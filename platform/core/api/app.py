@@ -13,12 +13,15 @@ port — dette er.
 """
 from __future__ import annotations
 
+import base64
+import collections
 import hashlib
 import hmac
 import ipaddress
 import json
 import os
 import queue
+import re
 import secrets
 import sys
 import threading
@@ -41,6 +44,7 @@ from .mac_register import last_mac_register
 from policy_validator.engine import EvaluationContext
 
 from . import cursor as cursormodul
+from . import artefaktskjema
 from . import feil as feiltabell
 from . import kjerne
 
@@ -53,6 +57,89 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
+#: §4-tallet, pinnet her som i arkivgaten: 25 MiB per dokument. Står i
+#: KROPPSGRENSE-blokken og ikke ved handleren fordi transporttakene under
+#: REGNES ut av det — to skrivemåter av samme tall er nettopp driften
+#: PR-014b-linjen over finnes for å unngå.
+_KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
+#: Kandidatartefaktets eget budsjett, målt på den KANONISKE JSON-formen i
+#: døren: dokumentveiens `_KANDIDAT_DOK_MAKS` for `kildetekst`, og like
+#: mye til for ALT det andre kandidaten bærer.
+#:
+#: «SITATENE ER UTSNITT AV TEKSTEN» VAR IKKE EN GRENSE (Codex P2). Den
+#: andre halvdelen var begrunnet med at funnenes sitater per
+#: konstruksjon er utsnitt av `kildetekst` og derfor til sammen ikke kan
+#: overstige én kopi av den. Utsnitt er de, men de er ikke DISJUNKTE:
+#: kontrakten tillater 100 funn, og hvert sitat kan uavhengig dekke
+#: hvilken som helst del av teksten. To fulltekstsitater på en 20
+#: MiB-kandidat ga ~60 MiB kanonisk JSON, altså `request_feilformet` fra
+#: denne porten — og `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` for HELE den ellers gyldige evalueringen.
+#: Antakelsen felte det den skulle beskytte.
+#:
+#: Grensen bor nå der den kan HÅNDHEVES, i modulkontrakten:
+#: `rapportskjema.SITAT_MAKS` = 4096 tegn per sitat, `FUNN_MAKS` = 100
+#: funn, håndhevet ved modellgrensen. Verste fall i UTF-8 er 4 byte per
+#: tegn, altså 1,6 MiB samlet sitatvolum — mot de 25 MiB denne
+#: halvdelen setter av. Intervjuspørsmålene er 20 × 500 tegn (≤ 40 KiB),
+#: og resten er avmaskeringskartet og JSON-strukturen. Tallet er som før
+#: speilet og ikke importert (api/ importerer aldri modulkode, samme
+#: grunn som `_KANDIDAT_ID_KANON`); det som endret seg er at det nå er
+#: utledet av tall kontrakten faktisk håndhever.
+_KANDIDAT_ARTEFAKT_MAKS = 2 * _KANDIDAT_DOK_MAKS
+#: Verste-falls JSON-ekspansjon per KILDEBYTE, samme faktor som
+#: PR-014b-linjen over: gyldig JSON kan skrive ett tegn som `\uXXXX`, og
+#: en kontrolltegn-byte blir da 6 byte på wire. Kandidatrutene bærer
+#: store tekstfelt, så faktoren er ikke teoretisk her — den er forskjellen
+#: på et tak som holder og et som avviser gyldige kandidater.
+JSON_ESKAPEFAKTOR = 6
+#: Claim-trippel, kandidat_id og dokumentnavn. Navnet er ARKIVETS eget
+#: (se `_kandidatdata`) og ZIP-formatets navnefelt er 16-bits, altså
+#: maks 64 KiB; 1 MiB dekker konvolutten med god margin.
+_KANDIDAT_KONVOLUTT = 1024 * 1024
+#: #173: dokumentveien inn i kandidatlagrene bærer ETT dokument som
+#: base64 (§4-taket 25 MiB → ~33,4 MiB koding) pluss parsetteksten av
+#: samme dokument og claim-konvolutten.
+#:
+#: TEKSTEN ER IKKE «ALDRI STØRRE ENN KILDEN» PÅ WIRE (Codex P2). Den
+#: linjen målte parseteksten i DEKODEDE byte, men det som passerer
+#: middlewaren er JSON-konvolutten: `\n` blir to byte, et kontrolltegn
+#: seks. Et gyldig 25 MiB-uttrekk kunne derfor bli avvist med
+#: `body_for_stor` FØR handlerens dokumenterte dekodede sjekk kjørte —
+#: og `lagre_dokument` reiser den 4xx-en som `kandidatlagring_feilet`
+#: for HELE evalueringen. Taket budsjetterer nå verste fall.
+MAKS_KANDIDATDOK_KROPP = (
+    # base64: 4 byte per 3 kildebyte, avrundet opp til blokk
+    (_KANDIDAT_DOK_MAKS + 2) // 3 * 4
+    + JSON_ESKAPEFAKTOR * _KANDIDAT_DOK_MAKS
+    + _KANDIDAT_KONVOLUTT)
+KANDIDATDOK_RUTE = "/v1/rekruttering/kandidatdokument"
+#: #173 (Codex P1): kandidatveien inn i evalueringsartefaktet FALT NED PÅ
+#: `MAKS_KROPP` (256 KiB). Kroppen bærer kandidatens hele `kildetekst`
+#: pluss funnenes sitater, så enhver kandidat med mer enn en snau side
+#: tekst fikk `body_for_stor`; `lagre_kandidat` reiser den som
+#: `kandidatlagring_feilet` og feller hele evalueringen. Taket er dørens
+#: `_KANDIDAT_ARTEFAKT_MAKS` skrevet i wire-form.
+MAKS_KANDIDATARTEFAKT_KROPP = (
+    JSON_ESKAPEFAKTOR * _KANDIDAT_ARTEFAKT_MAKS + _KANDIDAT_KONVOLUTT)
+KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
+#: Rutene med eget kroppstak. Oppslag, ikke en voksende kjede av
+#: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
+#: er nettopp fallet dette funnet handlet om — da skal det være ÉN
+#: leselig linje å se den i.
+RUTEKROPPSGRENSER = {
+    KANDIDATDOK_RUTE: MAKS_KANDIDATDOK_KROPP,
+    KANDIDATARTEFAKT_RUTE: MAKS_KANDIDATARTEFAKT_KROPP,
+}
+#: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
+#: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
+#: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
+#: v1-grense, dokumentert i 058-headeren; chunket kryptering er egen maskin
+#: med eget issue). Taket her er transportens absolutte og styrer
+#: middleware-tellingen; reservasjonens deklarerte `maks_bytes` håndhever
+#: den KONTRAKTUELLE grensen nedstrøms, og de to måles hver for seg.
+INNDATA_MAKS_FYSISK = 64 * 1024 * 1024
+STROEM_RUTE_PREFIKS = "/v1/inndata/opplast/"
 
 #: Ytelsesporten perf-m01-v1 krever 100 beslutninger/sekund vedvarende fra
 #: ÉN klient. Standard rate-grense må derfor ligge over 6 000/minutt, ellers
@@ -65,7 +152,94 @@ STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
 #: tallene sammen så de ikke kan gli fra hverandre igjen.
 YTELSESKRAV_PER_SEK = 100
 STANDARD_RATE_PER_MIN = 2 * 60 * YTELSESKRAV_PER_SEK      # 12 000/min
+#: #173 (Codex P1): kandidatskrivingen har sin EGEN bøtte, og den er
+#: dimensjonert av MODULKONTRAKTENS dokumenterte maksima — ikke av
+#: ytelsesporten, som handler om beslutningsflaten.
+#:
+#: En bunt kan lovlig bære `MAKS_FILER` = 20 000 medlemmer og
+#: `antall_soknader` = 5 000 kandidater (kontrakt/KONTRAKT.md, §4), altså
+#: 25 000 skrivinger på veien inn i kandidatlagrene. Med standardbudsjettet
+#: 12 000/min fikk skriving nummer 12 001 innenfor et rullende minutt 429,
+#: og modulens `lever` leser 4xx som TERMINALT: hele evalueringen falt som
+#: `kandidatlagring_feilet` fordi plattformen kjørte inn i sin egen grense.
+#: Tallene står her og ikke i modulen fordi det er DENNE siden som håndhever
+#: dem; api/ importerer aldri modulkode (samme grunn som
+#: `_KANDIDAT_ID_KANON` er speilet og ikke importert).
+#:
+#: FAKTOREN ER HELE RETRYKJEDEN, IKKE HALVE (Codex P2, #173). Her sto
+#: faktor 2, med begrunnelsen «modulens retrykjede» — men `lever` gjør
+#: inntil `LEVERINGSFORSOK` = 4 forsøk, og faktor 2 budsjetterer bare ETT
+#: retry per logisk skriving. Bøtta belastes dessuten av hvert forsøk som
+#: NÅR handleren: rate-porten står foran databasearbeidet, så et forsøk
+#: som ender i 5xx har allerede tatt sin plass i vinduet.
+#:
+#: Regnestykket funnet peker på: en kjøring med i snitt to forbigående
+#: feil per skriving bruker tre forespørsler per logiske skriving og
+#: passerer 50 000 rundt logisk skriving nummer 16 667 — godt under
+#: kontraktens 25 000. Neste forsøk får en TERMINAL 429, og `lever` leser
+#: 4xx som endelig: en evaluering som var fullt gjenopprettelig ble felt
+#: som `kandidatlagring_feilet` av plattformens egen grense. Nøyaktig
+#: klassen bøtta ble laget for å fjerne, bare flyttet lenger ut i bunten.
+#:
+#: Budsjettet dekker derfor ALLE forsøkene. Den andre utveien — å ikke
+#: belaste retryer som ferske logiske skrivinger — krever at bøtta kan
+#: kjenne igjen et gjentatt skriv, altså idempotensnøkler inn i
+#: rate-laget: ny maskin, og ikke en fiksrunde-endring (§9 K1).
+#:
+#: `LEVERINGSFORSOK` SPEILES, den importeres ikke: api/ importerer aldri
+#: modulkode (samme grunn som `_KANDIDAT_ID_KANON` er speilet). Speilet
+#: er bundet til modulens eget tall av
+#: `test_173_ratebudsjettet_dekker_hele_retrykjeden`, så de to kan ikke
+#: drive fra hverandre i stillhet.
+#:
+#: PRISEN ER BETALT I BØTTEFORMEN, IKKE I TAKET (Codex P2). Linjen her sa
+#: at `slipp_gjennom` bygger vindulisten på nytt per kall — ~312
+#: millioner float-sammenligninger for en full bunt — og godtok det som
+#: «ikke veiens toppunkt». Det stemte per skriving, men kostnaden lå
+#: under den DELTE låsen: hver annen rate-sjekk i prosessen ventet på et
+#: arbeid bare denne bøtta hadde bruk for. Bøtta er nå en `deque` som
+#: forlater hvert tidspunkt én gang (amortisert O(1)), så taket kan være
+#: kontraktens tall uten å være et ytelsesspørsmål.
+KANDIDAT_LEVERINGSFORSOK = 4          # speiler m57 controller.LEVERINGSFORSOK
+KANDIDATDATA_RATE_PER_MIN = \
+    KANDIDAT_LEVERINGSFORSOK * (20_000 + 5_000)           # 100 000/min
 SIDE_STANDARD, SIDE_MAKS = 50, 200
+#: Statusene der saksbehandlingen ER FERDIG. Alt annet i statusmaskinen
+#: (migrasjon 011) venter på et menneske eller en maskin, og er dermed «åpen».
+#: Denne veien rundt — terminal er listet opp, åpen er «resten» — er ikke
+#: smakssak: en tillatelsesliste over åpne statuser MÅ vedlikeholdes hver gang
+#: statusmaskinen vokser, og gjør den ikke det, forsvinner saker som venter på
+#: en godkjenner stille ut av køen. Nøyaktig det skjedde med dashbordets
+#: `AAPNE`-liste, som manglet alle fire godkjenningsstatusene fra PR-012.
+#: Blir det noen gang en tredje terminal status, står den her — og ingen andre
+#: steder.
+TERMINALE_UNNTAKSSTATUSER = ("løst", "avvist")
+
+#: Sakstypene i `unntak` (migrasjon 003). `sikkerhet` og `drift` er EGNE
+#: køer med eget scope (v3-delta pkt. 5), og vernet gjelder ikke bare
+#: saksinnholdet: at det FINNES en sikkerhetssak er selv den beskyttede
+#: opplysningen — derfor svarer `_hent_unntak` `ikke_funnet` og ikke 403.
+SAKSTYPER = ("normal", "sikkerhet", "drift")
+
+
+def synlige_sakstyper(scopes) -> tuple[str, ...]:
+    """Sakstypene dette tokenet får se — DEN ENE avledningen av regelen.
+
+    Regelen bodde tidligere som en naken `!= "normal"`-test inne i
+    unntakslisten, altså i ETT endepunkt og ikke i domenet. Det gjorde
+    den umulig å arve: M-16-nøkkeltallene leser de samme radene, og
+    fordi de leser dem via egne definere kom de utenom testen — kategori-
+    og tilstandstellinger, og IDer, tidspunkter og sakstyper for lukkede
+    saker fra sikkerhets- og driftskøene, lå dermed åpne for ethvert
+    `decisions:read`. En scope-regel som bare finnes i én leser er en
+    regel det neste endepunktet ikke vet om; her er den én funksjon, og
+    hver leser av `unntak` spør den.
+    """
+    if "security:read" in scopes:
+        return SAKSTYPER
+    return ("normal",)
+
+
 MIGRASJONSMAPPE = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
@@ -199,20 +373,82 @@ class Rategrense:
     faktisk leser den.
     """
 
+    #: Taket på antall nøkler som holdes samtidig (Codex P1). Nøkkelen er
+    #: ikke alltid en identitet SERVEREN har utstedt: den uautentiserte
+    #: innløsningsruten nøkler på onboarding-id-en fra kroppen, altså på
+    #: KLIENTINPUT. En dict som bare vokser er da en gratis minneflate —
+    #: hver ferske id la igjen en liste ingen noensinne ser på igjen, siden
+    #: opprydding bare skjer når nøyaktig samme nøkkel kommer tilbake.
+    #: Over taket feies alle nøkler uten treff i vinduet; de er per
+    #: definisjon uten betydning for en grense som bare ser 60 sekunder
+    #: bakover.
+    NOKKELTAK = 4096
+
     def __init__(self, per_minutt: int) -> None:
         self.per_minutt = per_minutt
-        self._treff: dict[str, list[float]] = {}
+        self._treff: dict[str, collections.deque[float]] = {}
         self._laas = threading.Lock()
 
-    def slipp_gjennom(self, nokkel: str, naa: float | None = None) -> bool:
-        naa = naa if naa is not None else time.monotonic()
+    def slipp_gjennom(self, nokkel: str, naa: float | None = None, *,
+                      tak: int | None = None) -> bool:
+        """`tak` overstyrer budsjettet for NØYAKTIG denne nøkkelen.
+
+        Ruter som trenger et eget, strammere budsjett enn prosessens
+        standard (12 000/min, satt av ytelsesporten) sender det inn her i
+        stedet for å holde sin egen grense — én bøtteimplementasjon, ett
+        sted å lese om vinduet.
+        """
+        grense = tak if tak is not None else self.per_minutt
         with self._laas:
-            tider = [t for t in self._treff.get(nokkel, ()) if t > naa - 60.0]
-            if len(tider) >= self.per_minutt:
-                self._treff[nokkel] = tider
+            # TIDSPUNKTET TAS UNDER LÅSEN (Codex P2). Det ble tidligere
+            # samplet FØR `with self._laas`, og da er det ingen
+            # sammenheng mellom rekkefølgen tidspunktene får og
+            # rekkefølgen trådene faktisk skriver i: en tråd som blir
+            # deschedulert mellom de to linjene vekker opp og appender et
+            # GAMMELT tidspunkt bak nyere innslag.
+            #
+            # Køen tåler ikke den inversjonen, og det er ikke en
+            # skjønnhetsfeil — begge endepunktene den leses fra antar
+            # sortert innhold. `popleft`-løkken under stopper på det
+            # første innslaget som ikke er utløpt, så et gammelt
+            # tidspunkt bak et nyere blir ALDRI forlatt: bøtta bærer et
+            # utløpt treff for alltid og avviser lovlig trafikk. Og
+            # nøkkelfeiingen over måler `v[-1]` som «nyeste», så en
+            # inversjon der kan slette en bøtte som fortsatt har
+            # levende treff — motsatt feil, samme årsak.
+            #
+            # Ingen produksjonskaller sender `naa`; parameteren er
+            # testsømmen, og en test som oppgir sine egne tidspunkter
+            # eier rekkefølgen selv.
+            if naa is None:
+                naa = time.monotonic()
+            vindustart = naa - 60.0
+            if len(self._treff) > self.NOKKELTAK:
+                self._treff = {k: v for k, v in self._treff.items()
+                               if v and v[-1] > vindustart}
+            tider = self._treff.get(nokkel)
+            if tider is None:
+                tider = self._treff[nokkel] = collections.deque()
+            # HVERT TIDSPUNKT UTLØPER ÉN GANG (Codex P2). Linjen her
+            # bygde vindulisten på nytt per kall — O(vindu) — og gjorde
+            # det mens den DELTE låsen sto. Med kandidatbøttas vindu på
+            # 50 000 kostet én full bunt (25 000 skriv, kontraktens
+            # maksimum) ~312 millioner sammenligninger, og hver av dem
+            # holdt låsen hver annen rate-sjekk i prosessen venter på.
+            # Prisen var beskrevet i konstantens kommentar og godtatt som
+            # «ikke veiens toppunkt» — men den er betalt av ALLE ruter,
+            # ikke bare av den som betalte for den.
+            #
+            # Køen gir samme vindu til amortisert O(1): tidspunktene står
+            # sortert fordi de settes inn i kalltidsrekkefølge (samme
+            # antakelse som feiingen over alt bygger på, `v[-1]`), så det
+            # som har falt ut av vinduet ligger fremst og forlates én
+            # gang — ikke én gang per etterfølgende kall.
+            while tider and tider[0] <= vindustart:
+                tider.popleft()
+            if len(tider) >= grense:
                 return False
             tider.append(naa)
-            self._treff[nokkel] = tider
             return True
 
 
@@ -316,9 +552,13 @@ class KroppsgrenseMiddleware:
         rid = scope.setdefault("state", {}).get("request_id") or _nytt_request_id()
         scope["state"]["request_id"] = rid
 
+        # #162: inndata-strømmen bufres ALDRI i middlewaren — chunks telles
+        # og videresendes; taket avbryter midt i strømmen, aldri etter den.
+        if scope.get("path", "").startswith(STROEM_RUTE_PREFIKS):
+            return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
-                else self.maks)
+                else RUTEKROPPSGRENSER.get(scope.get("path"), self.maks))
         oppgitt = headere.get("content-length")
         chunked = "chunked" in headere.get("transfer-encoding", "").lower()
         if oppgitt is None and not chunked:
@@ -341,6 +581,21 @@ class KroppsgrenseMiddleware:
             if not melding.get("more_body", False):
                 break
 
+        # ÉN KROPP, IKKE TRE (Codex P1, #173). Linjene under lagde
+        # `bytes(kropp)` TO ganger — én til `scope["state"]`, én til
+        # replay — mens `kropp` selv holdt bytearray-bufferet levende
+        # gjennom hele `await self.app`. Det er tre samtidige kopier av
+        # en kropp som på kandidatartefaktruten kan være ~301 MiB, og
+        # middlewaren kjører FØR enhver autentisering: en forespørsel med
+        # ugyldig token betalte samme minne som en gyldig.
+        #
+        # Kopien tas nå én gang, deles av begge lesere, og bytearray-en
+        # slippes før handleren kalles. `bytearray.clear()` frigjør
+        # FAKTISK bufferet — CPythons `PyByteArray_Resize` har egen arm
+        # for størrelse 0 som kaller `PyObject_Free` — så dette er en
+        # frigjøring, ikke bare en dereferanse som venter på GC.
+        data = bytes(kropp)
+        kropp.clear()
         ferdig = False
 
         async def replay():
@@ -348,11 +603,46 @@ class KroppsgrenseMiddleware:
             if ferdig:
                 return {"type": "http.disconnect"}
             ferdig = True
-            return {"type": "http.request", "body": bytes(kropp),
+            return {"type": "http.request", "body": data,
                     "more_body": False}
 
-        scope["state"]["kropp"] = bytes(kropp)
+        scope["state"]["kropp"] = data
         return await self.app(scope, replay, send)
+
+    async def _stroem(self, scope, receive, send, rid, headere):
+        """Tellende gjennomstrømming for inndata-ruten (#162): endepunktet
+        leser `request.stream()` selv; her håndheves KUN det absolutte
+        transporttaket, byte for byte, uten å samle kroppen."""
+        # Den ÅPENBART for store avvises uten å lese en eneste byte, som
+        # for alle andre ruter over (Cursor P2-5). Uten dette ville
+        # `Content-Length: 10**9` tvunget hele veien opp til 64 MiB-kuttet
+        # før klienten fikk et 413 den kunne fått med det samme. Samme
+        # `isdigit`-form som hovedveien: en Content-Length som ikke er et
+        # tall er en ugyldig forespørsel, ikke noe å gjette på.
+        oppgitt = headere.get("content-length")
+        if oppgitt is not None:
+            if not oppgitt.isdigit():
+                return await self._avvis(send, "body_lengde_ugyldig", rid)
+            if int(oppgitt) > INNDATA_MAKS_FYSISK:
+                return await self._avvis(send, "body_for_stor", rid)
+        talt = 0
+        avvist = False
+
+        async def tellende():
+            nonlocal talt, avvist
+            melding = await receive()
+            if melding["type"] == "http.request":
+                talt += len(melding.get("body", b""))
+                if talt > INNDATA_MAKS_FYSISK:
+                    avvist = True
+                    # Endepunktet ser strømmen slutte og leser `avvist`
+                    # via scope-state — det svarer med den kodede feilen.
+                    scope["state"]["inndata_for_stor"] = True
+                    return {"type": "http.request", "body": b"",
+                            "more_body": False}
+            return melding
+
+        return await self.app(scope, tellende, send)
 
     async def _avvis(self, send, kode: str, rid: str):
         if self.logg is not None:
@@ -477,6 +767,27 @@ class Autentisert:
             kilde="arbeidskapabilitet" if self.kapabilitet else "api_token")
 
 
+class ModulAutentisert(Autentisert):
+    """En autentisert MODULDEPLOYMENT (035): tokenet svarer på nøyaktig ett
+    spørsmål — hvilken deployment er dette? Alt annet (livsløp, status,
+    epoch-gyldighet, oppdrags-/artefakttyper) slås opp ved HVER bruk via
+    releasens kontrakt; scopes lagres aldri og utledes aldri her.
+
+    `tenant` er modul-id-en (kun logg/rate — modultokener er tenantløse;
+    forretningstenanten kommer alltid fra det claimede oppdraget), `rolle`
+    er modul-id-en (samme konvensjon som modulens api-tokener: claim-SQL-en
+    bruker rollen som eiermodul)."""
+    __slots__ = ("modul_id", "miljo", "release_id", "utstedt_epoch",
+                 "modultoken_id")
+
+    def __init__(self, modul_id, miljo, release_id, utstedt_epoch,
+                 modultoken_id):
+        super().__init__(modul_id, modul_id, (), f"mtk_{modultoken_id}")
+        self.modul_id, self.miljo = modul_id, miljo
+        self.release_id, self.utstedt_epoch = release_id, utstedt_epoch
+        self.modultoken_id = modultoken_id
+
+
 def _mac(pepper: str, secret: str) -> str:
     return hmac.new(pepper.encode("utf-8"), secret.encode("utf-8"),
                     hashlib.sha256).hexdigest()
@@ -553,6 +864,24 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         if not authorization or not authorization.startswith("Bearer "):
             return None
         raa = authorization[7:].strip()
+        if raa.startswith("mtk_"):
+            # Modultoken (035): `mtk_<token_id>.<secret>`. Oppslaget går via
+            # den herdede `verifiser_modultoken` (runtime har hverken SELECT
+            # eller skriving på modultoken) og er gyldighets-filtrert der:
+            # tilbakekalt-og-forbi eller utløpt → ingen rad. Token-id-en i
+            # wire-formatet må MATCHE radens (ellers kunne en gjettet id
+            # pares med en stjålet MAC fra et annet token).
+            tid_del, _, msecret = raa[4:].partition(".")
+            if not tid_del or not msecret:
+                return None
+            mrad = conn.execute(
+                "SELECT token_id, modul_id, miljo, release_id, utstedt_epoch"
+                "  FROM verifiser_modultoken(%s)",
+                (_mac(tjeneste.pepper, msecret),)).fetchone()
+            if mrad is None or str(mrad[0]) != tid_del:
+                return None
+            return ModulAutentisert(mrad[1], mrad[2], mrad[3], mrad[4],
+                                    mrad[0])
         token_id, _, secret = raa.partition(".")
         if not token_id or not secret:
             return None
@@ -564,6 +893,54 @@ def preauth(tjeneste: Tjeneste, conn: psycopg.Connection,
         return Autentisert(rad[0], rad[1], rad[2], token_id)
     finally:
         conn.commit()      # pre-auth eier og lukker sin egen transaksjon
+
+
+def _modultoken_revalidert(tjeneste: Tjeneste, conn: psycopg.Connection,
+                           auth: Autentisert, rid: str) -> Response | None:
+    """Er deploymenten FORTSATT autorisert, her og nå? -> None = ja.
+
+    Codex P1. `preauth` eier og LUKKER sin egen transaksjon, og
+    forretningstransaksjonen starter etterpå. Mellom de to committene kan
+    `noddeaktiver_modul` ha kjørt — det nødstoppet som er annonsert å
+    terminere tokenfamilien ØYEBLIKKELIG. Men `ModulAutentisert`-objektet
+    lever videre over transaksjonsgrensen: et token nødstoppet faktisk
+    drepte, er fortsatt representert som en autentisert deployment i
+    requesten som alt er i gang. Kapabilitetsinnløsningene sammenligner kun
+    IDENTITET (modul, miljø, release) og leser hverken tokenets tilstand,
+    modulens status eller epoch — så kvitteringen eller artefaktet fra den
+    stoppede deploymenten gikk inn likevel, og stoppet var et løfte
+    plattformen ikke holdt.
+
+    ALLE TRE VEIENE BRUKER DEN (Codex P1). Først de to innløsningsveiene;
+    siden også claim-porten. Claim-veien så lenge ut til å være dekket av at
+    `claim_neste_oppdrag` re-verifiserer under modul-låsen, men den
+    re-verifiseringen gjelder REGISTERET — deployment, status, epoch.
+    Funksjonen får ingen token-id og kan derfor ikke se `tilbakekalt_ts`, så
+    en eksplisitt tilbakekalling midt i requesten stanset ingenting: det
+    tilbakekalte tokenet ble tildelt nytt arbeid. Porten står FØR bruken på
+    alle tre stedene, og låsen den tar er transaksjonsbundet — et nødstopp
+    eller en tilbakekalling kan ikke gli inn mellom dommen og forbruket.
+
+    ÉN funksjon for begge veiene, og dommen selv ligger i databasen
+    (`modultoken_fortsatt_autorisert`) — den er ikke sammensatt av tre
+    oppslag herfra som et nødstopp kunne kilt seg inn mellom.
+
+    Et legacy-api-token har ingen deployment å revalidere; scope-porten er
+    hele dets autorisasjon, og den er alt passert.
+    """
+    if not isinstance(auth, ModulAutentisert):
+        return None
+    utfall = conn.execute(
+        "SELECT modultoken_fortsatt_autorisert(%s,%s,%s,%s,%s)",
+        (auth.modultoken_id, auth.modul_id, auth.miljo, auth.release_id,
+         auth.utstedt_epoch)).fetchone()[0]
+    if utfall == "ok":
+        return None
+    conn.rollback()
+    tjeneste.logg.hendelse(utfall, rid, auth.tenant, modul=auth.modul_id,
+                           miljo=auth.miljo, release=auth.release_id,
+                           utstedt=auth.utstedt_epoch)
+    return _feilsvar(utfall, rid)
 
 
 def kanonisk_json(kropp: dict, status: int = 200,
@@ -630,6 +1007,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_kvittering(request: Request) -> Response:
         return _oppdrag_kvittering(tjeneste, request)
 
+    def oppdrag_forny(request: Request) -> Response:
+        return _oppdrag_forny(tjeneste, request)
+
+    def kandidatdokument(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "dokument")
+
+    def kandidatartefakt(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "kandidat")
+
     def artefakt_upload(request: Request) -> Response:
         return _artefakt_upload(tjeneste, request)
 
@@ -640,11 +1026,23 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oversikt(request: Request) -> Response:
         return lesing.oversikt(tjeneste, request)
 
+    def nokkeltall(request: Request) -> Response:
+        return lesing.nokkeltall(tjeneste, request)
+
     def beslutninger(request: Request) -> Response:
         return lesing.beslutninger(tjeneste, request)
 
     def beslutning_detalj(request: Request) -> Response:
         return lesing.beslutning_detalj(tjeneste, request)
+
+    def rapport_detalj(request: Request) -> Response:
+        return lesing.rapport_detalj(tjeneste, request)
+
+    def rekrutteringsrapport_detalj(request: Request) -> Response:
+        return lesing.rekrutteringsrapport_detalj(tjeneste, request)
+
+    def rekrutteringsevalueringer(request: Request) -> Response:
+        return lesing.rekrutteringsevalueringer(tjeneste, request)
 
     def unntak_detalj(request: Request) -> Response:
         return lesing.unntak_detalj(tjeneste, request)
@@ -668,6 +1066,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def policy_aktiv(request: Request) -> Response:
         return lesing.policy_aktiv(tjeneste, request)
 
+    def policy_aktive(request: Request) -> Response:
+        return lesing.policy_aktive(tjeneste, request)
+
     def utrulling(request: Request) -> Response:
         return lesing.utrulling(tjeneste, request)
 
@@ -690,6 +1091,48 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
 
     def sesjon_logout(request: Request) -> Response:
         return sesjonmodul.sesjon_logout(tjeneste, request)
+
+    # #162: inndata-artefaktet — buntens vei inn (PR-1: reservasjon +
+    # opplasting; resolver og bestillingsbinding er PR-2).
+    from . import inndata as inndata_http
+
+    def inndata_reserver(request: Request) -> Response:
+        return inndata_http.reserver_endepunkt(tjeneste, request)
+
+    async def inndata_hent(request: Request) -> Response:
+        # Kroppen (owner_claim_id-kapabiliteten) leses async; selve
+        # arbeidet (pool, dekryptering, fil) går i threadpoolen som de
+        # andre sync-veiene.
+        from starlette.concurrency import run_in_threadpool
+        try:
+            kropp = await request.json()
+        except Exception:
+            kropp = None
+        return await run_in_threadpool(
+            inndata_http.hent_endepunkt, tjeneste, request, kropp)
+
+    async def inndata_opplast(request: Request) -> Response:
+        return await inndata_http.opplast_endepunkt(tjeneste, request)
+
+    # M-57 utførelsesarmen: leseflaten + signeringen gjennom 056-kjeden.
+    from . import rekruttering as rekruttering_http
+
+    def rekruttering_prosesser(request: Request) -> Response:
+        return rekruttering_http.prosesser_endepunkt(tjeneste, request)
+
+    def rekruttering_signer(request: Request) -> Response:
+        return rekruttering_http.signer_endepunkt(tjeneste, request)
+
+    def rekruttering_blinding(request: Request) -> Response:
+        return rekruttering_http.blinding_endepunkt(tjeneste, request)
+
+    def rekruttering_profiler(request: Request) -> Response:
+        return rekruttering_http.stillingsprofiler_endepunkt(
+            tjeneste, request)
+
+    def rekruttering_profil_lagre(request: Request) -> Response:
+        return rekruttering_http.stillingsprofil_lagre_endepunkt(
+            tjeneste, request)
 
     # PR-013: policyadministrasjon — utkast-CRUD + aktivering (fire-øyne).
     from . import policyadmin_http
@@ -721,14 +1164,88 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
+    def pa_slett_policy(request: Request) -> Response:
+        return policyadmin_http.slett_policy_endepunkt(tjeneste, request)
+
     def pa_forkast_utkast(request: Request) -> Response:
         return policyadmin_http.forkast_utkast_endepunkt(tjeneste, request)
+
+    def pa_gjenapne_utkast(request: Request) -> Response:
+        return policyadmin_http.gjenapne_utkast_endepunkt(tjeneste, request)
 
     def pa_apne_runde(request: Request) -> Response:
         return policyadmin_http.apne_runde_endepunkt(tjeneste, request)
 
     def pa_attester(request: Request) -> Response:
         return policyadmin_http.attester_endepunkt(tjeneste, request)
+
+    # 038: bestillingsveien — kundeflatens produsent inn i beslutningsveien.
+    from . import bestilling as bestillingsmodul
+    from . import domener as domenermodul
+
+    def dm_liste(request: Request) -> Response:
+        return domenermodul.liste_endepunkt(tjeneste, request)
+
+    def dm_utsted(request: Request) -> Response:
+        return domenermodul.utsted_endepunkt(tjeneste, request)
+
+    # 047: versjonshistorikk og diff — lesing gjennom policy-eierens
+    # definere, aldri direkte fra policyer (port 38).
+    from . import policy_historikk as ph
+
+    def ph_versjoner(request):
+        return ph.versjoner_endepunkt(tjeneste, request)
+
+    def ph_diff(request):
+        return ph.diff_endepunkt(tjeneste, request)
+
+    def ph_grunnlag(request):
+        return ph.editorgrunnlag_endepunkt(tjeneste, request)
+
+    # 044: planflaten — CRUD over de herdede funksjonene.
+    from . import plan as planmodul
+
+    def pl_opprett(request: Request) -> Response:
+        return planmodul.opprett_endepunkt(tjeneste, request)
+
+    def pl_liste(request: Request) -> Response:
+        return planmodul.liste_endepunkt(tjeneste, request)
+
+    def pl_aktiver(request: Request) -> Response:
+        return planmodul.aktiver_endepunkt(tjeneste, request)
+
+    def pl_gjenoppta(request: Request) -> Response:
+        return planmodul.gjenoppta_endepunkt(tjeneste, request)
+
+    def pl_stans(request: Request) -> Response:
+        return planmodul.stans_endepunkt(tjeneste, request)
+
+    def pl_historikk(request: Request) -> Response:
+        return planmodul.historikk_endepunkt(tjeneste, request)
+
+    def do_saker(request: Request) -> Response:
+        # 041: adjudikatorkøen — plattformens visning, aldri en kundesesjons.
+        from . import domeneovertakelse
+        return domeneovertakelse.saker_endepunkt(tjeneste, request)
+
+    def bs_bestill(request: Request) -> Response:
+        return bestillingsmodul.bestill_endepunkt(tjeneste, request)
+
+    # 035: modul-onboarding — hemmelighet, innløsning, rotasjon,
+    # tilbakekalling. Maskin-/ops-endepunkter (Bearer), aldri browserøkt.
+    from . import modulonboarding
+
+    def mo_utsted(request: Request) -> Response:
+        return modulonboarding.utsted_endepunkt(tjeneste, request)
+
+    def mo_innlos(request: Request) -> Response:
+        return modulonboarding.innlos_endepunkt(tjeneste, request)
+
+    def mo_roter(request: Request) -> Response:
+        return modulonboarding.roter_endepunkt(tjeneste, request)
+
+    def mo_tilbakekall(request: Request) -> Response:
+        return modulonboarding.tilbakekall_endepunkt(tjeneste, request)
 
     app = Starlette(routes=[
         Route("/v1/beslutning", beslutning, methods=["POST"]),
@@ -738,15 +1255,54 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # databasen direkte — det er en av de åtte evidensbevisene, og en
         # statisk sjekk i testsuiten håndhever den.
         Route("/v1/oppdrag/claim", oppdrag_claim, methods=["POST"]),
+        # 035: onboarding-rutene er statiske stier, registrert her sammen
+        # med de andre maskinrutene.
+        Route("/v1/bestilling", bs_bestill, methods=["POST"]),
+        Route("/v1/domener", dm_liste, methods=["GET"]),
+        Route("/v1/domeneovertakelse/saker", do_saker, methods=["GET"]),
+        Route("/v1/plan", pl_liste, methods=["GET"]),
+        Route("/v1/plan", pl_opprett, methods=["POST"]),
+        # {id:uuid} og ikke {id:str} (Codex P2), av samme grunn som
+        # {id:int} på detaljrutene under: planfunksjonene tar UUID, så
+        # `/v1/plan/not-a-uuid/aktiver` reiste `InvalidTextRepresentation`,
+        # ble fanget som en generisk databasefeil og svarte 503
+        # `db_utilgjengelig` — med en drifthendelse — på helt ordinær
+        # klientinput. En ugyldig sti skal være 404 fra ROUTEREN, ikke en
+        # kodevei og aller minst en falsk alarm.
+        Route("/v1/plan/{id:uuid}/aktiver", pl_aktiver, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/gjenoppta", pl_gjenoppta,
+              methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/stans", pl_stans, methods=["POST"]),
+        Route("/v1/plan/{id:uuid}/historikk", pl_historikk,
+              methods=["GET"]),
+        Route("/v1/domener", dm_utsted, methods=["POST"]),
+        Route("/v1/modul/onboarding", mo_utsted, methods=["POST"]),
+        Route("/v1/modul/onboarding/innlos", mo_innlos, methods=["POST"]),
+        Route("/v1/modul/token/roter", mo_roter, methods=["POST"]),
+        Route("/v1/modul/token/tilbakekall", mo_tilbakekall,
+              methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
+        Route("/v1/oppdrag/forny", oppdrag_forny, methods=["POST"]),
+        # #173: skriveveien inn i kandidatlagrene — claim-bundet, som
+        # forny/kvittering.
+        Route("/v1/rekruttering/kandidatdokument", kandidatdokument,
+              methods=["POST"]),
+        Route("/v1/rekruttering/kandidatartefakt", kandidatartefakt,
+              methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
         # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
         # den, og detaljrutene bruker {id:int} så en ikke-numerisk sti er
         # 404 fra routeren, ikke en kodevei.
         Route("/v1/oversikt", oversikt, methods=["GET"]),
+        Route("/v1/nokkeltall", nokkeltall, methods=["GET"]),
         Route("/v1/beslutninger", beslutninger, methods=["GET"]),
         Route("/v1/beslutninger/{id:int}", beslutning_detalj, methods=["GET"]),
+        Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/rapport/{id:int}",
+              rekrutteringsrapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
+              methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
         Route("/v1/unntak/{id:int}/historikk", unntak_historikk,
               methods=["GET"]),
@@ -755,10 +1311,35 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/unntak/{id:int}/domeneattestasjon",
               unntak_domeneattestasjon, methods=["POST"]),
         Route("/v1/policy/aktiv", policy_aktiv, methods=["GET"]),
+        Route("/v1/policy/{policy_id:str}/versjoner", ph_versjoner,
+              methods=["GET"]),
+        Route("/v1/policy/{policy_id:str}/diff", ph_diff, methods=["GET"]),
+        Route("/v1/policyadmin/editorgrunnlag", ph_grunnlag,
+              methods=["GET"]),
+        # Lista over aktive policyer. Egen statisk sti, registrert
+        # sammen med `aktiv` og FØR mønsterrutene: den er utveien når
+        # `aktiv` (med rette) nekter å velge mellom flere.
+        Route("/v1/policy/aktive", policy_aktive, methods=["GET"]),
         # Utrullingsplanen: øktbundet, fordi den ellers måtte ligge i den
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
+              inndata_hent, methods=["POST"]),
+        Route("/v1/inndata/reserver", inndata_reserver,
+              methods=["POST"]),
+        Route("/v1/inndata/opplast/{jti:str}", inndata_opplast,
+              methods=["PUT"]),
+        Route("/v1/rekruttering/prosesser", rekruttering_prosesser,
+              methods=["GET"]),
+        Route("/v1/rekruttering/stillingsprofiler", rekruttering_profiler,
+              methods=["GET"]),
+        Route("/v1/rekruttering/stillingsprofiler",
+              rekruttering_profil_lagre, methods=["POST"]),
+        Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
+              rekruttering_blinding, methods=["POST"]),
+        Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
+              rekruttering_signer, methods=["POST"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
@@ -771,7 +1352,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/varsel/{varsel_id:str}/lest", pa_varsel_lest,
               methods=["POST"]),
         Route("/v1/varselvalg", pa_varselvalg, methods=["POST"]),
+        Route("/v1/policy/{policy_id:str}/slett", pa_slett_policy,
+              methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/forkast", pa_forkast_utkast,
+              methods=["POST"]),
+        Route("/v1/policyutkast/{utkast_id:str}/gjenapne", pa_gjenapne_utkast,
               methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/aktiveringsrunde",
               pa_apne_runde, methods=["POST"]),
@@ -845,7 +1430,17 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # for å slippe forbi den generelle porten
                                      # — ikke for å gi det til noen: det deles
                                      # aldri ut sammen med exceptions:handle.
-                                     "domains:adjudicate"})
+                                     "domains:adjudicate",
+                                     # 038 §6: bestillingen skjer i flaten
+                                     # (OIDC + CSRF); autoriteten ligger i
+                                     # domenekontroll + beslutningsveien.
+                                     "bestilling:opprett",
+                                     # 044 §6: planen er stående INTENSJON
+                                     # — hver kjøring policyvurderes som en
+                                     # vanlig bestilling, så scopene gir
+                                     # aldri stående utførelsesfullmakt.
+                                     "plan:opprett", "plan:aktiver",
+                                     "plan:gjenoppta"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -944,7 +1539,17 @@ def _beslutning(tjeneste: Tjeneste, request: Request) -> Response:
                 conn, auth.kontekst(), policy_id=data["policy_id"],
                 event=data["event"], idempotency_key=nokkel.strip(),
                 request_id=rid, aktor=auth.aktor, nokler=tjeneste.nokler,
-                kapabilitet=auth.kapabilitet)
+                kapabilitet=auth.kapabilitet,
+                # DETTE ER DET ENESTE ENDEPUNKTET SOM FØRER KLIENTENS NØKKEL
+                # RETT INN I `idempotens` (Codex P1). Rommet er delt: en
+                # annen vei — bestillingens gjenoppretting — LESER en rad
+                # derfra som bevis på sin egen committede beslutning, og
+                # nøkkelen den leser på er en deterministisk funksjon av det
+                # klienten selv sendte. Uten flagget kunne en kaller med
+                # `decision:write` hos samme tenant pre-skrive nøyaktig den
+                # raden og få bestillingen til å arve en beslutning den
+                # aldri tok. `kjerne.RESERVERTE_NOKKELROM` bærer regelen.
+                klientvalgt_nokkel=True)
         except kjerne.Feilsvar as f:
             art = "drift" if "drift" in f.rad.routing else "sikkerhet"
             tjeneste.logg.hendelse(f.kode, rid, auth.tenant, art=art)
@@ -1013,18 +1618,24 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
             sett_kontekst(conn, auth.tenant, auth.aktor, rid)
 
             sakstype = request.query_params.get("sakstype", "normal")
-            if sakstype not in ("normal", "sikkerhet", "drift"):
+            if sakstype not in SAKSTYPER:
                 return _feilsvar("request_feilformet", rid)
-            if sakstype != "normal" and "security:read" not in auth.scopes:
+            if sakstype not in synlige_sakstyper(auth.scopes):
                 # v3-delta pkt. 5: sikkerhets- og driftskøene er egne køer med
                 # eget scope. `exceptions:read` alene ser dem aldri.
                 tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                        scope="security:read")
                 return _feilsvar("scope_mangler", rid)
 
+            # `apen` er ikke en status i tabellen, men et SPØRSMÅL: «hva
+            # venter fortsatt på noen?». Det må besvares her og ikke av
+            # klienten, fordi filtrering skjer FØR `LIMIT`. Filtrerte
+            # klienten selv, ville en side med åtte ferdigbehandlede saker
+            # sett tom ut selv om det lå en uløst sak rett bak sidegrensen —
+            # og `neste_cursor` ville aldri blitt fulgt.
             status = request.query_params.get("status")
             if status is not None and status not in ("ny", "under_behandling",
-                                                     "løst", "avvist"):
+                                                     "løst", "avvist", "apen"):
                 return _feilsvar("request_feilformet", rid)
             try:
                 grense = min(
@@ -1045,11 +1656,23 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
                     tjeneste.logg.hendelse("cursor_ugyldig", rid, auth.tenant)
                     return _feilsvar("cursor_ugyldig", rid)
 
+            # `arsak` er MED (043, Codex P2): en sak født av
+            # `sikre_sak_for_oppdrag` bærer hele sin grunn der — og fra 043
+            # er tre av verdiene `kompensasjon_kreves`,
+            # `irreversibel_utfort` og `reversibilitet_ukjent`, altså «et
+            # menneske må rydde opp etter en handling som rakk å skje», «en
+            # irreversibel handling ble rapportert utført» og «vi vet ikke
+            # om virkningen kan reverseres». Uten kolonnen så listen
+            # nøyaktig ut som en hvilken som helst arvet sak, og den
+            # forskjellen er hele poenget med å føde saken.
             sql = ("SELECT id, ts, handling, kategori, prioritet, status,"
-                   " sakstype FROM unntak"
+                   " sakstype, arsak FROM unntak"
                    " WHERE tenant=%s AND sakstype=%s")
             args: list = [auth.tenant, sakstype]
-            if status is not None:
+            if status == "apen":
+                sql += " AND NOT (status = ANY(%s))"
+                args.append(list(TERMINALE_UNNTAKSSTATUSER))
+            elif status is not None:
                 sql += " AND status=%s"
                 args.append(status)
             if etter is not None:
@@ -1066,7 +1689,7 @@ def _unntak(tjeneste: Tjeneste, request: Request) -> Response:
 
         saker = [{"id": r[0], "ts": r[1].isoformat(), "handling": r[2],
                   "kategori": r[3], "prioritet": r[4], "status": r[5],
-                  "sakstype": r[6]} for r in rader]
+                  "sakstype": r[6], "arsak": r[7]} for r in rader]
         # Payload er IKKE med — og kan ikke bli det ved et uhell, fordi
         # kolonnen aldri hentes. `exceptions:manage` (PR-006) er veien dit.
         neste = (cursormodul.lag(auth.tenant, rader[-1][1], rader[-1][0],
@@ -1125,16 +1748,55 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/unntak"):                  "exceptions:read",
     ("POST", "/v1/oppdrag/claim"):           ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/oppdrag/kvittering"):      ORDRESCOPE + "<prefiks>",
+    # 063 (#165): fornyelsen autentiseres som claim/kvittering —
+    # modultoken + claimets egen identitet i kroppen.
+    ("POST", "/v1/oppdrag/forny"):           ORDRESCOPE + "<prefiks>",
+    # #173: skriveveien inn i kandidatlagrene — samme autentisering som
+    # forny/kvittering: modultoken + claimets identitet i kroppen.
+    ("POST", "/v1/rekruttering/kandidatdokument"):
+        ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/rekruttering/kandidatartefakt"):
+        ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
+    ("GET",  "/v1/nokkeltall"):              "decisions:read",
     ("GET",  "/v1/beslutninger"):            "decisions:read",
     ("GET",  "/v1/beslutninger/{id:int}"):   "decisions:read",
+    # 038 §7: rapporten er evidensen bak tenantens egen beslutning.
+    ("GET",  "/v1/rapport/{id:int}"):        "decisions:read",
     ("GET",  "/v1/unntak/{id:int}"):         "exceptions:read",
     ("GET",  "/v1/unntak/{id:int}/historikk"): "exceptions:read",
     ("POST", "/v1/unntak/{id:int}/handling"): "exceptions:approve",
     # PR-015 §3: cross-tenant domeneautoritet er sitt EGET scope.
     ("POST", "/v1/unntak/{id:int}/domeneattestasjon"): "domains:adjudicate",
     ("GET",  "/v1/policy/aktiv"):            "policy:read",
+    # 047 (§6): historikken er NY rute bak EKSISTERENDE scope.
+    ("GET",  "/v1/policy/{policy_id:str}/versjoner"): "policy:read",
+    ("GET",  "/v1/policy/{policy_id:str}/diff"):      "policy:read",
+    ("GET",  "/v1/policyadmin/editorgrunnlag"):       "policy:read",
+    ("GET",  "/v1/policy/aktive"):           "policy:read",
+    # M-57 utførelsesarmen: lesingen bak flatens svakeste ledd; signering
+    # og blinding-avskruing bak mutasjonsscopet (056-kjeden + #159 gjør
+    # resten av dømmingen inne i endepunktene).
+    ("GET",  "/v1/rekruttering/prosesser"):  "decisions:read",
+    # M-57s egen rapportflate ("ats"-diskriminatoren): evidens bak en
+    # beslutning tenanten selv bestilte — samme scope som WCAG-rapporten.
+    ("GET",  "/v1/rekruttering/rapport/{id:int}"): "decisions:read",
+    ("GET",  "/v1/rekruttering/evalueringer"): "decisions:read",
+    ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
+    # Skriving av profilen er kundens/adminens bestillingsmyndighet —
+    # samme scope som signeringen og inndata-reservasjonen.
+    ("POST", "/v1/rekruttering/stillingsprofiler"): "bestilling:opprett",
+    # Modulveien (060): retten er CLAIMET — ORDRESCOPE-klassen som
+    # claim/kvittering; auth avgjøres i endepunktet (modultoken).
+    ("POST", "/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}"):
+        ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/inndata/reserver"):        "bestilling:opprett",
+    ("PUT",  "/v1/inndata/opplast/{jti:str}"): "bestilling:opprett",
+    ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):
+        "bestilling:opprett",
+    ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):
+        "bestilling:opprett",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en
@@ -1143,13 +1805,47 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",
+    # 035: modul-onboarding. Maskin-/ops-ruter; scope-porten håndheves
+    # inne i endepunktene (Bearer/modultoken, aldri browserøkt) — samme
+    # deklarasjonsform som /v1/oppdrag/*. Innløsningen autentiseres av
+    # selve engangshemmeligheten, rotasjonen av modultokenet.
+    ("POST", "/v1/bestilling"):              "bestilling:opprett",
+    # 039: selvbetjent domeneverifisering — samme autoritet som bestilling
+    # (domeneregisteret ER porten bestillingsveien håndhever).
+    # GET er en LESERUTE og følger leseinvariantens scopes (pr008-porten):
+    # å SE domenelisten er lesing av egen tilstand; å ENDRE den krever
+    # bestilling:opprett. Flaten selv ligger uansett bak admin-ruten.
+    ("GET",  "/v1/domener"):                 "decisions:read",
+    ("GET",  "/v1/domeneovertakelse/saker"): "domains:adjudicate",
+    ("GET",  "/v1/plan"):                    "decisions:read",
+    ("POST", "/v1/plan"):                    "plan:opprett",
+    ("POST", "/v1/plan/{id:uuid}/aktiver"):   "plan:aktiver",
+    ("POST", "/v1/plan/{id:uuid}/gjenoppta"): "plan:gjenoppta",
+    ("POST", "/v1/plan/{id:uuid}/stans"):     "plan:opprett",
+    ("GET",  "/v1/plan/{id:uuid}/historikk"): "decisions:read",
+    ("POST", "/v1/domener"):                 "bestilling:opprett",
+    ("POST", "/v1/modul/onboarding"):        "modules:onboard",
+    ("POST", "/v1/modul/onboarding/innlos"): "onboarding-hemmelighet",
+    ("POST", "/v1/modul/token/roter"):       "modultoken",
+    ("POST", "/v1/modul/token/tilbakekall"): "modules:onboard",
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
+    # INNBOKSEN ER MOTTAKERENS, IKKE POLICYFORVALTNINGENS (Codex P2). Begge
+    # POST-ene rører KUN kallerens egne rader — bruker-id-en kommer fra
+    # økten, aldri fra kroppen — så `policy:write` var en fullmakt de ikke
+    # trenger. Kravet lot seg heller ikke forsvare etter 044: pause- og
+    # bruddvarslene går til administratoren som aktiverte planen, og den
+    # rollen har verken `policy:write` eller `policy:activate`. Hun kunne
+    # altså MOTTA et varsel hun ikke kunne kvittere ut — og hadde hun valgt
+    # `kun_portal`, kunne hun ikke engang endre valget tilbake.
+    # Å handle på et varsel skal aldri kreve mer enn å se det.
     ("GET",  "/v1/varsel"):                  "policy:read",
-    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:write",
-    ("POST", "/v1/varselvalg"):              "policy:write",
+    ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:read",
+    ("POST", "/v1/varselvalg"):              "policy:read",
+    ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/gjenapne"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/aktiveringsrunde"): "policy:activate",
     ("POST", "/v1/policyutkast/{utkast_id:str}/attester"): "policy:activate",
     ("GET",  "/v1/policyutkast/{utkast_id:str}"): "policy:read",
@@ -1176,6 +1872,149 @@ def _modulscope(auth: Autentisert) -> list[str]:
     """
     return sorted(s[len(ORDRESCOPE):] for s in auth.scopes
                   if s.startswith(ORDRESCOPE) and len(s) > len(ORDRESCOPE))
+
+
+def _utled_opplastingskapabilitet(conn, auth, tenant: str,
+                                  opp_id: int, ef):
+    """Utsteder opplastingskapabiliteten for et claimet oppdrag — delt av
+    claim (015/017) og fornyelsen (063/#165). Bindingen er
+    SERVERKONTEKSTENS (tenant · oppdrag · modul · release · kontrakt ·
+    epoch · artefakttype); modulen ber aldri om felt. Alle
+    fail-closed-reglene (tvetydig release/type, test.-prefikset i
+    produksjon, evidensfrist-klemmen) bor HER, én gang. -> dict | None.
+    Kalles i claimens/fornyelsens egen transaksjon; committer aldri selv.
+    """
+    opplasting = None
+    oppdragsrad = conn.execute(
+        "SELECT o.modul_id, ("
+        "  SELECT string_agg(DISTINCT d.release_id, ',')"
+        "    FROM moduldeployment d"
+        "   WHERE d.modul_id = o.modul_id AND d.livslop = 'claiming'"
+        "     AND d.kontraktversjon = o.kontraktversjon"
+        "     AND d.kontrakt_hash = o.kontrakt_hash),"
+        " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
+        " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+        (tenant, opp_id)).fetchone()
+    #
+    # Codex (P2): utledningen over er for LEGACY-api-tokener, som
+    # ikke bærer noen deployment i det hele tatt. Et modultoken
+    # BÆRER sin — release og miljø ble bundet ved onboardingen, og
+    # claimen har alt verifisert at nettopp den deploymenten er
+    # `claiming` med gjeldende epoch. Da er et oppslag som ikke kan
+    # skille staging fra produksjon både unødvendig og feil: er
+    # samme kontrakt deployet i BEGGE miljøer, ga det «tvetydig
+    # release» (ingen kapabilitet) eller — verre — produksjonssvaret
+    # på et staging-token, se `er_produksjon` under.
+    if isinstance(auth, ModulAutentisert):
+        autentisert_release, autentisert_miljo = (auth.release_id,
+                                                  auth.miljo)
+    else:
+        autentisert_release = autentisert_miljo = None
+    if oppdragsrad is not None and oppdragsrad[0] is not None \
+            and (autentisert_release is not None
+                 or (oppdragsrad[1] is not None
+                     and "," not in oppdragsrad[1])):
+        (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
+        if autentisert_release is not None:
+            o_release = autentisert_release
+        # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
+        # modulen + kontrakten. Finnes ingen registrert type, utstedes
+        # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
+        # En modul som ikke skal laste opp, får ikke lov (port 22).
+        #
+        # Codex (P2): `LIMIT 1` plukket den alfabetisk FØRSTE typen
+        # stille når kontrakten registrerer FLERE — svaret bar da en
+        # kapabilitet for feil type uten at noe sa fra. Responsen har
+        # ETT `opplasting`-felt, ikke en liste, og v1 har bevisst
+        # ingen on-demand-utstedelse (se docstringen over) — samme
+        # fail-closed regel som RELEASE-tvetydigheten over: er valget
+        # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
+        # `test.`-prefikset er reservert (035 §8): det utledes
+        # ALDRI når DENNE claimen kommer fra produksjon —
+        # selvtest-artefakter skal ikke kunne bære kundedata, og en
+        # testtype i produksjonskjeden er en konfigurasjonsfeil,
+        # ikke en fullmakt. Filteret står i SQL-en så «nøyaktig én
+        # type»-regelen teller de typene som faktisk kan utstedes.
+        #
+        # Codex (P2): porten spør om DEN AUTENTISERTE claimens
+        # miljø, ikke om kontrakten finnes i produksjon et sted.
+        # Med et modultoken står miljøet i tokenet. Uten et
+        # modultoken finnes ingen autentisert deployment å spørre,
+        # og da er «finnes den i produksjon» det nærmeste
+        # fail-closed svaret — et legacy-token er miljøløst, og å
+        # anta staging for det ville vært å gjette den veien som
+        # slipper mest ut.
+        if autentisert_miljo is not None:
+            er_produksjon = autentisert_miljo == "produksjon"
+        else:
+            er_produksjon = bool(conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM moduldeployment dp"
+                " WHERE dp.modul_id=%s AND dp.livslop='claiming'"
+                "   AND dp.kontraktversjon=%s AND dp.kontrakt_hash=%s"
+                "   AND dp.miljo='produksjon')",
+                (o_modul, o_kv, o_khash)).fetchone()[0])
+        typerader = conn.execute(
+            "SELECT artefakttype FROM artefakttype_register"
+            " WHERE eiermodul=%s AND kontraktversjon=%s"
+            "   AND kontrakt_hash=%s"
+            "   AND NOT (artefakttype LIKE 'test.%%' AND %s)"
+            " ORDER BY artefakttype LIMIT 2",
+            (o_modul, o_kv, o_khash, er_produksjon)).fetchall()
+        typerad = typerader[0] if len(typerader) == 1 else None
+        if typerad is not None:
+            # Levetid = evidensfristen, ALDRI lengre (port 23). 017
+            # klemmer levetiden til [60, 3600]; er det under et minutt
+            # igjen til fristen, ville klemmen gitt et token som lever
+            # LENGER enn evidensen det er til for. Da utstedes ingen —
+            # å runde oppover her hadde vært å bryte grensen i det
+            # stille, og oppdraget er uansett tapt før opplastingen.
+            #
+            # Codex (P2): resttiden regnes av DATABASENS klokke, ikke
+            # API-vertens. `utsted_artefaktkapabilitet()` setter
+            # `utloper = now() + levetid` med basens `now()` og
+            # sammenligner ALDRI med evidensfristen selv; ligger
+            # API-vertens klokke etter basens, ble `igjen`
+            # overestimert og kapabiliteten levde forbi fristen den er
+            # hardt bundet av. `now()` er transaksjonens starttid og er
+            # den SAMME i begge kall — dette er én transaksjon — så
+            # `utloper = now() + min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S) <= evidensfrist`
+            # holder eksakt, ikke omtrentlig.
+            igjen = int(conn.execute(
+                "SELECT floor(extract(epoch FROM (%s::timestamptz"
+                " - now())))::INT", (ef,)).fetchone()[0])
+            if igjen >= 60:
+                opplasting_jti = secrets.token_hex(16)
+                # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
+                # ligger i samme transaksjon som claimen, som holder
+                # raden. Endret epoch mellom claim og utstedelse gir
+                # ingen kapabilitet (port 24) — funksjonen matcher
+                # o.module_epoch og feiler.
+                #
+                # Codex P1: kapabiliteten stemples med DEPLOYMENTENS
+                # miljø når claimen kom fra et modultoken, så
+                # innløsningen kan kreve hele den autentiserte
+                # deploymenten (`_artefakt_upload`). Et legacy-token
+                # har ingen — da står miljøet NULL, som før.
+                orad = conn.execute(
+                    "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
+                    "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
+                     o_epoch, typerad[0], opplasting_jti,
+                     min(igjen, oppdragskontrakt.UTSTEDT_AUTORITET_S), autentisert_miljo)).fetchone()
+                # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
+                # over gjør `utloper <= evidensfrist` til en identitet,
+                # men den identiteten hviler på 017s klemming — og en
+                # kapabilitet som overlever evidensen den er til for
+                # skal ikke kunne slippe ut fordi et ledd endret seg et
+                # annet sted. Går den likevel over, utstedes ingen
+                # `opplasting` i svaret: jti-en er da aldri utlevert og
+                # kan ikke innløses.
+                if orad is not None and orad[1] <= ef:
+                    opplasting = {"jti": orad[0],
+                                  "utloper": orad[1].isoformat(),
+                                  "artefakttype": typerad[0]}
+
+    return opplasting
 
 
 def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
@@ -1206,11 +2045,120 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        prefikser = _modulscope(auth)
-        if not prefikser:
-            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
-                                   scope=ORDRESCOPE + "<prefiks>")
-            return _feilsvar("scope_mangler", rid)
+
+        # LUKKET SKJEMA (035, port 8): claim har INGEN lovlige parametre.
+        # En request som sender release/miljø/epoch — eller hva som helst
+        # annet — AVVISES, den ignoreres ikke: identiteten kommer fra
+        # tokenet, og en klient som prøver å sende den skal få vite at den
+        # veien ikke finnes, ikke lures til å tro at den virket.
+        raa_kropp = request.scope.get("state", {}).get("kropp", b"")
+        if raa_kropp:
+            try:
+                kropp_data = json.loads(raa_kropp.decode("utf-8"))
+            except (ValueError, RecursionError):
+                # Codex P2: `json.loads` er REKURSIV. Et syntaktisk gyldig,
+                # dypt nøstet dokument på noen få kilobyte (≈2 000 nivåer)
+                # ligger godt under kroppsgrensen på 256 KiB og treffer
+                # likevel rekursjonsgrensen — RecursionError er en
+                # RuntimeError, ikke en ValueError, så `except ValueError`
+                # alene slapp den ut som generisk 500 i stedet for det
+                # dokumenterte `request_feilformet`. Dybde er klientinput,
+                # og denne parseren er ny i 035; onboarding- og
+                # artefaktparserne fanger den allerede.
+                return _feilsvar("request_feilformet", rid)
+            if kropp_data not in ({}, None):
+                tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant,
+                                       feiltype="claim_med_parametre")
+                return _feilsvar("request_feilformet", rid)
+
+        # TOKENET AUTENTISERER, REGISTERET AUTORISERER (035 §2/§6).
+        # Token, deployment, status og epoch portes med EKSPLISITTE avslag —
+        # «du har ikke lov» og «det finnes ikke arbeid» må aldri se like ut
+        # (port 18–19). Porten er ÉN funksjon fordi den leses to ganger —
+        # før claimen og etter et tomt resultat — og to kopier av den samme
+        # dommen ville drevet fra hverandre.
+        def _modulporten():
+            """(drad, feilsvar): feilsvar er None når modulen får claime.
+
+            TOKENET REVALIDERES FØRST (Codex P1), og det er ikke en
+            omorganisering: fram til nå leste porten bare REGISTERET —
+            deployment, modulstatus, epoch — mens tokenraden aldri ble sett
+            igjen etter `preauth`, som eier og LUKKER sin egen transaksjon.
+            `claim_neste_oppdrag` kunne ikke ta den heller: den får ingen
+            token-id og har ingenting å slå opp `tilbakekalt_ts` på. En
+            eksplisitt tilbakekalling som committer mellom `preauth` og
+            claimen traff derfor ingen port i det hele tatt, og det
+            tilbakekalte tokenet fikk tildelt nytt arbeid — stikk i strid
+            med at endepunktet lover ØYEBLIKKELIG virkning.
+
+            Revalideringen er den SAMME funksjonen de to
+            innløsningsveiene bruker, og det er hele poenget: dommen «er
+            denne deploymenten fortsatt autorisert?» skal være én regel, én
+            gang, ikke en kopi per dør. Den tar den delte modul-låsen, og
+            låsen er transaksjonsbundet — den holdes altså HELE veien fram
+            til `claim_neste_oppdrag` har tildelt. Et nødstopp eller en
+            tilbakekalling kan ikke gli inn mellom dommen og tildelingen.
+
+            Modulstatus og epoch leses derfor ikke lenger her: de var de
+            samme to sjekkene, ULÅST, og etter revalideringen kan de per
+            konstruksjon ikke fyre — de ville stått som død kode som ser ut
+            som en port. Igjen står det som er DEPLOYMENTENS eget og som
+            revalideringen med vilje ikke ser: livsløpet (en `draining`
+            deployment skal ikke få NYTT arbeid, men skal få levere det den
+            har) og kontraktfeltene autorisasjonen utledes fra.
+            """
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return None, revalidering
+            drad = conn.execute(
+                "SELECT d.livslop, d.kontraktversjon, d.kontrakt_hash"
+                "  FROM moduldeployment d"
+                " WHERE d.modul_id=%s AND d.miljo=%s AND d.release_id=%s",
+                (auth.modul_id, auth.miljo, auth.release_id)).fetchone()
+            if drad is None or drad[0] != "claiming":
+                conn.rollback()
+                tjeneste.logg.hendelse("modul_ikke_claimbar", rid,
+                                       auth.tenant,
+                                       livslop=drad[0] if drad else "borte")
+                return None, _feilsvar("modul_ikke_claimbar", rid)
+            return drad, None
+
+        claim_release = claim_miljo = claim_epoch = None
+        if isinstance(auth, ModulAutentisert):
+            drad, portsvar = _modulporten()
+            if portsvar is not None:
+                return portsvar
+            # Autorisasjonen utledes ved BRUK, via releasens kontrakt: raden
+            # må matche eiermodul OG begge kontraktfeltene (positiv
+            # tillatelsesliste). En type registrert under en ANNEN kontrakt
+            # bidrar med ingenting — parallelle kontrakter holder seg fra
+            # hverandre begge veier (port 33–34). Typenavnet oversettes til
+            # handlingsprefikser gjennom den LUKKEDE typeregistreringen i
+            # `oppdragskontrakt`; en registerrad uten kodefestet type
+            # bidrar med ingenting (fail-closed).
+            typerader = conn.execute(
+                "SELECT oppdragstype FROM oppdragstype_register"
+                " WHERE eiermodul=%s AND kontraktversjon=%s"
+                "   AND kontrakt_hash=%s",
+                (auth.modul_id, drad[1], drad[2])).fetchall()
+            prefikser = sorted({
+                pre for (typenavn,) in typerader
+                for pre in getattr(
+                    oppdragskontrakt.OPPDRAGSTYPER.get(typenavn),
+                    "handlingsprefikser", ())})
+            if not prefikser:
+                conn.rollback()
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope="utledet:ordre")
+                return _feilsvar("scope_mangler", rid)
+            claim_release, claim_miljo = auth.release_id, auth.miljo
+            claim_epoch = auth.utstedt_epoch
+        else:
+            prefikser = _modulscope(auth)
+            if not prefikser:
+                tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                       scope=ORDRESCOPE + "<prefiks>")
+                return _feilsvar("scope_mangler", rid)
 
         claim_id = secrets.token_hex(16)
         try:
@@ -1221,14 +2169,44 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # (nettopp det bindingen skal hindre). Til modul-onboarding trår i
             # kraft passeres NULL: en registrert oppdragstype er da IKKE claimbar
             # herfra (fail-closed) — legacy/uregistrert arbeid er upåvirket.
+            #
+            # 300 er et GULV, ikke leasen (Codex P1 → migrasjon 037). Endepunktet
+            # vet ikke hvilket oppdrag det er i ferd med å dele ut — hvor lenge
+            # arbeidet får ta står på RADEN (`utforelsesfrist`), og bare
+            # `claim_neste_oppdrag` har den når leasen settes. Funksjonen
+            # strekker derfor leasen til minst den fristen, opp til sitt eget
+            # tak på 3600 s. Et fast tall her ville betydd at et langt oppdrag
+            # (WCAG: 30/60 min) fikk leasen sin til å utløpe MENS utføreren
+            # jobbet, og en annen utfører ville reclaimet det og bestilt det
+            # samme eksterne arbeidet en gang til.
             rad = conn.execute(
                 "SELECT id, tenant, unntak_id, oppdragstype, handling,"
                 " repair_operation_id, payload_kryptert, key_id, nonce,"
                 " owner_generation, utforelsesfrist, evidensfrist"
                 "  FROM claim_neste_oppdrag(%s, %s, %s, %s, %s, %s, %s)",
-                (auth.rolle, prefikser, claim_id, 300, None, None, None)).fetchone()
+                (auth.rolle, prefikser, claim_id, 300, claim_release,
+                 claim_miljo, claim_epoch)).fetchone()
             if rad is None:
                 conn.rollback()
+                # Codex P2: TOM KØ ER EN PÅSTAND OM ARBEID, IKKE OM TILLATELSE.
+                #
+                # Pre-porten over leses UTEN modul-låsen. Rekker
+                # `noddeaktiver_modul`, en drenering eller et epoch-bytte å
+                # committe etter den lesningen, men før claim_neste_oppdrag
+                # får låsen, forkaster SQL-funksjonen med rette hver kandidat
+                # og returnerer ingen rad. Da er 204 en LØGN: modulen mistet
+                # lov til å claime, og fikk beskjed om at det ikke fantes
+                # arbeid — nøyaktig sammenblandingen port 18–19 forbyr, og
+                # den som får en nøddeaktivert modul til å polle videre i
+                # stedet for å stanse. Rollbacken over avsluttet
+                # transaksjonen, så porten leses her på nytt og ser det som
+                # faktisk er committet. Holder autorisasjonen fortsatt, var
+                # køen virkelig tom.
+                if isinstance(auth, ModulAutentisert):
+                    _, portsvar = _modulporten()
+                    if portsvar is not None:
+                        return portsvar
+                    conn.rollback()
                 return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
                                      {"x-request-id": rid})
 
@@ -1240,6 +2218,20 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # oppdragskøen er på tvers av tenanter (modulen betjener mange),
             # og tenanten er ukjent til claimen har skjedd.
             sett_kontekst(conn, tenant, auth.aktor, rid)
+            # 038 §5: opphavet er metadata i svaret, ikke autorisasjon —
+            # modulen gjør det samme arbeidet uansett. Leses etter claimen
+            # (claim_neste_oppdrag-signaturen er 008s og røres ikke).
+            # `owner_lease_utloper` leses fra SAMME rad claimen nettopp
+            # skrev (#219): horisonten er serverens, og dette er den ENE
+            # kilden — å regne den ut i klienten ville speilet 037s
+            # formel, to sannheter som driver fra hverandre ved neste
+            # migrasjon. Fornyelsessvaret bærer alt feltet (063); nå gjør
+            # claim-svaret det også, så heartbeatets teller-tilbakefall
+            # før første fornyelse dør.
+            opprinnelse, lease_utloper = conn.execute(
+                "SELECT opprinnelse, owner_lease_utloper FROM oppdrag"
+                " WHERE tenant=%s AND id=%s",
+                (tenant, opp_id)).fetchone()
             nokkelrad = conn.execute(
                 "SELECT wrapped_dek FROM tenant_nokler"
                 " WHERE tenant=%s AND key_id=%s", (tenant, key_id)).fetchone()
@@ -1279,6 +2271,35 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # Verifikatoren må kunne binde attestasjonen til NØYAKTIG den
             # generasjonen som bestilte den — ellers kunne et bevis fra en
             # gammel runde bli akseptert i en ny.
+            # RETENSJONSANKERET FØDES I CLAIM-TRANSAKSJONEN (Codex P1,
+            # #220). 057-kontrakten sier at kandidatprosessen fødes mens
+            # oppdraget er aktivt claimet, og claim-rollen bærer
+            # INSERT-grantet nettopp for dette — men ingen kalte døren,
+            # så lesegrensens reap-predikat var vakuøst sant for alltid:
+            # rapporten kunne aldri bli reap-bar. Døren er idempotent
+            # (samme oppdrag ⇒ samme prosess-id), så re-claim etter tapt
+            # lease er trygt. Fristen er kundens valg fra det signerte
+            # oppdraget; fraværet ER standardvalget (basens DEFAULT 90).
+            # Feiler fødselen, finnes ingen claim — et claimet oppdrag
+            # uten retensjonsanker er nøyaktig tilstanden Codex målte.
+            if oppdragstype == "rekruttering.evaluering":
+                frist = (minimert or {}).get("slettefrist_dogn")
+                try:
+                    if frist is None:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s)",
+                            (tenant, opp_id))
+                    else:
+                        conn.execute(
+                            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+                            (tenant, opp_id, frist))
+                except psycopg.Error:
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           oppdrag=str(opp_id))
+                    return _feilsvar("intern_feil", rid)
+
             verifikasjonsgen = None
             if oppdragstype == "verifikasjon":
                 vg = conn.execute(
@@ -1293,11 +2314,23 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     return _feilsvar("db_utilgjengelig", rid)
                 verifikasjonsgen = vg[0]
 
+            # Codex P1: kapabiliteten stempler DEPLOYMENTEN som claimet, ikke
+            # bare modulen. `modul_id` er delt mellom alle levende
+            # deployments av modulen, og kvitteringsveien slipper dem alle
+            # forbi scope-porten (retten er kapabilitetens) — uten miljø og
+            # release å sammenligne mot kunne en staging-deployment, eller en
+            # utgått release med et fortsatt levende token, levere resultatet
+            # for produksjonsdeploymentens claim og avslutte den jobben.
+            # `claim_miljo`/`claim_release` er tokenets, ikke noe kalleren
+            # oppgir; med et legacy-api-token er de NULL, og kapabiliteten
+            # blir deploymentløs (og kan da bare innløses av en like
+            # deploymentløs credential).
             kvittering_jti = secrets.token_hex(16)
             kap = conn.execute(
                 "SELECT jti, utloper FROM utsted_kvitteringskapabilitet("
-                "%s,%s,%s,%s)",
-                (opp_id, claim_id, owner_gen, kvittering_jti)).fetchone()
+                "%s,%s,%s,%s,%s,%s)",
+                (opp_id, claim_id, owner_gen, kvittering_jti,
+                 claim_miljo, claim_release)).fetchone()
             if kap is None:
                 conn.rollback()
                 tjeneste.logg.hendelse("db_utilgjengelig", rid, tenant,
@@ -1322,84 +2355,11 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # Er den tvetydig eller fraværende, utstedes ingen kapabilitet:
             # å gjette en release ville tilskrevet artefaktet en opprinnelse
             # serveren ikke kan bevise.
-            opplasting = None
-            oppdragsrad = conn.execute(
-                "SELECT o.modul_id, ("
-                "  SELECT string_agg(DISTINCT d.release_id, ',')"
-                "    FROM moduldeployment d"
-                "   WHERE d.modul_id = o.modul_id AND d.livslop = 'claiming'"
-                "     AND d.kontraktversjon = o.kontraktversjon"
-                "     AND d.kontrakt_hash = o.kontrakt_hash),"
-                " o.kontraktversjon, o.kontrakt_hash, o.module_epoch"
-                " FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
-                (tenant, opp_id)).fetchone()
-            if oppdragsrad is not None and oppdragsrad[0] is not None \
-                    and oppdragsrad[1] is not None and "," not in oppdragsrad[1]:
-                (o_modul, o_release, o_kv, o_khash, o_epoch) = oppdragsrad
-                # Artefakttypen hentes fra REGISTERET, bundet til nøyaktig denne
-                # modulen + kontrakten. Finnes ingen registrert type, utstedes
-                # INGEN opplastingskapabilitet — og claimen lykkes fortsatt.
-                # En modul som ikke skal laste opp, får ikke lov (port 22).
-                #
-                # Codex (P2): `LIMIT 1` plukket den alfabetisk FØRSTE typen
-                # stille når kontrakten registrerer FLERE — svaret bar da en
-                # kapabilitet for feil type uten at noe sa fra. Responsen har
-                # ETT `opplasting`-felt, ikke en liste, og v1 har bevisst
-                # ingen on-demand-utstedelse (se docstringen over) — samme
-                # fail-closed regel som RELEASE-tvetydigheten over: er valget
-                # tvetydig, utstedes ingen kapabilitet, ikke en gjettet én.
-                typerader = conn.execute(
-                    "SELECT artefakttype FROM artefakttype_register"
-                    " WHERE eiermodul=%s AND kontraktversjon=%s"
-                    "   AND kontrakt_hash=%s ORDER BY artefakttype LIMIT 2",
-                    (o_modul, o_kv, o_khash)).fetchall()
-                typerad = typerader[0] if len(typerader) == 1 else None
-                if typerad is not None:
-                    # Levetid = evidensfristen, ALDRI lengre (port 23). 017
-                    # klemmer levetiden til [60, 3600]; er det under et minutt
-                    # igjen til fristen, ville klemmen gitt et token som lever
-                    # LENGER enn evidensen det er til for. Da utstedes ingen —
-                    # å runde oppover her hadde vært å bryte grensen i det
-                    # stille, og oppdraget er uansett tapt før opplastingen.
-                    #
-                    # Codex (P2): resttiden regnes av DATABASENS klokke, ikke
-                    # API-vertens. `utsted_artefaktkapabilitet()` setter
-                    # `utloper = now() + levetid` med basens `now()` og
-                    # sammenligner ALDRI med evidensfristen selv; ligger
-                    # API-vertens klokke etter basens, ble `igjen`
-                    # overestimert og kapabiliteten levde forbi fristen den er
-                    # hardt bundet av. `now()` er transaksjonens starttid og er
-                    # den SAMME i begge kall — dette er én transaksjon — så
-                    # `utloper = now() + min(igjen, 3600) <= evidensfrist`
-                    # holder eksakt, ikke omtrentlig.
-                    igjen = int(conn.execute(
-                        "SELECT floor(extract(epoch FROM (%s::timestamptz"
-                        " - now())))::INT", (ef,)).fetchone()[0])
-                    if igjen >= 60:
-                        opplasting_jti = secrets.token_hex(16)
-                        # Epoch kontrolleres UNDER oppdragslåsen: dette kallet
-                        # ligger i samme transaksjon som claimen, som holder
-                        # raden. Endret epoch mellom claim og utstedelse gir
-                        # ingen kapabilitet (port 24) — funksjonen matcher
-                        # o.module_epoch og feiler.
-                        orad = conn.execute(
-                            "SELECT jti, utloper FROM utsted_artefaktkapabilitet("
-                            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                            (tenant, opp_id, o_modul, o_release, o_kv, o_khash,
-                             o_epoch, typerad[0], opplasting_jti,
-                             min(igjen, 3600))).fetchone()
-                        # Grensen HÅNDHEVES, den forutsettes ikke. Utledningen
-                        # over gjør `utloper <= evidensfrist` til en identitet,
-                        # men den identiteten hviler på 017s klemming — og en
-                        # kapabilitet som overlever evidensen den er til for
-                        # skal ikke kunne slippe ut fordi et ledd endret seg et
-                        # annet sted. Går den likevel over, utstedes ingen
-                        # `opplasting` i svaret: jti-en er da aldri utlevert og
-                        # kan ikke innløses.
-                        if orad is not None and orad[1] <= ef:
-                            opplasting = {"jti": orad[0],
-                                          "utloper": orad[1].isoformat(),
-                                          "artefakttype": typerad[0]}
+            # Utledningen er DELT med fornyelsesveien (#165): nøyaktig
+            # samme serverkontekst-binding, samme fail-closed-regler —
+            # se `_utled_opplastingskapabilitet`.
+            opplasting = _utled_opplastingskapabilitet(
+                conn, auth, tenant, opp_id, ef)
             conn.commit()
         except psycopg.Error as e:
             conn.rollback()
@@ -1411,9 +2371,15 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         # feiler hvis den dukker opp i logg eller på disk.
         return kanonisk_json({
             "oppdrag_id": opp_id, "tenant": tenant, "unntak_id": unntak_id,
+            # 038 §5: `unntak_id` er null for beslutningsoppdrag — saken
+            # peker på oppdraget, aldri omvendt (port 27/28).
+            "opprinnelse": opprinnelse,
             "oppdragstype": oppdragstype, "handling": handling,
             "repair_operation_id": repair_id, "owner_claim_id": claim_id,
             "owner_generation": owner_gen,
+            # Horisonten 037 skrev i claim-UPDATE-en (#219) — samme felt
+            # fornyelsen returnerer, fra samme kolonne.
+            "owner_lease_utloper": lease_utloper.isoformat(),
             "utforelsesfrist": uf.isoformat(), "evidensfrist": ef.isoformat(),
             # Kvitteringskapabiliteten er modulens ENESTE adgang til
             # kvitteringsporten for DETTE oppdraget. Et langlivet modultoken
@@ -1480,6 +2446,780 @@ def _resultathash(kvittering: dict) -> str:
         separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+#: Dør-eid navnerom for kandidatlagrenes deterministiske identiteter
+#: (#173, eiers valg b): plattformen utleder UUID-ene av (tenant,
+#: prosess, manifest-id[, dokumentnavn]) — én kilde, modulen ser dem
+#: aldri. #157 kan løfte utledningen til en ankertabell uten at flaten
+#: endres. Separatoren er husets (`\x1f`, jf. buntlåsen).
+_KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
+#: Manifestets kandidat-ID-form — KONTRAKT (kontrakt/KONTRAKT.md, #216
+#: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
+#: kontrakten, og api/ importerer aldri modulkode.
+_KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: Arkivmedlemmets navn: ZIPs `file name length` er 16-bits, så 65 535
+#: byte er det lengste navnet et medlem overhodet kan bære. Grensen er
+#: ARKIVKONTRAKTENS, ikke dørens egen — se `_kandidatdata`.
+#:
+#: MÅLT I TEGN, IKKE I UTF-8-BYTE (Codex P2). Døren fikk aldri arkivets
+#: navnefelt; den får `dokumentnavn` som en DEKODET streng, og
+#: `zipfile` dekoder med arkivets egen koding (CP437 når UTF-8-flagget
+#: mangler). Å re-kode den til UTF-8 og måle DE bytene måler en koding
+#: arkivet aldri brukte: et lovlig legacy-navn med 40 000 CP437-`é` er
+#: 40 000 byte i arkivet og 80 000 i UTF-8, så `parsing.inspiser_bunt`
+#: godtok bunten mens denne porten svarte `request_feilformet` — og
+#: `lagre_dokument` reiser den som `kandidatlagring_feilet` for hele
+#: evalueringen. Tegn er derimot den ene målingen som ALDRI kan avvise
+#: et navn arkivet kan bære: enhver koding bruker minst én byte per
+#: tegn, så et navn på ≤ 65 535 byte i arkivet er ≤ 65 535 tegn dekodet.
+#: Fortsatt en grense — `dokumentnavn` går inn i uuid5, i en
+#: TEXT-kolonne og i loggens detalj — men nå formatets egen.
+_KANDIDAT_NAVN_MAKS = 65_535
+#: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
+#: felt av arkivgaten; her er det en feilformet forespørsel.
+_KANDIDAT_MIME = {
+    ".pdf": "application/pdf",
+    ".docx": ("application/vnd.openxmlformats-officedocument"
+              ".wordprocessingml.document"),
+    ".html": "text/html", ".htm": "text/html"}
+
+
+def _har_ulagringsbart_tegn(rot) -> bool:
+    """Bærer noen streng i strukturen et tegn raden ikke kan ta imot —
+    nøkler medregnet? To klasser, ÉN gjennomgang.
+
+    LØSREVNE SURROGATER (Codex P2, #173). `json.loads` gjør escapen
+    `\\ud800` til et ekte lone surrogate i Python-strengen, og en slik
+    streng er IKKE en gyldig Unicode-scalar-sekvens: `str.encode("utf-8")`
+    reiser `UnicodeEncodeError`. Den er verken `psycopg.Error` eller noe
+    porten under fanger, så den falt ut som en UKODET 500 — på hvert
+    eneste retryforsøk, siden samme kropp gir samme unntak — og felte
+    evalueringen uten å si hva som var galt. Manifestpredikatene slipper
+    verdien gjennom fordi et søskeninnslag matcher, og `avmaskering`
+    beholder hver deklarert verdi, så veien hit er helt vanlig.
+
+    Den treffer BEGGE grenene: artefaktveien på `r.encode("utf-8")` i
+    størrelsesporten, dokumentveien på `uuid.uuid5`, som encoder navnet
+    sitt. Derfor måles den her, i det ene predikatet begge grenene
+    allerede spør, og FØR noe forsøkes kodet.
+
+    Nullbyten er den andre klassen, og den var her først:
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
+
+    Å lete etter escapen `\\u0000` i JSON-teksten i stedet ville vært
+    feil andre vei: en tekst som LOVLIG inneholder de seks tegnene
+    `\\u0000` blir dumpet som `\\\\u0000`, som inneholder søkestrengen —
+    en gyldig kandidat avvist på en nullbyte den ikke har.
+
+    Iterativ og ikke rekursiv med vilje: dybden er kallerens, og en
+    `RecursionError` her ville vært en 500 der porten skal svare
+    `request_feilformet`.
+    """
+    stakk = [rot]
+    while stakk:
+        verdi = stakk.pop()
+        if isinstance(verdi, str):
+            if "\x00" in verdi:
+                return True
+            # Surrogatet måles ved å FORSØKE kodingen, ikke ved å lete
+            # etter kodepunkter i U+D800–U+DFFF for hånd: `encode` ER
+            # regelen nedstrøms, og et eget intervallsøk ville vært en
+            # andre sannhet om samme spørsmål (§9 K4 — ekte koder, ikke
+            # en etterligning av den).
+            try:
+                verdi.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(verdi, dict):
+            stakk.extend(verdi.keys())
+            stakk.extend(verdi.values())
+        elif isinstance(verdi, list):
+            stakk.extend(verdi)
+    return False
+
+
+def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
+    """Skriveveien inn i kandidatlagrene (#173, eiers valg b + i).
+
+    057 designet denne døren («Runtime skriver lagrene gjennom
+    API-veien») — dette er den. Autentiseringen er kvitteringens og
+    fornyelsens form: modultokenet svarer på hvilken deployment dette
+    er, og FULLMAKTEN ER CLAIMETS — kroppen bærer (tenant, oppdrag_id,
+    owner_claim_id, owner_generation), og raden må matche et aktivt
+    claimet `rekruttering.evaluering`-oppdrag hos denne modulen med
+    levende lease OG levende retensjonsanker. Tenant er kallerens
+    påstand bare som RLS-nøkkel: claim-paret er hemmeligheten som
+    binder, og et feil tenantvalg finner ingen rad.
+
+    `form="dokument"`: originaldokument + parsettekst i SAMME
+    transaksjon (FK-kjeden er kontrakten — eiers valg i). `form=
+    "kandidat"`: evalueringsartefakt + ev. intervjuspørsmål.
+
+    IDEMPOTENT PÅ PAYLOAD-LIKHET: lagrene er append-only, og en retry
+    etter tapt lease skriver de samme bytene — det er et stille ja. Et
+    AVVIKENDE re-skriv under samme nøkkel er to sannheter om samme
+    dokument og felles som `kandidatdata_konflikt`. Alle
+    autorisasjonsutfall er ETT svar (`kandidatdata_avvist`, 058-formen).
+    Lagervaktene (057) står bak døren og måler det samme for enhver
+    rolle — denne døren kan aldri være lagrenes eneste vern.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+        # EGEN BØTTE, IKKE MODULTOKENETS DELTE (Codex P1). Linjen sto som
+        # «samme ratebudsjett som claim/forny/upload», og det gjorde
+        # plattformens egen grense til en port mot dens egne dokumenterte
+        # maksima: en bunt kan lovlig bære 20 000 filer og 5 000
+        # kandidater, altså 25 000 skrivinger, mens standardbudsjettet er
+        # 12 000 per rullende minutt. Strømmer uttrekket mer enn 12 000
+        # små dokumenter innenfor et minutt, får neste skriving 429 —
+        # `lever` leser 4xx som terminalt, og `kjor_bunt` feller HELE
+        # evalueringen med `kandidatlagring_feilet`. Grensen felte altså
+        # ikke misbruk; den felte den eneste kjøringen den fantes for.
+        #
+        # Nøkkelen er EGEN, ikke bare taket: en skrivesløyfe skal hverken
+        # sulte modulens claim/forny/kvittering eller sultes av dem. Ett
+        # bøttested fortsatt (`Rategrense`), to bøtter.
+        if not tjeneste.rate.slipp_gjennom("kandidatdata:" + auth.token_id,
+                                           tak=KANDIDATDATA_RATE_PER_MIN):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        if isinstance(auth, ModulAutentisert):
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kropp = None
+        if not isinstance(kropp, dict):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+        tenant = kropp.get("tenant")
+        opp_id = kropp.get("oppdrag_id")
+        claim_id = kropp.get("owner_claim_id")
+        generasjon = kropp.get("owner_generation")
+        kid = kropp.get("kandidat_id")
+        if not isinstance(tenant, str) or not tenant \
+                or not isinstance(opp_id, int) or isinstance(opp_id, bool) \
+                or not isinstance(claim_id, str) or not claim_id \
+                or not isinstance(generasjon, int) \
+                or isinstance(generasjon, bool) \
+                or not isinstance(kid, str) \
+                or not _KANDIDAT_ID_KANON.fullmatch(kid):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+
+        modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
+            else auth.rolle
+        # DEPLOYMENTEN, IKKE BARE MODULEN (Codex P1). Bindingen målte
+        # `o.eiermodul`, og `modul_id` er DELT av hver levende deployment
+        # av modulen: staging og produksjon, gammel release og ny, svarer
+        # alle det samme på det spørsmålet. Et claim-trippel som lekker
+        # eller replayes til en annen deployment av samme modul kunne
+        # derfor skrive persondata inn i en annen deployments prosess —
+        # og siden lagrene er append-only, ville den LOVLIGE utføreren
+        # etterpå møtt `kandidatdata_konflikt` på sin egen kandidat og
+        # felt hele evalueringen. Claim-paret er en hemmelighet, men det
+        # er ikke deploymentens identitet, og døren skal måle begge.
+        #
+        # Formen er `hent_inndata_for_oppdrag` sin (060:102–103):
+        # `claim_release_id`/`claim_miljo` er sporet claim-porten selv
+        # STEMPLET (049 §0) fra TOKENET — aldri noe kalleren oppgir — så
+        # det finnes ingen vei til å påstå seg til en annen deployment.
+        #
+        # `IS NOT DISTINCT FROM`, ikke `=`: et legacy-api-token claimer
+        # deploymentløst, og da står begge kolonnene NULL (`app.py:2025`,
+        # samme grunn kvitteringskapabiliteten blir deploymentløs og bare
+        # kan innløses av en like deploymentløs credential). Med `=`
+        # hadde NULL-siden svart UKJENT, og den lovlige legacy-veien inn
+        # i lagrene ville stengt seg selv; med denne formen matcher
+        # deploymentløs KUN deploymentløs, og en deployment KUN seg selv.
+        claim_release = auth.release_id \
+            if isinstance(auth, ModulAutentisert) else None
+        claim_miljo = auth.miljo if isinstance(auth, ModulAutentisert) \
+            else None
+        sett_kontekst(conn, tenant, auth.aktor, rid)
+        # LÅST LESNING (Cursor P2-3). Uten radlåsen var autorisasjonen et
+        # SNAPSHOT: under READ COMMITTED kunne en ny claimer committe et
+        # `UPDATE oppdrag SET owner_claim_id/owner_generation/lease` i
+        # vinduet mellom dette oppslaget og INSERT-ene under, og denne
+        # forespørselen skrev likevel — INSERT-ene måler ikke claimet på
+        # nytt, og lagervakten (057) måler `slettet_ts`, ikke leasen. En
+        # utfører som HADDE mistet oppdraget skrev da persondata inn i
+        # prosessen på vegne av en fullmakt som var borte.
+        #
+        # `FOR SHARE`, ikke `FOR UPDATE`: claim-tyven og `forny_oppdragslease`
+        # tar `FOR UPDATE`, så delelåsen serialiserer mot NØYAKTIG dem —
+        # mens den lovlige strømmen av dokument- og artefaktskriv under
+        # SAMME claim går videre parallelt. En eksklusiv lås her ville
+        # gjort hele skriveveien til en kø på én rad. Og PostgreSQL
+        # re-evaluerer predikatet etter låsen: en rad som ble stjålet
+        # under ventingen faller ut av treffet i stedet for å bli lest fra
+        # et gammelt snapshot — samme mekanikk 057s fødselsvakt bruker.
+        #
+        # `OF o` er ikke stil, det er en RETTIGHET: enhver radlåsklausul
+        # krever UPDATE på tabellen, og runtime har SELECT+UPDATE på
+        # `oppdrag` (`deploy/staging/migrer.py`) men KUN SELECT på
+        # `rekrutteringsprosess`. En bar `FOR SHARE` her ville forsøkt å
+        # låse begge og svart `permission denied` — nøyaktig grunnen
+        # `_anker_lever` forkastet delelåsen på leseveien.
+        #
+        # OG `clock_timestamp()`, IKKE `now()` (Codex P2). Leddet spør
+        # «lever holdet NÅ», og `now()` er ikke nå: den er fastfrosset
+        # ved transaksjonens START. Denne transaksjonen begynner FØR
+        # base64-dekodingen av inntil 25 MiB og før `FOR SHARE` har
+        # ventet ut en samtidig claimer — den kan derfor stå åpen
+        # vilkårlig lenge mens `now()` peker på tiden før ventingen. En
+        # lease som døde i nettopp det vinduet ble da autorisert, og
+        # persondata committet på en fullmakt reaperen alt hadde
+        # inndratt. `clock_timestamp()` leses på nytt ved evalueringen
+        # og måler den faktiske skrivetiden. Retningen er trygg: den er
+        # alltid ≥ `now()`, så porten kan bare bli STRENGERE — den
+        # slipper aldri gjennom noe reclaimeren (som selv måler med
+        # `now()`, 005:894-895) alt har tatt. Samme ledd og samme grunn
+        # som `hent_inndata_for_oppdrag` (060:66-78, 101).
+        rad = conn.execute(
+            "SELECT p.prosess_id FROM oppdrag o"
+            "  JOIN rekrutteringsprosess p"
+            "    ON p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            " WHERE o.tenant=%s AND o.id=%s AND o.eiermodul=%s"
+            "   AND o.oppdragstype='rekruttering.evaluering'"
+            "   AND o.status='plukket' AND o.owner_claim_id=%s"
+            "   AND o.owner_generation=%s"
+            "   AND o.owner_lease_utloper IS NOT NULL"
+            "   AND o.owner_lease_utloper > clock_timestamp()"
+            "   AND o.claim_release_id IS NOT DISTINCT FROM %s"
+            "   AND o.claim_miljo IS NOT DISTINCT FROM %s"
+            "   AND p.slettet_ts IS NULL"
+            " FOR SHARE OF o",
+            (tenant, opp_id, modul, claim_id, generasjon,
+             claim_release, claim_miljo)).fetchone()
+        if rad is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("kandidatdata_avvist", rid)
+        prosess_id = rad[0]
+        kid_uuid = uuid.uuid5(
+            _KANDIDAT_NS, f"{tenant}\x1f{prosess_id}\x1f{kid}")
+
+        def _konflikt(detalj):
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_konflikt", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj=detalj)
+            return _feilsvar("kandidatdata_konflikt", rid)
+
+        svar = {"kandidat_id": str(kid_uuid), "request_id": rid}
+        if form == "dokument":
+            navn = kropp.get("dokumentnavn")
+            b64 = kropp.get("dokument_b64")
+            tekst = kropp.get("tekst")
+            endelse = ("." + navn.rsplit(".", 1)[-1].lower()
+                       if isinstance(navn, str) and "." in navn else "")
+            # NAVNEGRENSEN ER ARKIVETS, IKKE DØRENS EGEN (Codex P2). Her
+            # sto `len(navn) > 512`, et tall arkivgaten ikke kjenner:
+            # `parsing._sjekk_navn` måler traversering og endelse, aldri
+            # lengde, og `les_porsjonsvis` strømmer medlemmene uten å
+            # materialisere navnene som filsystemstier. En ellers gyldig
+            # pdf/docx/html med et lengre ZIP-navn passerte altså hele
+            # veien fram hit og fikk `request_feilformet` — som
+            # controlleren gjør om til `kandidatlagring_feilet` for HELE
+            # evalueringen. Døren avviste en bunt arkivkontrakten godtar.
+            #
+            # Grensen er derfor formatets egen: ZIPs `file name length`
+            # er 16-bits, så 65 535 byte er det lengste navnet et medlem
+            # overhodet KAN bære.
+            #
+            # MÅLT I TEGN (Codex P2, runde 2). Linjen sto som
+            # `len(navn.encode("utf-8"))`, altså i en koding arkivet
+            # aldri brukte: døren får det DEKODEDE navnet, og et lovlig
+            # CP437-navn dobler seg i UTF-8. Se `_KANDIDAT_NAVN_MAKS`
+            # for hvorfor tegn er den målingen som ikke kan felle noe
+            # arkivet godtar.
+            #
+            # NUL ER EN FEILFORMET FORESPØRSEL, IKKE EN DØD BASE (Codex
+            # P2). PostgreSQL kan ikke lagre en nullbyte i en `TEXT`-verdi
+            # i det hele tatt, og et uttrekk fra html eller pdf kan bære
+            # en: den passerer arkivgaten og uttrekket, og felte først
+            # her — som en rå `psycopg.Error`, som handlerens catch-all
+            # oversetter til `db_utilgjengelig`. Modulen leser 5xx som
+            # DRIFT, brenner hele retrykjeden mot en base som er frisk,
+            # og feller til slutt evalueringen som
+            # `kandidatlagring_feilet` — med en falsk infrastrukturalarm
+            # på veien, altså feil kø og feil diagnose. Koden skal si
+            # hva som faktisk er galt: kroppen bærer et tegn lageret ikke
+            # har. Målt på `tekst` OG `navn`, for begge går i
+            # TEXT-kolonner (og `navn` også i uuid5 og i loggens detalj).
+            #
+            # OG SAMME PORT FOR LØSREVNE SURROGATER (Codex P2, #173).
+            # Funnet ble meldt på artefaktveien, men dokumentveien har
+            # nøyaktig samme defekt én gren unna: `uuid.uuid5` encoder
+            # navnet sitt til UTF-8, og `tekst` encodes både til
+            # størrelsesmålingen og til sha256. Et `\ud800` fra
+            # `json.loads` reiser `UnicodeEncodeError` alle tre stedene —
+            # ukodet 500, ikke `request_feilformet`. Å lukke bare den ene
+            # grenen ville vært å fikse symptomet: predikatet er derfor
+            # det samme her, og det står FØR første koding.
+            if not isinstance(navn, str) or not navn \
+                    or len(navn) > _KANDIDAT_NAVN_MAKS \
+                    or endelse not in _KANDIDAT_MIME \
+                    or not isinstance(b64, str) \
+                    or not isinstance(tekst, str) \
+                    or _har_ulagringsbart_tegn(navn) \
+                    or _har_ulagringsbart_tegn(tekst):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            try:
+                data = base64.b64decode(b64, validate=True)
+            except Exception:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Teksten måles for seg (CodeRabbit, korrigert form): den
+            # kan LOVLIG være større enn dokumentbytene — en docx er
+            # komprimert, teksten er utpakket — så «tekst ≤ dokument» er
+            # feil grense. Taket er §4-tallets egen klasse: én fils
+            # budsjett, målt i UTF-8-byte.
+            if not data or len(data) > _KANDIDAT_DOK_MAKS \
+                    or len(tekst.encode("utf-8")) > _KANDIDAT_DOK_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            dok_uuid = uuid.uuid5(
+                _KANDIDAT_NS,
+                f"{tenant}\x1f{prosess_id}\x1f{kid}\x1f{navn}")
+            sha = hashlib.sha256(data).hexdigest()
+            satt = conn.execute(
+                "INSERT INTO kandidat_originaldokument (tenant,"
+                " prosess_id, kandidat_id, dokument_id, filnavn,"
+                " innholdstype, dokument, storrelse_bytes,"
+                " innhold_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                " ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, navn,
+                 _KANDIDAT_MIME[endelse], data, len(data),
+                 sha)).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT dokument = %s AND filnavn = %s"
+                    " FROM kandidat_originaldokument"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (data, navn, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("originaldokument")
+            satt = conn.execute(
+                "INSERT INTO kandidat_parsettekst (tenant, prosess_id,"
+                " kandidat_id, dokument_id, tekst, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, tekst,
+                 hashlib.sha256(tekst.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT tekst = %s FROM kandidat_parsettekst"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (tekst, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("parsettekst")
+            svar["dokument_id"] = str(dok_uuid)
+        else:
+            artefakt = kropp.get("artefakt")
+            sporsmal = kropp.get("intervjusporsmal")
+            # AVMASKERINGEN ER OBLIGATORISK PÅ DENNE VEIEN (Codex P1).
+            # 057 definerer `kandidat_avmaskering` som lagret for nettopp
+            # token→klartekst-kartet, og hver evaluering PRODUSERER det —
+            # men veien inn bar det ikke, og den promoterte rapporten
+            # stripper det med vilje. Kartet forsvant dermed når
+            # arbeideren døde, og igjen sto blindet kildetekst med
+            # `[NAVN-1]`-tokener ingen autorisert leser kunne løse opp.
+            #
+            # Feltet er KREVD, ikke valgfritt: et utelatt felt ville gitt
+            # nøyaktig den stille ikke-lagringen funnet handler om. Tom
+            # dict er derimot lovlig — det er formen blinding AVSKRUDD
+            # (auditert handling, `blinding.evalueringsinput`) gir, og
+            # 057s CHECK krever `felter IS NOT NULL`, ikke ikke-tom.
+            avmaskering = kropp.get("avmaskering")
+            if not isinstance(artefakt, dict) or not artefakt \
+                    or not isinstance(avmaskering, dict) \
+                    or not all(isinstance(t, str) and isinstance(v, str)
+                               for t, v in avmaskering.items()) \
+                    or (sporsmal is not None
+                        and not isinstance(sporsmal, list)):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Kanonisk JSON så payload-likheten er byte-veldefinert på
+            # tvers av retries — samme dict, samme streng.
+            #
+            # ALLE TRE MÅLES, OG SAMLET (Codex P2). Linjen under målte
+            # bare `artefakt`. `avmaskering` og `intervjusporsmal` er
+            # like fullt PERSISTERTE payloads — hver sin JSONB-rad, hver
+            # sin hashing og hver sin likhetssammenligning ved retry — og
+            # de gikk inn uten noe dekodet tak i det hele tatt. Det
+            # eneste som bandt dem var wire-taket
+            # `MAKS_KANDIDATARTEFAKT_KROPP`, som per konstruksjon er ~6×
+            # budsjettet (JSON-eskapefaktoren): en autentisert claimant
+            # kunne dermed lagre ~301 MiB kart eller spørsmålsliste under
+            # et uttalt 50 MiB-budsjett, med hashing, lagring og
+            # retry-sammenligning på hele mengden.
+            #
+            # SUMMEN, ikke tre separate tak: budsjettet er KANDIDATENS,
+            # og tre uavhengige tak à 50 MiB ville vært 150 MiB under
+            # samme navn. Det er også nøyaktig forholdet wire-taket alt
+            # er utledet av, så de to tallene fortsetter å bety det samme.
+            raa_a = json.dumps(artefakt, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_m = json.dumps(avmaskering, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_s = json.dumps(sporsmal or [], ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            # DØREN MÅLER, IKKE TRANSPORTEN (samme form som dokumentveien
+            # over): kroppstaket er wire-formen med verste-falls
+            # JSON-ekspansjon, mens budsjettet payloadene faktisk skal
+            # holde seg innenfor er den KANONISKE størrelsen. Uten denne
+            # linjen var 256 KiB-fallet det eneste som bandt en JSONB-rad
+            # i det hele tatt, og å heve taket ville fjernet grensen i
+            # stedet for å flytte den.
+            #
+            # OG NUL FELLES HER SOM PÅ DOKUMENTVEIEN (Codex P2, samme
+            # klasse): `jsonb` kan ikke bære en nullbyte noe
+            # mer enn `TEXT` kan. `kildetekst` er den samme uttrekksteksten
+            # dokumentveien bærer, og avmaskeringens verdier er utsnitt
+            # av den, så nullbyten når hit langs nøyaktig samme vei.
+            #
+            # PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2, runde 2).
+            # Denne porten målte `"\x00" in raa_*`, og der finnes den
+            # aldri: `json.dumps` skriver nullbyten som de seks tegnene
+            # `\u0000`. Predikatet var dødt fra første linje. Se
+            # `_har_ulagringsbart_tegn` for hvorfor escapen ikke er noe
+            # bedre å lete etter. STØRRELSEN måles fortsatt på de
+            # kanoniske strengene — de ER det som INSERTes.
+            #
+            # TEGNPORTEN STÅR FØRST, OG DET ER IKKE KOSMETIKK (Codex P2,
+            # #173). `or` evaluerer venstre side først, så med
+            # størrelsessummen foran var det `r.encode("utf-8")` som møtte
+            # et løsrevet surrogat — og `UnicodeEncodeError` derfra er
+            # verken `psycopg.Error` eller noe denne porten fanger. Den
+            # kom ut som en UKODET 500, på hvert eneste retryforsøk, i
+            # stedet for det `request_feilformet` linjene her finnes for.
+            # Tegnene måles derfor FØR noe forsøkes kodet.
+            if any(_har_ulagringsbart_tegn(v)
+                   for v in (artefakt, avmaskering, sporsmal or [])) \
+                    or sum(len(r.encode("utf-8"))
+                           for r in (raa_a, raa_m, raa_s)) \
+                    > _KANDIDAT_ARTEFAKT_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            satt = conn.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_a,
+                 hashlib.sha256(raa_a.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT artefakt = %s::jsonb"
+                    " FROM kandidat_evalueringsartefakt"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_a, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("evalueringsartefakt")
+            # Samme transaksjon som artefaktet: kartet og teksten det
+            # løser opp er ETT skriv, ikke to som kan divergere. Samme
+            # idempotens- og konfliktform som lagrene over. (`raa_m` er
+            # kanonisert sammen med de to andre over — budsjettet er
+            # kandidatens, og alle tre måles før noe INSERTes.)
+            satt = conn.execute(
+                "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
+                " kandidat_id, felter, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_m,
+                 hashlib.sha256(raa_m.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT felter = %s::jsonb FROM kandidat_avmaskering"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_m, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("avmaskering")
+            # SYMMETRISK MED ARTEFAKT/AVMASKERING (Cursor P2-2). Armen sto
+            # som `if sporsmal:`, og da var «ingen spørsmål» ikke en
+            # LAGRET sannhet, men et hopp over lageret. Begge veier brøt
+            # løftet i docstringen over:
+            #
+            #   null først, deretter liste  → INSERT-en lyktes, og et
+            #     nytt svar sto stille under samme nøkkel;
+            #   liste først, deretter null  → armen ble hoppet over, og
+            #     den gamle lista ble stående uten at noen målte avviket.
+            #
+            # To sannheter under samme `(tenant, prosess_id,
+            # kandidat_id)` er nøyaktig det `kandidatdata_konflikt`
+            # finnes for, og et STILLE hopp over lageret måler ingen
+            # divergens.
+            #
+            # MEN FRAVÆR SKAL IKKE MATERIALISERES (Codex P2). Forrige
+            # runde løste «hoppet» ved å skrive `[]` ubetinget, og det
+            # gjør absens til den ENDELIGE payloaden: 057-lageret er
+            # append-only, triggeren tillater ingen UPDATE av payload, og
+            # `(tenant, prosess_id, kandidat_id)` er primærnøkkelen. Hver
+            # evaluering produserer med vilje null spørsmål (#225, eiers
+            # retning 27/8: de hører til innkallingen av de beste, ikke
+            # evalueringen av alle), så raden ble skrevet for HVER
+            # kandidat — og la permanent beslag på nøkkelen det senere
+            # innkallings-/shortlist-steget skal skrive under. Lageret
+            # som er utpekt som kilden for genererte spørsmål var dermed
+            # fylt med tomhet før den flyten fikk eksistere.
+            #
+            # Begge kravene holder samtidig ved å skille PÅSTAND fra
+            # LAGRING: en liste skrives og måles som de to lagrene over,
+            # mens ingen liste ikke skriver noe — men fortsatt MÅLER at
+            # ingen står der fra før. Divergensen forrige runde pekte på
+            # («liste først, deretter null») blir da fortsatt en
+            # `kandidatdata_konflikt`, ikke et stille hopp. (`raa_s`
+            # kanoniseres sammen med de to andre over, av samme grunn:
+            # budsjettet er kandidatens og måles før noe INSERTes.)
+            #
+            # RESTRISIKO, SAGT HØYT: skriver innkallingssteget spørsmål
+            # og en SEN retry av denne evalueringen kommer etterpå, ser
+            # målingen en rad og svarer `kandidatdata_konflikt`. Vinduet
+            # er leasens, og alternativet — å la raden stå tom for alltid
+            # — stenger flyten for hver eneste kandidat.
+            if sporsmal:
+                satt = conn.execute(
+                    "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                    " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
+                    " VALUES (%s,%s,%s,%s::jsonb,%s)"
+                    " ON CONFLICT DO NOTHING",
+                    (tenant, prosess_id, kid_uuid, raa_s,
+                     hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
+                     )).rowcount
+                if not satt:
+                    likt = conn.execute(
+                        "SELECT sporsmal = %s::jsonb"
+                        " FROM kandidat_intervjusporsmal"
+                        " WHERE tenant=%s AND prosess_id=%s"
+                        "   AND kandidat_id=%s",
+                        (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
+                    if likt is None or not likt[0]:
+                        return _konflikt("intervjusporsmal")
+            else:
+                staar = conn.execute(
+                    "SELECT 1 FROM kandidat_intervjusporsmal"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s",
+                    (tenant, prosess_id, kid_uuid)).fetchone()
+                if staar is not None:
+                    return _konflikt("intervjusporsmal")
+        # OG LEASEN MÅLES PÅ NYTT VED SKRIVEGRENSEN (Codex P2). Leddet
+        # over var den ENESTE tidsmålingen, og den står før
+        # base64-dekodingen, hashingen og INSERT-ene av inntil 25–50 MiB.
+        # Radlåsen serialiserer TILSTANDSENDRINGER — en claim-tyv og
+        # `forny_oppdragslease` tar begge `FOR UPDATE` og venter på oss —
+        # men den stopper ikke VEGGKLOKKEN. Verre: mens vi holder `FOR
+        # SHARE` kan heartbeaten ikke ta sin egen lås, så leasen kan
+        # ikke engang fornyes underveis. En forespørsel med lite tid
+        # igjen kunne derfor passere porten over, bruke sekundene sine på
+        # å skrive, og committe persondata på en fullmakt som var utløpt
+        # da raden landet.
+        #
+        # Målingen gjentas derfor der skrivingen faktisk blir varig, i
+        # SAMME transaksjon og med samme `clock_timestamp()`. Claimet
+        # måles med — ikke fordi det kan ha endret seg under låsen, men
+        # fordi en port som fanger utfallet skal stå på egne ben om en
+        # framtidig skriver glemmer `FOR UPDATE`. Retningen er
+        # fail-closed: en lease som døde i skrivevinduet ruller tilbake
+        # og svarer som en avvist claim, aldri et stille ja.
+        levende = conn.execute(
+            "SELECT 1 FROM oppdrag"
+            " WHERE tenant=%s AND id=%s AND status='plukket'"
+            "   AND owner_claim_id=%s AND owner_generation=%s"
+            "   AND owner_lease_utloper IS NOT NULL"
+            "   AND owner_lease_utloper > clock_timestamp()",
+            (tenant, opp_id, claim_id, generasjon)).fetchone()
+        if levende is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj="lease_utlopt_under_skriving")
+            return _feilsvar("kandidatdata_avvist", rid)
+        conn.commit()
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
+def _oppdrag_forny(tjeneste: Tjeneste, request: Request) -> Response:
+    """Fornyelsesveien (063/#165): heartbeat fra den SITTENDE utføreren.
+
+    Autentiseringen er kvitteringens form: et modultoken svarer på hvilken
+    deployment dette er, og fullmakten er CLAIMETS — kroppen må bære
+    nøyaktig (oppdrag_id, owner_claim_id, owner_generation), og døren
+    matcher raden radlåst. En død lease kan aldri fornyes (fencing), og
+    en rullet modulepoch feller fornyelsen (port 24-formen, målt i døren
+    mot levende modulhode).
+
+    Svaret bærer ny leaseutløper OG en FERSK opplastingskapabilitet
+    (samme serverkontekst-utledning som claim — den gamle kapabiliteten
+    var klemt til sitt eget grant-vindu og kan være død): en utfører som
+    lever forbi første time mister ellers leveringsretten midt i lovlig
+    arbeid. Kvitteringskapabiliteten lever til evidensfristen og trenger
+    aldri fornyelse.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"), rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        # Samme unntak som kvitteringen (035): modultokenet bærer ingen
+        # scopes — fullmakten er claimets, og bindingen under er smalere
+        # enn noe scope kunne vært.
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+        # Samme ratebudsjett som claim/upload (CodeRabbit): et heartbeat
+        # i løkke er billig for kalleren og skal ikke være gratis her.
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        # Revalideringen (CodeRabbit, kritisk): `noddeaktiver_modul`
+        # terminerer tokenfamilien ØYEBLIKKELIG, og fornyelsen er
+        # nøyaktig veien et drept token ville brukt til å holde liv i
+        # claimet sitt — samme port som claim/kvittering/upload.
+        if isinstance(auth, ModulAutentisert):
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kropp = None
+        opp_id = kropp.get("oppdrag_id") if isinstance(kropp, dict) else None
+        claim_id = kropp.get("owner_claim_id") \
+            if isinstance(kropp, dict) else None
+        generasjon = kropp.get("owner_generation") \
+            if isinstance(kropp, dict) else None
+        lease_s = kropp.get("lease_s", 300) if isinstance(kropp, dict) else 300
+        if not isinstance(opp_id, int) or isinstance(opp_id, bool) \
+                or not isinstance(claim_id, str) or not claim_id \
+                or not isinstance(generasjon, int) \
+                or isinstance(generasjon, bool) \
+                or not isinstance(lease_s, int) or isinstance(lease_s, bool):
+            tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant)
+            return _feilsvar("request_feilformet", rid)
+
+        modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
+            else auth.rolle
+        try:
+            rad = conn.execute(
+                "SELECT owner_lease_utloper, tenant, modul_id,"
+                " kontraktversjon, kontrakt_hash, module_epoch, evidensfrist"
+                " FROM forny_oppdragslease(%s,%s,%s,%s,%s)",
+                (opp_id, modul, claim_id, generasjon, lease_s)).fetchone()
+        except psycopg.errors.NoDataFound:
+            conn.rollback()
+            tjeneste.logg.hendelse("lease_ikke_fornybar", rid, auth.tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("lease_ikke_fornybar", rid)
+        except psycopg.errors.ObjectNotInPrerequisiteState:
+            conn.rollback()
+            tjeneste.logg.hendelse("lease_utlopt", rid, auth.tenant, art="drift",
+                                   oppdrag_id=opp_id)
+            return _feilsvar("lease_utlopt", rid)
+        except psycopg.errors.InvalidAuthorizationSpecification:
+            conn.rollback()
+            tjeneste.logg.hendelse("modulepoch_utdatert", rid, auth.tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("modulepoch_utdatert", rid)
+        except psycopg.errors.InvalidParameterValue:
+            conn.rollback()
+            tjeneste.logg.hendelse("request_feilformet", rid, auth.tenant)
+            return _feilsvar("request_feilformet", rid)
+
+        # Fersk opplastingskapabilitet i SAMME transaksjon som
+        # fornyelsen: radlåsen fra døren holder til commit, så epoken
+        # kapabiliteten stemples med er den fornyelsen målte.
+        # RLS-konteksten settes til OPPDRAGETS tenant (dørens svar, aldri
+        # kallerens påstand) — utledningen leser `oppdrag` som runtime.
+        sett_kontekst(conn, rad[1], auth.aktor, rid)
+        opplasting = _utled_opplastingskapabilitet(
+            conn, auth, rad[1], opp_id, rad[6])
+        conn.commit()
+        tjeneste.logg.hendelse("lease_fornyet", rid, rad[1], art="drift",
+                               oppdrag_id=opp_id)
+        return kanonisk_json({
+            "oppdrag_id": opp_id,
+            "owner_lease_utloper": rad[0].isoformat(),
+            "opplasting": opplasting,
+            "request_id": rid}, 200, {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
+
+
 def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
     """Signert, ressursbundet resultatkvittering. Én tenantbundet transaksjon.
 
@@ -1509,7 +3249,16 @@ def _oppdrag_kvittering(tjeneste: Tjeneste, request: Request) -> Response:
         if auth is None or auth.kapabilitet is not None:
             tjeneste.logg.hendelse("token_ugyldig", rid)
             return _feilsvar("token_ugyldig", rid)
-        if not _modulscope(auth):
+        # 035: et modultoken bærer INGEN scopes — det svarer på ett spørsmål
+        # (hvilken deployment er dette?), og fullmakten til å kvittere er
+        # ikke tokenets, men OPPDRAGETS: `kvittering_jti` ble utstedt av
+        # claim-en, er bundet til nøyaktig ett oppdrag OG til eiermodulen,
+        # og innløses mot `auth.rolle` noen linjer ned. Den bindingen er
+        # smalere enn `orders:execute:<prefiks>` kunne vært, så
+        # legacy-porten er ikke bare uoppfylt her — den er overflødig.
+        # Uten dette unntaket kunne en onboardet deployment claime arbeid
+        # den aldri fikk levere resultatet av.
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope=ORDRESCOPE + "<prefiks>")
             return _feilsvar("scope_mangler", rid)
@@ -1556,6 +3305,18 @@ def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
     """
     if artefakt_id is None:
         return False
+    if unntak_id is None:
+        # 038 §5: beslutningsoppdrag — avvisningen ble ført på saken
+        # `sikre_sak_for_oppdrag` fant/fødte, og DEN id-en har ikke denne
+        # veien. Detaljene bærer oppdrag+artefakt og er nøkkelen som
+        # faktisk identifiserer kvitteringen; et `unntak_id = NULL`-filter
+        # hadde stille gjort enhver gjentatt avvist kvittering til 200.
+        return conn.execute(
+            "SELECT 1 FROM unntak_historikk WHERE tenant=%s"
+            " AND hendelse='artefakt_ikke_verifisert'"
+            " AND detalj->>'oppdrag_id' = %s AND detalj->>'artefakt_id' = %s",
+            (tenant, str(oppdrag_id),
+             str(artefakt_id))).fetchone() is not None
     return conn.execute(
         "SELECT 1 FROM unntak_historikk WHERE tenant=%s AND unntak_id=%s"
         " AND hendelse='artefakt_ikke_verifisert'"
@@ -1564,13 +3325,74 @@ def _kvittering_alt_avvist(conn, tenant: str, unntak_id: int, oppdrag_id: int,
          str(artefakt_id))).fetchone() is not None
 
 
+def _idempotent_svar(conn, *, tenant: str, oppdrag_id: int, ny_hash: str,
+                     rid: str) -> Response:
+    """Svaret på en gjentakelse: sa den forrige kvitteringen NOE OM STATUS?
+
+    `status: "idempotent"` betydde begge deler på én gang (Codex P2), og
+    det er den samme sammenblandingen `lagret_uten_statusendring` ble
+    innført for å fjerne. Den FØRSTE kvitteringen tar én av to veier:
+
+      * den avsluttende: `oppdrag.status` settes til `utfort`/`feilet` og
+        `oppdrag.resultathash` til hashen — oppdraget ER ferdig;
+      * sen evidens: bare kapabiliteten brennes med hashen. Status og sak
+        røres ikke med vilje — «en sen kvittering er evidens, og skal
+        aldri avslutte noe» — og svaret sier det selv, med 202.
+
+    Begge etterlater `kapabilitet.resultathash = ny_hash`, så en
+    gjentakelse traff samme idempotensgren uansett hvilken vei den første
+    tok, og fikk det samme ordet for to helt ulike tilstander. Utfører
+    utføreren en retry — helt lovlig, kvitteringen ER idempotent — måtte
+    den enten tro at et ufullført oppdrag var ferdig, eller (som
+    `wcag_audit.controller` valgte, fail-closed) at et ferdig oppdrag var
+    ukvittert. Ingen av dem er sanne, og ingen av dem kan utledes av
+    svaret.
+
+    Autoriteten er oppdragsraden, ikke kapabiliteten: statusen må være
+    terminal OG `resultathash` må være VÅR hash. Har et ANNET resultat
+    avsluttet oppdraget, er dette ikke et idempotent gjensyn med vår egen
+    kvittering, og da svarer vi det konservative — samme retning som
+    resten av porten.
+
+    Leses FØR kallerens rollback, som `_kvittering_alt_avvist`: READ
+    COMMITTED gir setningen et ferskt snapshot, så kappløpsvinnerens
+    committede tilstand er synlig.
+    """
+    rad = conn.execute(
+        "SELECT status, resultathash FROM oppdrag WHERE tenant=%s AND id=%s",
+        (tenant, oppdrag_id)).fetchone()
+    skiftet = (rad is not None and rad[0] in ("utfort", "feilet")
+               and rad[1] == ny_hash)
+    return kanonisk_json(
+        {"status": "idempotent" if skiftet
+                   else "idempotent_uten_statusendring",
+         "oppdrag_id": oppdrag_id, "request_id": rid}, 200,
+        {"x-request-id": rid})
+
+
 def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
                          tenant: str, unntak_id: int, oppdrag_id: int,
-                         rid: str, artefakt_id=None) -> Response | None:
+                         rid: str, artefakt_id=None,
+                         sen: bool = False) -> Response | None:
     """Forbruker kapabiliteten, eller klassifiserer hvorfor vi ikke kunne.
 
     -> None betyr «kapabiliteten er VÅR, fortsett». Alt annet er et ferdig
     svar, og transaksjonen er avsluttet.
+
+    `sen=True` er sen-evidensveien (043, Codex P1). Der kan kapabiliteten
+    være brent `avvist` av et menneskelig nei, og toargsformen svarer
+    `ugyldig` på den — for evig, siden retryen bærer samme jti. Da rullet
+    denne funksjonen tilbake med `kapabilitet_ugyldig` FØR sen-evidens-
+    grenen ble nådd, og en gyldig sen kvittering kunne aldri skrive
+    `sen_kvittering` eller føde kompensasjons-/irreversibilitetssaken §5
+    lover. Treargsformens `sen_evidens` fester hashen på den avviste
+    kapabiliteten uten å røre statusen: `avvist` er fortsatt terminal,
+    oppdraget fortsatt kansellert — men evidensen kommer inn, og
+    idempotens/konflikt gjelder også her.
+
+    Den AVSLUTTENDE veien bruker bevisst ikke `sen_evidens`: taper den
+    kappløpet mot et nei, skal den fortsatt fail-close (`kapabilitet_
+    ugyldig`) og ikke fortsette til statusskiftet.
 
     Delt av BEGGE veiene — den avsluttende og sen-evidensveien. Det er ikke
     en stilsak: forrige runde viste hva som skjer når en regel bare er
@@ -1581,9 +3403,14 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
     `bruk_kvitteringskapabilitet`). Å lese tilstanden herfra etterpå ville
     vært et nytt kappløp for å avgjøre utfallet av det første.
     """
-    utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
-                          (jti, ny_hash)).fetchone()[0]
-    if utfall == "brukt":
+    if sen:
+        utfall = conn.execute(
+            "SELECT bruk_kvitteringskapabilitet(%s,%s,'sen_evidens')",
+            (jti, ny_hash)).fetchone()[0]
+    else:
+        utfall = conn.execute("SELECT bruk_kvitteringskapabilitet(%s,%s)",
+                              (jti, ny_hash)).fetchone()[0]
+    if utfall in ("brukt", "sen_evidens"):
         return None
 
     if utfall == "idempotent":
@@ -1598,14 +3425,16 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         # rekonstruksjon som den sekvensielle retryen, samme funksjon.
         avvist = _kvittering_alt_avvist(conn, tenant, unntak_id, oppdrag_id,
                                         artefakt_id)
+        # Samme lesning som den sekvensielle retryen, samme funksjon: hvilken
+        # vei vinneren tok avgjør hva taperen får vite (Codex P2).
+        svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                ny_hash=ny_hash, rid=rid)
         conn.rollback()
         if avvist:
             tjeneste.logg.hendelse("kvittering_konflikt", rid, tenant,
                                    oppdrag_id=oppdrag_id, kapplop=True)
             return _feilsvar("kvittering_konflikt", rid)
-        return kanonisk_json({"status": "idempotent",
-                              "oppdrag_id": oppdrag_id, "request_id": rid},
-                             200, {"x-request-id": rid})
+        return svar
 
     if utfall == "konflikt":
         # To ULIKE resultater levert samtidig. Uten denne grenen forsvant
@@ -1614,7 +3443,8 @@ def _forbruk_kapabilitet(tjeneste: Tjeneste, conn, jti: str, ny_hash: str, *,
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": "kapplop", "ny": ny_hash,
-                                   "oppdrag_id": oppdrag_id}, rid)
+                                   "oppdrag_id": oppdrag_id}, rid,
+                                  oppdrag_id=oppdrag_id)
         # Codex P2: også kappløps-TAPEREN navngir et artefakt, og det er nettopp
         # evidensen sikkerhetssaken trenger. Hash-konfliktveien bevarer det alt;
         # denne atomiske DB-konfliktgrenen returnerte før den nådde bevaringen, så
@@ -1657,6 +3487,13 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
     `oppdrag.kvittering`, ville kolonnelåsen (kvitteringen er uforanderlig)
     gjort det umulig for den NYE eieren å levere sin — altså ville en
     utdatert kvittering blokkert den gjeldende.
+
+    Med ÉN presis unntagelse (043 §5, Codex P2 runde 8): et oppdrag et
+    menneske har kansellert er TERMINALT. Det kan aldri claimes igjen, så
+    det finnes ingen ny eier å blokkere — og der er uforanderligheten
+    nettopp det evidensen skal ha. Den sene kvitteringen som utløser
+    kompensasjons-/irreversibilitetssaken lagres derfor signert på raden,
+    så saken kan legge fram grunnlaget sitt og ikke bare påstå det.
     """
     from policy_validator import attestering
 
@@ -1675,10 +3512,33 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
 
     # 1. Kapabiliteten. `modul_id` sammenlignes inne i funksjonen, så en
     #    annen modul kan ikke innløse en kapabilitet den har fått tak i.
+    #
+    #    Codex P1: `auth.rolle` er MODULENS id, og den er delt mellom alle
+    #    levende deployments av modulen — staging og produksjon, eller to
+    #    releaser under hver sin kontraktversjon, hver med sitt eget
+    #    modultoken. Kvitteringsveien slipper dem alle forbi scope-porten
+    #    med vilje (retten ER kapabilitetens), så modulnavnet alene var
+    #    ingen port: en delt eller feilrutet `kvittering_jti` lot en annen
+    #    deployment enn den som claimet levere resultatet og avslutte
+    #    jobben. Innløsningen krever derfor HELE den autentiserte
+    #    deploymenten. Med et legacy-api-token finnes ingen — NULL matcher
+    #    da kun kapabiliteter som selv er deploymentløse (fail-closed begge
+    #    veier), som på opplastingsveien.
+    #
+    #    Codex P1, neste runde: identiteten er ikke NOK. `preauth` lukket
+    #    sin egen transaksjon, og et nødstopp som committet etterpå har
+    #    drept tokenet uten at dette `auth`-objektet vet det. Derfor
+    #    revalideres deploymenten FØR innløsningen, under modul-låsen —
+    #    ellers kunne den stoppede deploymenten fortsatt avslutte jobben.
+    revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+    if revalidering is not None:
+        return revalidering
+    d_miljo = getattr(auth, "miljo", None)
+    d_release = getattr(auth, "release_id", None)
     kap = conn.execute(
         "SELECT tenant, oppdrag_id, owner_claim_id, owner_generation, status,"
-        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s)",
-        (jti, auth.rolle)).fetchone()
+        " resultathash FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+        (jti, auth.rolle, d_miljo, d_release)).fetchone()
     if kap is None:
         conn.rollback()
         tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, auth.tenant)
@@ -1785,7 +3645,175 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                oppdrag_id=oppdrag_id, grunn="klartekst_sha256")
         return _feilsvar("request_feilformet", rid)
 
+    # Codex P1: en SUKSESS for en artefaktproduserende type må BÆRE
+    # artefaktet. `er_utforelseskvittering` krever ingen av artefaktfeltene,
+    # og hele artefaktgrenen nedenfor står under `if art_id is not None` —
+    # en vellykket kvittering uten `artefakt_id` hoppet derfor over
+    # promotering, bindingskontroll, epoch-sjekk OG skjemarevalideringen og
+    # falt rett ned i statusskiftet: `oppdrag.status = utfort`, `unntak =
+    # løst`, uten en eneste rapport å vise til. En WCAG-kontroll uten
+    # evidens er ikke en utført kontroll, og her ville ingen engang sett at
+    # den manglet.
+    #
+    # Kravet står på TYPEN (`produserer_artefakt`), ikke som en fast liste
+    # her: legacy-typer uten artefakt er helt urørt, og en FEILET kvittering
+    # har per definisjon ingen rapport og skal fortsatt kunne meldes uten.
+    # Sjekken ligger sammen med de andre strukturvaktene, altså FØR
+    # kapabiliteten forbrukes — en kvittering vi avviser skal ikke brenne
+    # den controllerens ene sjanse til å levere den samme rapporten på nytt.
+    if oppdragskontrakt.mangler_artefaktevidens(oppdragstype, kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_paakrevd",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
+    # ... og den ANDRE halvdelen av den samme setningen (Codex P2): en
+    # FEILET kvittering har per definisjon ingen rapport. Bare den ene
+    # halvdelen var håndhevet. Artefaktgrenen nedenfor står under `if
+    # art_id is not None` og ikke under resultatet, så en autentisert
+    # modul som sendte `resultat: "feilet"` sammen med en gyldig
+    # `artefakt_id` og hash fikk rapporten PROMOTERT til attestert
+    # evidens — og deretter ble oppdraget merket feilet. Det er en
+    # selvmotsigende tilstand å lagre: en konsument som leser rapporten
+    # ser en fullført kontroll, en som leser oppdraget ser en mislykket.
+    #
+    # Står sammen med vakten over, altså før kapabiliteten forbrukes: en
+    # kvittering vi avviser skal ikke brenne utførerens ene sjanse til å
+    # sende den riktige.
+    if oppdragskontrakt.artefakt_uten_utforelse(kvittering):
+        conn.rollback()
+        tjeneste.logg.hendelse("request_feilformet", rid, tenant,
+                               oppdrag_id=oppdrag_id,
+                               grunn="artefakt_uten_utforelse",
+                               oppdragstype=oppdragstype)
+        return _feilsvar("request_feilformet", rid)
+
     ny_hash = _resultathash(kvittering)
+
+    # 3c. LÅSEORDEN: SAKEN FØRST (043, Codex P1 runde 3).
+    #
+    # Avvis-veien tar tre rader, i denne rekkefølgen:
+    #   sak (`unntak`)  →  kvitteringskapabilitet  →  oppdrag
+    # `behandle_unntakshandling` låser saken med `FOR UPDATE`
+    # (`unntaksbehandling.py`, steg 2) og HOLDER den gjennom hele
+    # operatørhandlingen; inne i den låsen pre-låser `avvis_med_opplosning`
+    # kapabilitetene og deretter oppdragene (043 §7).
+    #
+    # Kvitteringsveien tok de SAMME tre radene i motsatt ende: den brant
+    # kapabiliteten i `_forbruk_kapabilitet` og rørte saken først til slutt
+    # (historikkraden + `UPDATE unntak`). Da kan avvis-veien holde saken og
+    # vente på kapabiliteten mens kvitteringsveien holder kapabiliteten og
+    # venter på saken — PostgreSQL avbryter én med 40P01. Kappløpet skal
+    # avgjøres av hvem som brenner kapabiliteten først, og ende i et
+    # AVGJORT utfall (`oppdrag_utfort` eller gjennomført kansellering);
+    # en vranglåsfeil er ingen av delene. Pre-passet i 043 §7 rettet bare
+    # den indre halvparten (kapabilitet før oppdrag) — den ytre sakslåsen
+    # sto igjen, og det er nettopp den Codex fant.
+    #
+    # Saken låses derfor HER, før første kapabilitets- eller oppdragslås, og
+    # holdes til commit: begge veier tar radene i samme rekkefølge, og den
+    # ene venter på den andre i stedet for at begge dør. Punktet er valgt
+    # etter alle struktur-/signaturvaktene — en kvittering vi uansett
+    # avviser skal ikke stå i kø bak en operatørhandling.
+    #
+    # ... OG SAKEN HAR TO RELASJONSRETNINGER (Codex P1, runde 5).
+    #
+    # `o.unntak_id` er OPPHAV, ikke generell sakstilknytning (038): et
+    # BESLUTNINGSoppdrag har den NULL, og saken peker den andre veien
+    # (`unntak.oppdrag_id`). Denne låsen sto bak `unntak_id is not None` og
+    # så derfor bare reparasjonsopphavet — mens §4 i 043 gjorde nettopp den
+    # andre koblingen avvisbar: `sak_utestaaende` finner beslutningsoppdrag
+    # GJENNOM `unntak.oppdrag_id`, og `avvis_med_opplosning` godtar dem som
+    # oppløsningsmål (§7). For akkurat de oppdragene hoppet kvitteringsveien
+    # over både låsen og oppfriskningen under den, og tapet fra runde 4 var
+    # tilbake i sin helhet: nei-et rekker å committe kansellering og
+    # `avvist`, kvitteringen regner videre på `plukket`/`utstedt`, `bruk_
+    # kvitteringskapabilitet` (toargs) svarer `ugyldig`, og den signerte
+    # sene evidensen — med kompensasjons-/irreversibilitetssaken §5 skal
+    # føde — går tapt i stillhet.
+    #
+    # Saken finnes derfor gjennom BEGGE retningene, i ÉN setning og i
+    # stigende id: mengden er den samme autoriteten §7 krever av
+    # oppløsningsmålene, og en deterministisk rekkefølge holder to
+    # kvitteringsveier fra å ta flere saker i motsatt orden. `unntak_id`
+    # selv røres ikke — den betyr fortsatt OPPHAV nedenfor.
+    #
+    # Er det ingen sak i noen av retningene, er det ingen felles rad å
+    # ordne: avvis-veien kan ikke nå oppdraget (den finner oppdrag gjennom
+    # saken), og en sak som fødes lenger nede av `sikre_sak_for_oppdrag` er
+    # per definisjon ny — ingen annen transaksjon holder den.
+    laaste_saker = conn.execute(
+        "SELECT u.id FROM unntak u"
+        " WHERE u.tenant=%s AND (u.id=%s OR u.oppdrag_id=%s)"
+        " ORDER BY u.id FOR UPDATE",
+        (tenant, unntak_id, oppdrag_id)).fetchall()
+    if laaste_saker:
+
+        # ... OG DA MÅ TILSTANDEN LESES PÅ NYTT (Codex P1, runde 4).
+        #
+        # En lås som bare ordner rekkefølgen, uten at det som leses etterpå
+        # er lest UNDER den, gjør bare vranglåsen om til en stille feil.
+        # Kapabiliteten (steg 1) og oppdragsraden (steg 1b) ble lest FØR
+        # låsen. Kommer inntaket hit mens et menneskelig nei holder saken,
+        # venter vi her til det har committet — og fortsetter så å regne på
+        # verdier fra tiden før nei-et: `kap_status` er fortsatt `utstedt`,
+        # `status` fortsatt `plukket`, generasjonen fortsatt eierens.
+        #
+        # Utfallet var det motsatte av det 043 §5 er til for: `kan_avslutte`
+        # ble True, den ORDINÆRE toargsbrenningen kjørte mot en kapabilitet
+        # som nå står `avvist`, og `_forbruk_kapabilitet` rullet tilbake med
+        # `kapabilitet_ugyldig`. Den signerte kvitteringen ble aldri skrevet
+        # som `sen_kvittering`, og kompensasjons-/irreversibilitetssaken ble
+        # aldri født — nøyaktig det tapet sen-evidensveien ble bygget for å
+        # hindre, gjenåpnet av låsen som skulle beskytte den.
+        #
+        # Låsen er det eneste punktet som gir et STABILT bilde: fra her og
+        # ut kan ingen avvis-vei endre disse radene før vi committer.
+        # Leses de her, ser vi nei-et og velger sen-evidensveien; forsvant
+        # kapabiliteten helt (terminal `feilet`/utløpt) eller oppdraget,
+        # svarer vi som førstelesningen gjorde — fail-closed.
+        #
+        # `naa` er BEVISST ikke oppfrisket: den er kvitteringens ANKOMSTTID,
+        # målt før enhver låskø. Et oppdrag skal ikke miste fristen sin
+        # fordi vår transaksjon sto bak en operatørhandling.
+        #
+        # ... og DET SAMME GJELDER KAPABILITETENS UTLØP (Codex P2, runde 5).
+        # Innvendingen var at `innlos_kvitteringskapabilitet` filtrerer på
+        # `k.utloper > now()`, så en kvittering som ankom i tide, men sto i
+        # sakslåskø forbi utløpet, skulle miste kapabiliteten her. Den
+        # egenskapen HAR koden allerede, og den er ikke en tilfeldighet:
+        # `now()` er transaksjonstidsstempelet (`transaction_timestamp()`),
+        # ikke veggklokka, og hele ingesten kjører i ÉN transaksjon —
+        # `preauth` lukker sin egen, og forretningstransaksjonen begynner
+        # ved den første lesningen over. Låskøen kan derfor ikke flytte
+        # utløpsgrensen: begge innløsningene måler mot nøyaktig samme
+        # tidspunkt, og det ligger før ankomsten (`naa`). Ville vi i stedet
+        # ha friskepunktets veggklokke, måtte vi bedt om
+        # `statement_timestamp()` — og det er nettopp det vi IKKE gjør.
+        # Egenskapen er målt, ikke bare beskrevet: se
+        # `test_P1_sakslaskoen_tar_ikke_kapabilitetens_frist` (test_m37).
+        kap = conn.execute(
+            "SELECT owner_claim_id, owner_generation, status, resultathash"
+            "  FROM innlos_kvitteringskapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
+        if kap is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kapabilitet_ugyldig", rid, tenant,
+                                   oppdrag_id=oppdrag_id, grunn="etter_sakslas")
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        kap_claim, kap_gen, kap_status, kap_hash = kap
+
+        rad = conn.execute(
+            "SELECT o.status, o.owner_claim_id, o.owner_generation,"
+            " o.utforelsesfrist, o.resultathash"
+            "  FROM oppdrag o WHERE o.tenant=%s AND o.id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        if rad is None:
+            conn.rollback()
+            return _feilsvar("kapabilitet_ugyldig", rid)
+        status, owner_claim, owner_gen, uf, lagret_hash = rad
 
     # 4. Idempotens og konflikt — målt mot BEGGE kilder. Kapabiliteten
     #    husker hva DEN ble brukt til; oppdraget husker hva som avsluttet
@@ -1801,15 +3829,18 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                                       kvittering.get("artefakt_id")):
                 conn.rollback()
                 return _feilsvar("kvittering_konflikt", rid)
+            # ... og var den IKKE avvist: sa den forrige kvitteringen noe om
+            # status, eller ble den bare bevart som sen evidens? Se
+            # `_idempotent_svar` (Codex P2).
+            svar = _idempotent_svar(conn, tenant=tenant, oppdrag_id=oppdrag_id,
+                                    ny_hash=ny_hash, rid=rid)
             conn.rollback()
-            return kanonisk_json({"status": "idempotent",
-                                  "oppdrag_id": oppdrag_id,
-                                  "request_id": rid}, 200,
-                                 {"x-request-id": rid})
+            return svar
         _sikkerhetssak_kvittering(conn, tenant, unntak_id,
                                   "motstridende_kvittering",
                                   {"kilde": kilde, "lagret": hash_,
-                                   "ny": ny_hash}, rid)
+                                   "ny": ny_hash, "oppdrag_id": oppdrag_id},
+                                  rid, oppdrag_id=oppdrag_id)
         # Samme bevaringsregel som den sene veien: sikkerhetssaken er skrevet,
         # og artefaktet det motstridende resultatet påberoper seg er nettopp
         # det etterforskningen trenger. Karantene = retained (ryddes aldri).
@@ -1849,10 +3880,15 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # Forbruket skjer i SAMME commit som evidensraden. Statusen på
         # oppdraget og saken røres ikke — en sen kvittering er evidens, og
         # skal aldri avslutte noe.
+        #
+        # `sen=True`: en kapabilitet brent `avvist` av et menneskelig nei
+        # skal slippe evidensen inn her (043, Codex P1) — ikke svare
+        # `kapabilitet_ugyldig` og dermed gjøre §5-saken uoppnåelig.
         svar = _forbruk_kapabilitet(tjeneste, conn, jti, ny_hash,
                                     tenant=tenant, unntak_id=unntak_id,
                                     oppdrag_id=oppdrag_id, rid=rid,
-                                    artefakt_id=kvittering.get("artefakt_id"))
+                                    artefakt_id=kvittering.get("artefakt_id"),
+                                    sen=True)
         if svar is not None:
             # Taperen av kappløpet skriver INGEN evidensrad. Den ville vært
             # den andre raden for samme jti — og om utfallet var idempotent
@@ -1868,14 +3904,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         # oppryddingen: har rydd nettopp nullet raden i race-en rundt evidensfristen,
         # ser vi den ikke som gjenopprettbar og klassifiserer konflikt i stedet for
         # falsk aksept. `bevart` er retained/terminalt; idempotent hvis alt bevart.
+        #
+        # REVERSIBILITETEN AVGJØRES FØR BEVARINGEN (043, Codex P2 runde 2).
+        # `bevar_artefakt` setter artefaktet `bevart` = RETAINED og terminalt,
+        # og oppryddingen rører det aldri igjen. For et `direkte` oppdrag som
+        # mennesket kansellerte sier kontrakten — og avsnittet under — at
+        # resultatet FORKASTES og artefaktet skal ryddes; bevares det først,
+        # blir «ryddes» til «beholdes for alltid». Oppslaget er derfor flyttet
+        # hit opp: det avgjør OM artefaktet skal bevares, og gjenbrukes så av
+        # §5-saken lenger nede.
+        kans = conn.execute(
+            "SELECT kansellert_aarsak FROM oppdrag WHERE tenant=%s AND id=%s",
+            (tenant, oppdrag_id)).fetchone()
+        menneskelig_nei = kans is not None and kans[0] == "menneskelig_avvis"
+        reversibilitet = conn.execute(
+            "SELECT reversibilitet_for_oppdrag(%s,%s)",
+            (tenant, oppdrag_id)).fetchone()[0] if menneskelig_nei else None
+        bevar = not (menneskelig_nei and reversibilitet == "direkte")
         sen_artefakt = kvittering.get("artefakt_id")
         if sen_artefakt is not None:
             # bevar_artefakt validerer (tenant/oppdrag/signert hash), låser raden
             # (serialiserer mot oppryddingen) og bevarer den atomisk. 'ugyldig' =
             # fremmed/ikke-eksisterende/feil-hash/alt-nullet → sikkerhetskonflikt,
             # ikke falsk aksept. Runtime kan ikke låse artefakt selv (kun SELECT).
+            # Skal artefaktet IKKE bevares, gjøres NØYAKTIG samme validering og
+            # låsing av `verifiser_artefaktbinding` — bare uten skrivingen: en
+            # kvittering som navngir feil artefakt skal falle like hardt på
+            # `direkte`-veien, det er artefaktet som skal ryddes, ikke porten.
             utfall = conn.execute(
-                "SELECT bevar_artefakt(%s,%s,%s,%s)",
+                "SELECT bevar_artefakt(%s,%s,%s,%s)" if bevar else
+                "SELECT verifiser_artefaktbinding(%s,%s,%s,%s)",
                 (sen_artefakt, tenant, oppdrag_id,
                  kvittering.get("klartekst_sha256"))).fetchone()[0]
             if utfall == "ugyldig":
@@ -1884,11 +3942,87 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                 _sikkerhetssak_kvittering(
                     conn, tenant, unntak_id, "artefakt_ikke_verifisert",
                     {"oppdrag_id": oppdrag_id, "artefakt_id": str(sen_artefakt)},
-                    rid)
+                    rid, oppdrag_id=oppdrag_id)
                 conn.commit()
                 tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                        oppdrag_id=oppdrag_id, art="sikkerhet")
                 return _feilsvar("kvittering_konflikt", rid)
+        if unntak_id is None and menneskelig_nei:
+            # SAKEN SOM SA NEI EIER DEN SENE EVIDENSEN (Codex P1, runde 7).
+            #
+            # For et BESLUTNINGSoppdrag er `unntak_id` NULL med vilje —
+            # saken peker tilbake gjennom `unntak.oppdrag_id`, og det er
+            # nettopp den koblingen §4 gjorde avvisbar. Falt vi rett ned i
+            # `sikre_sak_for_oppdrag(... 'evidensfrist' ...)` under, fikk vi
+            # ikke saken tilbake: mennesket har akkurat satt den `avvist`,
+            # altså TERMINAL, og gjenbruksveien (038) tar aldri en terminal
+            # sak. Resultatet var en helt ny, ÅPEN evidensfrist-sak — en
+            # påstand om at fristen løp ut, for en kvittering som kom i
+            # TIDE — og for `kompenserende`/`irreversibel` deretter enda en
+            # sak ved siden av. For `direkte`, der kontrakten sier at ingen
+            # oppfølging trengs, ble den falske saken den eneste.
+            #
+            # Den sene evidensen hører til saken mennesket faktisk avgjorde.
+            # Den er entydig identifiserbar: §7 fører `oppdrag_kansellert`
+            # med oppdragets id på nøyaktig den saken nei-et ble gitt på.
+            # Finner vi den ikke (en kansellering fra en vei uten spor),
+            # faller vi tilbake på selve tilbakekoblingen, og først om
+            # INGEN sak finnes gjelder 038 §5-veien under.
+            sak_nei = conn.execute(
+                "SELECT h.unntak_id FROM unntak_historikk h"
+                " WHERE h.tenant=%s AND h.hendelse='oppdrag_kansellert'"
+                "   AND (h.detalj->>'oppdrag_id')::bigint = %s"
+                " ORDER BY h.id DESC LIMIT 1",
+                (tenant, oppdrag_id)).fetchone()
+            if sak_nei is None:
+                sak_nei = conn.execute(
+                    "SELECT u.id FROM unntak u"
+                    " WHERE u.tenant=%s AND u.oppdrag_id=%s"
+                    " ORDER BY u.id LIMIT 1",
+                    (tenant, oppdrag_id)).fetchone()
+            if sak_nei is not None:
+                unntak_id = sak_nei[0]
+        if unntak_id is None:
+            # 038 §5: sen evidens på et beslutningsoppdrag hører til
+            # evidensfrist-familien — samme sak reaperen fant/fødte da
+            # fristen løp ut, idempotent også om kvitteringen kommer først.
+            unntak_id = conn.execute(
+                "SELECT sikre_sak_for_oppdrag(%s,%s,'evidensfrist',%s,%s)",
+                (tenant, oppdrag_id, auth.aktor, rid)).fetchone()[0]
+        # DEN SIGNERTE KVITTERINGEN SKAL OVERLEVE (Codex P2, runde 8).
+        #
+        # Under fødte §5-saken en påstand om at handlingen SKJEDDE — og
+        # kastet så beviset: evidensraden bærer bare en oppsummering
+        # (resultat + hash), kapabiliteten bare hashen, og selve den
+        # signerte kvitteringen fantes ingen steder etter dette kallet. Da
+        # ber saken et menneske kompensere for, eller granske, noe systemet
+        # ikke lenger kan legge fram grunnlaget for. En remedieringssak uten
+        # sin egen evidens er en påstand, ikke et spor.
+        #
+        # Raden HAR plassen for det (`kvittering`, `kvittering_signatur`,
+        # `resultathash`), og grunnen til at den sene veien lot den stå tom
+        # gjelder ikke her: den er at en utdatert kvittering ellers ville
+        # låst raden (kolonnelåsen: uforanderlig når satt) og hindret den
+        # NYE eieren i å levere sin. Det forutsetter at det KAN komme en ny
+        # eier. Etter et menneskelig nei er oppdraget terminalt
+        # `kansellert` — ingen kan claime det, og ingen kvittering kan
+        # avslutte det noen gang. Da blokkerer lagringen ingenting, og
+        # uforanderligheten er nettopp det evidensen skal ha.
+        #
+        # Derfor: bare på nei-grenen, og bare i det tomme feltet. Er det alt
+        # fylt (en tidligere sen kvittering på samme kansellerte oppdrag),
+        # rører vi det ikke — den første er den lagrede, og denne står
+        # fortsatt i historikken med sin egen hash. Statusen endres ikke;
+        # dette er lagring av evidens, ikke en fullføring.
+        kvittering_lagret = False
+        if menneskelig_nei:
+            kvittering_lagret = conn.execute(
+                "UPDATE oppdrag SET kvittering=%s, kvittering_signatur=%s,"
+                " resultathash=%s WHERE tenant=%s AND id=%s"
+                "   AND kvittering IS NULL RETURNING id",
+                (json.dumps(kvittering, ensure_ascii=False),
+                 (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
+                 tenant, oppdrag_id)).fetchone() is not None
         conn.execute(
             "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
             " request_id, detalj) VALUES (%s,%s,'sen_kvittering',%s,%s,%s)",
@@ -1896,7 +4030,69 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
              json.dumps({"oppdrag_id": oppdrag_id,
                          "gjeldende_fencing": gjeldende,
                          "etter_utforelsesfrist": naa > uf,
+                         "resultat": kvittering.get("resultat"),
+                         # Sier HVOR beviset ligger: True = denne
+                         # kvitteringen står signert på oppdragsraden,
+                         # False = en tidligere sen kvittering har plassen
+                         # (eller oppdraget ble ikke kansellert av et
+                         # menneske, og da fødes ingen §5-sak heller).
+                         "kvittering_lagret": kvittering_lagret,
                          "resultathash": ny_hash}, ensure_ascii=False)))
+        # 043 (Gate 14b §5): fencingen hindrer FULLFØRING, ikke det som
+        # allerede skjedde. En gyldig sen kvittering på et oppdrag mennesket
+        # kansellerte betyr at modulen UTFØRTE — når, i forhold til
+        # operatørens klikk, vet vi ikke og påstår vi ikke (Codex P2, runde
+        # 8): det eneste målte er at kvitteringen ANKOM etter kanselleringen.
+        # Hva det krever av oss utledes av MODULKONTRAKTENS reversibilitet,
+        # aldri av gjetning: `direkte` → ingenting (resultatet forkastes,
+        # artefaktet forblir staged og ryddes av 038-reaperen);
+        # `kompenserende`/`irreversibel` → sak, gjennom samme
+        # `sikre_sak_for_oppdrag` som all annen sakskobling — ingen
+        # parallell sakskilde, idempotent per (oppdrag, arsak), terminal
+        # sak gjenbrukes aldri. Oppslaget selv er gjort FØR bevaringen (se
+        # over) — nettopp fordi `direkte` også avgjør at artefaktet ikke skal
+        # bevares; her brukes svaret bare til sakskoblingen.
+        #
+        # ... men FØRST må kvitteringen faktisk PÅSTÅ at handlingen skjedde
+        # (Codex P1). Hele §5-slutningen hviler på premisset «modulen
+        # utførte». En sen kvittering med
+        # `resultat: "feilet"` sier det motsatte: ingen sideeffekt inntraff.
+        # Den gikk likevel inn her og fødte `kompensasjon_kreves` eller
+        # `irreversibel_utfort` — altså en sak som ber et menneske
+        # kompensere for noe som aldri ble gjort, eller som fører i
+        # revisjonssporet at en irreversibel handling er utført når
+        # utføreren selv rapporterte at den ikke ble det. Evidensraden over
+        # skrives fortsatt (den sene kvitteringen ER evidens, uansett
+        # utfall, og bærer nå resultatet), men SLUTNINGEN krever premisset.
+        #
+        # ... og UKJENT REVERSIBILITET ER IKKE TRYGG (Codex P1, runde 8).
+        # Mappingen var et oppslag med stille frafall: alt som ikke var
+        # `kompenserende` eller `irreversibel` ga ingen sak. For `direkte`
+        # er det RIKTIG — kontrakten sier at virkningen reverserer seg
+        # selv. Men `reversibilitet_for_oppdrag` svarer også NULL, og det
+        # betyr noe helt annet: oppdraget ble aldri modulbundet. Claim-
+        # veien tillater bevisst uregistrerte oppgavetyper (037) og lar
+        # modul-/kontraktbindingen stå NULL, så en slik oppgave kan utføre
+        # og sende en gyldig signert `utfort`-kvittering etter nei-et —
+        # og falle rett gjennom. Da er utfallet det motsatte av det §5 ble
+        # bygget for: systemet har INGEN kontraktevidens for at virkningen
+        # er trygg eller reverserer seg selv, og lot likevel være å
+        # spørre et menneske. Fraværet av bevis er ikke bevis på fravær.
+        # Mengden er derfor LUKKET med et eksplisitt fall-through: `direkte`
+        # er den ene verdien som betyr «ingen oppfølging», alt annet vi ikke
+        # kjenner — NULL i dag, en fremtidig klasse i morgen — blir
+        # `reversibilitet_ukjent` og går til et menneske.
+        sen_utfort = kvittering.get("resultat") == "utfort"
+        if menneskelig_nei and sen_utfort:
+            kjent = {"kompenserende": "kompensasjon_kreves",
+                     "irreversibel": "irreversibel_utfort",
+                     "direkte": None}
+            ny_arsak = (kjent[reversibilitet] if reversibilitet in kjent
+                        else "reversibilitet_ukjent")
+            if ny_arsak is not None:
+                conn.execute(
+                    "SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",
+                    (tenant, oppdrag_id, ny_arsak, auth.aktor, rid))
         conn.commit()
         return kanonisk_json({"status": "lagret_uten_statusendring",
                               "oppdrag_id": oppdrag_id, "request_id": rid},
@@ -1955,6 +4151,36 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         promotert = (art is not None and naa_epoch is not None
                      and opp_epoch == naa_epoch[0])
         if promotert:
+            # PR-014c §8 pkt. 2: REVALIDER MOT SAMME SKJEMA i samme
+            # transaksjon som statusovergangen. Skjemaet er immutabelt, så
+            # dette er ikke forsvar mot endring — det er forsvar mot at en
+            # fremtidig opplastingsvei glemmer valideringen ved opplasting.
+            # Brudd (eller uvaliderbart innhold) → IKKE promotert → samme
+            # karantene + sikkerhetssak som binding-/epoch-avvik under:
+            # artefaktet bevares for etterforskning, aldri som evidens.
+            arad = conn.execute(
+                "SELECT artefakttype, ciphertext, nonce, dek_ref FROM"
+                " artefakt WHERE tenant=%s AND artefakt_id=%s",
+                (tenant, art_id)).fetchone()
+            promotert = arad is not None
+            if promotert:
+                skjema = artefaktskjema.hent_skjema(conn, arad[0])
+                if skjema is None:
+                    promotert = False
+                else:
+                    try:
+                        dek = kryptering.hent_dek(conn, tenant, arad[3])
+                        innhold = kryptering.dekrypter(
+                            dek, bytes(arad[1]), bytes(arad[2]), tenant,
+                            arad[3])
+                    except Exception:                         # noqa: BLE001
+                        # Udekrypterbart innhold er per definisjon
+                        # uvaliderbart — samme utfall, aldri en 500.
+                        promotert = False
+                        innhold = None
+                    if innhold is not None                             and artefaktskjema.valider(skjema, innhold):
+                        promotert = False
+        if promotert:
             try:
                 # SAVEPOINT: en promoteringsfeil (epoch-drift/bindingsavvik) må
                 # IKKE rulle tilbake kapabilitet-brenningen + resultathashen som
@@ -1984,7 +4210,8 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
                          (art_id, tenant, oppdrag_id))
             _sikkerhetssak_kvittering(
                 conn, tenant, unntak_id, "artefakt_ikke_verifisert",
-                {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid)
+                {"oppdrag_id": oppdrag_id, "artefakt_id": str(art_id)}, rid,
+                oppdrag_id=oppdrag_id)
             conn.commit()
             tjeneste.logg.hendelse("artefakt_promotering_avvist", rid, tenant,
                                    oppdrag_id=oppdrag_id, art="sikkerhet")
@@ -1997,32 +4224,75 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
-    conn.execute(
-        "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
-        " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
-        (tenant, unntak_id, auth.aktor, rid,
-         json.dumps({"oppdrag_id": oppdrag_id,
-                     "resultat": kvittering.get("resultat"),
-                     "ressurs_id": kvittering.get("ressurs_id")},
-                    ensure_ascii=False)))
-    conn.execute(
-        "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
-        "   AND status='venter_utførelse'",
-        ("løst" if vellykket else "manuell", tenant, unntak_id))
+    # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
+    # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
+    # lukkingen falt evalueringen til reaperens forlatt-frist målt fra
+    # `opprettet`. Stedet er linjen OVER, ikke kapabilitetsbruken:
+    # `brukt` kan ende i avvist promotering (skjema/epoch/binding), som
+    # committer avvisningen med jobben fortsatt `plukket` og gjenlosbar
+    # — en lukking der hadde startet fristen på et løp som ikke er
+    # ferdig, og døren nekter å flytte en satt lukking når den EKTE
+    # kvitteringen kommer. `sen_evidens`-veien når aldri hit. Oppslaget
+    # er type-agnostisk: bare M-57-oppdrag HAR et anker.
+    rad_p = conn.execute(
+        "SELECT prosess_id FROM rekrutteringsprosess"
+        " WHERE tenant=%s AND oppdrag_id=%s AND lukket_ts IS NULL",
+        (tenant, oppdrag_id)).fetchone()
+    if rad_p is not None:
+        conn.execute("SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                     (tenant, rad_p[0]))
+    # 038 §5 (Codex P1): et BESLUTNINGSOPPDRAG har ingen sak — det er hele
+    # poenget med opprinnelsen. Den avsluttende bokføringen under er
+    # M-37-veiens saksbokføring, og `unntak_historikk.unntak_id` er NOT NULL:
+    # kjørt ubetinget døde HVER normal kvittering på et bestilt oppdrag i
+    # basen, og rullet med seg statusskiftet og artefaktpromoteringen — altså
+    # kunne et bestilt oppdrag aldri fullføres.
+    #
+    # Vi FØDER heller ingen sak her, i motsetning til de sene/motstridende
+    # veiene: en kvittering i tide, innenfor fencing og frist, ER
+    # normalveien. Evidensen ligger på oppdragsraden (kvittering, signatur,
+    # resultathash, status) — som for enhver annen kvittering. En sak
+    # opprettes når noe FAKTISK er et unntak, aldri som journalføring.
+    if unntak_id is not None:
+        conn.execute(
+            "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
+            " request_id, detalj) VALUES (%s,%s,'kvittering',%s,%s,%s)",
+            (tenant, unntak_id, auth.aktor, rid,
+             json.dumps({"oppdrag_id": oppdrag_id,
+                         "resultat": kvittering.get("resultat"),
+                         "ressurs_id": kvittering.get("ressurs_id")},
+                        ensure_ascii=False)))
+        conn.execute(
+            "UPDATE unntak SET status=%s WHERE tenant=%s AND id=%s"
+            "   AND status='venter_utførelse'",
+            ("løst" if vellykket else "manuell", tenant, unntak_id))
     conn.commit()
     return kanonisk_json({"status": "utfort" if vellykket else "feilet",
                           "oppdrag_id": oppdrag_id, "unntak_id": unntak_id,
                           "request_id": rid}, 200, {"x-request-id": rid})
 
 
-def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int,
-                              hendelse: str, detalj: dict, rid: str) -> None:
+def _sikkerhetssak_kvittering(conn, tenant: str, unntak_id: int | None,
+                              hendelse: str, detalj: dict, rid: str,
+                              oppdrag_id: int | None = None) -> None:
     """Historikkrad for kvitteringsavvik. INGEN statusendring.
 
     v3-delta pkt. 3 er tydelig: et motstridende resultat skal ikke avgjøre
     noe. Det skal SES. En automatisk statusendring her ville betydd at den
     som klarer å sende to ulike kvitteringer bestemmer utfallet.
+
+    038 §5 (port 24): et beslutningsoppdrag har ingen `unntak_id` — saken
+    peker på oppdraget, ikke omvendt. Da hentes (eller fødes) den
+    ikke-terminale sikkerhetssaken for oppdraget idempotent via
+    `sikre_sak_for_oppdrag`, og avviket føres på DEN. Uten dette døde
+    hele kvitteringskonflikt-transaksjonen på NOT NULL i historikken —
+    altså nøyaktig hendelsen sikkerhetssporet finnes for.
     """
+    if unntak_id is None:
+        unntak_id = conn.execute(
+            "SELECT sikre_sak_for_oppdrag(%s,%s,'sikkerhet',"
+            "'kvitteringsport',%s)",
+            (tenant, oppdrag_id, rid)).fetchone()[0]
     conn.execute(
         "INSERT INTO unntak_historikk (tenant, unntak_id, hendelse, aktor,"
         " request_id, detalj) VALUES (%s,%s,%s,'kvitteringsport',%s,%s)",
@@ -2059,7 +4329,14 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not tjeneste.rate.slipp_gjennom(auth.token_id):
             tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
             return _feilsvar("rate_grense", rid)
-        if "artifacts:upload" not in auth.scopes:
+        # 035: samme unntak som kvitteringen — modultokenet har ingen
+        # scopes, og opplastingsretten er `kapabilitet_jti`-ens, ikke
+        # tokenets. Artefaktkapabiliteten deles ut av claim-en, er bundet
+        # til oppdrag + eiermodul + release/kontrakt/epoch, og innløses
+        # mot `auth.rolle` under. En claim uten opplastingskapabilitet gir
+        # ingen jti, og da stopper `innlos_artefaktkapabilitet` requesten.
+        if not isinstance(auth, ModulAutentisert) \
+                and "artifacts:upload" not in auth.scopes:
             tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
                                    scope="artifacts:upload")
             return _feilsvar("scope_mangler", rid)
@@ -2080,12 +4357,35 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
         if not isinstance(jti, str) or not isinstance(rapport, dict):
             return _feilsvar("request_feilformet", rid)
 
-        # Innløs kapabiliteten — KUN for den holdende modulen (auth.rolle).
+        # Innløs kapabiliteten — KUN for den holdende DEPLOYMENTEN.
+        #
+        # Codex P1: `auth.rolle` er modulens id, ikke deploymentens. En modul
+        # kan ha flere levende deployments samtidig (staging og produksjon,
+        # eller to releaser under hver sin kontraktversjon), hver med sitt
+        # eget modultoken — og unntaket over slipper dem alle forbi
+        # scope-porten. Uten miljø og release i innløsningen kunne en
+        # staging-arbeider som fikk en jti utstedt til produksjons-
+        # deploymenten levere rapporten, og API-et ville ført evidensen på
+        # den releasen kapabiliteten bar: en attestering fra en deployment
+        # som ikke autentiserte requesten. Med et legacy-api-token finnes
+        # ingen autentisert deployment — NULL matcher da kun kapabiliteter
+        # som selv er miljøløse (fail-closed begge veier).
+        #
+        # Codex P1, neste runde: og identiteten er ikke NOK — den er en
+        # PÅSTAND fra en pre-auth-transaksjon som er lukket. Et nødstopp
+        # som committet etterpå drepte tokenet, men `auth` husker det ikke.
+        # Revalideringen står derfor før innløsningen, som på
+        # kvitteringsveien.
+        revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+        if revalidering is not None:
+            return revalidering
+        d_miljo = getattr(auth, "miljo", None)
+        d_release = getattr(auth, "release_id", None)
         bind = conn.execute(
             "SELECT tenant, oppdrag_id, release_id, kontraktversjon,"
             " kontrakt_hash, module_epoch, artefakttype"
-            "  FROM innlos_artefaktkapabilitet(%s, %s)",
-            (jti, auth.rolle)).fetchone()
+            "  FROM innlos_artefaktkapabilitet(%s, %s, %s, %s)",
+            (jti, auth.rolle, d_miljo, d_release)).fetchone()
         if bind is None:
             conn.rollback()
             tjeneste.logg.hendelse("kapabilitet_ugyldig", rid)
@@ -2095,6 +4395,27 @@ def _artefakt_upload(tjeneste: Tjeneste, request: Request) -> Response:
 
         # Tenant fra kapabiliteten. Server-beregnet JCS-hash + størrelse.
         sett_kontekst(conn, tenant, auth.aktor, rid)
+
+        # PR-014c §8 pkt. 1: SKJEMAVALIDERING FØR KRYPTERING. Kapabiliteten
+        # bærer artefakttypen; typen binder en skjema_hash; hashen slår opp
+        # skjemaet. Ingen skjemarad → avvist (innhold ingen kan validere
+        # tas ikke imot); brudd → avvist, med detaljene i sikkerhetsloggen
+        # og aldri i svaret (rapportinnhold kan bære persondata).
+        skjema = artefaktskjema.hent_skjema(conn, artefakttype)
+        if skjema is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefaktskjema_mangler", rid, tenant,
+                                   art="drift", artefakttype=artefakttype)
+            return _feilsvar("artefaktskjema_mangler", rid)
+        skjemafeil = artefaktskjema.valider(skjema, rapport)
+        if skjemafeil:
+            conn.rollback()
+            tjeneste.logg.hendelse("artefakt_skjemabrudd", rid, tenant,
+                                   art="sikkerhet", artefakttype=artefakttype,
+                                   antall=len(skjemafeil),
+                                   forste=skjemafeil[0][:160])
+            return _feilsvar("artefakt_skjemabrudd", rid)
+
         try:
             kanon = jcs.kanoniske_bytes(rapport)
         except (jcs.Ikkekanoniserbar, UnicodeEncodeError, RecursionError):
@@ -2236,17 +4557,22 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
             "SELECT r.policy_id, u.handling FROM revisjonslogg r JOIN unntak u"
             "   ON u.tenant=r.tenant AND u.loggpost_id=r.id"
             " WHERE u.tenant=%s AND u.id=%s", (tenant, unntak_id)).fetchone()
-        from policy_validator.engine import les_policyref
-        ref = les_policyref(policy_ref[0]) if policy_ref else None
-        prad = conn.execute(
-            "SELECT innhold FROM policyer WHERE tenant=%s AND policy_id=%s"
-            "   AND aktiv", (tenant, ref[0])).fetchone() if ref else None
+        # Ett oppslag, én definisjon: `hent_aktiv_bak_loggreferanse` tolker
+        # referansen og leser den aktive policyen den navngir — samme vei som
+        # M-37 bruker når en reparasjon planlegges. Se den for hvorfor veien
+        # ikke tar policylåsen mot sletting (Codex P1): unntakets loggrad ER
+        # referansen `slett_ubrukt_policy` teller, og `revisjonslogg` er
+        # append-only, så policyen bak den kan ikke slettes — verken i
+        # vinduet mellom lesingen her og commit, eller noen gang senere.
+        from .policyregister import hent_aktiv_bak_loggreferanse
+        aktiv = hent_aktiv_bak_loggreferanse(
+            conn, tenant, policy_ref[0] if policy_ref else None)
     except psycopg.Error:
         raise
-    if prad is None or not isinstance(prad[0], dict):
+    if aktiv is None:
         conn.rollback()
         return _feilsvar("policy_ukjent", rid)
-    policy = prad[0]
+    policy = aktiv[0]
 
     verifikator = konvolutt["verifikator"]
     betrodd_alle = True
@@ -2270,11 +4596,12 @@ def _ingest_verifikasjon(tjeneste: Tjeneste, conn, auth: Autentisert,
     # handlingen. Taket overstyrer verifikatorens eget `utloper` — en
     # verifikator som setter utløp ett år frem kan ikke selv utvide hvor
     # gammelt et faktum tenanten godtar.
-    # MÅLHANDLINGEN kommer fra saken, ikke fra policyreferansen:
-    # `les_policyref` returnerer (policy_id, VERSJON), ikke handlingen.
-    # Med `ref[1]` sto det «1.0.0» der en handlings-id skulle stå, oppslaget
-    # traff ingenting, og taket var stille fraværende — altså en kontroll
-    # som så ut til å finnes og aldri kunne fyre.
+    # MÅLHANDLINGEN kommer fra unntaket (`u.handling`, altså `policy_ref[1]`),
+    # ikke fra policyreferansen: `les_policyref` leser (policy_id, VERSJON) ut
+    # av den, aldri handlingen. Med referansens andre ledd sto det «1.0.0» der
+    # en handlings-id skulle stå, oppslaget traff ingenting, og taket var
+    # stille fraværende — altså en kontroll som så ut til å finnes og aldri
+    # kunne fyre.
     handling_def = next(
         (h for h in (policy.get("handlinger") or [])
          if isinstance(h, dict) and h.get("id") == policy_ref[1]), {})

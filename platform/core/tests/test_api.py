@@ -23,13 +23,20 @@ from policy_validator import attestering
 
 DSN = os.environ.get("DISPONIT_TEST_DSN")
 MIGRATOR_DSN = os.environ.get("DISPONIT_TEST_MIGRATOR_DSN") or DSN
+#: Senderrollen. De kryss-tenant senderfunksjonene er BARE hennes (Codex P1),
+#: så en test som prøver dem må koble som henne — migratoren arver ingenting
+#: (WITH INHERIT FALSE) og web-runtime skal nektes. CI setter variabelen.
+VARSEL_DSN = os.environ.get("DISPONIT_TEST_VARSEL_DSN")
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 TENANT = "t-api"
 ANNEN_TENANT = "t-api-annen"
 PEPPER = "p" * 40
 KEK = "b" * 64
-NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40}}
+NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40},
+          # 038/aksept: plattformens egen domenekontroll-verifikator —
+          # bestillingsveien signerer domenekontroll_verifisert med den.
+          "v_domenekontroll": {"k1": "d" * 40}}
 #: MAC-signeringsregister for menneskelige godkjenningskonvolutter (PR-012):
 #: nøyaktig én `signerer`, hemmelighet >= 32 tegn.
 MAC_NOKLER = {"mk1": {"rolle": "signerer", "hemmelighet": "m" * 40}}
@@ -58,14 +65,42 @@ APPEND_ONLY_TRIGGERE = (
     # Uten dette feiler oppryddingen på FK-en fra `policy_hode` til `policyer`.
     ("policy_hode", "hode_ingen_sletting"),
     ("unntak_historikk", "historikk_ingen_endring"),
+    # 038: idempotenslageret er immutabelt også mot DELETE — i drift er det
+    # poenget; i testryddingen må trigger av for at tenant-radene skal ut.
+    ("bestilling_idempotens", "bestilling_idempotens_immutable"),
     ("unntak", "unntak_ingen_delete"),
     ("unntak", "unntak_historikkforing"),
     ("revisjonslogg", "revisjonslogg_ingen_endring"),
+    # 068: revisjonshendelsen er append-only på samme form (rad OG
+    # statement), og nekter dermed DELETE. Bare RADtriggeren skrus av —
+    # `revisjonshendelse_ingen_truncate` fyrer på TRUNCATE, som
+    # oppryddingen aldri gjør, og en sperre som ikke er i veien skal
+    # heller ikke avvæpnes. Uten linja her velter `_rydd` på
+    # `avvis_endring` i det første testen committer en hendelse.
+    ("revisjonshendelse", "revisjonshendelse_append_only"),
     ("tenant_nokler", "tenant_nokler_ingen_delete"),
     # PR-006: outbox-tabellene er append+status som `unntak`, og de har
     # samme DELETE-sperre. Uten dem her feiler oppryddingen — noe som i seg
     # selv er en bekreftelse på at sperrene virker.
     ("oppdrag", "oppdrag_ingen_delete"),
+    # 056: kjeden er append-only mot både UPDATE og DELETE.
+    ("utsendingsliste", "utsendingsliste_append_only"),
+    ("utsendingssignatur", "utsendingssignatur_append_only"),
+    ("utsendingsfrigivelse", "utsendingsfrigivelse_append_only"),
+    # 057: kandidatlagrene reapes (payload til NULL), men rader slettes
+    # aldri — så også de må skrus av for at oppryddingen skal komme til.
+    ("rekrutteringsprosess", "rekrutteringsprosess_vakt"),
+    ("kandidat_originaldokument", "kandidat_originaldokument_vakt"),
+    ("kandidat_parsettekst", "kandidat_parsettekst_vakt"),
+    ("kandidat_evalueringsartefakt", "kandidat_evalueringsartefakt_vakt"),
+    ("kandidat_intervjusporsmal", "kandidat_intervjusporsmal_vakt"),
+    ("kandidat_utsendingsdata", "kandidat_utsendingsdata_vakt"),
+    ("kandidat_avmaskering", "kandidat_avmaskering_vakt"),
+    # 058: inndata-artefaktet nekter DELETE på samme måte (vakten avviser
+    # alt som ikke er UPDATE). Uten linjen her velter oppryddingen på
+    # DELETE av `oppdrag`/`tenant_nokler`, som tabellen har FK til — den
+    # nøyaktige nabo-regresjonen 057-lagrene over ble registrert for.
+    ("inndata_artefakt", "inndata_artefakt_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -78,6 +113,23 @@ APPEND_ONLY_TRIGGERE = (
     ("domenekontroll_hendelse", "hendelse_append_only"),
     ("artefaktkapabilitet", "artefaktkapabilitet_ingen_delete"),
     ("artefakt", "artefakt_ingen_delete"),
+    # 043 §7: oppløsningsveien krever nå en attestert avvisning, så
+    # M-37-suitens nei-porter legger igjen en `menneskelig_attestasjon`-rad
+    # med FK til `unntak`. Tabellen er append-only — som den skal være — så
+    # ryddingen må skru vakten av, akkurat som for de andre.
+    ("menneskelig_attestasjon", "attestasjon_ingen_endring"),
+    # 044: hele planfamilien nekter DELETE — evidensen (tick), sporet
+    # (hendelse), perioden, vinduet og planen selv. Sto de ikke her, ble
+    # planradene ALDRI ryddet, mens `oppdrag` og `artefakt` under ble det:
+    # en plan med tre `tillat`-tick overlevde inn i neste test som
+    # kandidat for `gjentatt_uten_resultat`, fordi resultatene bak
+    # tickene var slettet. Sveipene leser på tvers av tenanter, så den
+    # ene planen forgiftet hver eneste senere sveipeassert i suiten.
+    ("bestillingsplan_tick", "tick_ingen_update"),
+    ("bestillingsplan_hendelse", "hendelse_ingen_update"),
+    ("bestillingsplan_aktiv_periode", "periode_ingen_delete"),
+    ("bestillingsplan_vindu", "vindu_ingen_delete"),
+    ("bestillingsplan", "plan_ingen_delete"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -95,11 +147,58 @@ APPEND_ONLY_TRIGGERE = (
 #: PR-007-tabellene FØRST: `verifikasjonsgenerasjon` og
 #: `verifikasjonsbevis` har fremmednøkler til `unntak`, og generasjonen
 #: peker i tillegg på beviset.
-RYDDETABELLER = ("artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
+#: 044-familien står FØRST og i sin egen fremmednøkkelrekkefølge (tick →
+#: vindu → hendelse/periode → plan). Den peker ikke ut av seg selv:
+#: `bestillingsplan_tick.oppdrag_id` er med vilje UTEN fremmednøkkel, for
+#: evidensen skal overleve oppdraget. Nettopp derfor må den ryddes — et
+#: tick uten sitt oppdrag er en plan uten resultat, og sveipene ville
+#: felt en pausedom på det.
+RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
+                 "bestillingsplan_hendelse",
+                 "bestillingsplan_aktiv_periode", "bestillingsplan",
+                 "artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST
                  "verifikasjonskonflikt", "verifikasjonsgenerasjon",
                  "verifikasjonsbevis",
-                 "oppdrag", "reparasjonsoperasjoner", "unntak_historikk",
-                 "unntak", "revisjonslogg", "attestasjon_jti", "idempotens",
+                 # 038: FK-ene danner en SIRKEL — unntak.oppdrag_id →
+                 # oppdrag, oppdrag.unntak_id → unntak, oppdrag.repair_
+                 # operation_id → reparasjonsoperasjoner → unntak. Én flat
+                 # rekkefølge finnes likevel, fordi de to unntak-familiene
+                 # aldri blandes (port 27: en oppdragssak står ALDRI i
+                 # oppdrag.unntak_id, og reparasjonsoperasjoner peker aldri
+                 # på en oppdragssak): oppdragssakene slettes i forsteget i
+                 # `_rydd` FØR oppdragene, resten av unntakene til slutt.
+                 # 043 §7: attestasjonen peker på `unntak` og må ut FØR
+                 # forsteget i `_rydd` (som sletter oppdragssakene før
+                 # oppdragene) — ellers blokkerer et attestert nei
+                 # slettingen av saken det ble gitt på.
+                 "menneskelig_attestasjon",
+                 "bestilling_idempotens", "unntak_historikk",
+                 # 056: utsendingskjeden peker på oppdrag (og innbyrdes
+                 # frigivelse→signatur→liste) — ut i avhengighetsrekkefølge
+                 # FØR oppdragene.
+                 "utsendingsfrigivelse", "utsendingssignatur",
+                 "utsendingsliste",
+                 # 057: kandidatlagrene peker på prosessen (og parset
+                 # tekst på originaldokumentet), prosessen på oppdraget —
+                 # barna først, ankeret sist, alt FØR oppdragene.
+                 "kandidat_parsettekst", "kandidat_originaldokument",
+                 "kandidat_evalueringsartefakt", "kandidat_intervjusporsmal",
+                 "kandidat_utsendingsdata", "kandidat_avmaskering",
+                 "rekrutteringsprosess",
+                 # 058: inndata-artefaktet peker på BÅDE `oppdrag`
+                 # (bindingen) og `tenant_nokler` (DEK-referansen), så det
+                 # må ut før begge.
+                 "inndata_artefakt",
+                 "oppdrag", "reparasjonsoperasjoner", "unntak",
+                 # 068: revisjonshendelsen peker BARE ut av tenanten —
+                 # `bruker_id` har FK til den GLOBALE `brukeridentitet`
+                 # (056-formen for `signatar`), og den tabellen ryddes
+                 # ikke herfra. Tenanten er en TEXT-kolonne, ikke en FK.
+                 # Plassen er derfor fri: den står ved siden av
+                 # `revisjonslogg` fordi den hører til samme familie,
+                 # ikke fordi rekkefølgen krever det.
+                 "revisjonslogg", "revisjonshendelse",
+                 "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
                  "policy_hode", "policyer", "tenant_nokler",
                  "frekvens_hendelser",
@@ -136,11 +235,37 @@ def _rydd(migrator, *tenanter: str) -> None:
     _rydd_kapabiliteter(migrator, tenanter)
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
-    for tenant in tenanter:
+    # 041: overtakelsessaker bor på PLATTFORMTENANTEN og PEKER (kompositt-FK
+    # med ON DELETE RESTRICT) på kundetenantenes domenekontroll_hendelse.
+    # Plattformtenanten må derfor ryddes FØRST — ellers blokkerer saken
+    # slettingen av hendelsene den refererer.
+    for tenant in ("__plattform_domener", *tenanter):
         migrator.execute(
             "SELECT set_config('disponit.tenant',%s,true),"
             "       set_config('disponit.aktor','test',true)", (tenant,))
         for tabell in RYDDETABELLER:
+            if tabell == "utsendingsfrigivelse":
+                # 056: ATS-oppdragene PEKER på frigivelsene og må ut
+                # først — mens listene peker på EVAL-oppdragene, som
+                # ryddes med resten av `oppdrag` etter kjeden.
+                #
+                # ... og fra 056 §9 kan et ATS-oppdrag BÆRE EN SAK (sen
+                # kvittering / sikkerhetskonflikt utleder nå en
+                # revisjonslinje gjennom frigivelse→liste→evaluering, der
+                # den før døde på `loggpost_id NOT NULL`). Forsteget som
+                # står ved `oppdrag` under gjelder derfor allerede her:
+                # sakene ut FØR oppdragene de peker på.
+                migrator.execute(
+                    "DELETE FROM unntak WHERE tenant=%s AND oppdrag_id IN"
+                    " (SELECT id FROM oppdrag WHERE tenant=%s"
+                    "   AND frigivelse_id IS NOT NULL)", (tenant, tenant))
+                migrator.execute("DELETE FROM oppdrag WHERE tenant=%s"
+                                 " AND frigivelse_id IS NOT NULL", (tenant,))
+            if tabell == "oppdrag":
+                # Forsteget fra kommentaren over RYDDETABELLER: sakene som
+                # PEKER på oppdrag må ut før oppdragene de peker på.
+                migrator.execute("DELETE FROM unntak WHERE tenant=%s"
+                                 " AND oppdrag_id IS NOT NULL", (tenant,))
             migrator.execute(f"DELETE FROM {tabell} WHERE tenant=%s", (tenant,))
     migrator.execute("DELETE FROM api_tokener WHERE tenant = ANY(%s)",
                      (list(tenanter),))
@@ -976,3 +1101,23 @@ def test_flere_aktive_policyer_er_sanitert_500(klient, migrator, malpolicy):
     kropp = r.json()
     assert kropp["feil"] == "intern_feil" and "request_id" in kropp
     assert "p-a" not in r.text and "p-b" not in r.text
+
+    # ...men den tilstanden er NØYAKTIG feilen «angre en feilopprettet policy»
+    # finnes for, og uten en vei til å SE begge var slettehandlingen på flaten
+    # utilgjengelig i det ene tilfellet den er skrevet for (Codex P2).
+    # `/v1/policy/aktive` enumererer, den velger fortsatt ingen: fail-closed
+    # står, men blindveien er borte.
+    r = klient.get("/v1/policy/aktive",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert [p["policy_id"] for p in r.json()["policyer"]] == ["p-a", "p-b"]
+
+
+@pg
+def test_aktive_policyer_krever_policy_read(klient, migrator, malpolicy):
+    """Lista er et LESEENDEPUNKT som alle andre: den henger på `policy:read`,
+    ikke på at kalleren tilfeldigvis skal slette noe."""
+    tok, _ = _lag_token(migrator, TENANT, "bruker", ["decisions:read"])
+    r = klient.get("/v1/policy/aktive",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 403 and r.json()["feil"] == "scope_mangler"

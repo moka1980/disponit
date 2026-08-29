@@ -239,6 +239,62 @@ def test_registrer_oppdragstype_global_og_prefiks_overlapp():
 
 
 @pg
+def test_registrer_oppdragstype_er_no_op_pa_identisk_innhold():
+    # Codex P1, runde 16 på #91 (migrasjon 040). En IDENTISK streng
+    # tilfredsstiller BEGGE `starts_with`-leddene i overlappssjekken, så
+    # funksjonen meldte at raden «overlapper» seg selv: andre registrering
+    # av samme type, samme eier og samme kontrakt-hash ble en
+    # `unique_violation`. Det brøt familiekontrakten `installer_modul`,
+    # `registrer_kontrakt`, `registrer_release` og `registrer_artefakttype`
+    # (036) alle holder — og felte `fase2` i staging-sjekklista på andre
+    # kjøring, før gjenåpningen etter nødstopp i det hele tatt ble forsøkt.
+    tok = secrets.token_hex(4)
+    ot = f"kontroll{tok}.wcag.nettsted"
+    # Alle kontraktradene skrives som MIGRATOR: `_admin()`-forbindelsen er
+    # `disponit_modules_admin`, som med vilje ikke har bordtilgang — bare
+    # EXECUTE på overgangsfunksjonene.
+    c = _c(); m = _mid(); kh = _kontrakt(c, m)
+    m2 = _mid(); kh2 = _kontrakt(c, m2)          # annen eier, egen kontrakt
+    kh3 = _kontrakt(c, m, ver=2)                 # samme eier, annen hash
+    c.commit(); c.close()
+    a = _admin()
+    try:
+        a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                  (ot, m, kh)); a.commit()
+        # IDENTISK innhold → no-op, ikke feil. Kjøres to ganger til: det er
+        # nøyaktig gjentakelsen sjekklista gjør ved hver rerun.
+        for _ in range(2):
+            a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                      (ot, m, kh)); a.commit()
+        # ANNEN eier på samme type er fortsatt hard feil — raden er
+        # immutabel, og global entydighet finnes for nettopp den konflikten.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            a.execute("SELECT registrer_oppdragstype(%s,%s,1,%s,'sys')",
+                      (ot, m2, kh2))
+        a.rollback()
+        # ANNEN kontrakt-hash, samme eier: også avvist. En no-op her ville
+        # meldt at bindingen var anvendt uten at den var det.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            a.execute("SELECT registrer_oppdragstype(%s,%s,2,%s,'sys')",
+                      (ot, m, kh3))
+        a.rollback()
+    finally:
+        a.close()
+    # Ingen revisjonsrad for et arbeid som ikke ble gjort: de to no-op-ene
+    # skal ikke ha lagt igjen hendelser, like lite som `registrer_kontrakt`
+    # gjør på sin idempotente vei.
+    c = _c()
+    try:
+        n = c.execute(
+            "SELECT count(*) FROM modulregister_hendelse WHERE"
+            " hendelse='oppdragstype_registrert' AND detalj->>'oppdragstype'=%s",
+            (ot,)).fetchone()[0]
+        assert n == 1, f"forventet én hendelse for {ot}, fikk {n}"
+    finally:
+        c.rollback(); c.close()
+
+
+@pg
 def test_sett_modulstatus_statemaskin_og_aktiv_krever_claiming():
     # Codex-port 13: 'aktiv' uten claiming-deployment avvises av funksjonen.
     c = _c(); m = _mid(); kh = _kontrakt(c, m); _release(c, m, "r1", 1, kh)

@@ -57,7 +57,19 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     forespørselen er kun et navn innenfor den tenanten — den kan aldri peke
     ut en annen tenants policy, verken via spørringen eller via RLS.
     Krever at kalleren har satt `disponit.tenant` (db.pg.sett_kontekst).
+
+    Låsen FØRST, og delt (Codex P1). Uten den kunne `slett_ubrukt_policy`
+    (032) kile seg inn i dette vinduet: beslutningen leser policyen her,
+    slettingen ser en revisjonslogg uten spor av den, sletter — og så
+    committer beslutningen revisjonsraden sin, som nå peker på en policy som
+    ikke finnes. `FOR UPDATE` på `policy_hode` inne i slettefunksjonen stengte
+    ikke det vinduet, for denne veien rører aldri `policy_hode`. Den delte
+    låsen holder til kallerens transaksjon committer, altså til revisjonsraden
+    STÅR — og slettingens eksklusive lås på samme nøkkel venter på nettopp det.
+    Delte låser blokkerer ikke hverandre, så beslutninger går som før.
     """
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT innhold, innholds_hash, status, versjon FROM policyer"
         " WHERE tenant=%s AND policy_id=%s AND aktiv",
@@ -114,6 +126,51 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
     return innhold, lagret_hash
 
 
+def hent_aktiv_bak_loggreferanse(
+        conn: psycopg.Connection, tenant: str,
+        loggreferanse: object) -> tuple[dict, str] | None:
+    """Den AKTIVE policyen som en revisjonsreferanse navngir, ellers None.
+
+    `loggreferanse` er en `revisjonslogg.policy_id`-verdi — `pid@versjon/
+    handling` — lest ut av en COMMITTET loggrad for SAMME tenant. Det er
+    ikke en formalitet, det er hele sikkerheten i funksjonen, og derfor er
+    det den eneste inngangen: de to kallerne (`m37.arbeider._aktiv_policy`
+    når en reparasjon planlegges, og `api.app._ingest_verifikasjon` når
+    aktiv autoritet måles før bevis godtas) leser loggraden og sender
+    verdien hit uten å ha en policy-id å gi.
+
+    HVORFOR INGEN `laas_policy_delt` HER (Codex P1). Låsen i `hent_aktiv` og
+    `policyadmin._hode_aktiv_versjon` finnes for lesere som ennå IKKE har et
+    spor: beslutningen har ikke skrevet revisjonsraden sin, runde-åpningen
+    har ikke satt inn runden. De må holde slettingen ute til referansen
+    STÅR. Her står den allerede — og den er nettopp den raden
+    `slett_ubrukt_policy` (032) teller når den avgjør «aldri brukt»
+    (`policy_id LIKE pid || '@%'`). En policy som er navngitt av en loggrad
+    er derfor allerede uslettelig, og permanent: `revisjonslogg` er
+    append-only (001, `revisjonslogg_er_append_only` avviser UPDATE, DELETE
+    og TRUNCATE), så referansen kan ikke fjernes igjen.
+
+    Låsen ville heller ikke løst noe for en leser UTEN et spor: den utsetter
+    slettingen til leseren committer, men leseren etterlater ingenting
+    slettingen kan se — policyen ville blitt slettet like etterpå, med
+    autorisasjonen like foreldet. Vernet er referansen; låsen er bare måten
+    en referanse som er UNDERVEIS rekker frem. Skulle en fremtidig kaller
+    trenge den aktive policyen uten å ha en loggreferanse, er den derfor
+    ikke en kaller av denne funksjonen — den må ha sitt eget vern.
+    """
+    from policy_validator.engine import les_policyref
+    ref = les_policyref(loggreferanse)
+    if ref is None:
+        return None                # ingen verifiserbar policyidentitet
+    rad = conn.execute(
+        "SELECT innhold, innholds_hash FROM policyer"
+        " WHERE tenant=%s AND policy_id=%s AND aktiv",
+        (tenant, ref[0])).fetchone()
+    if rad is None or not isinstance(rad[0], dict):
+        return None
+    return rad[0], rad[1]
+
+
 def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
               status: str, aktiver: bool = True) -> str:
     """Legger inn en policyversjon, eventuelt som den aktive. -> innholds_hash.
@@ -148,10 +205,96 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
             [f"meta.status '{meta.get('status')}' != oppgitt status '{status}'"],
             policy)
     pid, versjon, h = meta["policy_id"], meta["versjon"], innholds_hash(policy)
+    # Samme per-policy-lås som husets øvrige skrivere (Codex P2 på #73): en
+    # `registrer(..., aktiver=False)` hvis INSERT ennå ikke var committet da
+    # slettingens DELETE tok sitt snapshot, ville overlevd slettingen —
+    # endepunktet melder suksess mens en versjon står igjen og okkuperer
+    # nummeret sitt. Delt lås venter på sletterens eksklusive, og omvendt.
+    from db.pg import laas_policy_delt
+    laas_policy_delt(conn, tenant, pid)
     if aktiver:
+        # BOOTSTRAP, ikke aktivering (047, Codex P2). Denne veien har ingen
+        # runde, ingen attestasjoner og ingen hendelse — den er til for den
+        # FØRSTE policyen en tenant får (`init-tenant.sh`), før det finnes
+        # noe å ha fire øyne på. Etter 047 er det derfor to ting den må
+        # gjøre eksplisitt:
+        #
+        # 1. Si hva den er. `aktivert_av_operasjon` må være NULL — det
+        #    finnes ingen hendelse å peke på — men NULL alene betydde
+        #    «ubundet historisk versjon», altså en rad fra før lineagen
+        #    fantes. En bootstrap skrevet i dag er ikke det, og historikken
+        #    kunne ikke se forskjell. `aktiveringskilde='bootstrap'` sier
+        #    det raden faktisk er.
+        #
+        # 2. Aldri gå FORBI en styrt aktivering. Har policyen ENGANG vært
+        #    aktivert gjennom fire-øyne-veien, er serien inne i lineagen,
+        #    og en oppsettskjøring som setter inn sin egen hendelsesløse
+        #    rad ville tatt den ut igjen uten at noe sa fra — nøyaktig den
+        #    omgåingen 047 er til for å hindre. Da er svaret at aktivering
+        #    er en styrt handling, ikke en registrering.
+        #
+        # PRØVEN MÅLER HENDELSEN, IKKE DEN AKTIVE RADEN (Codex P1). En
+        # tidligere utgave spurte `policyer` om den NÅVÆRENDE aktive raden
+        # bar `aktivert_av_operasjon`. Det er en tilstand som kan forsvinne:
+        # `slett_ubrukt_policy` (032) sletter en ubrukt versjon — også en
+        # styrt aktivert en — mens `policyaktivering` er immutabel og blir
+        # stående. Etter en slik sletting fant prøven ingen aktiv styrt rad,
+        # og oppsettsveien åpnet seg igjen for en serie som for lengst har
+        # gått inn i lineagen: en oppsettskjøring kunne gjenskape samme
+        # policy/versjon som bootstrap, historikken ville vist den som
+        # bootstrap, og den forrige aktiveringshendelsen ville ligget
+        # frakoblet ved siden av. Døren stenges av det som ikke kan slettes.
+        #
+        # ANKERRADEN LÅSES FØRST (Codex P1). Den delte advisory-låsen over
+        # serialiserer denne veien mot SLETTINGEN, som tar den eksklusive
+        # varianten — men ikke mot `aktiver_policy`, som ikke tar den i det
+        # hele tatt. Autoriteten den styrte veien serialiserer på er
+        # `policy_hode`-raden (steg 4 i 022/047: `SELECT aktiv_versjon ...
+        # FOR UPDATE`), og uten den her kunne en aktivering committe mellom
+        # prøven under og `UPDATE policyer SET aktiv=false` rett etter.
+        # Bootstrapen ville da deaktivert en nettopp styrt aktivert versjon
+        # og satt inn sin egen hendelsesløse rad — nøyaktig omgåingen
+        # prøven finnes for, bare gjennom et vindu i stedet for en dør.
+        #
+        # Radlåsen er tilgjengelig HER, i motsetning til i
+        # forespørselsveien `laas_policy_delt` er skrevet for: `registrer`
+        # er en administrativ operasjon som uansett skriver `policy_hode`
+        # lenger nede, altså har UPDATE på tabellen. Ankerraden opprettes
+        # om den mangler, med samme `ON CONFLICT DO NOTHING` som
+        # aktiveringen bruker — låsen skal tas på en rad som finnes.
+        conn.execute(
+            "INSERT INTO policy_hode (tenant, policy_id) VALUES (%s,%s)"
+            " ON CONFLICT (tenant, policy_id) DO NOTHING", (tenant, pid))
+        conn.execute(
+            "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s"
+            " AND policy_id=%s FOR UPDATE", (tenant, pid))
+        # Egen setning ETTER låsen: under READ COMMITTED tar den et ferskt
+        # snapshot, så en aktivering som committet mens vi ventet på låsen
+        # ER synlig her. `policyaktivering` leses direkte: `registrer` er
+        # oppsettsveien og kjører på migratorforbindelsen (se docstringen),
+        # og tenantporten står — `sett_tenant` øverst satte GUC-en RLS-
+        # policyen på tabellen måler mot.
+        styrt = conn.execute(
+            "SELECT versjon, decision_operation_id FROM policyaktivering"
+            " WHERE tenant=%s AND policy_id=%s"
+            " ORDER BY aktivert_ts DESC, decision_operation_id DESC LIMIT 1",
+            (tenant, pid)).fetchone()
+        if styrt is not None:
+            raise PolicyKorrupt(
+                [f"kan ikke registrere versjon {versjon} som aktiv:"
+                 f" {pid} er aktivert gjennom fire-øyne-veien"
+                 f" ({pid}@{styrt[0]}, operasjon {styrt[1]}). En ny versjon"
+                 " må aktiveres samme vei (policyadmin), ikke gjennom"
+                 " oppsettsregistreringen"], policy)
+        # MÅLVERSJONEN HOLDES UTENFOR (Codex P2). «Deaktiver den forrige»
+        # gjelder de ANDRE versjonene; å slå av flagget på den raden vi er i
+        # ferd med å slå det på igjen er ingen overgang. Det var heller ikke
+        # gratis: upserten under avgjør aktiveringstidspunktet ved å se på
+        # om raden ALT var aktiv, og en re-registrering av den aktive
+        # versjonen hadde da alltid nullstilt den prøven selv.
         conn.execute("UPDATE policyer SET aktiv=false"
-                     " WHERE tenant=%s AND policy_id=%s AND aktiv",
-                     (tenant, pid))
+                     " WHERE tenant=%s AND policy_id=%s AND aktiv"
+                     " AND versjon<>%s", (tenant, pid, versjon))
     else:
         # `aktiver=False` på DEN VERSJONEN SOM ER AKTIV er ikke en
         # registrering — det er en avvikling, og den skal ikke skje som
@@ -178,13 +321,136 @@ def registrer(conn: psycopg.Connection, tenant: str, policy: dict,
                 [f"kan ikke registrere versjon {versjon} med aktiver=False:"
                  " den er den gjeldende aktive versjonen — avvikling er en"
                  " egen, styrt handling"], policy)
+    # En versjon som ER en styrt aktivering kan ikke skrives om herfra —
+    # heller ikke som inaktiv historikk. `innholds_hash` inngår i FK-en mot
+    # hendelsen, og attestantene signerte NØYAKTIG det innholdet; en upsert
+    # som byttet det ville enten brutt FK-en ved commit (med en feilmelding
+    # ingen kan lese) eller flyttet attestasjonen over på et annet dokument.
+    bundet = conn.execute(
+        "SELECT aktivert_av_operasjon FROM policyer WHERE tenant=%s"
+        " AND policy_id=%s AND versjon=%s AND aktivert_av_operasjon IS NOT"
+        " NULL", (tenant, pid, versjon)).fetchone()
+    if bundet is not None:
+        raise PolicyKorrupt(
+            [f"kan ikke registrere versjon {versjon} på nytt: den ble"
+             f" aktivert gjennom fire-øyne-veien (operasjon {bundet[0]}),"
+             " og innholdet er bundet til attestasjonene"], policy)
+    # ET INNHOLD SOM HAR VÆRT I KRAFT KAN IKKE BYTTES UT (Codex P2).
+    #
+    # Upserten under skriver `innholds_hash` og `innhold` ubetinget. En
+    # oppsettskjøring med REDIGERT innhold på en versjon som alt har vært
+    # aktiv skrev derfor om selve dokumentet der det står, mens raden
+    # beholdt aktiveringstidspunktet og opphavet sitt: historikken
+    # fortsatte å påstå at DETTE innholdet var i kraft fra den gang, uten
+    # at noen aktivering hadde skjedd. Det som faktisk var i kraft, fantes
+    # da ikke lenger noe sted — versjonsnummeret er `policyer`s eneste
+    # nøkkel til fortiden, og en rullbakk-binding til generasjonen ble
+    # ugyldig i samme slengen.
+    #
+    # Gjelder også en versjon som IKKE er aktiv lenger: at den er avløst
+    # gjør ikke fortiden hennes friere. En rad som aldri har vært i kraft
+    # (`registrer(..., aktiver=False)`, merket bootstrap uten tidspunkt) er
+    # derimot fortsatt et arbeidsstykke og kan redigeres — det er nettopp
+    # den veien som finnes for å legge inn en versjon før den tas i bruk.
+    #
+    # IDENTISK re-kjøring er urørt: prøven er innholdet, ikke kallet.
+    # `init-tenant.sh` skal kunne kjøres om igjen.
+    #
+    # «Har vært i kraft» er ETT spørsmål med ETT svar (047, Codex P2):
+    # prøven bor i `policyversjon_i_kraft`, delt med historikkens
+    # `aktivert`-kolonne, dens sortering og rullbakkens kildeport. Skrevet
+    # ut her igjen kunne den drive fra dem — og da ville denne vakten og
+    # flaten kunne mene ulike ting om samme rad.
+    var_i_kraft = conn.execute(
+        "SELECT innholds_hash FROM policyer WHERE tenant=%s AND policy_id=%s"
+        " AND versjon=%s AND policyversjon_i_kraft(aktiv,"
+        "     bootstrap_aktivert_ts, aktiveringskilde)",
+        (tenant, pid, versjon)).fetchone()
+    if var_i_kraft is not None and var_i_kraft[0] != h:
+        raise PolicyKorrupt(
+            [f"kan ikke registrere versjon {versjon} med nytt innhold: den"
+             " har vært i kraft, og innholdet som var det kan ikke byttes"
+             f" ut i ettertid (lagret {var_i_kraft[0][:12]}…, nytt"
+             f" {h[:12]}…). Registrer en ny versjon i stedet"], policy)
+    # `aktiveringskilde='bootstrap'` merker VEIEN INN, ikke bare
+    # aktiveringen: raden kom gjennom oppsettsregistreringen, med eller uten
+    # flagget. Uten merket var den ikke til å skille fra en rad som lå der
+    # da 047 landet (047, Codex P2).
+    #
+    # AKTIVERINGSTIDSPUNKTET skrives her (047, Codex P2). Bootstrapen har
+    # ingen hendelse å hente det fra, og `opprettet` er ikke svaret: den
+    # står for REGISTRERINGEN, og upserten under aktiverer i mange tilfeller
+    # en rad som ble lagt inn med `aktiver=False` for lenge siden. Uten et
+    # eget tidspunkt sorterte historikken den nyaktiverte versjonen på et
+    # gammelt merke. `now()` er transaksjonens starttid, samme klokke som
+    # `policyaktivering.aktivert_ts` bruker.
+    #
+    # `aktiver=False` LAR merket stå: en avaktivering fjerner ikke at raden
+    # en gang ble aktivert, og denne veien kan uansett ikke avvikle den
+    # gjeldende aktive versjonen (porten over).
+    #
+    # MERKET SETTES BARE VED EN FAKTISK OVERGANG (Codex P2). Funksjonen er
+    # med vilje en upsert: en administrativ re-kjøring av samme
+    # registrering skal være ufarlig. Skrev vi `now()` på hver
+    # `aktiver=True`, var den ikke det — en re-registrering av den ALT
+    # aktive versjonen ga den et ferskt aktiveringstidspunkt, uten at noen
+    # versjonsovergang hadde skjedd. Historikken sorterer på nettopp dette
+    # merket, så raden hoppet til topps og snudde diffens default-retning,
+    # og «sist aktivert» sa når noen sist kjørte oppsettet i stedet for når
+    # policyen faktisk ble tatt i bruk. `policyer.aktiv` er tilstanden FØR
+    # upserten (og målversjonen ble holdt utenfor deaktiveringen over,
+    # nettopp så den prøven er sann), altså: bare en rad som IKKE var aktiv
+    # blir «nå aktivert».
+    #
+    # OPPHAVET FØLGER SAMME PRØVE (Codex P2). Merket og tidspunktet er to
+    # halvdeler av én påstand om aktiveringen, og de må derfor avgjøres av
+    # den SAMME prøven. Skrev vi `'bootstrap'` ubetinget, sto en aktiv rad
+    # backfillen ikke klarte å binde — merket `'historisk'`, altså «vi vet
+    # ikke hvordan denne ble aktivert» — igjen med to uforenlige svar etter
+    # en oppsettskjøring: kilden sa at raden kom inn gjennom oppsettet,
+    # mens tidspunktet ble bevart som NULL, siden ingen overgang skjedde,
+    # og historikken derfor fortsatte å falle tilbake på `opprettet`. Det
+    # ukjente opphavet var da borte for godt, byttet mot en påstand ingen
+    # hadde grunnlag for.
+    #
+    # En rad som ALT var aktiv beholder derfor kilden sin: aktiveringen
+    # dens skjedde før dette kallet, og det er den upserten ikke rører.
+    # En INAKTIV rad som aktiveres — eller en helt ny rad — er derimot
+    # aktivert nettopp her, og merkes `'bootstrap'` som før.
+    #
+    # SAMME PRØVE BETYR SAMME UTTRYKK (Codex P2). Avsnittet over sier at
+    # merket og tidspunktet må avgjøres av den samme prøven, men de to
+    # CASE-ene sto ikke og målte det samme: tidspunktet spurte om en
+    # OVERGANG (`EXCLUDED.aktiv AND NOT policyer.aktiv`), merket bare om
+    # raden var aktiv fra før. En INAKTIV rad som ble re-registrert med
+    # `aktiver=False` — en ren, identisk oppsettskjøring, der ingen
+    # aktivering skjer — falt derfor i ELSE-grenen og fikk `'bootstrap'`
+    # skrevet over seg. For en avløst `historisk` rad var det nettopp tapet
+    # avsnittet over beskriver, bare gjennom den andre døra: merket var det
+    # ENESTE sporet av at raden en gang var i kraft (tidspunktet er NULL for
+    # alle migrerte rader), så `policyversjon_i_kraft` gikk fra sann til
+    # usann og historikken begynte å påstå at versjonen aldri ble aktivert.
+    # Verre: den samme prøven vokter innholdet lenger oppe, så NESTE
+    # oppsettskjøring kunne skrive om et dokument som HAR vært i kraft.
+    #
+    # Begge halvdelene måler nå overgangen, og bare den.
     conn.execute(
         "INSERT INTO policyer (tenant, policy_id, versjon, innholds_hash,"
-        " status, innhold, aktiv) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+        " status, innhold, aktiv, aktiveringskilde, bootstrap_aktivert_ts)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,'bootstrap',"
+        "         CASE WHEN %s THEN now() END)"
         " ON CONFLICT (tenant, policy_id, versjon) DO UPDATE"
         " SET innholds_hash=EXCLUDED.innholds_hash, status=EXCLUDED.status,"
-        "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv",
-        (tenant, pid, versjon, h, status, json.dumps(policy), aktiver))
+        "     innhold=EXCLUDED.innhold, aktiv=EXCLUDED.aktiv,"
+        "     aktiveringskilde=CASE"
+        "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv"
+        "             THEN EXCLUDED.aktiveringskilde"
+        "         ELSE policyer.aktiveringskilde END,"
+        "     bootstrap_aktivert_ts=CASE"
+        "         WHEN EXCLUDED.aktiv AND NOT policyer.aktiv THEN now()"
+        "         ELSE policyer.bootstrap_aktivert_ts END",
+        (tenant, pid, versjon, h, status, json.dumps(policy), aktiver,
+         aktiver))
     if aktiver:
         # Ankerraden MÅ følge med. Den styrte aktiveringen
         # (`aktiver_policy`) leser `policy_hode.aktiv_versjon`, IKKE

@@ -2,6 +2,7 @@
 // administrasjonsvisningene. Én statuskilde gjør at modulstatus kan oppdateres
 // ett sted når en modul faktisk er ferdig.
 import { t } from "./i18n.js";
+import { KATALOG_ANTALL } from "./katalog.js";
 
 // Kanonisk statuskilde. Alt annet — kort, merker og KPI-er — utleder herfra,
 // så en modul som skifter tilstand oppdateres ETT sted.
@@ -25,9 +26,19 @@ import { t } from "./i18n.js";
 // `i_drift`-liste — ikke i det kunden leser.
 export const MODULSTATUS = {
   1: "klargjort",   // m01_policy: status aktiv, driftstilstand staging
-  2: "bygges",      // m02_revisjonslogg: under_utvikling, ikke_i_drift
+  2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
+                    // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
+                    // m02-aksept-v1, alle punkter bundet)
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
+  // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
+  // flippedrillen 22/8, aksepthendelsen i basen) og flippet SAMMEN med
+  // m02 — konsistensregelen som holdt den igjen er nå oppfylt begge
+  // veier. Manifestet (denne flatens eneste kilde) sier
+  // aktiv/produksjon.
+  56: "i_drift",
+  57: "bygges",     // m57_ats: under_utvikling, ikke_i_drift — flippes
+                    // av M-57-aksepten, aldri av en byggemilepæl
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens
@@ -58,6 +69,18 @@ const MODULER = [
     navn_nokkel: "site.modul.m38.navn",
     fase_nokkel: "site.fase.fundament",
     tekst_nokkel: "site.modul.m38.tekst",
+  },
+  {
+    id: 56,
+    navn_nokkel: "site.modul.m56.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m56.tekst",
+  },
+  {
+    id: 57,
+    navn_nokkel: "site.modul.m57.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m57.tekst",
   },
 ];
 
@@ -100,28 +123,40 @@ export const KUNDEROLLER = [
   },
 ];
 
+// Fasestatusen sto som en EGEN skrevet verdi ved siden av `MODULSTATUS`
+// (Codex P2 på #152): M-56 ble `i_drift` i flippet, mens fasen modulen
+// ligger i fortsatt rendret «Planlagt» på den SAMME adminsiden som viste
+// kortet «I drift». Det er dobbeltautoriteten toppen av denne fila sier at
+// kort, merker og KPI-er ikke skal ha — og den koster en glemt linje hver
+// gang en modul flytter seg.
+//
+// Avledningen: en fase er `aktiv` når minst én av modulene i den er
+// PÅBEGYNT, altså har en annen tilstand enn `planlagt`. En fase ingen har
+// begynt på er planlagt. Det gir de samme fire verdiene flaten har vist
+// hele tiden, bortsett fra den ene som var feil.
+export function faseStatus(navn_nokkel) {
+  return MODULER.some((mod) => mod.fase_nokkel === navn_nokkel &&
+    modulStatus(mod.id) !== "planlagt") ? "aktiv" : "planlagt";
+}
+
 export const FASEOVERSIKT = [
   {
     navn_nokkel: "site.fase.fundament",
-    status: "aktiv",
     tekst_nokkel: "site.fase.fundament.tekst",
   },
   {
     navn_nokkel: "site.fase.operasjoner",
-    status: "planlagt",
     tekst_nokkel: "site.fase.operasjoner.tekst",
   },
   {
     navn_nokkel: "site.fase.autopiloter",
-    status: "planlagt",
     tekst_nokkel: "site.fase.autopiloter.tekst",
   },
   {
     navn_nokkel: "site.fase.global",
-    status: "planlagt",
     tekst_nokkel: "site.fase.global.tekst",
   },
-];
+].map((fase) => ({ ...fase, status: faseStatus(fase.navn_nokkel) }));
 
 // INGEN TENANTDATA I DENNE FILA (Codex P1). `/ui/{sti}` serveres uten
 // sesjonssjekk — den anonyme landingssiden importerer dette modultreet — så alt
@@ -167,11 +202,13 @@ export const TILBUD = [
 
 // «Tilgjengelig» er et løfte til en BESØKENDE om at hen kan ta modulen i bruk
 // med sine egne data. Det løftet har TO ledd, ikke ett: modulen må være rullet
-// ut til kunder (`i_drift`), OG verten må kjøre i produksjonsmodus. Ingen av
-// dem holder i dag — M-1 kjører på staging, og `DISPONIT_MILJO` sier det samme
-// — men de kan bli oppfylt hver for seg, og da er ETT av dem ikke nok:
+// ut til kunder (`i_drift`), OG verten må kjøre i produksjonsmodus. Leddene
+// ble oppfylt hver for seg, slik denne kommentaren forutså: etter
+// akseptflippet holder det FØRSTE for M-2 og M-56, mens verten fortsatt er
+// staging og `DISPONIT_MILJO` sier det samme. Da er ETT av dem ikke nok —
 // policyene som binder beslutningene står `utkast` så lenge verten er staging,
-// uansett hvor koden er rullet ut.
+// uansett hvor koden er rullet ut, og `erTilgjengelig(2)` er derfor `false`
+// med `modulStatus(2) === "i_drift"`.
 //
 // Skillet er det samme manifestene gjør med `status` og `driftstilstand`:
 // kollapses to akser til ett ord, lover flaten mer enn den ene aksen bærer.
@@ -265,7 +302,13 @@ export function tenantTelling(moduler) {
 
 //: Modulkatalogen slik produktplanen beskriver den. Bare de fire i `MODULER`
 //: har en tilstand ennå; resten er `planlagt`.
-const KATALOG_TOTALT = 45;
+//
+// Tallet er AVLEDET av den genererte katalogen, ikke skrevet av (Codex P1 på
+// PR #99). Da v8 utvidet omfanget fra 45 til 55 moduler ble denne konstanten
+// stående på 45, og statuslinja ville sagt «i drift av 45» mens katalogen den
+// teller mot hadde 55 — en nevner ingen hadde bestemt, i en flate som skal
+// være den ene sanne statuskilden.
+const KATALOG_TOTALT = KATALOG_ANTALL;
 
 export function plattformTelling() {
   const tell = (s) => Object.values(MODULSTATUS).filter((v) => v === s).length;

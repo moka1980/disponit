@@ -115,6 +115,10 @@ def test_domenekontroll_og_hostname_binding_kan_ikke_slettes(migrator):
 
 # ---------------- artefakt ----------------
 
+#: sha256 over JCS({"type": "object"}) — det permissive skjemaet fixturene
+#: binder testartefakttyper til (PR-014c).
+PERMISSIV_SKJEMA_HASH = "a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0"
+
 def _artefakttype(conn, modul, kh, at, ver=1):
     """kontrakt + artefakttype (begge direkte som migrator; immutabelt)."""
     conn.execute(
@@ -122,10 +126,30 @@ def _artefakttype(conn, modul, kh, at, ver=1):
         "payload_schema_hash,kvittering_schema_hash,sideeffektklasse,"
         "reversibilitet) VALUES (%s,%s,%s,'p','k','krever_outbox','kompenserende')"
         " ON CONFLICT DO NOTHING", (modul, ver, kh))
+    # PR-014c: skjemavalidering ved opplasting/promotering krever at
+    # skjema_hash-en KAN slås opp. Testene her prøver bindinger og
+    # tilstandsmaskiner, ikke innhold — det permissive objektskjemaet
+    # ({"type": "object"}, JCS-hashet) slipper alt innhold gjennom.
+    # Bytene, ikke en jsonb-kopi av dem: raden er innholdsadressert, og
+    # CHECK-en i 036 krever at hashen stemmer med det som lagres. Merk
+    # mellomrommet som var her før — `{"type": "object"}` under hashen
+    # til `{"type":"object"}` — nettopp driften den CHECK-en fanger.
+    conn.execute(
+        "INSERT INTO artefaktskjema (skjema_hash, kanonisk)"
+        " VALUES (%s, '{\"type\":\"object\"}')"
+        " ON CONFLICT (skjema_hash) DO NOTHING", (PERMISSIV_SKJEMA_HASH,))
     conn.execute(
         "INSERT INTO artefakttype_register (artefakttype, eiermodul,"
         " kontraktversjon, kontrakt_hash, skjema_hash) VALUES (%s,%s,%s,%s,%s)",
-        (at, modul, ver, kh, "sh-" + secrets.token_hex(4)))
+        (at, modul, ver, kh, PERMISSIV_SKJEMA_HASH))
+    # 049: artefaktets releasesnapshot er relasjonelt (`artefakt_release_fk`)
+    # — fixturen bygger den ekte formen og registrerer releasen radene
+    # peker på, aldri omgår FK-en.
+    conn.execute(
+        "INSERT INTO modulrelease (modul_id, release_id, kontraktversjon,"
+        " kontrakt_hash, manifest_hash, artifact_digest) VALUES"
+        " (%s,'r1',%s,%s,'mh','digest-fixtur') ON CONFLICT DO NOTHING",
+        (modul, ver, kh))
     conn.commit()
 
 
@@ -154,7 +178,7 @@ def _artefakt(conn, tenant, oppdrag_id, at, modul, kh, *, jti=None, ver=1):
 
 @pg
 def test_artefakt_statemaskin_og_frosset_binding(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -181,7 +205,7 @@ def test_artefakt_statemaskin_og_frosset_binding(migrator):
 
 @pg
 def test_artefakt_ciphertext_kan_kun_nulles(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -226,7 +250,7 @@ def test_artefakt_ciphertext_kan_kun_nulles(migrator):
 
 @pg
 def test_ett_promotert_per_oppdrag(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -245,7 +269,7 @@ def test_ett_promotert_per_oppdrag(migrator):
 
 @pg
 def test_artefakttype_immutable(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     with pytest.raises(psycopg.errors.RaiseException):
@@ -517,9 +541,17 @@ def test_forbigatt_utfordrer_kan_ikke_godkjennes(migrator):
         assert _dkrow(migrator, ANNEN_TENANT, h)[0] == "tilbakekalt", \
             "den forbigåtte utfordreren ble stående i avklaring"
         # Gjenskap den forbigåtte-i-avklaring-tilstanden gjerdet finnes for.
+        # 041: `domenekontroll_avklaring_krever_sak` avviser nettopp denne
+        # skrivingen (avklaring uten gjeldende sak — port 2), så fixturen må
+        # gjøre kirurgien med vakten av, som `_rydd` gjør for append-only-
+        # triggerne. Selve porten (direkte DML avvises) måles i 041-suiten.
         _sett_kontekst(migrator, ANNEN_TENANT)
+        migrator.execute("ALTER TABLE domenekontroll DISABLE TRIGGER"
+                         " domenekontroll_avklaring_krever_sak")
         migrator.execute("UPDATE domenekontroll SET status='avklaring_kreves'"
                          " WHERE tenant=%s AND hostname=%s", (ANNEN_TENANT, h))
+        migrator.execute("ALTER TABLE domenekontroll ENABLE TRIGGER"
+                         " domenekontroll_avklaring_krever_sak")
         migrator.commit()
         b_gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
         # B sin sak er FORBIGÅTT: godkjenning avvises på bindingen.
@@ -615,7 +647,7 @@ def test_runtime_kan_ikke_kalle_domenefunksjoner(migrator):
 # ---------------- artefakt-funksjoner ----------------
 
 def _artefakt_oppsett(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -634,7 +666,7 @@ def _artefakt_oppsett(migrator):
 
 @pg
 def test_promoter_epoch_avvik_port37(migrator):
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -668,7 +700,7 @@ def test_promoter_idempotent_validerer_binding(migrator):
     funksjon «promotert» på et kall med feil oppdrag, feil release, feil epoch
     eller feil signert hash, og applikasjonen leser det som verifisert evidens.
     """
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -703,7 +735,7 @@ def test_promoter_idempotent_validerer_binding(migrator):
 
 def _gammelt_staged_artefakt(migrator, *, evidensfrist):
     """Staged artefakt > 24 t gammelt på et oppdrag med gitt evidensfrist."""
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -763,9 +795,14 @@ def test_rydd_venter_paa_evidensfristen(migrator):
 
 @pg
 def test_b4_overtakelsessak_idempotent_port11(migrator):
-    # Port 11: konflikt → ÉN M-37-sak (familie domeneovertakelse), idempotent per
-    # overtakelsesgenerasjon; ny generasjon → ny sak.
-    from api.domeneovertakelse import opprett_overtakelsessak
+    """Port 11 i 041-form: konflikten LAGER saken selv, i samme transaksjon.
+
+    Før 041 målte denne at python-veien var idempotent per generasjon. Nå er
+    sak-skaperen `sikre_overtakelsessak()` inne i `verifiser_domenekontroll`,
+    og invarianten er strammere: ÉN åpen sak per hostname, på
+    plattformtenanten, og et RETRY av samme verifisering (som returnerer
+    `avklaring_kreves`) skaper hverken ny sak eller ny revisjon.
+    """
     h = _host(); a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
@@ -774,39 +811,41 @@ def test_b4_overtakelsessak_idempotent_port11(migrator):
                         (ANNEN_TENANT, h)).fetchone()[0]
         a.commit()
         assert res == "konflikt:" + TENANT
+        gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
+
+        def sakene():
+            _sett_kontekst(migrator, "__plattform_domener")
+            rader = migrator.execute(
+                "SELECT id, saksrevisjon, utfordrer_tenant, tapt_tenant,"
+                "       autorisasjonsgenerasjon, kategori, sakstype, status"
+                "  FROM unntak WHERE hostname_ref=%s"
+                "   AND sakskilde='domeneovertakelse' AND NOT terminal",
+                (h,)).fetchall()
+            migrator.rollback()
+            return rader
+        forste = sakene()
+        assert len(forste) == 1, forste
+        sid, rev, utf, tapt, sgen, kat, styp, status = forste[0]
+        assert (utf, tapt, sgen, rev) == (ANNEN_TENANT, TENANT, gen, 0), forste
+        assert (kat, styp, status) == ("domeneovertakelse", "sikkerhet", "ny")
+
+        # Retry av samme verifisering: B står i avklaring — terminal for
+        # denne veien — og saken skal stå UENDRET (ingen ny sak, ingen +1).
+        res2 = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
+                         (ANNEN_TENANT, h)).fetchone()[0]
+        a.commit()
+        assert res2 == "avklaring_kreves"
+        etter = sakene()
+        assert etter == forste, "et retry endret saken"
     finally:
         a.close()
-    tapt = res.split(":", 1)[1]
-    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]   # B-generasjon etter overtakelse
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid1 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    row = migrator.execute("SELECT kategori, sakstype, status FROM unntak"
-                           " WHERE tenant=%s AND id=%s",
-                           (ANNEN_TENANT, uid1)).fetchone()
-    migrator.rollback()
-    assert row == ("domeneovertakelse", "sikkerhet", "ny")
-    # idempotent: samme konflikt (samme generasjon) → samme sak.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid2 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
-    assert uid2 == uid1
-    # ny overtakelsesgenerasjon → ny sak.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid3 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                   tenant_tapt=tapt, generasjon=gen + 1, aktor="sys")
-    migrator.commit()
-    assert uid3 != uid1
 
 
 @pg
 def test_karantene_bevares_gjennom_rydd(migrator):
     # Codex §7 pkt. 8: et karantenesatt artefakt (uverifisert kvittering) må
     # OVERLEVE oppryddingen — den rører kun 'staged'.
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -843,10 +882,12 @@ def test_append_only_tabeller_ingen_truncate(migrator):
     tømme dem tross immutabilitets-invarianten.
 
     MUTASJONEN SOM DREPER DENNE: fjern BEFORE TRUNCATE-triggerne."""
-    # domenekontroll_hendelse har ingen innkommende FK → triggeren er det ENESTE
-    # som stopper en TRUNCATE.
+    # 041 ga domenekontroll_hendelse en innkommende FK (unntak-lineage), så
+    # plain TRUNCATE stoppes nå av FK-en før triggeren rekker å fyre. CASCADE
+    # løser FK-innvendingen — og da er statement-triggeren igjen det ENESTE
+    # som stopper tømmingen, som for artefakttype_register under.
     with pytest.raises(psycopg.errors.RaiseException):
-        migrator.execute("TRUNCATE domenekontroll_hendelse")
+        migrator.execute("TRUNCATE domenekontroll_hendelse CASCADE")
     migrator.rollback()
     # artefakttype_register: FK fra artefakt blokkerer plain TRUNCATE, men CASCADE
     # (som ellers ville tømt BEGGE) fanges nettopp av statement-triggeren.
@@ -978,7 +1019,7 @@ def test_artefakt_dek_ref_frosset(migrator):
     ciphertext/hash/tilstand står urørt.
 
     MUTASJONEN SOM DREPER DENNE: fjern dek_ref fra frys-sjekken i artefakt_statemaskin."""
-    at = "at-" + secrets.token_hex(4); modul = "m-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"; modul = "m-" + secrets.token_hex(4)
     kh = "k-" + secrets.token_hex(8)
     _artefakttype(migrator, modul, kh, at)
     sak, logg = _lag_sak(migrator, TENANT)
@@ -1234,61 +1275,46 @@ def test_to_tenanter_kan_ikke_dele_hostname_via_kasus(migrator):
 
 @pg
 def test_overtakelsessak_ignorerer_fremmed_idempotensnokkel(migrator):
-    """Codex: `revisjonslogg.idempotency_key` er et DELT, KALLERSTYRT navnerom
-    (`/v1/beslutning` skriver klientens Idempotency-Key rett inn) med kun en
-    IKKE-unik indeks. En fremmed loggpost som alt heter
-    `domeneovertakelse:<hostname>:<generasjon>` skal verken kapre eller
-    ødelegge idempotensen: saken slås opp via `unntak` scopet til familien.
-
-    MUTASJONEN SOM DREPER DENNE: slå opp loggposten først og let etter et
-    hvilket som helst `unntak` på den."""
-    from api.domeneovertakelse import (opprett_overtakelsessak,
-                                       idempotensnokkel, FAMILIE)
+    """041-formen av Codex-funnet: `revisjonslogg.idempotency_key` er et DELT,
+    KALLERSTYRT navnerom. Før 041 slo python-veien opp saken via nøkkelen —
+    nå skriver `sikre_overtakelsessak()` sin EGEN loggpost på
+    plattformtenanten (`payload_type='referanse'`) og bruker aldri nøkkelen.
+    En fremmed loggpost som alt heter `domeneovertakelse:<hostname>:<gen>`
+    skal derfor verken kapres, adopteres eller gi duplikatsaker.
+    """
+    from api.domeneovertakelse import idempotensnokkel
     h = _host(); a = _admin()
     try:
         a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')", (TENANT, h))
         a.commit()
+        # Den fremmede raden ligger klar FØR konflikten oppstår — nøkkelen
+        # bygges på generasjonen overtakelsen kommer til å få (1 hos B).
+        _sett_kontekst(migrator, ANNEN_TENANT)
+        fremmed = int(migrator.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'klient','beslutning','ih','pol','TILLAT','[]',%s)"
+            " RETURNING id",
+            (ANNEN_TENANT, idempotensnokkel(h, 1))).fetchone()[0])
+        migrator.commit()
+
         res = a.execute("SELECT verifiser_domenekontroll(%s,%s,false,'sys')",
                         (ANNEN_TENANT, h)).fetchone()[0]
         a.commit()
+        assert res == "konflikt:" + TENANT
     finally:
         a.close()
-    tapt = res.split(":", 1)[1]
-    gen = _dkrow(migrator, ANNEN_TENANT, h)[1]
-    key = idempotensnokkel(h, gen)
 
-    # En FREMMED loggpost med NØYAKTIG samme idempotensnøkkel, skrevet av en
-    # annen kilde — nøyaktig det `/v1/beslutning` produserer.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    fremmed = int(migrator.execute(
-        "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash, policy_id,"
-        " beslutning, begrunnelse, idempotency_key)"
-        " VALUES (%s,'klient','beslutning','ih','pol','TILLAT','[]',%s)"
-        " RETURNING id", (ANNEN_TENANT, key)).fetchone()[0])
-    migrator.commit()
-
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid1 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
-    # Retry MÅ gi samme sak — den fremmede raden skal ikke sende oss i INSERT igjen.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    uid2 = opprett_overtakelsessak(migrator, tenant_ny=ANNEN_TENANT, hostname=h,
-                                   tenant_tapt=tapt, generasjon=gen, aktor="sys")
-    migrator.commit()
-    assert uid2 == uid1, \
-        "en fremmed loggpost med samme nøkkel brøt idempotensen (duplikat M-37-sak)"
-
-    # ...og saken er VÅR — ikke hengt på den fremmede loggposten.
-    _sett_kontekst(migrator, ANNEN_TENANT)
-    rad = migrator.execute(
-        "SELECT u.loggpost_id, u.kategori, r.kilde FROM unntak u"
-        " JOIN revisjonslogg r ON r.tenant=u.tenant AND r.id=u.loggpost_id"
-        " WHERE u.tenant=%s AND u.id=%s", (ANNEN_TENANT, uid1)).fetchone()
-    n = migrator.execute(
-        "SELECT count(*) FROM unntak WHERE tenant=%s AND kategori=%s",
-        (ANNEN_TENANT, FAMILIE)).fetchone()[0]
+    _sett_kontekst(migrator, "__plattform_domener")
+    rader = migrator.execute(
+        "SELECT u.loggpost_id, r.tenant, r.kilde, r.payload_type"
+        "  FROM unntak u"
+        "  JOIN revisjonslogg r ON r.tenant=u.tenant AND r.id=u.loggpost_id"
+        " WHERE u.hostname_ref=%s AND u.sakskilde='domeneovertakelse'"
+        "   AND NOT u.terminal", (h,)).fetchall()
     migrator.rollback()
-    assert rad[0] != fremmed, "saken ble hengt på den fremmede loggposten"
-    assert (rad[1], rad[2]) == (FAMILIE, FAMILIE)
-    assert n == 1, f"{n} overtakelsessaker for én konflikt (skulle vært 1)"
+    assert len(rader) == 1, "fremmed nøkkel ga duplikat/ingen sak"
+    loggpost, ltenant, kilde, ptype = rader[0]
+    assert loggpost != fremmed, "saken ble hengt på den fremmede loggposten"
+    assert (ltenant, kilde, ptype) == ("__plattform_domener", "domenekontroll",
+                                       "referanse"), rader

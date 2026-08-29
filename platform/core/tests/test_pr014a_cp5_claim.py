@@ -24,7 +24,7 @@ def _tok():
 
 
 def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
-                      eiermodul, handling="purring.send"):
+                      eiermodul, handling="purring.send", frist="1 hour"):
     """Som test_m37._lag_oppdrag, men med parametrisert oppdragstype/eiermodul.
 
     (Hjelperen der pinner oppdragstype='reinnsending'; CP5 trenger egne,
@@ -49,15 +49,15 @@ def _lag_oppdrag_type(conn, tenant, sak_id, loggpost_id, *, oppdragstype,
     ct, nonce = kryptering.krypter(
         dek, {"handling": handling, "ressurs_id": "fak-1"}, tenant, key_id)
     opp = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
+        "INSERT INTO oppdrag (opprinnelse, tenant, unntak_id, loggpost_id,"
         " repair_operation_id, oppdragstype, handling, eiermodul,"
         " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
         " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-        " now()+interval '1 hour', now()+interval '30 days',"
+        " VALUES ('m37_reparasjon',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        " now()+%s::interval, now()+interval '30 days',"
         " %s,'KOBLET') RETURNING id",
         (tenant, sak_id, loggpost_id, rid, oppdragstype, handling, eiermodul,
-         ct, key_id, nonce, beslutning)).fetchone()[0]
+         ct, key_id, nonce, frist, beslutning)).fetchone()[0]
     conn.commit()
     return int(opp), rid
 
@@ -87,8 +87,19 @@ def _claim(modul_id, prefiks, cid, lease=300, release=None, miljo=None,
 
 def _binding(conn, opp):
     _sett_kontekst(conn, TENANT)
+    # `claim_release_id`/`claim_miljo` er lagt til bakerst (049 §0, Codex
+    # P1 på PR #117 runde 20): claimet skriver ned HVILKEN deployment som
+    # tok raden. Drillens tre ledd i 049 måles mot nettopp det sporet, og
+    # den porten er bare så god som stemplingen her.
+    #
+    # `forste_claim_ts` er samme spors klokke (Codex P1 runde 21):
+    # claim-stoppet i 049 måles som `forste_claim_ts - opprettet`, og
+    # stempelet er write-once nettopp fordi en reclaim ellers ville
+    # forlenget et ventevindu som aldri ble observert.
     rad = conn.execute("SELECT modul_id, kontraktversjon, kontrakt_hash,"
-                       " module_epoch, status, owner_generation FROM oppdrag"
+                       " module_epoch, status, owner_generation,"
+                       " claim_release_id, claim_miljo, forste_claim_ts"
+                       " FROM oppdrag"
                        " WHERE tenant=%s AND id=%s", (TENANT, opp)).fetchone()
     conn.rollback()
     return rad
@@ -145,6 +156,9 @@ def test_port5_registrert_oppdragstype_krever_aktiv_claiming_kontrakt(migrator):
     b = _binding(migrator, opp)
     assert b[0] == modul and b[1] == 1 and b[2] == kh, "kontrakt ikke stemplet"
     assert b[3] == 0, "module_epoch ikke stemplet"
+    # …og deploymenten porten nettopp verifiserte som `claiming`, står på
+    # raden: uten det sporet kan ingen senere måling si HVEM som tok den.
+    assert (b[6], b[7]) == ("r1", "staging"), "claim-releasen ikke stemplet"
     # Codex P1: samme modul, men FEIL deployment-identitet (annen release) →
     # ikke claimbar (drenert/retired r1-prosess kan ikke claime via en annen).
     _sett_kontekst(migrator, TENANT)
@@ -226,6 +240,75 @@ def test_port7_reclaim_bumper_generasjon_og_bevarer_binding(migrator):
     b2 = _binding(migrator, opp)
     assert (b2[0], b2[1], b2[2]) == (b1[0], b1[1], b1[2]), \
         "kontraktbindingen endret seg ved reclaim (skal være write-once)"
+    # Ventetidsstempelet står også (Codex P1 runde 21): flyttet det seg
+    # ved reclaim, kunne et oppdrag som ble tatt med én gang og reclaimet
+    # et halvt minutt senere målt seg som et claim-stopp ingen observerte.
+    assert b1[8] is not None, "claimet stemplet ikke forste_claim_ts"
+    assert b2[8] == b1[8], \
+        "forste_claim_ts flyttet seg ved reclaim (skal være write-once)"
+
+
+@pg
+def test_leasen_dekker_oppdragets_egen_utforelsesfrist(migrator):
+    """Codex P1 (037): en fast lease på 300 s var kortere enn arbeidet.
+
+    `/v1/oppdrag/claim` ber om 300 sekunder for ALT arbeid, mens reclaim-
+    grenen gjør et `plukket` oppdrag med utløpt lease claimbart igjen. For
+    kort arbeid var de to enige. For en WCAG-kontroll (annonsert frist
+    30/60 min) var de det ikke: leasen utløp mens den første utføreren
+    fortsatt skannet, en annen utfører claimet SAMME oppdrag og startet et
+    NYTT eksternt skann av kundens nettsted, `owner_generation` flyttet
+    seg — og den første kvitteringen, for et arbeid som faktisk var gjort,
+    ble avvist på fencing.
+
+    Leasen strekkes derfor til oppdragets egen `utforelsesfrist`: det er
+    tiden plattformen selv har gitt arbeidet, og etter den er raden uansett
+    ikke claimbar (`utforelsesfrist > now()`). Kallerens tall er et GULV,
+    og funksjonens tak på 3600 s står.
+
+    Kontroll: bytt `owner_lease_utloper` i 037 tilbake til
+    `now() + (v_lease || ' seconds')::INTERVAL`, så blir denne rød —
+    leasen faller til 300 s mens fristen ligger en time frem.
+    """
+    t = _tok(); modul = "cp5mod-" + t; ot = "cp5-" + t
+
+    teller = [0]
+
+    def _lease(frist):
+        # Hvert kall lager sitt eget oppdrag; de foregående står `plukket`
+        # med en levende lease, så claimet under treffer alltid det ferske.
+        # EGEN SAK per kall: `_lag_oppdrag_type` setter inn
+        # reparasjonsoperasjonen med `ON CONFLICT DO NOTHING`, så to
+        # oppdrag under samme sak og samme målhandling ville delt rad —
+        # den andre ville stille falt tilbake på en FK som ikke finnes.
+        teller[0] += 1
+        sak, logg = _lag_sak(migrator, TENANT)
+        opp, _ = _lag_oppdrag_type(migrator, TENANT, sak, logg,
+                                   oppdragstype=f"{ot}-{teller[0]}",
+                                   eiermodul=modul, frist=frist)
+        assert _claim(modul, ["purring."], secrets.token_hex(16)) is not None
+        _sett_kontekst(migrator, TENANT)
+        rad = migrator.execute(
+            "SELECT extract(epoch FROM (owner_lease_utloper - now()))::int,"
+            "       extract(epoch FROM (utforelsesfrist - now()))::int"
+            "  FROM oppdrag WHERE tenant=%s AND id=%s",
+            (TENANT, opp)).fetchone()
+        migrator.rollback()
+        return rad
+
+    # En time frem: leasen dekker hele fristen (og treffer takets 3600 s).
+    lease, frist = _lease("59 minutes")
+    assert lease >= frist - 5, \
+        f"leasen ({lease}s) er kortere enn fristen ({frist}s) — reclaim" \
+        " kan kapre oppdraget mens utføreren jobber"
+    # Taket står: en frist langt utenfor 3600 s klemmes, den sprenger ikke
+    # funksjonens egen grense.
+    lease, _ = _lease("10 hours")
+    assert 3590 <= lease <= 3600, lease
+    # ... og en KORT frist forlenges ikke: kallerens 300 s er gulvet,
+    # ikke et minimum som overkjører oppdragets egen frist nedover.
+    lease, frist = _lease("2 minutes")
+    assert frist <= 125 and 295 <= lease <= 300, (lease, frist)
 
 
 @pg
@@ -302,6 +385,29 @@ def test_legacy_uregistrert_oppdragstype_claimes_som_for(migrator):
     b = _binding(migrator, opp)
     assert b[0] is None and b[1] is None and b[2] is None and b[3] is None, \
         "uregistrert oppdragstype fikk kontraktbinding"
+    # Claim-sporet følger bindingen: legacy-grenen har ingen
+    # deployment-port, så kallerens release er en uprøvd påstand — og
+    # en påstand hører ikke hjemme i et spor drillen måler på.
+    assert b[6] is None and b[7] is None, \
+        "uregistrert oppdragstype fikk et claim-spor ingen port hadde prøvd"
+    # Klokka er derimot portens EGEN (Codex P1 runde 21), ikke noe
+    # kalleren oppgir: når raden ble tatt er sant også når det ikke
+    # finnes en verifisert release å skrive ned.
+    assert b[8] is not None, "legacy-claimet stemplet ikke forste_claim_ts"
+    # …også når kalleren OPPGIR en: legacy-grenen prøver den ikke mot
+    # `moduldeployment`, så den skrives ikke ned.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE oppdrag SET status='opprettet',"
+                     " owner_claim_id=NULL, owner_lease_utloper=NULL"
+                     " WHERE tenant=%s AND id=%s", (TENANT, opp))
+    migrator.commit()
+    assert _claim(modul, ["purring."], secrets.token_hex(16),
+                  release="pastand", miljo="staging") is not None
+    b2 = _binding(migrator, opp)
+    assert b2[6] is None and b2[7] is None, \
+        "legacy-claimet skrev kallerens uprøvde release inn i sporet"
+    assert b2[8] == b[8], \
+        "det andre claimet flyttet forste_claim_ts (skal være write-once)"
 
 
 @pg
@@ -332,9 +438,9 @@ def test_oppdrag_binding_kan_ikke_settes_ved_insert(migrator):
     _sett_kontekst(migrator, TENANT)
     with pytest.raises(psycopg.errors.RaiseException):
         migrator.execute(
-            "INSERT INTO oppdrag (tenant,unntak_id,loggpost_id,repair_operation_id,"
+            "INSERT INTO oppdrag (opprinnelse, tenant,unntak_id,loggpost_id,repair_operation_id,"
             "oppdragstype,handling,eiermodul,payload_kryptert,key_id,nonce,"
-            "utforelsesfrist,evidensfrist,modul_id) VALUES (%s,1,1,'x',"
+            "utforelsesfrist,evidensfrist,modul_id) VALUES ('m37_reparasjon',%s,1,1,'x',"
             "'reinnsending','purring.send','em','\\x00','k','\\x00',now(),"
             "now()+interval '1 day','forfalsk')", (TENANT,))
     migrator.rollback()

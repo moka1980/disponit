@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/rollbackm56artefakt-v1.json",
+  "title": "Moduldeployment-drillartefakt (rollback-m56-v1)",
+  "comment": "Flippedrillen for m56: rull moduldeployment tilbake, mal at den drillede releasen slutter aa claime, at loepende oppdrag faar rent utfall (SP-3), og at akseptkandidaten (byte-identisk med den drillede - A1) plukker og fullfoerer. Livsloepet er ENVEIS (014): drillen KONSUMERER den drillede deploymenten, og aksepten binder kandidaten - raden som faktisk kjoerer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "identiteter",
+    "maalt",
+    "etterkontroll"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "rollback-m56-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "miljo",
+        "drillet_release",
+        "rullback_release",
+        "kandidat_release",
+        "drillet_digest",
+        "kandidat_digest",
+        "module_epoch",
+        "forgjenger_release",
+        "rullback_digest",
+        "forgjenger_digest"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "miljo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rullback_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kandidat_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "kandidat_digest": {
+          "type": "string",
+          "minLength": 12
+        },
+        "module_epoch": {
+          "$ref": "#/$defs/telling"
+        },
+        "forgjenger_release": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Releasen den drillede overtok fra - den drillen ruller TILBAKE til. Uten den kan artefaktet ikke skille en rullbakk fra en ny registrering av de drillede bytene (Codex P1, #117 runde 6)."
+        },
+        "rullback_digest": {
+          "type": "string",
+          "minLength": 12,
+          "comment": "Bytene rullbakk-releasen faktisk ble registrert og bootet med. Skal vaere forgjengerens, ikke den drilledes."
+        },
+        "forgjenger_digest": {
+          "type": "string",
+          "minLength": 12,
+          "comment": "Forgjengerens egne bytes, lest av registeret. Porten regner likheten mot `rullback_digest` ut av disse to - aldri av etterkontrollens flagg alene."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inflight_oppdrag",
+        "inflight_utfall",
+        "inflight_har_signert_kvittering",
+        "rullback_har_signert_kvittering",
+        "inflight_promoterte_artefakter",
+        "falske_verdikter",
+        "nye_oppdrag_claimet_av_drillet_release",
+        "ventetid_ubehandlet_s",
+        "rullback_claimet_oppdrag",
+        "rullback_promoterte_artefakter",
+        "rullback_overtakelse_s",
+        "kandidat_claimet_oppdrag",
+        "kandidat_promoterte_artefakter",
+        "overtakelse_s"
+      ],
+      "properties": {
+        "inflight_oppdrag": {
+          "$ref": "#/$defs/telling"
+        },
+        "inflight_utfall": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inflight_har_signert_kvittering": {
+          "type": "boolean"
+        },
+        "inflight_promoterte_artefakter": {
+          "$ref": "#/$defs/telling",
+          "comment": "Evidensen bak utfallet til det loepende oppdraget - PAAKREVD for ALLE utfall. Uten den er motsigelsen mellom utfall og evidens umaalt, og den gaar begge veier: et `utfort` uten promotert artefakt er like falskt som et `feilet` med ett."
+        },
+        "falske_verdikter": {
+          "$ref": "#/$defs/telling"
+        },
+        "nye_oppdrag_claimet_av_drillet_release": {
+          "$ref": "#/$defs/telling"
+        },
+        "ventetid_ubehandlet_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "kandidat_claimet_oppdrag": {
+          "$ref": "#/$defs/telling"
+        },
+        "kandidat_promoterte_artefakter": {
+          "$ref": "#/$defs/telling"
+        },
+        "overtakelse_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rullback_claimet_oppdrag": {
+          "$ref": "#/$defs/telling",
+          "comment": "1 naar den tilbakerullede releasen selv plukket og fullfoerte det ventende oppdraget. Rullbakken skal BOOTES og proeves, ikke bare skrives i moduldeployment (Codex P1, #117)."
+        },
+        "rullback_promoterte_artefakter": {
+          "$ref": "#/$defs/telling",
+          "comment": "Artefakter den tilbakerullede releasen promoterte - evidensen bak (b2)."
+        },
+        "rullback_overtakelse_s": {
+          "type": "number",
+          "minimum": 0,
+          "comment": "Sekunder fra rullbakken begynte aa bootes til det ventende oppdraget var fullfoert."
+        },
+        "rullback_har_signert_kvittering": {
+          "type": "boolean",
+          "comment": "052 (klarsignalet paragraf 1.1a): rullbakk-releasen fullfoerte det ventende oppdraget SELV, med signert kvittering fra SIN kjoering - maalt i basen av maal_rent_utfall, samme predikat som inflight-leddet. Promoteringstellingen alene sier ikke at kvitteringsveien var innom oppdraget."
+        }
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "drillet_livslop",
+        "rullback_livslop",
+        "kandidat_livslop",
+        "digest_likhet",
+        "modulstatus",
+        "rullback_bytes_er_forgjengerens"
+      ],
+      "properties": {
+        "drillet_livslop": {
+          "type": "string"
+        },
+        "kandidat_livslop": {
+          "type": "string"
+        },
+        "digest_likhet": {
+          "type": "boolean"
+        },
+        "modulstatus": {
+          "type": "string"
+        },
+        "rullback_livslop": {
+          "type": "string",
+          "comment": "Rullbakkens livsloep etter at kandidaten overtok - drenert, som den drillede."
+        },
+        "rullback_bytes_er_forgjengerens": {
+          "type": "boolean",
+          "comment": "Lest av REGISTERET etter drillen: bar rullback-releasen forgjengerens digest? En rullbakk til de drillede bytene proever ikke det man ruller tilbake til."
+        }
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "comment": "HVA drillen saa, ikke bare hvor mange: oppdrags- og artefaktidentitetene bak hvert ledd. Akseptens E2E-bevis maa vaere ett av kandidatens artefakter her - FK-en i 049 skiller ikke ett promotert artefakt fra et annet paa samme release (Codex P2, #117).",
+      "required": [
+        "inflight_oppdrag_id",
+        "inflight_artefakter",
+        "rullback_oppdrag_id",
+        "rullback_artefakter",
+        "kandidat_oppdrag_id",
+        "kandidat_artefakter"
+      ],
+      "properties": {
+        "inflight_oppdrag_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget som var claimet da rullingen traff. Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
+        },
+        "inflight_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter det loepende oppdraget promoterte - evidensen bak utfallet."
+        },
+        "rullback_oppdrag_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget rullbakken plukket etter at den ble bootet (b2). Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
+        },
+        "rullback_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter rullbakken promoterte."
+        },
+        "kandidat_oppdrag_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "comment": "Oppdraget akseptkandidaten plukket da hun overtok (c). Registreringen i 049 FK-er den mot `oppdrag` og maaler utfallet paa den, saa den maa vaere en oppdrags-id - ikke bare en ikke-tom streng (Codex P1, #117 runde 5)."
+        },
+        "kandidat_artefakter": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "uniqueItems": true,
+          "comment": "Artefakter kandidaten promoterte. Akseptens E2E-bevis MAA vaere ett av disse."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "telling": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

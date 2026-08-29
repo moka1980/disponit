@@ -902,10 +902,57 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     """
     from registry import les_manifester, valider
     st = valider(les_manifester(MODULROT))
-    assert st.aktive == ["m01_policy"], st
-    assert st.i_drift == ["m01_policy"], (
+    # 2026-08-23: m56 og m02 er AKSEPTERT (hendelsene står i basen —
+    # m56 på wcag-r23 etter r21-runden + drillen, m02 innholdsadressert
+    # på 2aaca01) og flippet aktiv/produksjon sammen. Historien om
+    # #89-feilen (aktiv med tre av seks punkter) står i git — regelen
+    # den lærte oss håndheves fortsatt: et ubundet punkt er `nei`, og
+    # begge modulene kom hit ved å BINDE hvert punkt, ikke ved å love.
+    assert st.aktive == ["m01_policy", "m02_revisjonslogg",
+                         "wcag_audit"], st
+    assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
+                          "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
+
+
+#: Setninger som BARE gir mening så lenge en modul ikke er flippet. Lista er
+#: konkret med vilje: den navngir de faktiske setningene som ble stående
+#: igjen over `status: aktiv` etter flippen 2026-08-23 — ikke en grammatikk
+#: over manifestprosa, som ville vært en tilstandsmaskin over vår egen
+#: fritekst (SP-13). Nye setninger legges til når de faktisk oppstår.
+ETTERLATT_TILBAKERULLINGSNARRATIV = (
+    "FLIPPET ER TATT TILBAKE",
+    "står derfor på `ikke_i_drift`",
+    "FIRE AV SEKS PUNKTER ER BUNDET",
+    "FLIPPEDRILLEN MÅ KJØRES",
+)
+
+
+def test_aktivt_manifest_baerer_ikke_et_tilbakerullingsnarrativ():
+    """Cursor-P1 på #152: to autoriteter i samme registerfil.
+
+    Manifestet er registerets ENESTE kilde, og feltene er bare halve fila:
+    over dem står prosaen som forklarer hvorfor de står som de gjør. Da
+    m56 og m02 ble flippet til `aktiv`/`produksjon`, ble
+    #89-tilbakerullingen og blokkert-narrativet stående uendret rett over
+    de nye verdiene. En leser — menneske eller agent — som følger toppen,
+    «retter» da flippen tilbake, og det er nøyaktig feilen #89 var.
+
+    Porten er en negativ strengsjekk, ikke en tolkning av prosaen: er
+    modulen `aktiv`, kan setningene som sier at flippet IKKE har skjedd
+    ikke stå i fila. Skal en av dem bevares som historikk, må den skrives
+    om til fortid — som er hele poenget.
+    """
+    for sti in sorted(MODULROT.glob("*/manifest.yaml")):
+        tekst = sti.read_text(encoding="utf-8")
+        if (yaml.safe_load(tekst) or {}).get("status") != "aktiv":
+            continue
+        for frase in ETTERLATT_TILBAKERULLINGSNARRATIV:
+            assert frase not in tekst, (
+                f"{sti.parent.name}/manifest.yaml står `aktiv`, men bærer"
+                f" fortsatt «{frase}» — feltet og prosaen over det er to"
+                " uenige autoriteter om samme flipp")
 
 
 def test_drift_uten_aktiv_status_er_en_registerfeil():
@@ -1030,6 +1077,34 @@ def test_maalesti_fra_et_ANNET_artefakt_avvises(m01):
     assert any("finnes ikke i artefaktet" in f for f in feil), feil
 
 
+def test_nabopunktsmaaling_avvises_gjennom_valider_artefakter():
+    """#166 gjennom HELE kjeden — ikke bare `_punktbinding` direkte.
+
+    De andre #166-negativene kaller `_punktbinding()` rett, og felles
+    derfor ikke av at KALLET forsvinner: fjernes `feil += _punktbinding(…)`
+    fra `valider_artefakter`, flyttes det foran hash/grenser eller
+    kondisjoneres bort, blir de grønne mens porten er borte. Det er samme
+    klasse `test_oppdiktet_maalesti_avvises` og
+    `test_maalesti_fra_et_ANNET_artefakt_avvises` finnes for på lag 3.
+
+    `maalt.avvik_mot_fasit` FINNES i m56s artefakt — den beviser
+    `tester_gronne_pa_staging` i samme grense — så hash, format, grenser og
+    `_bevismaalinger_finnes` slipper den alle gjennom. Bare punktbindingen
+    kan avvise den under `feilinjisering_til_unntakskø`, og derfor er dette
+    kallet det eneste testen kan måle.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_punktbinding`-kallet fra
+    `valider_artefakter`.
+    """
+    m = yaml.safe_load((MODULROT / "m56_wcag_audit/manifest.yaml"
+                        ).read_text(encoding="utf-8"))
+    m["staging_sjekkliste"]["feilinjisering_til_unntakskø"][
+        "bevismaalinger"].append("maalt.avvik_mot_fasit")
+    feil = valider_artefakter(m, REPOROT)
+    assert any("står ikke i" in f and "maalt.avvik_mot_fasit" in f
+               for f in feil), feil
+
+
 def test_artefakt_uten_bevismaalinger_avvises(m01):
     """Codex' negative test 1, i BEGGE lag.
 
@@ -1124,3 +1199,313 @@ def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():
     feil = valider(moduler).feil
     assert any("m02_revisjonslogg" in f and "ikke er aktiv" in f
                for f in feil), feil
+
+
+def _m02_suite_artefakt(**maalt):
+    """Et helt m02-suite-v1-artefakt, med `maalt` overstyrbar felt for
+    felt — så hver test under er ÉN mutasjon fra et grønt artefakt."""
+    from manifestskjema import M02_SUITE_ANDEL, m02_bevisrot_sha256
+    tall = {"tester_totalt": 1972, "tester_feilet": 0,
+            "tester_hoppet": 12, "m2_tester": len(M02_SUITE_ANDEL),
+            "m2_feilet": 0,
+            "m2_hoppet": 0, "suite_exitkode": 0, "m2_exitkode": 0}
+    tall.update(maalt)
+    return {
+        "krav_id": "m02-suite-v1", "ts": "2026-08-21T00:00:00+00:00",
+        "bestatt": True,
+        "oppsett": {"modul": "m02_revisjonslogg", "commit": "a" * 40,
+                    "vert": "disponit-srv",
+                    "m2_filer": list(M02_SUITE_ANDEL),
+                    "bevisrot_sha256": m02_bevisrot_sha256()},
+        "maalt": tall,
+    }
+
+
+def test_m02_suite_hel_kjoring_passerer():
+    """Referansen de negative portene under måles mot."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = _m02_suite_artefakt()
+    assert valider_artefaktformat(art, "m02-suite-v1") == []
+    assert _sjekk_grenser("m02-suite-v1", art) == []
+
+
+def test_m02_suite_hoppet_m2_andel_er_ikke_en_maaling():
+    """Hele M-2-andelen er `skipif(not DSN)`, og junit teller en hoppet
+    test i `tests` med null failures og null errors. En vert uten oppsatt
+    testbase leverte derfor en full andel, null feilede — over gulvet —
+    uten at ÉN M-2-test hadde kjørt. Delingsbetingelsen krever en MÅLING
+    for nettopp denne modulen; en hoppet port måler ingenting.
+
+    MUTASJONEN SOM DREPER DENNE: la grensen måle `m2_tester` i stedet for
+    de KJØRTE.
+    """
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+    feil = _sjekk_grenser(
+        "m02-suite-v1",
+        _m02_suite_artefakt(m2_hoppet=len(M02_SUITE_ANDEL)))
+    assert any("m2_hoppet" in f for f in feil), feil
+    # ... og gulvet for hele suiten måles på samme vis.
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_hoppet=1900))
+    assert any("kjørte" in f for f in feil), feil
+
+
+def test_m02_suite_avbrutt_pytest_er_ikke_en_hel_suite():
+    """En avbrutt pytest skriver junit-XML likevel, over bare testene som
+    rakk å bli ferdige: alle grønne, null failures, null errors — og et
+    antall som kan klare gulvet. Exitkoden er det eneste stedet avbruddet
+    står (exit 2 ved en sen KeyboardInterrupt).
+
+    MUTASJONEN SOM DREPER DENNE: kast `CompletedProcess` i `_kjor` igjen.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(suite_exitkode=2))
+    assert any("suite_exitkode" in f for f in feil), feil
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(m2_exitkode=2))
+    assert any("m2_exitkode" in f for f in feil), feil
+
+
+def test_m02_suite_vrangt_oppsett_feiler_lukket():
+    """`valider_artefakter` går med vilje videre i grensene etter en
+    formatfeil, for å samle ALLE røde funn. Da må grensene tåle et vrangt
+    artefakt: et sant ikke-objekt i `oppsett` skal gi et FUNN, ikke en
+    AttributeError som river med seg hele valideringskjøringen."""
+    from manifestskjema import _sjekk_grenser, valider_artefaktformat
+    art = dict(_m02_suite_artefakt(), oppsett="ikke et objekt")
+    assert valider_artefaktformat(art, "m02-suite-v1") != []
+    assert any("m2_filer" in f for f in _sjekk_grenser("m02-suite-v1", art))
+
+
+def test_m02_suite_redusert_kolleksjon_er_roedt():
+    """En pytest-kjøring som samlet inn et redusert utvalg — etter en sti-
+    eller konfigendring — er grønn i seg selv: null feilede, null hoppede,
+    exit 0. Den er likevel ikke suitekjøringen punktet krever, og gulvet
+    er det eneste stedet forskjellen står. Produsenten spør nå NØYAKTIG
+    denne porten før den melder `bestatt`, så staging-kommandoen ikke kan
+    returnere 0 for et artefakt CI feller.
+
+    MUTASJONEN SOM DREPER DENNE: senk `min_tester` til noe en delkjøring
+    klarer.
+    """
+    from manifestskjema import _sjekk_grenser
+    feil = _sjekk_grenser("m02-suite-v1",
+                          _m02_suite_artefakt(tester_totalt=40,
+                                              tester_hoppet=0))
+    assert any("krever >=" in f for f in feil), feil
+
+
+def test_m02_suite_m2_filer_maa_vaere_det_pinnede_utvalget():
+    """Å NAVNGI et utvalg er ikke å bli målt på det. Skjemaet krever bare
+    en ikke-tom strengliste, så et artefakt kunne klare alle tallene med
+    `m2_filer: ["noen andres tester"]` og likevel bli lest som beviset for
+    M-2 — delingsbetingelsen sier hvilken MÅLING som beviser punktet, og
+    da kan ikke produsenten velge målingen selv.
+
+    MUTASJONEN SOM DREPER DENNE: la porten godta enhver ikke-tom liste
+    igjen.
+    """
+    from manifestskjema import M02_SUITE_ANDEL, _sjekk_grenser
+
+    def med_filer(filer):
+        art = _m02_suite_artefakt()
+        art["oppsett"]["m2_filer"] = filer
+        return _sjekk_grenser("m02-suite-v1", art)
+
+    assert med_filer(list(M02_SUITE_ANDEL)) == []
+    # Et helt annet utvalg — tallene er de samme, beviset er ikke.
+    feil = med_filer(["platform/core/tests/test_noe_annet.py"])
+    assert any("m2_filer" in f and "godkjente utvalget" in f
+               for f in feil), feil
+    # ... og et utvalg som mangler ÉN av de pinnede portene er heller ikke
+    # utvalget: append-only-porten er ikke valgfri.
+    feil = med_filer(list(M02_SUITE_ANDEL[1:]))
+    assert any("mangler" in f for f in feil), feil
+    # ... og de pinnede portene finnes FAKTISK: en node-id som er skrevet
+    # feil er en port som aldri kjører, og «0 feilede av 0» ser grønt ut.
+    for velger in M02_SUITE_ANDEL:
+        sti, _, navn = velger.partition("::")
+        kilde = (Path(__file__).resolve().parents[3] / sti
+                 ).read_text(encoding="utf-8")
+        assert f"def {navn}(" in kilde, velger
+
+
+# ===========================================================================
+# #166 — punktbinding: et sjekklistepunkt navngir målingene som beviser DET
+# ===========================================================================
+
+def _punktbind(krav_id, navn, maalinger):
+    from manifestskjema import _punktbinding
+    return _punktbinding(krav_id, {"bevismaalinger": list(maalinger)}, navn)
+
+
+def test_punktbindingen_avviser_en_sti_som_ikke_beviser_punktet():
+    """#166 (Codex P1 ×6 på #153): en sti som FINNES er ikke et bevis.
+
+    `_bevismaalinger_finnes` måler at en påberopt sti finnes i artefaktet,
+    og sier det selv i sin egen docstring: «Dette beviser ikke at målingen
+    er RELEVANT.» Følgen var at et hvilket som helst gyldig modulartefakt
+    kunne flippe et hvilket som helst punkt, så lenge det navnga en sti som
+    tilfeldigvis fantes. Codex felte den seks ganger på M-57 alene, hver
+    gang som et nytt «funn», hver gang samme rot.
+
+    MUTASJONEN SOM DREPER DENNE: la `_punktbinding` godta enhver sti som
+    finnes i bindingens verdier, uansett hvilket punkt de står under.
+    """
+    # NABOPUNKTET I SAMME GRENSE, ikke en fremmed grense. Første utgave av
+    # denne testen lånte en måling fra `m02-fordeling-v1` — en annen
+    # krav_id — og da overlevde mutasjonen «godta enhver sti i BINDINGEN,
+    # uansett punkt»: `m02-suite-v1` har bare ett punkt, så unionen er lik
+    # punktets eget sett. En port som ikke kan skille sitt eget angrep fra
+    # en tilfeldig streng, måler ikke det den heter.
+    #
+    # `wcag-kontroll-v1` har tre punkter. `maalt.avvik_mot_fasit` beviser
+    # `tester_gronne_pa_staging` der — den beviser ikke at en feilinjisert
+    # jobb havnet i unntakskøen.
+    feil = _punktbind("wcag-kontroll-v1", "feilinjisering_til_unntakskø",
+                      ["maalt.feilinjisering_feilet_med_kvittering",
+                       "maalt.avvik_mot_fasit"])
+    assert feil, "en måling fra NABOPUNKTET i samme grense flippet punktet"
+    assert "maalt.avvik_mot_fasit" in feil[0]
+    assert not _punktbind("wcag-kontroll-v1", "feilinjisering_til_unntakskø",
+                          ["maalt.feilinjisering_feilet_med_kvittering",
+                           "maalt.evidensfrist_reapet"]), \
+        "punktets EGNE målinger ble avvist — porten måler feil vei"
+
+
+def test_en_binding_med_feil_form_slipper_ingenting_gjennom(monkeypatch):
+    """Codex på #234: feil form er ikke en svakere binding — det er ingen.
+
+    Skrives en binding som bar streng, `"maalt.teller"` i stedet for
+    `("maalt.teller",)`, blir medlemskapstesten en DELSTRENGTEST. Da
+    autoriserer bindingen `maalt` — en kortere sti som beviser noe helt
+    annet — og porten flipper punktet på en måling ingen har navngitt.
+
+    MUTASJONEN SOM DREPER DENNE: dropp formsjekken og la `s not in lovlige`
+    møte strengen direkte.
+    """
+    import manifestskjema as skjemamodul
+    for vrang in ("maalt.teller", ["maalt.teller", ""], ["maalt.teller", 7],
+                  {"maalt.teller": True}):
+        monkeypatch.setitem(
+            skjemamodul.KRAVGRENSER["wcag-kontroll-v1"], "punktbinding",
+            {"tester_gronne_pa_staging": vrang})
+        assert _punktbind("wcag-kontroll-v1", "tester_gronne_pa_staging",
+                          ["maalt"]), \
+            f"delstreng/vrang form {vrang!r} autoriserte en fremmed sti"
+        assert _punktbind("wcag-kontroll-v1", "tester_gronne_pa_staging",
+                          ["maalt.teller"]), \
+            f"vrang form {vrang!r} ble håndhevet som gyldig binding"
+
+
+def test_hver_binding_i_kravgrensene_har_riktig_form():
+    """Porten måler sin egen tabell, ikke bare de konstruerte tilfellene.
+
+    En binding skrevet feil ETTER denne runden skal felles her, der den
+    skrives — ikke først når et punkt flippes på en delstreng.
+    """
+    from manifestskjema import KRAVGRENSER
+    for krav_id, grense in KRAVGRENSER.items():
+        binding = grense.get("punktbinding")
+        if binding is None:
+            continue
+        assert isinstance(binding, dict), f"{krav_id}: punktbinding er ikke dict"
+        for navn, lovlige in binding.items():
+            assert isinstance(lovlige, (list, tuple)), \
+                f"{krav_id}/{navn}: bindingen er ikke liste eller tuple"
+            assert lovlige and all(isinstance(s, str) and s for s in lovlige), \
+                f"{krav_id}/{navn}: bindingen har tomme eller ikke-streng-ledd"
+
+
+def test_et_punkt_uten_binding_er_uflippbart():
+    """Fravær er ikke fritak — og det er hele poenget med #166.
+
+    Første utgave av porten leste «ingen binding» som «ingenting å
+    håndheve». Da slapp nettopp de grensene igjennom som ikke har navngitt
+    noe — altså `m57-v1`, som er grunnen til at issuet finnes. En port som
+    er blind der den mangler, er ingen port.
+
+    Dette er §10s egen setning gjort mekanisk: «et punkt uten definert,
+    målbar grense regnes som nei».
+
+    MUTASJONEN SOM DREPER DENNE: returner tom liste når `punktbinding`
+    mangler eller er tom.
+    """
+    feil = _punktbind("m57-v1", "tester_gronne_pa_staging",
+                      ["maalt.tester_totalt"])
+    assert feil, "`m57-v1` har tom binding, men punktet flippet likevel"
+    assert "UFLIPPBART" in feil[0]
+
+    feil = _punktbind("m57-v1", "et_punkt_ingen_har_definert", [])
+    assert feil, "et ukjent punkt er flippbart"
+
+
+def test_delt_evidens_taaler_ulike_maalinger_per_modul():
+    """RUTINER §2s delingsregel skal IKKE brytes av #166.
+
+    Samme artefakt beviser samme punkt for flere moduler gjennom ULIKE
+    målinger: `rollback-m01-v1` beviser `rollback_testet` for M-1 gjennom
+    deaktiveringstiden og for M-2 gjennom tapte loggposter, i samme
+    kjøring. Bindingen er derfor unionen av det som lovlig beviser punktet
+    i det artefaktet — ikke ett sett per modul.
+
+    Arbeidsdelingen er uendret, bare flyttet: at målingen FINNES er
+    maskinelt, at den er RELEVANT for nettopp den modulen er reviewansvar.
+    Det maskinen nå hindrer, er at et punkt bevises av en måling som ikke
+    beviser DET.
+
+    MUTASJONEN SOM DREPER DENNE: gjør bindingen til ett sett per modul —
+    da felles den ene av de to lovlige lesningene.
+    """
+    assert not _punktbind("rollback-m01-v1", "rollback_testet",
+                          ["maalt.paagaaende_requests_korrekt_avvist"]), \
+        "M-1s lovlige måling ble avvist"
+    assert not _punktbind("rollback-m01-v1", "rollback_testet",
+                          ["maalt.tapte_loggposter"]), \
+        "M-2s lovlige måling ble avvist"
+
+
+def test_hvert_flippet_punkt_i_repoet_staar_i_sin_binding():
+    """Lever porten mot treet, ikke bare mot konstruerte tilfeller.
+
+    Hvert `ja`-punkt med krav_id i et manifest må ha alle sine
+    `bevismaalinger` i grensens binding. Går denne rød, har noen flippet et
+    punkt på en måling grensen ikke sier beviser det — og det er nøyaktig
+    hendelsen #166 finnes for, målt der den faktisk skjer.
+    """
+    import yaml as _yaml
+    feil = []
+    for fil in sorted(MODULROT.glob("*/manifest.yaml")):
+        m = _yaml.safe_load(fil.read_text(encoding="utf-8"))
+        for navn, p in (m.get("staging_sjekkliste") or {}).items():
+            if not isinstance(p, dict) or p.get("status") != "ja":
+                continue
+            if not p.get("krav_id"):
+                continue
+            feil += [f"{fil.parent.name}: {f}"
+                     for f in _punktbind(p["krav_id"], navn,
+                                         p.get("bevismaalinger") or [])]
+    assert not feil, "flippede punkter uten binding:\n" + "\n".join(feil)
+
+
+def test_m57_punktene_er_uflippbare_med_apne_oeyne():
+    """Det TILSIKTEDE utfallet, skrevet ned så det ikke leses som en feil.
+
+    `m57-v1` har tom binding. De seks punktene Codex felte — suitekjøring,
+    datasett-likhet, revisjonslogg, feilinjisering, flippedrill — kan derfor
+    ikke flippes før målingene finnes. M-57-aksepten skal uansett ikke kjøre
+    før utførelsesarmen har gitt dem.
+
+    Porten står her for at en fremtidig runde ikke skal «fikse» tomheten ved
+    å fjerne den.
+    """
+    from manifestskjema import KRAVGRENSER
+    assert KRAVGRENSER["m57-v1"]["punktbinding"] == {}, \
+        "m57-v1 har fått en binding — da skal denne porten oppdateres" \
+        " sammen med den, ikke slettes"
+    for punkt in ("tester_gronne_pa_staging", "syntetisk_datasett_likt_lokalt",
+                  "revisjonslogg_korrekt", "feilinjisering_til_unntakskø",
+                  "rollback_testet"):
+        assert _punktbind("m57-v1", punkt, ["maalt.hva_som_helst"]), \
+            f"{punkt} er flippbart på en vilkårlig sti"

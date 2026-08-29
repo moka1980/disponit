@@ -31,9 +31,16 @@ KONTRAKT = {
                               "sen_evidens", "konflikt_evidens",
                               "policy_versjon", "sikkerhet", "sak_finnes",
                               "feil_aarsak"],
-    "/v1/unntak": ["saker", "kategori", "prioritet", "status", "sakstype"],
+    # `arsak` (043): saker FØDT av et oppdrag bærer grunnen sin der —
+    # `kompensasjon_kreves`, `irreversibel_utfort` og
+    # `reversibilitet_ukjent` betyr at et menneske må rydde opp (eller
+    # undersøke) utenfor systemet. Flaten viser den i både listen
+    # (kolonne) og detaljen (rad + forklaring); faller feltet ut av
+    # backend, er de sakene igjen ikke til å skille fra en arvet sak.
+    "/v1/unntak": ["saker", "kategori", "prioritet", "status", "sakstype",
+                   "arsak"],
     "/v1/unntak/{id}": ["kategori", "sakstype", "status", "prioritet",
-                        "begrunnelse"],
+                        "begrunnelse", "arsak"],
     "/v1/unntak/{id}/historikk": ["rader", "hendelse", "fra_status",
                                   "til_status"],
     "/v1/policy/aktiv": ["versjon", "roller", "handlinger", "modus",
@@ -41,6 +48,9 @@ KONTRAKT = {
                          "belop_maks", "valuta", "tidsvindu", "frekvens",
                          "offentlig_id", "betrodd_for",
                          "kan_fastsla_permanent"],
+    # Lista over aktive policyer: utveien når `/v1/policy/aktiv` (med rette)
+    # ikke kan velge mellom flere. Flaten leser NØYAKTIG disse feltene.
+    "/v1/policy/aktive": ["policyer", "policy_id", "versjon"],
     "/v1/sesjon": ["tenant", "scopes"],
     # Utrullingsplanen. Feltene leses av flater/admin.js og
     # flater/kundeadmin.js — de har ingen tenanttabell å falle tilbake på.
@@ -159,17 +169,29 @@ def test_ingen_tenantdata_i_offentlige_ressurser():
     `offentlige_ressurser.test.js` håndhever den samme grensen fra JS-siden,
     men bare mot mønstre. Denne porten leser de FAKTISKE radene registeret
     serverer, så et nytt kundenavn er dekket i det øyeblikket det legges
-    inn — uten at noen må huske å oppdatere et mønster."""
+    inn — uten at noen må huske å oppdatere et mønster.
+
+    Ett unntak: plattformens egen tenant-id ER merkenavnet (`disponit`), og
+    merkenavnet er chrome som lovlig ligger i det offentlige locale-settet
+    (`app.navn`, `__Host-disponit_csrf` osv., se `sesjon.py:167`). Unntaket
+    er en EKSAKT match mot `app.navn` lowercased — ikke en prefiks og ikke
+    hele raden — så `navn`-feltet («Disponit (plattform)») og alle andre
+    tenanters id/navn (nordvik, bjørkli, granmo) er fortsatt dekket."""
     from api.utrulling import _UTRULLING
 
+    locale_dir = Path(__file__).resolve().parents[3] / "locales"
+    merkenavn = json.loads((locale_dir / "nb.json")
+                           .read_text(encoding="utf-8"))["app.navn"].lower()
+
     offentlig = list(UI_JS.rglob("*.js"))
-    offentlig += sorted((Path(__file__).resolve().parents[3] / "locales")
-                        .glob("*.json"))
+    offentlig += sorted(locale_dir.glob("*.json"))
     assert offentlig, "fant ingen serverte ressurser å sjekke"
     for sti in offentlig:
         tekst = sti.read_text(encoding="utf-8").lower()
         for rad in _UTRULLING:
             for verdi in (rad["id"], rad["navn"]):
+                if verdi.lower() == merkenavn:
+                    continue
                 assert verdi.lower() not in tekst, (
                     f"tenantdata ({verdi!r}) ligger i {sti.name}, som serveres "
                     f"uten øktsjekk")

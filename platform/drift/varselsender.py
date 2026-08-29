@@ -240,6 +240,23 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     fullføring `false`, raden telles som `mistet`, og advarselen står i
     journalen der driften ser den.
     """
+    # PRE-PASS (035 §5): familiehorisont-varslene (30/7/1 døgn) skrives inn
+    # i køen FØR den tømmes — sveipen er idempotent (unikhetsnøkkelen per
+    # bruker·familie·terskel), skjermet (en feil her skal aldri stoppe
+    # sendingen av det som alt ligger i køen), og kjøres her fordi senderen
+    # er den ene timerdrevne prosessen som allerede eier varselkøens rytme.
+    # `DISPONIT_PLATTFORMTENANT` er tenanten hvis `admin`-medlemmer driver
+    # plattformen (v1-standard: disponit).
+    try:
+        conn.execute("SELECT varsle_tokenfamilie_utlop(%s)",
+                     (os.environ.get("DISPONIT_PLATTFORMTENANT",
+                                     "disponit"),))
+        conn.commit()
+    except Exception as e:                                    # noqa: BLE001
+        conn.rollback()
+        print(f"varselsender: familievarsel-sveipen feilet: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+
     oppsett = oppsett or _smtp_oppsett()
     if oppsett is None and send is None:
         # Ikke konfigurert. Si det tydelig og la køen ligge urørt.

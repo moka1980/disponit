@@ -15,9 +15,17 @@ import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
 // «Hva du får» — og en besøkende kunne tro at det var alt vi tilbyr.
 //
 // Ingen statusbrikke per modul her. Katalogen er OMFANGET (hva plattformen
-// dekker), ikke en leveranseplan, og 45 «Kommer»-merker ville gjort seksjonen
-// til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som kjører i
-// dag står ett sted: brikkene i «Hva du får».
+// dekker), ikke en leveranseplan, og 56 «Kommer»-merker ville gjort
+// seksjonen til nettopp det byggeregnskapet forsiden ble ryddet for. Hva som
+// kjører i dag står ett sted: brikkene i «Hva du får».
+//
+// En «I drift»-etikett for M-56, båret av et eget statusfelt i katalogen,
+// sto kort her og er tatt ut igjen (Codex P1 på #109): `siteStatusMerke`
+// betyr per definisjon «kjører hos kunder», og et felt her ville vært en
+// ANDRE statusakse ved siden av `MODULSTATUS`. M-56 står `i_drift` etter
+// akseptflippet — regelen står likevel, og det er nettopp flytting som er
+// prøven på den: skal katalogen vise tilstand, utledes den av
+// `MODULSTATUS`, den manifestforankrede aksen, ikke av en akse her.
 function lesSide() {
   const side = new URLSearchParams(window.location.search).get("side") || "hjem";
   return ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"].includes(side)
@@ -55,18 +63,23 @@ function offentligTopp(side) {
     el("input", { type: "hidden", name: "sprak", value: sprak() }),
     el("label", { class: "sr-only", for: "site-sokefelt", text: t("site.sok.label") }),
     el("input", { id: "site-sokefelt", name: "q", type: "search",
-      placeholder: t("site.sok.placeholder"), value: side === "tjenester"
+      placeholder: t("site.sok.placeholder").replace("{antall}", KATALOG_ANTALL),
+      value: side === "tjenester"
         ? new URLSearchParams(window.location.search).get("q") || "" : "" }),
     el("button", { type: "submit", text: t("site.sok.knapp") }));
-  return el("header", { class: "site-topp" },
+  const topp = el("header", { class: side === "tjenester" ? "site-topp har-sok" : "site-topp" },
     el("div", { class: "site-topp-rad" },
       el("a", { class: "site-logo", href: offentligUrl("hjem"),
         "aria-label": t("site.nav.logo") },
         el("span", { "aria-hidden": "true", text: "D" }),
         el("strong", { text: t("app.navn", "Disponit") })),
       nav,
-      sprakvelger()),
-    el("div", { class: "site-sok-rad" }, sok));
+      sprakvelger()));
+  // Søket hører til katalogen, ikke til merkevarens første møte med brukeren.
+  // På forsiden skapte en egen søkerad en konkurrerende handling før produktet
+  // var forklart. Funksjonen er bevart der den faktisk har et resultatrom.
+  if (side === "tjenester") topp.append(el("div", { class: "site-sok-rad" }, sok));
+  return topp;
 }
 
 function katalogseksjon() {
@@ -218,6 +231,13 @@ function tilbudseksjon() {
     el("div", { class: "site-section-head" }, el("div", {},
       el("p", { class: "site-eyebrow", text: t("site.tilbud") }),
       el("h2", { text: t("site.tilbud_tittel") }))),
+    /* `site.hero.tilbud` er hele tilbudsbeskrivelsen, og den er nettopp IKKE
+       en funksjon av utrullingen — derfor står den utenfor
+       `site.hero.tekst_*` (se `plattformdata.js`). Nøkkelen var voktet i
+       locale og i unit, men kalt fra ingen flate: kontrakten sto død, og
+       prosaen nådde ingen besøkende (Cursor P2). Den hører hjemme her, rett
+       over områdene den ramser opp, og rendres uansett utrullingstilstand. */
+    el("p", { class: "site-tilbud-ingress", text: t("site.hero.tilbud") }),
     el("div", { class: "site-grid site-grid-2" }, TILBUD.map((post, indeks) =>
       el("article", { class: "site-feature" },
         el("span", { class: "site-feature-nr", "aria-hidden": "true",
@@ -231,31 +251,55 @@ function tilbudseksjon() {
 
 function hjemSide() {
   return [
-    el("section", { class: "site-hero site-hero-ny" },
-      el("div", { class: "site-hero-copy" },
-        el("p", { class: "site-eyebrow", text: t("site.hero.kicker") }),
-        el("h1", { text: t("site.hero.tittel") }),
-        el("p", { class: "site-hero-text", text: t("site.hero.tilbud") }),
-        el("p", { class: "site-hero-status", text: t(heroTekstNokkel()) }),
-        el("div", { class: "site-cta" },
+    el("section", { class: "site-home-hero" },
+      el("div", { class: "site-home-copy" },
+        el("p", { class: "site-eyebrow", text: t("site.home.kicker") }),
+        el("h1", { text: t("site.home.tittel") }),
+        el("p", { class: "site-home-ingress", text: t("site.home.ingress") }),
+        el("div", { class: "site-home-handlinger" },
           el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
-            text: t("site.cta.tjenester") }),
-          el("a", { class: "knapp", href: offentligUrl("produkt"),
+            text: t("site.home.cta") }),
+          el("a", { class: "site-tekstlenke", href: offentligUrl("produkt"),
             text: t("site.cta.produkt") }))),
-      el("aside", { class: "site-signal", "aria-label": t("site.hero.punkter_tittel") },
-        el("span", { class: "site-orbit", "aria-hidden": "true" }),
-        el("p", { class: "site-eyebrow", text: t("site.hero.punkter") }),
-        el("h2", { text: t("site.hero.punkter_tittel") }),
-        el("ul", { class: "site-checklist" },
-          el("li", { text: t("site.hero.punkt.fullmakt") }),
-          el("li", { text: t("site.hero.punkt.stopp") }),
-          el("li", { text: t("site.hero.punkt.spor") })))),
+      el("aside", { class: "site-kontrollbevis",
+        "aria-label": t("site.home.flyt.tittel") },
+        el("p", { class: "site-kontrollbevis-label", text: t("site.home.flyt.label") }),
+        el("h2", { text: t("site.home.flyt.tittel") }),
+        el("ol", { class: "site-kontrollflyt" },
+          /* Nummer, tittel og tekst er tre SØSKEN, ikke to: raden er et grid
+             med tre kolonner, og bare direkte barn blir grid-elementer. En
+             mellomliggende <div> ville lagt tittel og tekst i kolonne 2 og
+             latt den brede kolonne 3 stå tom (Codex P2). Mobilregelen
+             `.site-kontrollflyt li p { grid-column: 2 }` regner også med at
+             avsnittet er et grid-element. */
+          ["handling", "policy", "utfall", "spor"].map((steg, indeks) =>
+            el("li", {},
+              el("span", { class: "site-kontrollflyt-nr", "aria-hidden": "true",
+                text: String(indeks + 1).padStart(2, "0") }),
+              el("strong", { text: t(`site.home.flyt.${steg}.tittel`) }),
+              el("p", { text: t(`site.home.flyt.${steg}.tekst`) })))))),
+    el("section", { class: "site-driftstatus", "aria-labelledby": "driftstatus-tittel" },
+      el("p", { class: "site-driftstatus-merke", text: t("site.home.status.merke") }),
+      el("div", {},
+        el("h2", { id: "driftstatus-tittel", text: t("site.home.status.tittel") }),
+        el("p", { text: t(heroTekstNokkel()) }))),
+    el("section", { class: "site-section site-prinsipper",
+      "aria-labelledby": "prinsipper-tittel" },
+      el("div", { class: "site-section-head" }, el("div", {},
+        el("p", { class: "site-eyebrow", text: t("site.home.prinsipper.kicker") }),
+        el("h2", { id: "prinsipper-tittel", text: t("site.home.prinsipper.tittel") }))),
+      el("div", { class: "site-prinsipp-grid" },
+        ["presisjon", "plattform", "kostnad"].map((n, indeks) =>
+          el("article", { class: "site-prinsipp" },
+            el("span", { "aria-hidden": "true", text: String(indeks + 1).padStart(2, "0") }),
+            el("h3", { text: t(`site.argument.${n}_tittel`) }),
+            el("p", { text: t(`site.argument.${n}_tekst`) }))))),
     tilbudseksjon(),
     el("section", { class: "site-bunn-cta" },
       el("div", {}, el("p", { class: "site-eyebrow", text: t("site.cta.kicker") }),
         el("h2", { text: t("site.cta.tittel") })),
-      el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
-        text: t("site.nav.innlogging") })),
+      el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
+        text: t("site.home.cta") })),
   ];
 }
 
@@ -278,10 +322,15 @@ function produktSide() {
   ];
 }
 
-function sideIntroduksjon(kicker, tittel, tekst) {
+// `erstatninger` fyller inn plassholdere i tittelen, slik at sidetitler som
+// teller katalogen henter tallet fra katalogen selv og ikke fra en tekst som
+// må vedlikeholdes for hånd (Codex P2).
+function sideIntroduksjon(kicker, tittel, tekst, erstatninger) {
+  const tittelTekst = Object.entries(erstatninger || {}).reduce(
+    (tekst, [plassholder, verdi]) => tekst.replace(plassholder, verdi), t(tittel));
   return el("header", { class: "site-sideintro" },
     el("p", { class: "site-eyebrow", text: t(kicker) }),
-    el("h1", { text: t(tittel) }),
+    el("h1", { text: tittelTekst }),
     el("p", { class: "site-hero-text", text: t(tekst) }));
 }
 
@@ -308,7 +357,8 @@ function sikkerhetSide() {
 
 function tjenesterSide() {
   return [
-    sideIntroduksjon("site.katalog", "site.tjenester.tittel", "site.tjenester.tekst"),
+    sideIntroduksjon("site.katalog", "site.tjenester.tittel", "site.tjenester.tekst",
+      { "{antall}": KATALOG_ANTALL }),
     katalogseksjon(),
   ];
 }
@@ -364,16 +414,18 @@ export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
   let provider = null;
+  // Miljøet avgjør om forsiden kan LOVE noe, og leses fail-closed: bare den
+  // eksakte strengen teller, så et manglende felt eller en feilet henting
+  // koster et løfte i stedet for å gi et. Svaret bæres som LOKAL variabel her
+  // og skrives til modulglobalen først nedenfor — se der for hvorfor.
+  let iProduksjon = false;
   try {
     const o = await hentJson("/ui/oppsett.json");
     provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
-    // Miljøet avgjør om forsiden kan LOVE noe. Settes FØR rendringen under, og
-    // fail-closed: bare den eksakte strengen teller, så et manglende felt
-    // eller en feilet henting koster et løfte i stedet for å gi et.
-    settProduksjonsmiljo(o && o.miljo === "produksjon");
+    iProduksjon = o && o.miljo === "produksjon";
   } catch {
     provider = null;
-    settProduksjonsmiljo(false);
+    iProduksjon = false;
   }
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,
   // er også dette oppsett-svaret gammelt, og ingenting av det skal på skjermen.
@@ -389,7 +441,17 @@ export async function visInnlogging(opsjoner = {}) {
     lokaliserSkiplenke();
   }
 
+  // Miljøflagget er modulglobalt og leses av `erTilgjengelig`/`heroTekstNokkel`
+  // mens treet under bygges. Det skrives derfor FØRST her: etter begge
+  // returpunktene over, og uten et eneste ventepunkt mellom skrivingen og
+  // rendringen som bruker den. Sto skrivingen ved hentingen, kunne et kall som
+  // ikke lenger har rett til å tegne likevel etterlate SITT miljø i globalen —
+  // samme feilklasse som `gjelderFortsatt` ble innført mot, og med staging som
+  // taperen: en flate som lover «Tilgjengelig» utenfor produksjon (Cursor P2).
+  settProduksjonsmiljo(iProduksjon);
+
   const side = lesSide();
+  document.documentElement.setAttribute("data-offentlig-side", side);
   settDokumenttittel(side);
   const sideinnhold = side === "tjenester" ? tjenesterSide()
     : side === "produkt" ? produktSide()

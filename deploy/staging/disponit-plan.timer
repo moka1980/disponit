@@ -1,0 +1,14 @@
+# 044 §4: hvert 5. minutt. Kadensen avgjør ikke HVA som materialiseres —
+# vinduets forfall og toleranse gjør det; SKIP-semantikken bor i mutexen
+# (claim_planvindu), så en overlappende kjøring er trygg.
+
+[Unit]
+Description=Disponit plan-materialiserertimer
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

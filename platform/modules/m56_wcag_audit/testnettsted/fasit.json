@@ -1,0 +1,122 @@
+{
+  "_kommentar": [
+    "FASITEN ER SKREVET FRA KONSTRUKSJONEN, ikke fra en kjøring: hvert",
+    "tall under svarer til et brudd som er lagt inn med vilje i sidene",
+    "(se kommentarene i HTML-en). Motoren måles MOT denne fila",
+    "(klarsignal §12: funn.avvik_mot_fasit = 0) — endres sidene, endres",
+    "fasiten i SAMME commit, aldri ved å lese motorens svar tilbake.",
+    "Alvorlighet er axe-impact mappet: critical->kritisk, serious->alvorlig.",
+    "blokkert.annet=1 er axes EGEN CSSOM-refetch (xhr) av det blokkerte kryssorigin-stilarket - en reell, deterministisk blokkert forespursel; tellingen er per FORESPORSEL, ikke per ressurs."
+  ],
+  "scenarier": {
+    "enkeltside": {
+      "payload": {
+        "sti": "/index.html",
+        "kravsett": "wcag21_aa",
+        "omfang": "enkeltside",
+        "maks_sider": 1
+      },
+      "sider_ok": 1,
+      "funn": {
+        "image-alt": {
+          "alvorlighet": "kritisk",
+          "antall": 2
+        },
+        "label": {
+          "alvorlighet": "kritisk",
+          "antall": 1
+        },
+        "button-name": {
+          "alvorlighet": "kritisk",
+          "antall": 1
+        },
+        "link-name": {
+          "alvorlighet": "alvorlig",
+          "antall": 1
+        },
+        "color-contrast": {
+          "alvorlighet": "alvorlig",
+          "antall": 2
+        }
+      },
+      "blokkert": {
+        "ekstern-cdn.example": {
+          "stilark": 1,
+          "skript": 1,
+          "bilde": 1,
+          "annet": 1
+        }
+      },
+      "avkortet": [
+        false,
+        null,
+        null
+      ]
+    },
+    "nettsted_maks4": {
+      "payload": {
+        "sti": "/index.html",
+        "kravsett": "wcag21_aa",
+        "omfang": "nettsted",
+        "maks_sider": 4
+      },
+      "_crawlrekkefolge": [
+        "/index.html",
+        "/om.html",
+        "/kontakt.html",
+        "/side-3.html"
+      ],
+      "sider_ok": 4,
+      "funn": {
+        "image-alt": {
+          "alvorlighet": "kritisk",
+          "antall": 3
+        },
+        "label": {
+          "alvorlighet": "kritisk",
+          "antall": 3
+        },
+        "button-name": {
+          "alvorlighet": "kritisk",
+          "antall": 1
+        },
+        "link-name": {
+          "alvorlighet": "alvorlig",
+          "antall": 1
+        },
+        "color-contrast": {
+          "alvorlighet": "alvorlig",
+          "antall": 2
+        },
+        "html-has-lang": {
+          "alvorlighet": "alvorlig",
+          "antall": 1
+        }
+      },
+      "blokkert": {
+        "ekstern-cdn.example": {
+          "stilark": 1,
+          "skript": 1,
+          "bilde": 1,
+          "annet": 1
+        }
+      },
+      "avkortet": [
+        true,
+        4,
+        14
+      ],
+      "_avkortet_forklart": [
+        "14 = 4 besokte + 9 oppdagede-i-ko (side-4..side-12 fra side-3)",
+        "+ 1 query-lenke (/sok?q=... fra kontakt.html). Query-lenken er",
+        "med med vilje: en crawler som kaster lenker med query utelater",
+        "dynamiske sider i stillhet OG melder et for lavt avkortingstall,",
+        "saa fasiten ville sett komplett ut. Den hentes aldri (taket er 4",
+        "og den staar sist i koen), saa sider_ok er urort.",
+        "/privat/hemmelig.html teller ALDRI: robots.txt disallow — den",
+        "siden baerer med vilje mange brudd, saa en crawler som ignorerer",
+        "robots sprenger funn-fasiten i stedet for aa bestaa stille."
+      ]
+    }
+  }
+}

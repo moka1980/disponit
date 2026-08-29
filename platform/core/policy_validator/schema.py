@@ -302,7 +302,227 @@ def _valider_innforing(policy: dict) -> list[str]:
                 feil.append(
                     f"{felt}: verifikator-id '{vid}' inneholder skilletegn fra"
                     " diffstien (. eller [) og gjør stien flertydig")
+    feil += _overstyring_kan_anvendes(policy)
+    feil += _belopene_kan_baeres(policy)
     return sorted(feil)
+
+
+#: Flest sifre et beløp kan ha FORAN komma. Ikke en smakssak: et beløpstak
+#: over 10^18 finnes ikke i noen valuta noen bedrift fører, og tallet må
+#: kunne bæres av HVERT lag som måler det — jsonb, `NUMERIC` i
+#: aktiveringsgaten, diffen og flaten. Uten et tak var det siste leddet det
+#: som brast (Codex P2).
+BELOP_MAKS_SIFRE = 18
+
+
+def _belopene_kan_baeres(policy: dict) -> list[str]:
+    """Et beløp må være et tall lagene under kan BÆRE (Codex P2).
+
+    Skjemaets mønster (`^\\d+(\\.\\d{1,2})?$`) sier bare at tegnene er
+    sifre. En sifferstreng på hundretusen tegn passerer det fint — og
+    `Decimal` i Python leser den uten å blunke — men `aktiver_policy` caster
+    `belop_maks` til `NUMERIC` for å måle om overstyringen flytter noe.
+    `NUMERIC` har et tak, og over det feiler castet med
+    `numeric_value_out_of_range`. Den koden er ikke et av aktiveringens
+    håndterte utfall, så en FERDIG ATTESTERT fire-øyne-runde endte i 500 —
+    på et dokument, altså noe eier kunne rettet, hadde noen sagt fra.
+
+    Kravet bor i INNFØRINGSkontrakten, ikke i skjemaet: skjemaet er også
+    lastekontrakten, og `hent_aktiv` revaliderer hver lagret policy mot det
+    ved hver forespørsel. En innstramming der ville gjort en alt aktiv
+    policy `PolicyKorrupt` i det utrullingen lander. Framover må neste
+    versjon rette beløpet; bakover leses og virker den som før — og SQL-
+    gaten er uansett gjort ufølsom for verdier den ikke kan lese.
+
+    Bare den UTVETYDIGE formen måles: en `belop_maks` som ikke er tall
+    eller streng er lastekontraktens dom, ikke vår.
+    """
+    feil: list[str] = []
+
+    def _mal(sti: str, verdi: object) -> None:
+        if isinstance(verdi, bool) or not isinstance(verdi, (int, str)):
+            return
+        heltall = str(verdi).lstrip("-").split(".")[0]
+        if len(heltall) > BELOP_MAKS_SIFRE:
+            feil.append(
+                f"{sti}: 'belop_maks' har {len(heltall)} sifre foran komma —"
+                f" maks er {BELOP_MAKS_SIFRE}. Et større tall kan ikke bæres"
+                " av lagene som måler det, og aktiveringen ville feilet på et"
+                " sted som ikke kan si hva som er galt")
+
+    for i, h in enumerate(policy.get("handlinger") or []):
+        if not isinstance(h, dict):
+            continue
+        grenser = h.get("grenser")
+        if isinstance(grenser, dict) and grenser.get("belop_maks") is not None:
+            _mal(f"handlinger[{i}].grenser", grenser["belop_maks"])
+    mo = policy.get("menneskelig_overstyring")
+    for i, e in enumerate((mo or {}).get("godkjennbare") or []
+                          if isinstance(mo, dict) else []):
+        if isinstance(e, dict) and e.get("belop_maks") is not None:
+            _mal(f"menneskelig_overstyring[{i}]", e["belop_maks"])
+    return feil
+
+
+def _overstyring_kan_anvendes(policy: dict) -> list[str]:
+    """En `godkjennbare`-oppføring motoren ikke KAN anvende (Codex P1).
+
+    `IKKE_MENNESKELIG_GODKJENNBARE` er deny-siden: grunnkoder et menneske
+    aldri SKAL få godkjenne. Dette er den andre siden — grunnkoder motoren
+    ikke KAN løfte. `_loft_policy` uttrykker bare `belop_maks` og `valuta`
+    (`engine.LOFTBARE_GRUNNKODER`); alt annet gir None, og da ender HVER
+    godkjenning i STOPP. En slik oppføring passerte lastekontrakten fint,
+    så eier kunne aktivere det som så ut som en konfigurert menneskelig
+    overstyring — og aldri se den virke, uten at noe sa fra. Feltet
+    grunnkoden krever måles samme sted og av samme grunn: et løft uten
+    verdien å løfte TIL er like virkningsløst som en ikke-løftbar kode.
+
+    At verdien FINNES er heller ikke nok (Codex P1, runde 7): den må ligge
+    slik at det finnes et blokkert utfall løftet faktisk flytter. Et
+    `belop_maks` som ikke er HØYERE enn handlingens egen grense løfter
+    ingenting — hvert beløp som utløste `belop_over_grense` er per
+    definisjon over den grensen, altså også over overstyringens tak, og
+    steg 7 i `_anvend_menneskelig_godkjenning` stopper det. En `valuta`
+    handlingen ALT tillater er samme sak fra den andre siden: en hendelse
+    blokkert på `valuta_ikke_tillatt` bærer nødvendigvis en annen valuta,
+    og steg 7 krever likhet. Verdien måles derfor mot handlingen
+    oppføringen peker på, ikke bare mot sitt eget nærvær.
+
+    Kravet bor i INNFØRINGSkontrakten, ikke i lastekontrakten: en policy
+    som allerede er aktiv med en slik oppføring virker som før (den ene
+    overstyringen har aldri gjort noe), og skal ikke bli `PolicyKorrupt`
+    ved lasting i det utrullingen lander. Neste versjon må rette den.
+    """
+    from .engine import LOFTBARE_GRUNNKODER
+    mo = policy.get("menneskelig_overstyring")
+    if not isinstance(mo, dict):
+        return []
+    feil: list[str] = []
+    lovlige = ", ".join(sorted(LOFTBARE_GRUNNKODER))
+    handlinger = {h["id"]: h for h in policy.get("handlinger") or []
+                  if isinstance(h, dict) and isinstance(h.get("id"), str)}
+    for i, e in enumerate(mo.get("godkjennbare") or []):
+        if not isinstance(e, dict) or not isinstance(e.get("grunnkode"), str):
+            continue                     # lastekontrakten har alt sagt fra
+        gk = e["grunnkode"]
+        krav = LOFTBARE_GRUNNKODER.get(gk)
+        if krav is None:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: grunnkode '{gk}' kan ikke"
+                " løftes av motoren — en godkjenning ville alltid endt i"
+                f" STOPP. Løftbare grunnkoder: {lovlige}")
+        elif e.get(krav) is None:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: grunnkode '{gk}' krever"
+                f" '{krav}' i oppføringen — uten en verdi å løfte til kan"
+                " motoren ikke bygge løftet, og godkjenningen ender i STOPP")
+        else:
+            feil += _loftet_flytter_noe(i, gk, e, handlinger.get(e.get("handling")))
+    return feil
+
+
+#: Grunnkodene `_loftet_flytter_noe` faktisk MÅLER mot handlingen. Skal til
+#: enhver tid være hele `engine.LOFTBARE_GRUNNKODER` — en ny løftbar kode uten
+#: en gren der er en stille fail-open, altså nøyaktig hullet runde 7 lukket.
+#: `test_hver_loftbar_grunnkode_maales_mot_handlingen` er vakten.
+ANVENDBARHET_MALT = frozenset({"belop_over_grense", "valuta_ikke_tillatt"})
+
+
+def _loftet_flytter_noe(i: int, gk: str, e: dict, h: dict | None) -> list[str]:
+    """Verdien i oppføringen målt mot handlingen den peker på.
+
+    Ukjent handling sier lastekontrakten (`_valider`) alt fra om; her ville
+    den bare blitt en andre stemme om det samme, så da måler vi ingenting.
+    Det samme gjelder en uleselig grense: `belop_ugyldig`/
+    `policy_belopsgrense_ugyldig` er andres dom, og en verdi vi ikke kan
+    lese kan vi ikke påstå noe om.
+
+    Rekkefølgen i `_evaluer` teller: en handling motoren feller FØR
+    grensene rekker aldri fram til utfallene de løftbare kodene kommer
+    fra, så da er oppføringen uanvendelig uansett grunnkode og verdi. Slike
+    sjekker gjelder ALLE koder og står derfor foran grendelingen — en ny
+    løftbar kode arver dem uten at noen må huske det. To steg feller slik:
+    MODUS (steg 2) og ROLLE (steg 3).
+    """
+    from .engine import MODUS_UTEN_LOFTBARE_UTFALL, parse_belop
+    if h is None:
+        return []
+    grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) else {}
+    hid = h["id"]
+    if h.get("modus", MODUS_UTEN_LOFTBARE_UTFALL) == MODUS_UTEN_LOFTBARE_UTFALL:
+        return [f"menneskelig_overstyring[{i}]: handling '{hid}' har modus"
+                f" '{MODUS_UTEN_LOFTBARE_UTFALL}' og felles på"
+                " 'modus_alltid_stopp' før noen grense i det hele tatt"
+                f" vurderes, så '{gk}' kan aldri oppstå for den —"
+                " godkjenningen ender i STOPP uansett verdi"]
+    # STEG 3 FELLER LIKE HARDT SOM STEG 2 (Codex P1). `_evaluer` måler
+    # `context.aktor_rolle not in (h.get("tillatt_for") or [])` og
+    # returnerer `rolle_ikke_tillatt` — FØR beløp (steg 4) og valuta
+    # (steg 5). Er lista tom eller fraværende, er den prøven usann for
+    # ENHVER rolle: ingen aktør finnes som kan komme forbi den, og da kan
+    # ingen løftbar grunnkode oppstå for handlingen.
+    #
+    # Skjemaet tillater at `tillatt_for` mangler, så dette er en form eier
+    # faktisk kan lagre — og editoren tilbyr handlingen som mål uansett.
+    # Uten denne linjen så overstyringen komplett ut og endte i STOPP ved
+    # HVER godkjenning, som med `alltid_stopp`.
+    #
+    # Bare det UTVETYDIGE fraværet felles. En `tillatt_for` som er noe
+    # annet enn en liste er lastekontraktens dom, ikke vår — samme
+    # arbeidsdeling som for en uleselig grense.
+    tillatt = h.get("tillatt_for")
+    if tillatt is None or (isinstance(tillatt, list)
+                           and not [r for r in tillatt
+                                    if isinstance(r, str) and r]):
+        return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                " rolle i 'tillatt_for', så motoren feller den på"
+                " 'rolle_ikke_tillatt' før noen grense vurderes, og"
+                f" '{gk}' kan aldri oppstå for den — godkjenningen ender i"
+                " STOPP uansett verdi"]
+    feil: list[str] = []
+    if gk == "belop_over_grense":
+        hgrense = grenser.get("belop_maks")
+        if hgrense is None:
+            # Uten en beløpsgrense på handlingen kan `belop_over_grense`
+            # aldri oppstå for den — oppføringen venter på et utfall som
+            # ikke finnes.
+            return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                    " 'grenser.belop_maks', så 'belop_over_grense' kan aldri"
+                    " oppstå for den og overstyringen kan aldri anvendes"]
+        hmaks, emaks = parse_belop(hgrense), parse_belop(e["belop_maks"])
+        if hmaks is not None and emaks is not None and emaks <= hmaks:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: 'belop_maks' {emaks} er ikke"
+                f" høyere enn grensen {hmaks} på handling '{hid}' — hvert"
+                " beløp som utløser 'belop_over_grense' er over den grensen,"
+                " altså også over overstyringens tak, og godkjenningen ender"
+                " i STOPP")
+        # `belop_maks` drar `valuta` med seg (dependentRequired), og steg 7
+        # krever at hendelsens valuta ER den. Er ikke DEN valutaen tillatt
+        # for handlingen, stopper den gjenopptatte evalueringen på valuta i
+        # stedet — løftet hevet jo bare beløpet.
+        lovlige_v = grenser.get("valuta")
+        v = e.get("valuta")
+        if isinstance(lovlige_v, list) and lovlige_v and v is not None \
+                and v not in lovlige_v:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: valutaen '{v}' er ikke tillatt"
+                f" for handling '{hid}' ({', '.join(map(str, lovlige_v))}) —"
+                " løftet hever beløpet, ikke valutaen, så evalueringen"
+                " stopper på 'valuta_ikke_tillatt' uansett")
+    elif gk == "valuta_ikke_tillatt":
+        lovlige_v = grenser.get("valuta")
+        if not isinstance(lovlige_v, list) or not lovlige_v:
+            return [f"menneskelig_overstyring[{i}]: handling '{hid}' har ingen"
+                    " 'grenser.valuta', så 'valuta_ikke_tillatt' kan aldri"
+                    " oppstå for den og overstyringen kan aldri anvendes"]
+        if e["valuta"] in lovlige_v:
+            feil.append(
+                f"menneskelig_overstyring[{i}]: valutaen '{e['valuta']}' er"
+                f" allerede tillatt for handling '{hid}' — en hendelse som"
+                " blokkeres på 'valuta_ikke_tillatt' bærer en ANNEN valuta,"
+                " og godkjenningen ender i STOPP")
+    return feil
 
 
 def _valider(policy: object) -> list[str]:
@@ -346,9 +566,24 @@ def _valider(policy: object) -> list[str]:
             elif vk["navn"] not in verifikatorer[vid]["betrodd_for"]:
                 feil.append(f"handling '{hid}': verifikator '{vid}' er ikke "
                             f"betrodd for vilkår '{vk['navn']}'")
-        if h["reversering"]["type"] == "irreversibel" \
-                and not (h.get("grenser") or h.get("vilkaar")):
-            feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+        if h["reversering"]["type"] == "irreversibel":
+            if not (h.get("grenser") or h.get("vilkaar")):
+                feil.append(f"handling '{hid}': irreversibel uten grenser/vilkår")
+            # En irreversibel handling som KAN utføres automatisk må ha minst
+            # ett vilkår. Grunnen er replay-vernet: jti-ene API-veien
+            # konsumerer kommer fra attestasjonene, og en attestasjon finnes
+            # bare fordi et vilkår krever den (`engine.py` → attestasjon_mangler).
+            # Uten vilkår er `jti_liste` tom (`kjerne.py`), ingen jti
+            # konsumeres, og den irreversible handlingen kan spilles av på
+            # nytt — mens grensene alene bare begrenser hvor stor hver enkelt
+            # avspilling er. `alltid_stopp` trenger ikke vilkåret: den
+            # utføres aldri automatisk, så det finnes ingen avspilling å verne.
+            elif h["modus"] in ("auto", "auto_med_vilkaar") \
+                    and not (h.get("vilkaar") or []):
+                feil.append(f"handling '{hid}': irreversibel handling med modus "
+                            f"'{h['modus']}' krever minst ett vilkår — uten "
+                            "attestasjon konsumeres ingen jti og replay-vernet "
+                            "finnes ikke")
         # `auto_med_vilkaar` UTEN vilkår degenererer til ren `auto` — fullmakt
         # uten port. Håndheves her i den KANONISKE validatoren (PR-014 R2), ikke
         # i en parallell validator. Typene er garantert (skjemaet passerte over).

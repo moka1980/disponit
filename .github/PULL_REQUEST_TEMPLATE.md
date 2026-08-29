@@ -8,10 +8,14 @@
 2. Er alle handlinger reversible eller eksplisitt irreversible med harde vilkår?
 3. Mangler unntakshåndtering for noen feilvei?
 
-## Codex merge-porter (steg 4)
+## CodeRabbit-feilfanger (steg 4)
+- [ ] `coderabbit review --agent --include-untracked --base main` kjørt før push — kritisk/alvorlig fikset, bagateller listet under
+- [ ] Ny kjøring etter vesentlige endringer i PR-en
+
+## Merge-porter (steg 5 — Claude Code merger ved grønn CI)
 - [ ] CI grønn — inkludert negative policytester (ingen fjernet/svekket)
 - [ ] Ingen kodevei uten ved_brudd-håndtering
-- [ ] Akseptansemapping mot v7.2 komplett i beskrivelsen
+- [ ] Akseptansemapping mot gjeldende prototype (`docs/spesifikasjon/`) komplett i beskrivelsen
 - [ ] Ingen secrets; ingen skrivetilgang utenom policymotoren
 
 ## Filplassering

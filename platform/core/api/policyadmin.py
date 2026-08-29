@@ -34,7 +34,7 @@ from datetime import timedelta
 
 import psycopg
 
-from db.pg import sett_kontekst
+from db.pg import laas_policy_delt, sett_kontekst
 from policy_validator import klassifikator, policydiff, semantikk
 from policy_validator import schema as _schema
 
@@ -63,6 +63,33 @@ KONVOLUTTVERSJON = 1
 
 #: Aktiverte policyer settes i produksjonsstatus (den blir den aktive raden).
 _AKTIV_STATUS = "produksjon"
+
+#: Rullbakkevaktens navngitte constraints (047) → feilkode (Codex P2).
+#:
+#: `policyutkast_rullbakkeopphav_vakt` er den AUTORITATIVE prøven på et
+#: opphav, og den kjører i SKRIVINGENS transaksjon — etter at HTTP-veien har
+#: sluppet sin lesetransaksjon. Rekker `slett_ubrukt_policy` å slette eller
+#: gjenskape kilden i mellomtiden, feller triggeren innsettingen. Det er en
+#: STØTTET samtidighet, ikke en driverfeil, men uten navnene her nådde
+#: `psycopg.errors.CheckViolation` helt ut til `_med_conn` — som bare kjenner
+#: `Aktiveringsfeil` — og eier fikk 500 i stedet for det 409-et forkontrollen
+#: gir for nøyaktig samme tilstand.
+#:
+#: Oversettelsen bor HER, ikke i HTTP-laget: triggeren vokter tabellen mot
+#: enhver skriver, og en kaller utenfor forespørselsveien skal møte det samme
+#: domenesvaret. Navnet er kontrakten — en constraint vi ikke kjenner kastes
+#: videre urørt, for da er det virkelig noe uventet.
+_RULLBAKKVAKT_FEIL = {
+    # Kilden er borte, eller bærer nå en annen generasjon: raden er ikke den
+    # klienten så. Samme kode og samme 409 som forkontrollens egen prøve
+    # (`kilde_gen != rollback_gen`) — flaten laster historikken på nytt.
+    "utkast_rullbakk_kilde_finnes": "rullbakk_kilde_endret",
+    # En rullbakk uten kildegenerasjon. HTTP-veien krever feltet, så dette er
+    # en kaller utenfor den: 400, ikke 500 — forespørselen er feilformet.
+    "utkast_rullbakk_krever_generasjon": "utkast_feilformet",
+    # Innholdet er ikke kildens. Samme klasse, samme svar.
+    "utkast_rullbakk_er_kopi": "utkast_feilformet",
+}
 
 _AKTIVER_SCOPE = "policy:activate"
 
@@ -150,10 +177,16 @@ def _base_med_versjon(conn, tenant, policy_id) -> tuple[dict, str, str | None]:
 def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, policy_id: str, innhold: dict,
                    idempotency_key: str, input_hash: str,
-                   rollback_av_versjon: str | None = None) -> dict:
+                   rollback_av_versjon: str | None = None,
+                   rollback_av_generasjon: int | None = None) -> dict:
     """Opprett et nytt utkast (status `utkast`). Fanger gjeldende aktive versjon
     + hash som `basert_pa_*` for konfliktdeteksjon (§4). Idempotent (P1 R3):
-    en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx."""
+    en replay returnerer NØYAKTIG samme utkast_id. Kalleren eier tx.
+
+    En RULLBAKK må levere kilderadens `generasjon`, hentet SAMMEN med
+    innholdet den kopierer: opphavet lagres som generasjonens identitet,
+    ikke som versjonsnummeret eller innholdet — begge kan gjenskapes etter
+    en sletting, generasjonstallet kan ikke. Se migrasjon 047."""
     sett_kontekst(conn, tenant, aktor, request_id)
     if not isinstance(innhold, dict):
         conn.rollback()
@@ -180,30 +213,12 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # under ruller posten tilbake sammen med resten av transaksjonen: en
     # forespørsel som aldri kunne blitt et utkast brenner ikke nøkkelen.
     #
-    # FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
-    # dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
-    # ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
-    # beskjeden.
-    if not _POLICY_ID.fullmatch(policy_id or ""):
+    # Selve prøven bor i `nytt_utkast_avvik` — flatene spør den FØR de tilbyr
+    # en handling som ellers alltid ender i 400 (Codex P2).
+    avvik = nytt_utkast_avvik(tenant, policy_id)
+    if avvik:
         conn.rollback()
-        raise Aktiveringsfeil("policy_id_ugyldig", f"policy_id={policy_id!r}")
-    # Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
-    # primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
-    # plass. Da er det opprettelsen som skal si nei, ikke en validering hun
-    # aldri kan tilfredsstille.
-    #
-    # EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
-    # koden videre — detaljen under når aldri skjermen — og editoren oversetter
-    # `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
-    # altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
-    # eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
-    # ikke feil form: `_POLICY_ID` over har alt sagt ja til den.
-    if _nokkelbytes(tenant, policy_id) > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
-        conn.rollback()
-        raise Aktiveringsfeil(
-            "policy_id_for_stor",
-            f"policy_id levner ikke plass til en versjon i registernøkkelen"
-            f" ({_nokkelbytes(tenant, policy_id)} byte)")
+        raise Aktiveringsfeil(*avvik)
     # Identiteten er godkjent. Så INNHOLDET, og her retter vi i stedet for å
     # avvise — statusen er ikke eiers valg (se under).
     #
@@ -229,13 +244,55 @@ def opprett_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         innhold = {**innhold,
                    "meta": {**innhold["meta"], "status": "produksjon"}}
     _, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
+    # `meta.versjon` normaliseres etter samme prinsipp som `meta.status` over:
+    # et utkast som er DØDFØDT slik det opprettes, skal ikke opprettes slik.
+    # Redigerer man en eksisterende policy, arver utkastet dokumentets egen
+    # versjon — altså nøyaktig den som er aktiv — og eiers utkast 17/8 bar
+    # 0.3.0 hele veien gjennom validering før rundeåpningen avviste det med
+    # et uforklart 409. En versjon som alt er opptatt byttes derfor med den
+    # neste ledige VED OPPRETTELSEN, mens en versjon eier selv har satt
+    # HØYERE ikke røres (den er et gyldig valg, ikke en arv). Valideringen
+    # (`_versjonsavvik`) står uansett som port for det som redigeres inn
+    # senere.
+    if isinstance(innhold.get("meta"), dict) \
+            and isinstance(innhold["meta"].get("versjon"), str) \
+            and _SEMVER.fullmatch(innhold["meta"]["versjon"]):
+        try:
+            _krev_ny_versjon(conn, tenant, policy_id, innhold, aktiv)
+        except Aktiveringsfeil:
+            forslag = _neste_ledige_versjon(conn, tenant, policy_id, aktiv)
+            if forslag:
+                innhold = {**innhold,
+                           "meta": {**innhold["meta"], "versjon": forslag}}
     utkast_id = "u-" + secrets.token_hex(8)
-    conn.execute(
-        "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
-        " basert_pa_versjon, basert_pa_hash, rollback_av_versjon, innhold,"
-        " opprettet_av) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
-        (tenant, utkast_id, policy_id, aktiv, base_hash, rollback_av_versjon,
-         json.dumps(innhold), aktor))
+    # Opphavet bindes til GENERASJONEN, ikke til nummeret og ikke til
+    # innholdet (Codex P2). Begge de to kan gjenskapes: nummeret frigjøres
+    # av sletting, og det samme dokumentet kan settes inn igjen — da er
+    # hashen lik og generasjonen en annen. Tallet leses av kalleren SAMMEN
+    # med innholdet kopien er tatt fra, ikke i et nytt oppslag her: en
+    # gjenskaping mellom de to ville ellers bundet kopien til en generasjon
+    # den aldri kom fra. En rullbakk uten kildegenerasjon får NULL —
+    # historikken sier da «kilden er ikke bundet» i stedet for å påstå noe.
+    rb_gen = (rollback_av_generasjon if rollback_av_versjon is not None
+              and isinstance(rollback_av_generasjon, int) else None)
+    # Vakten i 047 måler opphavet HER, i vår egen transaksjon. Kilden kan ha
+    # flyttet seg siden kalleren leste den, og da er avslaget et domenesvar —
+    # se `_RULLBAKKVAKT_FEIL`. `rollback()` først: transaksjonen er avbrutt av
+    # feilen, og `Aktiveringsfeil` reises ellers på en død forbindelse.
+    try:
+        conn.execute(
+            "INSERT INTO policyutkast (tenant, utkast_id, policy_id,"
+            " basert_pa_versjon, basert_pa_hash, rollback_av_versjon,"
+            " rollback_av_generasjon, innhold, opprettet_av)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)",
+            (tenant, utkast_id, policy_id, aktiv, base_hash,
+             rollback_av_versjon, rb_gen, json.dumps(innhold), aktor))
+    except psycopg.errors.CheckViolation as e:
+        kode = _RULLBAKKVAKT_FEIL.get(e.diag.constraint_name or "")
+        conn.rollback()
+        if kode is None:
+            raise
+        raise Aktiveringsfeil(kode) from e
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "policy_id": policy_id,
         "utkastversjon": 1, "status": "utkast", "base_versjon": aktiv})
@@ -280,6 +337,79 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         (json.dumps(innhold), ny, tenant, utkast_id))
     return _fullfor(conn, tenant, idempotency_key, {
         "utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"})
+
+
+def _krev_malautorisasjonsvilkar(conn: psycopg.Connection,
+                                 innhold) -> list[str]:
+    """Feilliste: `ekstern_lesing`-handlinger uten plattformvilkår (047).
+
+    HVILKE handlinger porten gjelder for avgjøres av `_er_ekstern_lesing` —
+    den SAMME klassifiseringen aktiveringsporten bruker (Codex P2): koden
+    først, registeret bare der koden ikke selv stiller kravet. Et rent
+    registeroppslag her var ikke bare en annen mening om samme handling,
+    det var en STILLERE mening. For en kodefestet type som
+    `kontroll.wcag.nettsted` med manglende eller feil registerrad
+    (`sideeffektfri`) krevde `_krev_ekstern_lesing_port` fortsatt et
+    målautorisasjonsvilkår, mens valideringen her fant ingen ekstern
+    handling i det hele tatt og FRØS utkastet som gyldig. Eier møtte da
+    kravet først ved rundeåpning eller attestering — etter frysingen, der
+    innholdet ikke lenger kan rettes, bare erstattes. Hele poenget med å
+    måle kravet i valideringen er at det skal komme mens utkastet ennå er
+    redigerbart, og da må de to veiene klassifisere likt.
+
+    Vilkårskravet leses fra `malautorisasjonsvilkar` — ingen hardkodet
+    liste (port 32) — og måles mot typens `malautorisasjonsdomene`, samme
+    domenebinding som aktiveringsporten krever. En handling som er
+    ekstern lesing UTEN en målautorisasjonsbærende oppdragstype kan ikke
+    aktiveres i det hele tatt (porten avviser den med
+    `malautorisasjon_mangler`); den får derfor sin egen linje her i
+    stedet for å bli stående som tilsynelatende gyldig.
+
+    En handling hvis id verken er en kodefestet type eller en registrert
+    oppdragstype er ikke denne portens sak: den er enten en intern
+    handling (motoren) eller fanges av bestillingsveien."""
+    if not isinstance(innhold, dict):
+        return []
+    handlinger = innhold.get("handlinger")
+    if not isinstance(handlinger, list):
+        return []
+    feil = []
+    for h in handlinger:
+        if not isinstance(h, dict):
+            continue
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
+            continue
+        hid = h.get("id") if isinstance(h.get("id"), str) else "?"
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
+            feil.append(
+                f"handling '{hid}': ekstern_lesing uten"
+                " målautorisasjonsbærende oppdragstype — det finnes ikke"
+                " noe målautorisasjonsvilkår som kan telle, og handlingen"
+                " kan ikke aktiveres")
+            continue
+        # Ustrukturert `vilkaar` er en skjemasak og er alt rapportert av
+        # `valider_ny_policy`; her leses bare det som ER lesbart, slik at
+        # feillisten ikke drukner i en TypeError fra et halvferdig utkast.
+        vilkaar = h.get("vilkaar") if isinstance(h.get("vilkaar"), list) \
+            else []
+        navn = [v.get("navn") for v in vilkaar
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in vilkaar if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            lovlige = [r[0] for r in conn.execute(
+                "SELECT vilkar_type FROM malautorisasjonsvilkar"
+                " WHERE maldomene = %s ORDER BY vilkar_type",
+                (t.malautorisasjonsdomene,)).fetchall()]
+            feil.append(
+                f"handling '{hid}': ekstern_lesing krever et "
+                f"målautorisasjonsvilkår for {t.malautorisasjonsdomene} "
+                f"({', '.join(lovlige) or 'ingen registrert ennå'})")
+    return feil
 
 
 def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -337,11 +467,53 @@ def valider_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     # aktivere eller redigere. Avvikene legges i feillisten sammen med
     # skjemafeilene, så eier ser NØYAKTIG hva som må rettes i editoren.
     feil = list(feil) + _dokumentavvik(policy_id, innhold, tenant)
+    # 047 (klarsignal §5/port 34): en handling hvis oppdragstype er
+    # `ekstern_lesing` MÅ bære et plattform-målautorisasjonsvilkår —
+    # målt her, FØR runden, ikke først i modulaktiveringsporten (036).
+    # Dette er samtidig fjerningsvernet (port 31): å redigere bort
+    # vilkåret gjør utkastet ugyldig, uansett hvilken flate som prøvde.
+    #
+    # REGISTERAVVIK, ikke dokumentfeil (Codex P2). Dommen ser på utkastet,
+    # men den FELLES av registeret: `_er_ekstern_lesing` leser
+    # `modulkontrakt` og `oppdragstype_register`, og vilkårslista leses fra
+    # den append-only `malautorisasjonsvilkar`. Alle tre flytter seg — det
+    # er nettopp derfor kravet ikke er hardkodet (port 32). Kjørte
+    # valideringen før drift hadde registrert vilkåret eller kontrakten, og
+    # eier prøvde igjen med flatens stabile `valNokkel` etter at det var på
+    # plass, ville `_idempotent_start` replayet den gamle dommen uten å
+    # spørre det reparerte registeret — og det uendrede utkastet var umulig
+    # å validere fra den visningen til eier tilfeldigvis tvang fram en ny
+    # render. Samme resonnement som `_versjonsavvik` under, samme bøtte.
+    reg_feil = _krev_malautorisasjonsvilkar(conn, innhold)
+    # Versjonen måles mot REGISTERET her — ikke først ved rundeåpning. Eiers
+    # utkast 17/8 bar den aktive policyens egen versjon (0.3.0), gikk
+    # gjennom valideringen med glans, og døde så med `versjon_i_bruk` i et
+    # 409 ingen flate forklarte. Valideringen er stedet eier fortsatt kan
+    # RETTE: etter frysingen kan versjonen ikke økes, og et validert utkast
+    # med opptatt versjon er en blindgate (den kan bare gjenåpnes/erstattes).
+    # Porten `_krev_ny_versjon` består uendret ved rundeåpning og attestering;
+    # her brukes den som PRØVE, så de to aldri kan mene noe ulikt om samme
+    # versjon.
+    reg_feil += _versjonsavvik(conn, tenant, policy_id, innhold)
     if feil:
         # Ugyldig CACHES også (bundet til versjonen): en retry med samme nøkkel
         # får samme svar; et endret utkast (ny versjon) → egen nøkkel/konflikt.
+        # Registeravviket tas med som tekst — utkastet er uansett ugyldig av
+        # dokumentgrunner, og de kan ikke rettes uten en ny versjon (ny nøkkel).
         return _fullfor(conn, tenant, idempotency_key, {
-            "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil})
+            "utfall": "ugyldig", "utkast_id": utkast_id, "feil": feil + reg_feil})
+    if reg_feil:
+        # Er REGISTERET eneste innvending, caches svaret IKKE (Codex P2):
+        # dokumentfeilene over er egenskaper ved det uforanderlige utkastet og
+        # tåler et replay, men registeret flytter seg — slettes policyen som
+        # holder versjonen (slettingen frigjør uttrykkelig versjonsnumrene),
+        # eller registreres vilkåret/kontrakten en `ekstern_lesing`-handling
+        # manglet, er det samme utkastet gyldig. Et cachet «ugyldig» ville da
+        # replayet en foreldet dom uten å spørre registeret, og flaten
+        # gjenbruker med rette nøkkelen sin per render. Rollback tar claimet
+        # med seg — en validering som ikke frøs noe skal ikke brenne nøkkelen.
+        conn.rollback()
+        return {"utfall": "ugyldig", "utkast_id": utkast_id, "feil": reg_feil}
     h = _pr.innholds_hash(innhold)
     conn.execute(
         "UPDATE policyutkast SET status='validert', innholds_hash=%s"
@@ -598,6 +770,111 @@ def _lukk_forfalt_runde(conn: psycopg.Connection, tenant: str, utkast_id: str,
     return False
 
 
+def _kanseller_levende_runde(conn: psycopg.Connection, tenant: str,
+                             utkast_id: str, naa) -> None:
+    """Trekk utkastets ÅPNE runde tilbake, fordi eieren av forslaget trekker
+    selve forslaget (gjenåpning eller forkasting).
+
+    Runden er en FORESPØRSEL om godkjenning, ikke en fullmakt: å kansellere
+    den gir ingen agent lov til noe mer eller mindre. Og etter handlingen som
+    kaller hit kan runden uansett aldri lykkes — et gjenåpnet utkast mister
+    `innholds_hash`-en runden er frosset mot, et forkastet utkast finnes ikke
+    som forslag lenger. Å la runden stå «åpen» ville bedt godkjennere signere
+    på noe som ikke kan aktiveres (nøyaktig tilstanden `_kanseller_runde`
+    finnes for å avvikle). Eier sto i praksis fast i 24 timer (RUNDE_TTL) på
+    et utkast han selv eide — seks slettinger på rad døde mot den samme
+    runden 17/8 før dette ble en kodesti.
+
+    En `klar` runde røres ALDRI her: da er utkastet `godkjent`, og både
+    gjenåpning og forkasting avviser den statusen før de kommer hit — fire
+    øyne som HAR sagt ja avvikles ikke som et forslag ingen har vurdert.
+    Attestasjonene består uansett (append-only); de tilhører runden.
+
+    Kalleren eier tx og holder utkastraden — samme låsrekkefølge som
+    `_lukk_forfalt_runde` (utkast, så runde)."""
+    if not _lukk_forfalt_runde(conn, tenant, utkast_id, naa):
+        return                     # ingen levende runde — ingenting å trekke
+    rad = conn.execute(
+        "SELECT runde FROM aktiveringsrunde WHERE tenant=%s AND utkast_id=%s"
+        " AND status='apen' FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        return
+    conn.execute(
+        "UPDATE aktiveringsrunde SET status='kansellert' WHERE tenant=%s"
+        " AND utkast_id=%s AND runde=%s", (tenant, utkast_id, rad[0]))
+    varsel.pensjoner_runde(conn, tenant=tenant, utkast_id=utkast_id,
+                           runde=rad[0])
+
+
+def gjenapne_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                    request_id: str, utkast_id: str, forventet_utkastversjon,
+                    idempotency_key: str, input_hash: str, naa) -> dict:
+    """Gjenåpne et VALIDERT utkast for redigering: status `validert → utkast`,
+    `innholds_hash` nullstilles (migrasjon 033), og en åpen runde trekkes
+    tilbake (`_kanseller_levende_runde`).
+
+    Eiers krav (17/8): «man må kunne redigere samme policy selv etter
+    validering … men da kan den igjen bli attestert og validert.» Uten denne
+    veien var et validert utkast med en feil en blindgate — eneste utvei var
+    å forkaste alt og begynne på nytt, og en åpen runde sperret til og med
+    forkastingen i 24 timer.
+
+    Ingen snarvei rundt fire øyne: det gjenåpnede utkastet må valideres på
+    nytt (ny hash-frysing) og gjennom en HELT NY runde med nye attestasjoner
+    før noe aktiveres. `godkjent` avvises som i `forkast_utkast` — en
+    godkjenning avvikles ikke ved å redigere den bort.
+
+    Idempotensnøkkelen bindes til utkastversjonen som ellers i modulen.
+    Kalleren eier tx."""
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        # Handlingen gjentas ikke — men PENSJONERINGEN forsones (samme
+        # begrunnelse og mønster som attesteringens replay): kanselleringen av
+        # runden er committet, mens varselryddingen er best effort og kan ha
+        # feilet. Uten forsoningen her var retryen som skulle reparere det ute
+        # av døra før noen opprydding ble forsøkt. `commit()`, ikke
+        # `rollback()` — en forsoning som kastes på vei ut har ingen verdi,
+        # og ingenting annet er skrevet (idempotens-INSERT traff DO NOTHING).
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    rad = conn.execute(
+        "SELECT status, utkastversjon FROM policyutkast WHERE"
+        " tenant=%s AND utkast_id=%s FOR UPDATE", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ukjent")
+    status, ver = rad
+    if status != "validert":
+        conn.rollback()
+        raise Aktiveringsfeil("utkast_ulovlig_tilstand", f"status={status}")
+    if not isinstance(forventet_utkastversjon, int) \
+            or isinstance(forventet_utkastversjon, bool) \
+            or forventet_utkastversjon != ver:
+        conn.rollback()
+        raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
+    _kanseller_levende_runde(conn, tenant, utkast_id, naa)
+    # Versjonen BUMPES i selve overgangen (Codex P1): gjenåpningen gjør raden
+    # redigerbar igjen, og hver editor som lastet utkastet FØR valideringen
+    # holder fortsatt versjon N. Sto raden igjen på N, passerte en slik
+    # foreldet editor både status- og versjonssjekken i `rediger_utkast` og
+    # overskrev det gjenåpnede utkastet stille — nøyaktig det den optimistiske
+    # låsen finnes for å hindre. Med N+1 er ALLE krav fra før valideringen
+    # ugyldige; den som vil redigere må laste utkastet på nytt.
+    ny = ver + 1
+    conn.execute(
+        "UPDATE policyutkast SET status='utkast', innholds_hash=NULL,"
+        " utkastversjon=%s WHERE tenant=%s AND utkast_id=%s",
+        (ny, tenant, utkast_id))
+    return _fullfor(conn, tenant, idempotency_key, {
+        "utkast_id": utkast_id, "status": "utkast", "utkastversjon": ny})
+
+
 def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                    request_id: str, utkast_id: str, forventet_utkastversjon,
                    idempotency_key: str, input_hash: str, naa) -> dict:
@@ -610,14 +887,19 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilbyr: en policy som HAR styrt beslutninger kan ikke fjernes, for da
     ville revisjonssporet pekt på noe som ikke finnes lenger.
 
-    To ting nektes:
-      * en LEVENDE åpen eller klar runde — der er attestasjoner i omløp, og et
-        utkast skal ikke kunne rives bort under godkjennerne mens de vurderer
-        det. Runden må avsluttes først. En runde som har passert `utloper` er
-        derimot ikke lenger i omløp: ingen kan attestere den, og den lukkes
-        her (se `_lukk_forfalt_runde`) i stedet for å blokkere for alltid;
-      * `godkjent` — da HAR fire øyne sagt ja, og å kaste den godkjenningen er
-        en annen handling enn å rydde bort et forslag ingen har vurdert.
+    Én ting nektes: `godkjent` — da HAR fire øyne sagt ja, og å kaste den
+    godkjenningen er en annen handling enn å rydde bort et forslag ingen har
+    vurdert.
+
+    En ÅPEN runde nektes IKKE lenger — den trekkes tilbake
+    (`_kanseller_levende_runde`). Den forrige regelen («runden må avsluttes
+    først») fantes for å verne godkjennere mot at grunnlaget rives bort under
+    dem, men den vernet ingen: et forkastet utkast kan uansett aldri
+    aktiveres, så en «vernet» runde var bare en runde som ba folk signere på
+    et dødt forslag — og eier, som selv eide både utkastet og runden, sto
+    fast i opptil 24 timer (RUNDE_TTL) uten noen kodesti som kunne avslutte
+    runden. Å trekke sitt eget forslag tilbake er forfatterens rett; ingen
+    fullmakt endres av det, og attestasjonene består (append-only).
 
     Idempotensnøkkelen bindes til utkastversjonen som ellers i denne modulen.
     Kalleren eier tx.
@@ -626,7 +908,10 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
     tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
                                          input_hash, request_id)
     if tilstand == "replay":
-        conn.rollback()
+        # Se gjenåpningens replay: kanselleringen av runden er committet, men
+        # varselryddingen er best effort — forson den før svaret går ut.
+        _forson_rundepensjonering(conn, tenant, aktor, utkast_id, naa)
+        conn.commit()
         return lagret
     if tilstand == "konflikt":
         conn.rollback()
@@ -646,14 +931,145 @@ def forkast_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
             or forventet_utkastversjon != ver:
         conn.rollback()
         raise Aktiveringsfeil("utkastversjon_utdatert", f"er={ver}")
-    if _lukk_forfalt_runde(conn, tenant, utkast_id, naa):
-        conn.rollback()
-        raise Aktiveringsfeil("runde_allerede_aapen")
+    _kanseller_levende_runde(conn, tenant, utkast_id, naa)
     conn.execute(
         "UPDATE policyutkast SET status='forkastet'"
         " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id))
     return _fullfor(conn, tenant, idempotency_key, {
         "utfall": "forkastet", "utkast_id": utkast_id})
+
+
+def _lukk_forfalte_runder(conn: psycopg.Connection, tenant: str,
+                          policy_id: str, naa) -> None:
+    """Rydd policyens runder av veien for en bekreftet sletting: forfalte
+    runder lukkes (`utlopt`), levende ÅPNE runder trekkes tilbake
+    (`kansellert`, se løkka under) — begge før slettingen teller runder
+    «i omløp». Kun `klar` (godkjent utkast) blir stående og blokkerer.
+
+    Uten dette blokkerte en forfalt runde slettingen for alltid (Codex P2).
+    Vernet i `slett_ubrukt_policy` teller `status IN ('apen','klar')` — den
+    LAGREDE statusen — og den er ikke en løgn, bare foreldet: overgangen til
+    `utlopt` skjer først når en skrivesti kommer forbi. Kom ingen forbi, sto
+    runden `apen` i det uendelige, og en ubrukt policy med en runde ingen kan
+    attestere (`attester_aktivering` nekter den med `runde_utlopt`) svarte
+    `runde_allerede_aapen` hver eneste gang. Vilkåret «ingen attestasjoner i
+    omløp» var oppfylt; det var bare ingen som hadde skrevet det ned.
+
+    Overgangen kjøres, den utelates ikke i et predikat: `_lukk_forfalt_runde`
+    er den ENE definisjonen av «forfalt» (`_runde_status`), og en fjerde kopi —
+    denne gangen i SQL, med sin egen klokke — er nøyaktig det de tre andre
+    veiene er skrevet for å unngå. Den pensjonerer dessuten varselet, så
+    godkjennerne slutter å bli bedt om å attestere en runde som nå heller ikke
+    har en policy å aktivere.
+
+    LÅSREKKEFØLGEN er `opprett_aktiveringsrunde` sin: utkastraden, så runden,
+    og FØRST DERETTER den eksklusive policylåsen inne i `slett_ubrukt_policy`.
+    Motsatt vei ville laget en sirkel mot en runde-åpning som holder utkastet
+    og venter på den delte låsen. Utkastene låses i utkast_id-rekkefølge, så to
+    slettinger på samme policy heller ikke kan gå i ring.
+
+    Kommer en NY runde til etter skanningen, er den ikke forfalt (en runde
+    åpnes med `utloper` i framtiden) — og da SKAL den blokkere. Den telles av
+    `slett_ubrukt_policy` under policylåsen, som er stedet det avgjøres.
+    """
+    rader = conn.execute(
+        "SELECT DISTINCT r.utkast_id FROM aktiveringsrunde r"
+        "  JOIN policyutkast u ON u.tenant=r.tenant AND u.utkast_id=r.utkast_id"
+        " WHERE r.tenant=%s AND u.policy_id=%s AND r.status IN ('apen','klar')"
+        " ORDER BY 1", (tenant, policy_id)).fetchall()
+    for (utkast_id,) in rader:
+        conn.execute("SELECT 1 FROM policyutkast WHERE tenant=%s"
+                     " AND utkast_id=%s FOR UPDATE", (tenant, utkast_id))
+        # Også LEVENDE åpne runder trekkes tilbake, ikke bare forfalte: eier
+        # har nettopp bekreftet at policyen skal bort, og en runde som venter
+        # på å aktivere den kan bare gjenskape det han fjerner. Seks slettinger
+        # på rad døde 17/8 mot en levende runde på et ANNET utkast av samme
+        # policy — en tilstand flaten verken viste eller kunne løse opp. En
+        # `klar` runde (utkastet er `godkjent`) røres fortsatt ikke; den telles
+        # av `slett_ubrukt_policy` under policylåsen og blokkerer med rette.
+        _kanseller_levende_runde(conn, tenant, utkast_id, naa)
+
+
+def slett_policy(conn: psycopg.Connection, *, tenant: str, aktor: str,
+                 request_id: str, policy_id: str, forventet_versjon: str,
+                 forventet_hash: str, idempotency_key: str,
+                 input_hash: str, naa) -> dict:
+    """Angre en feilopprettet policy: slett den som ALDRI har styrt en
+    beslutning. Alle vilkårene håndheves av `slett_ubrukt_policy` (032) — her
+    ligger idempotensen og OVERGANGEN som lukker forfalte runder.
+
+    `forventet_versjon`/`forventet_hash` er den aktive policyen KLIENTEN SÅ, og
+    de sendes videre urørt: sammenligningen hører hjemme under policylåsen inne
+    i funksjonen (Codex P1), ikke i en lesning her ute som en aktivering kan gå
+    forbi mellom lesningen og kallet. Avviker de, er policyen byttet ut under
+    operatøren — `policy_endret`, ikke en sletting av noe hun aldri så.
+
+    Idempotensen er ikke pynt på en `Idempotency-Key` endepunktet uansett
+    krever (Codex P2). Slettingen er ENGANGS og irreversibel: går svaret tapt
+    på veien tilbake — nettopp det retry-en finnes for — er policyen borte, og
+    et nytt forsøk med samme nøkkel møtte `policy_ukjent`. Eier fikk da en
+    endelig feilmelding på en operasjon som FAKTISK lyktes, ble stående på en
+    flate som viste den slettede policyen som aktiv, og hvert nye forsøk sa det
+    samme til hun lastet siden på nytt. Med claimet på plass svarer replayen
+    NØYAKTIG det lagrede svaret, og flaten kommer videre.
+
+    `naa` er klokka forfalte runder måles mot, som i `forkast_utkast` og
+    `opprett_aktiveringsrunde` — se `_lukk_forfalte_runder` under.
+
+    Kalleren eier tx; `_fullfor` committer.
+    """
+    sett_kontekst(conn, tenant, aktor, request_id)
+    tilstand, lagret = _idempotent_start(conn, tenant, idempotency_key,
+                                         input_hash, request_id)
+    if tilstand == "replay":
+        # Slettingen kansellerte policyens åpne runder; ryddingen av varslene
+        # deres er best effort og kan ha feilet. Forson per utkast — samme
+        # klasse som gjenåpningens og forkastingens replay, bare at policyen
+        # kan ha flere utkast med runder.
+        for (uid,) in conn.execute(
+                "SELECT DISTINCT r.utkast_id FROM aktiveringsrunde r"
+                "  JOIN policyutkast u ON u.tenant=r.tenant"
+                "   AND u.utkast_id=r.utkast_id"
+                " WHERE r.tenant=%s AND u.policy_id=%s ORDER BY 1",
+                (tenant, policy_id)).fetchall():
+            _forson_rundepensjonering(conn, tenant, aktor, uid, naa)
+        conn.commit()
+        return lagret
+    if tilstand == "konflikt":
+        conn.rollback()
+        raise Aktiveringsfeil("idempotenskonflikt")
+    _lukk_forfalte_runder(conn, tenant, policy_id, naa)
+    try:
+        n = conn.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (tenant, policy_id, forventet_versjon,
+             forventet_hash)).fetchone()[0]
+    except psycopg.errors.CheckViolation as e:
+        # Rollback tar claimet med seg, som ellers i modulen: en operasjon som
+        # ikke skjedde skal ikke brenne nøkkelen. Retry på en policy som er i
+        # bruk gir samme forklaring hver gang — det er sannheten om tilstanden.
+        conn.rollback()
+        # Prøven står på RUNDEN, ikke på bruken. Vilkårsbruddene fra 032 er nå
+        # tre, ikke to: styrt en beslutning, åpen runde, og en referanse
+        # retensjonsvakta (V3) fant og funksjonen oversatte. Bare det midterste
+        # har en egen forklaring på flaten; de to andre sier begge at policyen
+        # er referert og må avvikles i stedet. Med testen på «beslutning» ville
+        # den nye, oversatte avvisningen falt ut som `runde_allerede_aapen` —
+        # en feilmelding om en runde som ikke finnes.
+        raise Aktiveringsfeil(
+            "runde_allerede_aapen" if "aktiveringsrunde" in str(e)
+            else "policy_i_bruk") from None
+    except psycopg.errors.InvalidParameterValue:
+        # Den aktive policyen er ikke den klienten så. Rollback som over: en
+        # sletting som ikke skjedde skal ikke brenne nøkkelen — flaten kan
+        # laste på nytt og prøve igjen mot den versjonen som NÅ står.
+        conn.rollback()
+        raise Aktiveringsfeil("policy_endret") from None
+    except psycopg.errors.NoDataFound:
+        conn.rollback()
+        raise Aktiveringsfeil("policy_ukjent") from None
+    return _fullfor(conn, tenant, idempotency_key,
+                    {"slettet": n, "policy_id": policy_id})
 
 
 def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
@@ -746,18 +1162,81 @@ def hent_maler() -> list:
 
 def list_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
                 request_id: str, policy_id: str | None = None) -> list:
-    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende."""
+    """Utkastene for tenanten (evt. filtrert på policy_id). Rent lesende.
+
+    Lista er ARBEIDSKØEN, ikke historikken (eier 17/8: «når man sletter en
+    policy skal det fjernes helt fra listen»). To radtyper holdes derfor ute:
+
+      * `forkastet` — et slettet forslag. Det er terminalt og har ingen
+        handling igjen; å vise det for alltid var nøyaktig det eier meldte.
+      * `aktivert` som IKKE er gjeldende tilstand: enten fordi policyen siden
+        er slettet (raden sto igjen som «Aktivert» om en policy som ikke
+        finnes), eller fordi en senere aktivering har avløst den. Det
+        aktiverte utkastet som ER den aktive policyen vises fortsatt — det er
+        gjeldende tilstand, ikke et lik.
+
+    RADEN BINDES TIL GENERASJONEN, IKKE TIL NOE GJENBRUKBART (Codex P2, to
+    runder). Prøven må svare på «ble dette utkastet den generasjonen som er
+    aktiv NÅ», og de to nærliggende svarene er begge gjenbrukbare:
+
+      * `policy_id` alene: en id blir LEDIG igjen etter sletting — 032
+        nullstiller pekeren og frigjør versjonsnumrene, nettopp så en riktig
+        opprettelse etterpå ikke stoppes av 020-monotonien. Aktiveres en
+        erstatning under samme id, er pekeren ikke-NULL på nytt, og det
+        SLETTEDE utkastet kom tilbake i køen som «gjeldende tilstand».
+      * `innholds_hash`: 020 gjør versjonen til DOKUMENTETS versjon, og siden
+        032 sletter radene kan nøyaktig samme dokument aktiveres om igjen.
+        Hashen er deterministisk av innholdet, så erstatningen får da samme
+        hash som den slettede generasjonen — og prøven ble sann for BEGGE.
+
+    Begge er beskrivelser, og en beskrivelse kan passe på to generasjoner
+    samtidig. Identiteten som ikke kan gjenbrukes er `policy_hode.revisjon`:
+    en teller som bare går oppover, aldri nullstilt, på en ankerrad som aldri
+    slettes. Tre veier skriver den, og alle tre teller OPP — den styrte
+    aktiveringen, slettingen (032) og `policyregister.registrer` når den
+    aktiverer (oppsett-/token-veien, som skriver `policyer` helt uten
+    utkast). Den siste er også grunnen til at prøven er riktig konservativ:
+    skrives en ny generasjon utenom utkastveien, er den aktive generasjonen
+    ikke lenger den utkastet laget, og utkastet forsvinner fra køen. Migrasjon
+    034 stempler utkastet med den telleren i det aktiveringen skjer
+    (`aktivert_revisjon`, server-utledet av trigger), og prøven her er derfor
+    en likhet mellom to tall: hodets revisjon er fortsatt den dette utkastet
+    laget. Gjenbrukt id, gjenbrukt versjon og gjenbrukt innhold gjør den ikke
+    sann for en generasjon som er borte.
+
+    `aktiv_versjon IS NOT NULL` står ved siden av likheten, ikke i stedet for
+    den: en sletting bumper også telleren, så likheten alene ville holdt — men
+    den dagen en ny vei fjerner en policy uten å røre `revisjon`, er det denne
+    linjen som gjør at et lik ikke vises. Pekeren kan leses her (og ikke bare
+    `policyer`-raden, slik 032 må gjøre) fordi hvert `aktivert` utkast har
+    gått gjennom `aktiver_policy`, som oppretter hoderaden før den rører
+    utkastet: en grandfathered policy uten hoderad har ingen utkast å skjule.
+
+    Et AVLØST aktivert utkast faller dermed også ut, og det er riktig for en
+    arbeidskø: `aktivert` er terminalt (statusmaskinen i 012/033), så raden
+    har ingen handling igjen uansett.
+
+    Radene finnes fremdeles i basen — de er attestasjonshistorikkens ankre
+    (slettingen i 032 bevarer dem uttrykkelig) og nås via detalj-ruten.
+    Skjulingen er en visningsregel, ingen sletting."""
     sett_kontekst(conn, tenant, aktor, request_id)
+    vilkaar = (" AND u.status <> 'forkastet'"
+               " AND (u.status <> 'aktivert' OR EXISTS ("
+               "      SELECT 1 FROM policy_hode h WHERE h.tenant=u.tenant"
+               "        AND h.policy_id=u.policy_id"
+               "        AND h.aktiv_versjon IS NOT NULL"
+               "        AND h.revisjon=u.aktivert_revisjon))")
     if policy_id:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s AND policy_id=%s"
-            " ORDER BY opprettet DESC", (tenant, policy_id)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s"
+            " AND u.policy_id=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant, policy_id)).fetchall()
     else:
         rows = conn.execute(
-            "SELECT utkast_id, policy_id, status, utkastversjon, opprettet"
-            " FROM policyutkast WHERE tenant=%s ORDER BY opprettet DESC",
-            (tenant,)).fetchall()
+            "SELECT u.utkast_id, u.policy_id, u.status, u.utkastversjon,"
+            " u.opprettet FROM policyutkast u WHERE u.tenant=%s" + vilkaar +
+            " ORDER BY u.opprettet DESC", (tenant,)).fetchall()
     conn.rollback()
     return [{"utkast_id": u, "policy_id": p, "status": s, "utkastversjon": vv,
              "opprettet": o.isoformat()} for u, p, s, vv, o in rows]
@@ -771,7 +1250,19 @@ def _hode_aktiv_versjon(conn, tenant, policy_id) -> str | None:
     `serialization_failure`). Finnes ikke hoderaden (helt ny policy), er basen
     deny-all og funksjonen oppretter ankerraden idempotent ved aktivering — vi
     oppretter den ALDRI her (en forkastet runde skal ikke etterlate en tom
-    hoderad)."""
+    hoderad).
+
+    Men mot SLETTING (`slett_ubrukt_policy`, 032) holdt det ikke å ikke låse
+    (Codex P2). Slettingen lover at den ikke etterlater attestasjoner i omløp,
+    og kontrollerer det ved å telle åpne runder. En naken SELECT her lot
+    runde-åpningen validere basen, slettingen telle null runder og committe, og
+    så runde-INSERT-en lande på en policy som ikke lenger finnes — godkjennere
+    sendt inn i en runde som aldri kan aktiveres. Den delte låsen på policyen
+    holder til denne transaksjonen committer, altså til runden STÅR, og
+    slettingens eksklusive lås på samme nøkkel ser den. Radlås er ikke et
+    alternativ: `FOR SHARE` krever UPDATE-privilegium, som runtime ikke har.
+    """
+    laas_policy_delt(conn, tenant, policy_id)
     rad = conn.execute(
         "SELECT aktiv_versjon FROM policy_hode WHERE tenant=%s AND policy_id=%s",
         (tenant, policy_id)).fetchone()
@@ -996,6 +1487,45 @@ _VERSJONSRESERVE = 64
 def _nokkelbytes(*deler: str) -> int:
     """Nøkkelens størrelse slik Postgres måler den (`octet_length`, UTF-8)."""
     return sum(len(d.encode("utf-8")) for d in deler if isinstance(d, str))
+
+
+def nytt_utkast_avvik(tenant: str, policy_id: str) -> tuple[str, str] | None:
+    """`(kode, detalj)` for grunnen til at et NYTT utkast på denne identiteten
+    ville blitt avvist ved opprettelsen — eller `None` om den kan bære et.
+
+    ÉN definisjon, to lesere (Codex P2). `opprett_utkast` bruker den som port,
+    og HISTORIKKEN bruker den til å avgjøre om rullbakk i det hele tatt er en
+    mulig handling for serien. Lastekontrakten slipper med vilje gjennom
+    aktive policyer fra før innstrammingen — en arvet id som `acme\\n` finnes
+    og skal fortsatt kunne LESES — men en slik serie kan ikke få et nytt
+    utkast. Tilbød flaten rullbakk likevel, endte hver eneste knapp i et 400
+    ingen kunne gjøre noe med. Med to kopier av prøven ville flaten før eller
+    siden tilbudt en knapp porten avviser, eller skjult en den godtar.
+
+    FORMEN først: en id som ikke er skjemagyldig kan aldri skrives inn i
+    dokumentet, og en skjemagyldig id ville spriket fra raden. Rekkefølgen er
+    ikke tilfeldig — `"ACME"` er feil FORM, ikke for stor, og skal få den
+    beskjeden.
+
+    Så PLASSEN: levner identiteten ikke rom til en versjon i registerets
+    primærnøkkel, er ingen versjon eier senere kan skrive i stand til å få
+    plass. Da er det opprettelsen som skal si nei, ikke en validering hun
+    aldri kan tilfredsstille.
+
+    EGEN KODE, ikke `utkast_feilformet` (Codex P3). HTTP-laget slipper bare
+    koden videre — detaljen når aldri skjermen — og editoren oversetter
+    `utkast_feilformet` til «innholdet er ikke gyldig JSON-struktur». Eier ble
+    altså sendt for å reparere dokumentet sitt, som er helt i orden, mens det
+    eneste som må gjøres er å FORKORTE id-en. En id som er for stor er heller
+    ikke feil form: `_POLICY_ID` har alt sagt ja til den."""
+    if not _POLICY_ID.fullmatch(policy_id or ""):
+        return ("policy_id_ugyldig", f"policy_id={policy_id!r}")
+    stor = _nokkelbytes(tenant, policy_id)
+    if stor > _MAKS_NOKKELBYTES - _VERSJONSRESERVE:
+        return ("policy_id_for_stor",
+                "policy_id levner ikke plass til en versjon i"
+                f" registernøkkelen ({stor} byte)")
+    return None
 #: Tallpunktet versjon — semver, men også de eldre «1»/«2»-radene den styrte
 #: aktiveringen skrev før migrasjon 020. Alt annet sammenlignes ikke.
 _TALLVERSJON = re.compile(r"^[0-9]+(\.[0-9]+)*$")
@@ -1067,6 +1597,226 @@ def _krev_ny_versjon(conn, tenant: str, policy_id: str, ny_innhold,
                 "versjon_i_bruk",
                 f"versjon={ny} ikke nyere enn {aktiv_versjon}")
     return ny
+
+
+def _neste_ledige_versjon(conn, tenant: str, policy_id: str,
+                          aktiv_versjon: str | None) -> str | None:
+    """Det minste versjonsnummeret som er STØRRE enn alt registeret kjenner:
+    siste ledd i den høyeste kjente versjonen, pluss én, hoppende over
+    eventuelle registrerte kollisjoner. -> None når ingenting er kjent (da
+    finnes det ingen kollisjon å foreslå seg forbi).
+
+    Sammenligningen bruker `_versjonsnokkel` med samme ledd-utvidelse som
+    `_krev_ny_versjon` — én forståelse av «nyere», ikke to."""
+    kjente = [r[0] for r in conn.execute(
+        "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s",
+        (tenant, policy_id)).fetchall()]
+    if isinstance(aktiv_versjon, str):
+        kjente.append(aktiv_versjon)
+    kjente = [v for v in kjente if isinstance(v, str) and _SEMVER.fullmatch(v)]
+    if not kjente:
+        return None
+    ledd = max(v.count(".") for v in kjente) + 1
+    topp = max(kjente, key=lambda v: _versjonsnokkel(v, ledd))
+    deler = topp.split(".")
+    opptatt = set(kjente)
+    while True:
+        deler[-1] = str(int(deler[-1]) + 1)
+        kandidat = ".".join(deler)
+        if kandidat not in opptatt and not conn.execute(
+                "SELECT 1 FROM policyer WHERE tenant=%s AND policy_id=%s"
+                " AND versjon=%s", (tenant, policy_id, kandidat)).fetchone():
+            return kandidat
+
+
+def _versjonsavvik(conn, tenant: str, policy_id: str, innhold) -> list[str]:
+    """`meta.versjon` målt mot registeret, som TEKST eier kan handle på —
+    valideringens søsken til `_dokumentavvik`, men med databasen i hånden.
+
+    Prøven ER porten: `_krev_ny_versjon` kjøres og utfallet oversettes, så
+    valideringen og rundeåpningen aldri kan mene noe ulikt om samme versjon.
+    Formfeil (ikke-semver) rapporteres alt av `_dokumentavvik` og gjentas
+    ikke her."""
+    versjon = _meta(innhold).get("versjon")
+    if not isinstance(versjon, str) or not _SEMVER.fullmatch(versjon):
+        return []
+    aktiv = _hode_aktiv_versjon(conn, tenant, policy_id)
+    try:
+        _krev_ny_versjon(conn, tenant, policy_id, innhold, aktiv)
+        return []
+    except Aktiveringsfeil:
+        forslag = _neste_ledige_versjon(conn, tenant, policy_id, aktiv)
+        rad = (f"meta.versjon {versjon} er versjonen som er aktiv nå"
+               if versjon == aktiv
+               else f"meta.versjon {versjon} er allerede registrert eller"
+                    f" ikke høyere enn den aktive ({aktiv or 'ingen'})")
+        if forslag:
+            rad += f" — sett en høyere versjon, for eksempel {forslag}"
+        return [rad + ". En aktivering lagrer utkastets egen meta.versjon,"
+                " så den må være ny og høyere enn den aktive"]
+
+
+def _typens_sideeffektklasse(conn, oppdragstype: str) -> str | None:
+    """Sideeffektklassen til kontrakten som EIER oppdragstypen — join på
+    hele identiteten (eiermodul, kontraktversjon, kontrakt_hash), ikke bare
+    modulen. -> None når typen ikke er registrert.
+
+    Codex P2: en modulbred prøve leser feil rad. Kontraktrader er
+    immutable og blir stående for alltid, så en modul som EN GANG hadde en
+    `ekstern_lesing`-kontrakt bærer den videre — og en modulbred `LIMIT 1`
+    ville klassifisert HVER handling for den modulen som ekstern lesing,
+    også de som nå tilhører en nyere `sideeffektfri`-kontrakt. Følgen var
+    ikke bare en unødvendig port: slike moduler kunne ikke lenger aktivere
+    ellers gyldige policyer uten frekvens- og målautorisasjonsfelter som
+    ikke hører hjemme der."""
+    rad = conn.execute(
+        "SELECT k.sideeffektklasse FROM oppdragstype_register r"
+        "  JOIN modulkontrakt k ON k.modul_id = r.eiermodul"
+        "   AND k.kontraktversjon = r.kontraktversjon"
+        "   AND k.kontrakt_hash = r.kontrakt_hash"
+        " WHERE r.oppdragstype = %s", (oppdragstype,)).fetchone()
+    return rad[0] if rad else None
+
+
+def _er_ekstern_lesing(conn, h) -> tuple[bool, object | None]:
+    """Er DENNE handlingen ekstern lesing? -> (ja/nei, kodefestet type).
+
+    Den ENE autoritative klassifiseringen, delt av aktiveringsporten
+    (`_krev_ekstern_lesing_port`) og valideringen
+    (`_krev_malautorisasjonsvilkar`) (Codex P2). To kopier av regelen var
+    to steder å bli uenige, og uenigheten hadde en retning: valideringen
+    var den mildeste, så et utkast kunne fryses som gyldig og først dø i
+    porten — etter at innholdet ikke lenger kunne rettes.
+
+    Rekkefølgen er KODEN FØRST. Bærer den kodefestede typen
+    `krever_malautorisasjon`, ER dette ekstern lesing uansett hva
+    `modulkontrakt` sier — også når registeret ikke har rukket å si noe
+    (Codex P1) og også når det sier `sideeffektfri` (Codex P2, runde 19).
+    En registrering kan legge krav TIL, aldri fjerne et krav koden
+    stiller.
+
+    Sier koden ingenting, avgjør registeret: typens EGEN kontrakt
+    (`_typens_sideeffektklasse`, join på hele identiteten) når typen er
+    registrert, ellers den konservative modulbrede prøven på den
+    DEKLARERTE eiermodulen. `handlinger[].modul` er policyens navnerom
+    (`M-23`) og kan bare brukes når koden ikke kjenner typen i det hele
+    tatt."""
+    import oppdragskontrakt
+    hid = h.get("id") if isinstance(h.get("id"), str) else ""
+    t = oppdragskontrakt.type_for_handling(hid)
+    klasse = _typens_sideeffektklasse(conn, t.navn) if t is not None else None
+    if t is not None and t.krever_malautorisasjon:
+        return True, t
+    if klasse is None:
+        eier = t.eiermodul if t is not None and t.eiermodul else h.get("modul")
+        if not isinstance(eier, str) or not conn.execute(
+                "SELECT 1 FROM modulkontrakt WHERE modul_id=%s"
+                " AND sideeffektklasse='ekstern_lesing' LIMIT 1",
+                (eier,)).fetchone():
+            return False, t
+        return True, t
+    return klasse == "ekstern_lesing", t
+
+
+def _krev_ekstern_lesing_port(conn, ny_innhold) -> None:
+    """Aktiveringsporten for `ekstern_lesing` (PR-014c §6) — under
+    aktiveringslåsen, på begge veiene (rundeåpning og attestering, som
+    `_krev_innforingskrav`): en handling hvis OPPDRAGSTYPE eies av en
+    `ekstern_lesing`-kontrakt (`_typens_sideeffektklasse`) — ELLER hvis
+    kodefestede type krever målautorisasjon, uansett hva registeret sier;
+    sier registeret ingenting og koden stiller ikke kravet, faller vi
+    konservativt tilbake på den deklarerte eiermodulen — kan bare aktiveres
+    når
+
+      1. `grenser.frekvens` er satt (observerbar trafikk ut skal alltid ha
+         et tak policyen selv bærer),
+      2. frekvensen grupperes på `ressurs_id` — altså på MÅLET, og
+      3. handlingens vilkår inneholder minst ETT som har rad i
+         `malautorisasjonsvilkar` med `maldomene` lik oppdragstypens
+         `malautorisasjonsdomene`.
+
+    Alle tre er POSITIVE krav. `krever_malautorisasjon: true` i den kodefestede
+    typen uttrykker et behov, ikke et bevis — ukjent vilkårstype, manglende
+    rad eller feil måldomene avviser aktiveringen. Fail-closed også når
+    handlingen ikke matcher noen målautorisasjonsbærende type: da finnes
+    det ikke noe vilkår som KAN telle, og en ekstern_lesing-handling uten
+    autorisasjonsbegrep skal ikke gjennom fire øyne på flaks.
+
+    HVILKE handlinger porten gjelder for leses av KODEN FØRST, ikke av
+    registeret. Bærer den kodefestede typen `krever_malautorisasjon`, kjøres
+    porten uansett hva `modulkontrakt` sier om klassen — også når registeret
+    ikke har rukket å si noe, og også når det sier `sideeffektfri`. Bare der
+    koden IKKE stiller kravet får registeret avgjøre, og da konservativt.
+    Retningen er hele poenget: en registrering kan legge krav TIL, aldri
+    fjerne et krav koden stiller.
+
+    Krav 2 er det som gjør krav 1 til et TAK (Codex P2). Motoren i
+    `policy_validator` teller per `event[grupperingsnokkel]`, og
+    grupperingsnøkkelen er et feltnavn fra tenantens eget payload-domene:
+    peker den på noe innsenderen kan variere fritt — en forespørsels-id,
+    en tidsstempelstreng — får hver eneste forespørsel sin egen bøtte, og
+    grensen «10 per time» blir «ubegrenset per time» mot ETT og samme
+    nettsted. Da er den obligatoriske frekvensporten ren seremoni i
+    nøyaktig den trafikken den ble innført for å begrense.
+
+    `ressurs_id` er det ene feltet som IKKE er fritt: for en
+    målautorisasjonsbærende type krever `malbindingsbrudd` at
+    `event["ressurs_id"]` ER det normaliserte vertsnavnet i målfeltet, og
+    attestasjonen bærer samme verdi inne i de signerte bytene. Bøtta
+    følger derfor målet, ikke innsenderens fantasi. Kravet stilles kun
+    for typer som faktisk bærer den bindingen — for andre finnes det
+    ingen server-bundet nøkkel å kreve, og da ville kravet vært pynt.
+
+    Vilkåret står i policyen fordi det gjør kravet synlig og reviewbart —
+    men plattformregelen her gjelder uansett og kan ikke fjernes med fire
+    øyne (014b §4-mønsteret: håndhevingen bor hos plattformen).
+    """
+    import oppdragskontrakt
+    for h in (ny_innhold.get("handlinger") or []):
+        if not isinstance(h, dict):
+            continue
+        hid = h.get("id") if isinstance(h.get("id"), str) else ""
+        # Klassifiseringen bor i `_er_ekstern_lesing` — KODEN FØRST, med
+        # registeret som konservativ reserve. Den er delt med valideringen
+        # (`_krev_malautorisasjonsvilkar`) nettopp fordi to kopier av regelen
+        # var to steder å bli uenige, og valideringen var den mildeste av dem
+        # (Codex P2): et utkast med en kodefestet `krever_malautorisasjon`-type
+        # og en manglende eller feilregistrert kontraktrad ble frosset som
+        # gyldig og døde først her, etter at innholdet ikke lenger kunne
+        # rettes. Se docstringen der for hvorfor retningen — registeret kan
+        # legge krav TIL, aldri fjerne et krav koden stiller — er hele poenget.
+        ekstern, t = _er_ekstern_lesing(conn, h)
+        if not ekstern:
+            continue
+        grenser = h.get("grenser") if isinstance(h.get("grenser"), dict) \
+            else {}
+        if not isinstance(grenser.get("frekvens"), dict):
+            raise Aktiveringsfeil("ekstern_lesing_uten_frekvens",
+                                  f"handling={hid or '?'}")
+        if t is None or not t.krever_malautorisasjon \
+                or t.malautorisasjonsdomene is None:
+            raise Aktiveringsfeil(
+                "malautorisasjon_mangler",
+                f"handling={hid or '?'}: ingen målautorisasjonsbærende"
+                " oppdragstype")
+        # Frekvensen må telle PER MÅL (Codex P2). Se docstringen: en fritt
+        # valgt grupperingsnøkkel gir én bøtte per forespørsel, og da er
+        # taket over ingen grense mot det nettstedet det gjelder.
+        if grenser["frekvens"].get("grupperingsnokkel") != \
+                oppdragskontrakt.MALBINDINGSFELT:
+            raise Aktiveringsfeil(
+                "frekvens_uten_malbinding",
+                f"handling={hid or '?'}: grupperingsnokkel må være"
+                f" {oppdragskontrakt.MALBINDINGSFELT}")
+        navn = [v.get("navn") for v in (h.get("vilkaar") or [])
+                if isinstance(v, dict) and isinstance(v.get("navn"), str)]
+        navn += [v for v in (h.get("vilkaar") or []) if isinstance(v, str)]
+        if not navn or conn.execute(
+                "SELECT 1 FROM malautorisasjonsvilkar WHERE"
+                " vilkar_type = ANY(%s) AND maldomene = %s LIMIT 1",
+                (navn, t.malautorisasjonsdomene)).fetchone() is None:
+            raise Aktiveringsfeil("malautorisasjon_mangler",
+                                  f"handling={hid or '?'}")
 
 
 def _krev_innforingskrav(ny_innhold) -> None:
@@ -1201,6 +1951,7 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     # ... eller som ikke oppfyller de framoverrettede kravene: `validert` kan
     # stamme fra før kravet fantes, og status alene er ingen kvittering.
     _krev_innforingskrav(ny_innhold)
+    _krev_ekstern_lesing_port(conn, ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
     v = _vurder(base_innhold, base_hash, ny_innhold)
 
@@ -1395,6 +2146,7 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         # Og for de framoverrettede kravene: runden kan ha vært åpen da
         # utrullingen som innførte dem landet.
         _krev_innforingskrav(ny_innhold)
+        _krev_ekstern_lesing_port(conn, ny_innhold)
     except Aktiveringsfeil as e:
         # RUNDEN KANSELLERES, den kastes ikke bare ut av (Codex P2). Alle fire
         # kravene her måler det FROSNE innholdet, så et avslag er permanent:
@@ -1724,14 +2476,24 @@ def _revisjonsrolle(roller) -> str:
     return roller[0]
 
 
+def _idempotent_laas(conn, tenant: str, idempotency_key: str) -> None:
+    """Advisory-låsen som serialiserer per idempotensnøkkel.
+
+    Nøkkelformelen står ETT sted (Codex P2): to utskrifter av den er to
+    låser, og to låser serialiserer ingenting. Både claimet og den
+    ventende etterprøven under bruker denne.
+    """
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+
+
 def _idempotent_start(conn, tenant: str, idempotency_key: str,
                       input_hash: str, request_id: str):
     """Claim en idempotensnøkkel i kallerens tx (spec: `Idempotency-Key` på ALLE
     skriveruter, Codex P1 R3). -> ("ny", None) fortsett · ("replay", dict)
     returner lagret respons · ("konflikt", None) samme nøkkel, ANNET input.
     Serialiserer per nøkkel med en advisory-lås, som unntaksbehandlingen."""
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                 (f"{tenant}\x1fpolidem\x1f{idempotency_key}",))
+    _idempotent_laas(conn, tenant, idempotency_key)
     claim = conn.execute(
         "INSERT INTO idempotens (tenant, nokkel, input_hash, status, request_id)"
         " VALUES (%s,%s,%s,'paagaar',%s) ON CONFLICT (tenant, nokkel)"
@@ -1755,6 +2517,48 @@ def _idempotent_start(conn, tenant: str, idempotency_key: str,
                  " WHERE tenant=%s AND nokkel=%s",
                  (request_id, tenant, idempotency_key))
     return ("ny", None)
+
+
+def idempotent_svar(conn, tenant: str, idempotency_key: str, input_hash: str,
+                    vent_paa_vinner: bool = False):
+    """Se på en idempotensnøkkel UTEN å claime den.
+    -> ("replay", dict) · ("konflikt", None) · ("ukjent", None).
+
+    `_idempotent_start` claimer, og claimet hører hjemme i selve
+    operasjonens transaksjon. Men noen ruter må gjøre arbeid FØR den —
+    rullbakkopprettelsen henter kildeversjonen for å bygge innholdet — og
+    det arbeidet kan feile av grunner som ikke lenger er sanne for et
+    forsøk som ALT har lyktes: kilden kan være arkivert siden. Da skal
+    retryen få det lagrede svaret, ikke en 404 på et utkast som finnes
+    (047, Codex P2).
+
+    Ren lesing: ingen advisory-lås, ingen rad skrives. Er svaret ikke
+    ferdig ennå, faller kalleren tilbake til den vanlige veien, og
+    `_idempotent_start` avgjør som før — der ligger serialiseringen.
+
+    `vent_paa_vinner` snur det for ETTERPRØVEN (Codex P2). En overlappende
+    retry ser `ukjent` i forkontrollen fordi originalens idempotensrad
+    ennå ikke er committet, og et READ COMMITTED-snapshot kan ikke se den.
+    Rekker originalen å committe — og kilden å bli slettet — før retryen
+    slår opp versjonen, ville et lås-løst gjensyn fortsatt kunne bomme:
+    svaret er da et 404 på en nøkkel som ALT bærer et lagret 201, og en
+    senere retry ville replayet det samme. Låsen holdes av vinneren HELE
+    dens transaksjon, så å ta den her er å vente på at utfallet er
+    avgjort. Den koster bare i feilveien; forkontrollen er urørt."""
+    if vent_paa_vinner:
+        _idempotent_laas(conn, tenant, idempotency_key)
+    rad = conn.execute(
+        "SELECT input_hash, status, respons FROM idempotens"
+        " WHERE tenant=%s AND nokkel=%s",
+        (tenant, idempotency_key)).fetchone()
+    if rad is None:
+        return ("ukjent", None)
+    lagret_hash, istatus, respons = rad
+    if lagret_hash != input_hash:
+        return ("konflikt", None)
+    if istatus == "ferdig":
+        return ("replay", {**respons, "replay": True})
+    return ("ukjent", None)
 
 
 def _fullfor(conn, tenant, idempotency_key, res: dict) -> dict:

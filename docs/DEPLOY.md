@@ -14,7 +14,39 @@ sudo deploy/staging/bootstrap-token.sh demo-a  # interaktiv, KREVER TTY
 | `disponit-m37.service` | Unix `disponit-m37`, DB `disponit_arbeider` | `/etc/disponit/m37/` | unntakskø-arbeider |
 | `disponit-helse.timer` | Unix `disponit-helse` (medlem `disponit-proxy`) | ingen | /live + heartbeat-tilsyn, restart via lukket helper |
 | `disponit-rydd-pending.timer` | `disponit-helse`, DB `disponit_token_admin` | `/etc/disponit/tokenadmin/` | PENDING-TTL (30 min) |
-| `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + restore-verifisering mot isolert base |
+| `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + arkiv av inndata-lageret, begge restore-verifisert |
+
+**Backupen er et PAR, ikke en fil (#191).** Hver kjøring legger to
+filer i `/var/backups/disponit` under samme stempel:
+`disponit-<stempel>.dump.age` (basen) og
+`disponit-<stempel>.inndata.tar.age` (bunt-lageret,
+`/var/lib/disponit-inndata`). De er ÉN gjenopprettingsenhet: DEK-ene
+som dekrypterer buntene i arkivet ligger i dumpen med samme stempel,
+KEK-wrappet slik de sto den natten. **Restore krysser aldri to
+stempler** — en dump fra i går med et arkiv fra i forgårs gir rader
+hvis filer aldri var der.
+
+Derfor får de to heller aldri backupnavnene sine hver for seg, og
+retention sletter dem sammen. Ser du ett stempel med bare én fil, er
+det ikke en halv backup — det er ingen backup, og noe har rørt
+katalogen utenom skriptet.
+
+**Den UKRYPTERTE mellomdumpen ligger i MINNET, ikke i katalogen (#229,
+eiers dom 28/8).** Kjøringen dumper basen én gang, til
+`/dev/shm/disponit-backup.<tilfeldig>/disponit-<stempel>.dump.raa`,
+fordi den lagrede dumpen og restore-verifiseringen må være nøyaktig
+samme snapshot — to `pg_dump`-passeringer ville latt `lager_sti`-porten
+godkjenne et annet tidspunkt enn det som ble arkivert. I
+`/var/backups/disponit` hører KUN `.age`-parene hjemme; ligger det en
+`.raa` der, har noe rørt katalogen utenom skriptet.
+
+Fila slettes så snart begge forbrukerne er ferdige, og et avbrudd
+rydder den også. Men trapen dekker ikke `SIGKILL`/OOM: der blir
+klarteksten liggende på tmpfs til neste omstart, og den ser du bare ved
+å lete i `/dev/shm` — backupkatalogen er da fortsatt ren, og sier
+ingenting. Feiesvingen i starten av neste kjøring er den tilsiktede
+oppryddingen, ikke en lekkasje. Haster det, slett `/dev/shm`-katalogen
+for hånd i stedet for å vente på neste natt.
 
 **Ingen TCP-port (PR-009b §0).** API-et lytter KUN på
 `/run/disponit/api.sock`: eier `disponit-api`, gruppe `disponit-proxy`,
@@ -81,7 +113,7 @@ Oppgraderingsutløser: **første modul som trenger 7B-modell i staging-test
 | **Staging** | one.com Cloud Server S (Ubuntu) — oppgraderes S → L → XL etter behov | «Ekte test på server»: hver modul må bestå sjekklisten sin her 100 % før neste modul startes | Syntetisk + sandkasser (Stripe test-mode, bank-sandbox). ALDRI kundedata |
 | **Produksjon** | Egen VPS (settes opp når fase 1 nærmer seg pilot — kan også være one.com, men alltid separat maskin) | Kunder + kunde null | Ekte, kryptert, tenant-isolert |
 
-Produksjon oppdateres kun via utrullingsløypen i v7.2 (CI → staging →
+Produksjon oppdateres kun via utrullingsløypen i gjeldende prototype (CI → staging →
 evaluering → kanari → gradvis → automatisk rollback). Ingen SSH-endringer
 rett i produksjon — aldri.
 

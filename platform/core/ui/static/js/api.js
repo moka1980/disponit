@@ -148,6 +148,63 @@ async function _muter(sti, metode, kropp, idempotensnokkel) {
 // genereres en fersk (for engangs-klikk der duplikat ikke er en risiko).
 export const hentMaler = () => hentJson("/v1/policymaler");
 
+// M-57 (§8): signeringen binder INNHOLDSHASHEN, aldri bare listen —
+// signataren skal signere nøyaktig de bytene dialogen viste kortformen av
+// (056s `signer_utsendingsliste`-form).
+//
+// Blindingsklienten er tatt ut igjen (Codex P2, runde 4): avskruing er en
+// auditert handling, og `blinding_endepunkt` kan ikke skrive revisjonsraden
+// før #159 har evidensdesignet — den svarer en kodet 409 begge veier. En
+// klientfunksjon for en mutasjon ingen kan utføre er død kode; #159 er
+// PR-en som bringer den tilbake sammen med skrivingen.
+// Stillingsprofilen (#189): lagring er ALLTID en ny, komplett versjon —
+// `profilId` null oppretter en ny profil.
+export const lagreStillingsprofil = (profilId, navn, krav, idem) =>
+  _muter("/v1/rekruttering/stillingsprofiler", "POST",
+         { profil_id: profilId, navn, krav },
+         idem || nyIdempotensnokkel());
+
+// Evalueringskjeden (#162): reserver bunteplass → last opp ZIP-en rå →
+// bestill. Reservasjonen og bestillingen bærer hver sin SP-2-nøkkel
+// (stabil per forsøk, holdt av flaten); opplastingen er engangs per
+// reservasjon og identifiseres av reservasjonens jti alene.
+export const reserverBunt = (idem) =>
+  _muter("/v1/inndata/reserver", "POST",
+         { eiermodul: "m57_ats", formaal: "soknadsbunt" }, idem);
+
+export async function lastOppBunt(jti, bytes) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/inndata/opplast/${encodeURIComponent(jti)}`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "content-type": "application/zip",
+                 ...(csrf ? { "X-Disponit-CSRF": csrf } : {}) },
+      body: bytes, redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let b = null;
+  try { b = await r.json(); } catch { b = null; }
+  if (!r.ok) _kast(r.status, b && b.feil, b && b.detaljer);
+  return b;
+}
+
+export const bestillEvaluering = (kropp, idem) =>
+  _muter("/v1/bestilling", "POST", kropp, idem);
+
+// M-57s egen rapportflate ("ats"): listen og den promoterte rapporten.
+export const hentEvalueringer = (cursor) =>
+  hentJson("/v1/rekruttering/evalueringer"
+    + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""));
+export const hentEvalueringsrapport = (oppdragId) =>
+  hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
+
+export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
+  _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
+         "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());
+
 // Hvilken policy GJELDER i dag? Editoren kan ikke bare anta at malens id er
 // dagens policy-id: aktivering er per `policy_id`, så en ny id lager en NY
 // policyserie ved siden av den som gjelder i stedet for å avløse den — og
@@ -169,8 +226,28 @@ export async function hentAktivPolicyId() {
     return { kjent: false, id: null };
   }
 }
-export const opprettUtkast = (policyId, innhold, idem = nyIdempotensnokkel()) =>
-  _muter("/v1/policyutkast", "POST", { policy_id: policyId, innhold }, idem);
+// 047: `rollbackAvVersjon` gjør utkastet til en RULLBAKK — serveren
+// henter da selve innholdet fra versjonen (kopien er serverens sannhet,
+// port 22), så `innhold` utelates. Uten feltet er kontrakten som før.
+//
+// `rollbackAvGenerasjon` er den OPTIMISTISKE LÅSEN på kilden (Codex P2),
+// søsteren til `slettPolicy`s `versjon`/`innholds_hash`. Et versjonsnummer
+// frigjøres av `slett_ubrukt_policy` og kan gjenskapes med annet innhold,
+// så nummeret alene sier ikke HVILKEN rad eier så. Slettes og gjenskapes
+// den mellom visningen og bekreftelsen, kopierte serveren erstatningen og
+// lagret et opphav som var internt konsistent og likevel ikke det eier ba
+// om. Generasjonen er identiteten som ikke gjenbrukes; serveren avviser
+// med `rullbakk_kilde_endret` (409) når den ikke stemmer.
+export const opprettUtkast = (policyId, innhold,
+                              idem = nyIdempotensnokkel(),
+                              rollbackAvVersjon = null,
+                              rollbackAvGenerasjon = null) =>
+  _muter("/v1/policyutkast", "POST",
+         { policy_id: policyId,
+           ...(innhold === undefined ? {} : { innhold }),
+           ...(rollbackAvVersjon == null ? {}
+               : { rollback_av_versjon: rollbackAvVersjon,
+                   rollback_av_generasjon: rollbackAvGenerasjon }) }, idem);
 export const redigerUtkast = (uid, utkastversjon, innhold,
                               idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}`, "PUT", { utkastversjon, innhold }, idem);
@@ -178,17 +255,96 @@ export const redigerUtkast = (uid, utkastversjon, innhold,
 // versjonen).
 export const validerUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/valider`, "POST", { utkastversjon }, idem);
+// slett krever identiteten til den aktive policyen flaten VISTE (`versjon` +
+// `innholds_hash`) — den optimistiske låsen, som `utkastversjon` er for
+// utkastene. Serveren sammenligner under policylåsen: er en ny versjon
+// aktivert siden siden ble lastet, avvises slettingen med `policy_endret` i
+// stedet for å rive med seg noe operatøren aldri så.
+export const slettPolicy = (policyId, versjon, innholdsHash,
+                            idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policy/${encodeURIComponent(policyId)}/slett`, "POST",
+         { versjon, innholds_hash: innholdsHash }, idem);
 export const merkVarselLest = (id, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/varsel/${id}/lest`, "POST", {}, idem);
 export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>
   _muter("/v1/varselvalg", "POST", { kanal, sprak }, idem);
 export const forkastUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/forkast`, "POST", { utkastversjon }, idem);
+export const gjenapneUtkast = (uid, utkastversjon,
+                               idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/policyutkast/${uid}/gjenapne`, "POST", { utkastversjon }, idem);
 export const apneRunde = (uid, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/policyutkast/${uid}/aktiveringsrunde`, "POST", {}, idem);
 export const attesterAktivering = (uid, diffHash, idempotensnokkel) =>
   _muter(`/v1/policyutkast/${uid}/attester`, "POST", { diff_hash: diffHash },
          idempotensnokkel);
+
+// 038 §6: bestillingsveien. Nøkkelen holdes av FLATEN og er stabil så lenge
+// skjemainnholdet står urørt — en retry replayer, en endring bestiller nytt.
+export const bestill = (kropp, idempotensnokkel) =>
+  _muter("/v1/bestilling", "POST", kropp, idempotensnokkel);
+// 038 §7: den promoterte rapporten bak et beslutningsoppdrag (lesende).
+export const hentRapport = (oppdragId) => hentJson(`/v1/rapport/${oppdragId}`);
+// 039: selvbetjent domeneverifisering. Utstedelsen er muterende (CSRF);
+// nøkkelen er engangs — TXT-verdien i svaret finnes aldri igjen.
+export const hentDomener = () => hentJson("/v1/domener");
+export const leggTilDomene = (hostname) =>
+  _muter("/v1/domener", "POST", { hostname });
+
+// 044: planflaten — CSRF-vernede mutasjoner over de herdede funksjonene.
+// Opprettelsen KREVER `Idempotency-Key`: et tapt svar + nytt klikk skal
+// gjenspille planen, ikke lage plan nummer to med samme parametre og egen
+// kvotebruk. Kalleren holder nøkkelen (stabil så lenge kroppen er uendret).
+// Overgangene trenger den ikke — de er naturlig idempotente på plan-id-en.
+export const opprettPlan = (kropp, idem) =>
+  _muter("/v1/plan", "POST", kropp, idem);
+export const planHandling = (planId, hva) =>
+  _muter(`/v1/plan/${planId}/${hva}`, "POST", {});
+
+// 041 §5: adjudikasjonen — den ENESTE muterende veien i domenesakskøen.
+// CSRF (dobbel-innsending) som resten av browsermutasjonene. INGEN
+// Idempotency-Key: en gjentatt stemme fra samme aktør avvises av
+// primærnøkkelen i basen (`dobbel_attestasjon`), og det svaret skal VISES,
+// ikke skjules bak en replay.
+//
+// 409 KASTES IKKE, den RETURNERES. Endepunktet bruker den til å si noe
+// legibelt — «1 av 2 avgitt», «du har alt stemt», «saken er avgjort eller
+// foreldet» — og en flate som gjorde det om til «noe gikk galt» ville
+// gjenskapt nøyaktig den stillheten PR-015 §4 finnes for å fjerne.
+//
+// `saksrevisjon` ER EN DEL AV STEMMEN (Codex P1). Sak-id-en er stabil
+// gjennom A→B→C→B, så en fane som har stått åpen peker på samme sak, men
+// på en helt annen tvist — annen motpart, annen generasjon. Sendes ikke
+// revisjonen flaten VISTE, avgir knappen stemme i den konflikten som
+// tilfeldigvis står der nå, og to gamle faner kunne fullført en positiv
+// tildeling ingen av dem hadde sett. Basen håndhever den under
+// hostname-låsen; klienten er den eneste som kan si hva som ble lest.
+export async function avgiDomeneattestasjon(unntakId, utfall, vinnendeTenant,
+                                            saksrevisjon) {
+  const csrf = lesCookie("__Host-disponit_csrf");
+  let r;
+  try {
+    r = await fetch(`/v1/unntak/${unntakId}/domeneattestasjon`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...(csrf ? { "X-Disponit-CSRF": csrf } : {}),
+      },
+      body: JSON.stringify({ utfall, vinnende_tenant: vinnendeTenant,
+                             saksrevisjon }),
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  let kropp = null;
+  try { kropp = await r.json(); } catch { kropp = null; }
+  if (r.status === 409) return kropp || { feil: "krever_to_attestasjoner" };
+  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  return kropp;
+}
 
 // PR-012: menneskelig unntaksbehandling. Muterende → X-Disponit-CSRF
 // (dobbel-innsending). Klienten sender handlingen, `saksversjon` (den den
@@ -218,6 +374,13 @@ export async function postHandling(uid, operatorhandling, saksversjon,
   }
   let kropp = null;
   try { kropp = await r.json(); } catch { kropp = null; }
-  if (!r.ok) _kast(r.status, kropp && kropp.feil);
+  if (!r.ok) {
+    // 043: `oppdrag_utfort` bærer referansen mennesket skal beslutte på
+    // nytt med — den rir i `detaljer`, den lukkede feilens eneste bagasje.
+    _kast(r.status, kropp && kropp.feil,
+          kropp && kropp.feil === "oppdrag_utfort"
+            ? [String(kropp.oppdrag_id ?? ""),
+               String(kropp.kvitteringsref ?? "")] : undefined);
+  }
   return kropp;
 }

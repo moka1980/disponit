@@ -588,6 +588,20 @@ def _nullstill(migrator, med_legacy_uten_checksum: bool):
     # Event-trigger-funksjonen `disponit_vern_policy_retention` spares:
     # den eies av superbrukeren, migrator kan ikke gjenskape den, og en
     # drop her ville stille fjernet GO-vilkår V3 for resten av kjøringen.
+    #
+    # SEKVENSENE ER EN TREDJE ART. Den var aldri nødvendig før 047, som
+    # innførte historikkens første FRITTSTÅENDE sekvens
+    # (`policyer_generasjon_seq`) — en `SERIAL`-kolonne bærer sin egen,
+    # og den følger tabellen ut. En frittstående gjør ikke det: `DROP
+    # TABLE ... CASCADE` river defaulten som peker på den, men sekvensen
+    # er et eget objekt og blir stående. 047 møtte da sin egen sekvens
+    # igjen ved gjenoppbyggingen og døde på «already exists».
+    #
+    # 047 knytter nå sekvensen til kolonnen med `OWNED BY`, så nettopp
+    # den forsvinner med tabellen. Sveipet her står likevel, av samme
+    # grunn som resten av hjelperen er dynamisk: det finnes ingen liste å
+    # vedlikeholde, og neste sekvens skal ikke måtte oppdage dette på
+    # nytt. Etter tabellene, så en levende default aldri rives først.
     migrator.execute("""
         DO $$
         DECLARE r RECORD;
@@ -609,6 +623,12 @@ def _nullstill(migrator, med_legacy_uten_checksum: bool):
                                            AND d.deptype = 'e')
             LOOP
                 EXECUTE format('DROP FUNCTION IF EXISTS %s CASCADE', r.f);
+            END LOOP;
+            FOR r IN SELECT c.oid::regclass AS s FROM pg_class c
+                       JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relkind = 'S'
+            LOOP
+                EXECUTE format('DROP SEQUENCE IF EXISTS %s CASCADE', r.s);
             END LOOP;
         END $$;""")
     migrator.commit()

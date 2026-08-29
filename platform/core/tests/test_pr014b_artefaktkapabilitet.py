@@ -31,16 +31,19 @@ def _mk_admin(rolle):
     return c
 
 
-def _plukket_oppdrag_med_binding(conn, modul, kh):
+def _plukket_oppdrag_med_binding(conn, modul, kh, rev="kompenserende"):
     """Et LEGITIMT claimet, kontraktbundet oppdrag: registrer kontrakt+release,
     aktiver modulen med en claiming-deployment, registrer oppdragstype+
     artefakttype, og claim via den herdede claim-veien (014a-final tillater kun
-    claim-funksjonen å stemple bindingen). Returnerer (oppdrag_id, artefakttype)."""
+    claim-funksjonen å stemple bindingen). Returnerer (oppdrag_id, artefakttype).
+
+    `rev` er kontraktens REVERSIBILITET — 043 utleder både §5-saken og (Codex
+    P2, runde 2) om et sent artefakt skal bevares av nettopp den."""
     from .test_pr014a_cp5_claim import _lag_oppdrag_type
     ma = _mk_admin("disponit_modules_admin")
     try:
         ma.execute("SELECT registrer_kontrakt(%s,1,%s,'p','k','krever_outbox',"
-                   "'kompenserende','sys')", (modul, kh))
+                   "%s,'sys')", (modul, kh, rev))
         ma.execute("SELECT registrer_release(%s,'r1',1,%s,'mh','ad','sys')",
                    (modul, kh))
         ma.execute("SELECT installer_modul(%s,'sys')", (modul,))
@@ -53,10 +56,16 @@ def _plukket_oppdrag_med_binding(conn, modul, kh):
         ma.commit()
     finally:
         ma.close()
-    at = "at-" + secrets.token_hex(4)
+    at = f"at.t{secrets.token_hex(4)}.kvittering"
     da = _mk_admin("disponit_domains_admin")
     try:
-        da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,'sh','sys')",
+        da.execute("SELECT registrer_artefaktskjema("
+                   "'{\"type\":\"object\"}',%s,'sys')",
+                   ("a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909"
+                    "dcb7054738c0",))
+        da.execute("SELECT registrer_artefakttype(%s,%s,1,%s,"
+                   "'a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909"
+                   "dcb7054738c0','sys')",
                    (at, modul, kh))
         da.commit()
     finally:

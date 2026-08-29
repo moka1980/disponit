@@ -35,12 +35,22 @@ jobs:
       # verifiser_token.
       DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - name: Installer avhengigheter
-        run: pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography starlette uvicorn httpx "authlib>=1.6,<2" joserfc
+        run: |
+          pip install pytest pyyaml jsonschema "psycopg[binary]" cryptography starlette uvicorn httpx "authlib>=1.6,<2" joserfc
+          # Norskporten er fail-closed: uten wordfreq er den PERMANENT rød,
+          # og en port som alltid feiler blir en port noen slår av.
+          pip install -r requirements-dev.txt
+      - name: "Port: norsk uten ASCII-normalisering i sannhetskilden"
+        run: |
+          python prototype/sjekk_norsk.py --selftest
+          python prototype/sjekk_norsk.py docs/spesifikasjon/disponit-prototype-v9.html
       - name: "Databaseroller (speiler deploy/staging/oppsett-postgresql.sh)"
         env: {PGPASSWORD: postgres}
         run: |
@@ -49,6 +59,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_authenticator NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_varselsender LOGIN PASSWORD 'var'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plan_arbeider LOGIN PASSWORD 'pla'"
+          # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
+          # aldri medlem av modules_admin: attestant og akseptør skal
+          # være to identiteter (fire-øyne på akseptens forutsetning).
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_ci_verifikator LOGIN PASSWORD 'ver'"
           # PR-006: NOLOGIN-eieren av arbeidskapabiliteter og claim-funksjonene.
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_m37_claimer NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_authenticator TO disponit_migrator"
@@ -65,6 +80,7 @@ jobs:
           # admin-rollen som får EXECUTE på dem (ikke direkte DML).
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_modul_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modul_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modul_eier TO disponit_ci_verifikator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_modules_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_modules_admin TO disponit_migrator WITH INHERIT FALSE"
           # PR-014b: egress-tjenesterollen (LOGIN, SELECT kun paa visningen),
@@ -76,6 +92,12 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domene_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_admin TO disponit_migrator WITH INHERIT FALSE"
+          # 041: adjudikatorrollen — NOLOGIN, KUN policy-avgrenset SELECT.
+          # Runtime faar SET (aldri arv); migrator faar medlemskap saa
+          # rebuilds og negative rolletester kan SET ROLE til den.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_adjudicator NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit WITH INHERIT FALSE, SET TRUE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
@@ -113,6 +135,20 @@ jobs:
           # tester CI en annen vei enn den staging og produksjon bruker.
           DISPONIT_MIGRATOR_URL="postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test" \
             python deploy/staging/migrer.py disponit
+      - name: "SP-10: backfill-migrasjonen prøvekjøres mot BEBODD base"
+        # Tom base er halvparten av porten: 047-prod-stoppet (utsatte
+        # DEFERRABLE-hendelser foran ALTER) er per konstruksjon usynlig
+        # her uten seed. Nummeret pekes på eksplisitt — en ny
+        # backfill-migrasjon registrerer sin egen seed i skriptet og
+        # oppdaterer pekeren.
+        env:
+          DISPONIT_SP10_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          DISPONIT_SP10_MIGRATOR_URL: postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_sp10
+        run: |
+          python deploy/staging/sp10-provekjoring.py 48
+          python deploy/staging/sp10-provekjoring.py 49
+          python deploy/staging/sp10-provekjoring.py 56
+          python deploy/staging/sp10-provekjoring.py 59
       - name: Enhetstester + negative policytester
         run: python -m pytest platform/core/tests -q
       - name: "Port: ingen DB-tester ble hoppet over"

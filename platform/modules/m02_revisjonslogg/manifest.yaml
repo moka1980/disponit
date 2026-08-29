@@ -3,10 +3,43 @@
 id: m02_revisjonslogg
 navn: Revisjonslogg (M-2)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# Aksepten (RUTINER.md pkt. 6) er claude.ai sitt steg. Denne PR-en oppretter
-# manifestet og fester evidensen; aktiveringen er en egen beslutning.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+# FLIPPET ER TATT 2026-08-23, etter komplett binding. Alle seks
+# sjekklistepunkter under står `ja` med krav_id + innsjekket, sha256-bundet
+# artefakt + strukturerte `bevismaalinger` (bundet 2026-08-22), og
+# aksepthendelsen er skrevet i basen: `plattformmodulaksept`,
+# innholdsadressert mot commit 2aaca01 med manifest-sha b69aec8f…, grensen
+# `m02-aksept-v1`. Statusen her er katalogens avlesning av den raden, ikke
+# en mening om modulen.
+#
+# `driftstilstand` UNDER ER IKKE EN SELVSTENDIG PÅSTAND, og de to feltene
+# flyttes derfor SAMMEN: `registry.valider` gjør driftsaksen betinget —
+# `driftstilstand` ulik `ikke_i_drift` med `status` ulik `aktiv` gir «drift
+# krever aktiv», og CI (ci.yml, «register ok») avviser hele registeret på
+# det. Invarianten er pinnet i
+# `test_drift_uten_aktiv_status_er_en_registerfeil` og finnes nettopp for
+# tilstanden «kjører uten å ha bestått sin egen sjekkliste». Samme doktrine
+# står i m56_wcag_audit/manifest.yaml.
+#
+# HISTORIKK, så ingen leser «retter» flippet tilbake: M-2 ble satt `aktiv`
+# på #89 med begrunnelsen «alle punkter ja, artefaktene bundet» da det
+# gjaldt tre av seks, og flippet ble rullet tilbake i runde 2 (Codex P1).
+# Den grunnen finnes ikke lenger — de tre andre punktene fikk sine
+# artefakter og `bevismaalinger` 2026-08-22 (#147). Rekkefølgen denne
+# gangen er motsatt av #89: bindingen først, aksepthendelsen så, flippet
+# sist.
+#
+# SAMTIDIGHETEN MED m56 ER REGISTERETS EGEN REGEL, ikke en snarvei: en
+# `aktiv` modul kan ikke avhenge av en som ikke er aktiv, og
+# `m56_wcag_audit` har m02 som avhengighet. Derfor står begge flippene i
+# samme commit.
+#
+# ÅPENT MOT EIER (utsatt fra #152 etter K1, ikke lukket her): aksepten er
+# innholdsadressert mot bytene på 2aaca01, og flippet endrer nettopp de
+# bytene. m56 har et speil for dette — bare `staging_sjekkliste` får avvike
+# mellom drill og aksept — mens m02 mangler en tilsvarende «eneste tillatte
+# delta etter aksept»-port. Den porten er ny maskin og hører til egen PR.
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter: []              # loggen er lagringslaget — den avhenger av ingen
 kjerne: platform/core/policy_validator/audit.py
 i18n_prefiks: m02
@@ -20,29 +53,128 @@ i18n_prefiks: m02
 #
 # Uten den presiseringen ville deling vært et smutthull: «samme artefakt»
 # uten «samme måling» er å låne en konklusjon.
+#
+# HISTORIKK, LUKKET 2026-08-22 (#147) — OG NØYAKTIG DET GJALDT DE TRE
+# FØRSTE PUNKTENE (Codex P1, runde 2). Blokken over beskrev den gang
+# bindingen som om den var gjennomført for alle seks. Den var gjennomført
+# for tre: `feilinjisering_til_unntakskø`, `ytelse_bestatt` og
+# `rollback_testet` hadde krav_id + artefakt + artefakt_sha256 +
+# bevismaalinger. De tre første hadde ren fritekst.
+#
+# To av dem sa i sitt eget notat at de var m01-kjøringer — «Samme suite som
+# m01», «Den samme kjøringen på 180 hendelser». Det er delt evidens, og
+# delingen har én betingelse i RUTINER.md: «punktet må navngi hvilken
+# MÅLING i det delte artefaktet som beviser det for nettopp den modulen —
+# strukturert, i feltet `bevismaalinger`». Fritekst oppfyller den ikke:
+# `notat: "banan_maaling = true"` er både unikt og ikke-tomt.
+#
+# KONSEKVENSEN ER MÅLT, IKKE PÅSTÅTT: `valider_artefakter` hopper
+# eksplisitt over hvert `ja` som mangler `krav_id`. Sto punktene `ja`,
+# verifiserte CI null av de tre — porten var åpen, ikke bestått. Og
+# RUTINER.md er kategorisk om formen: «Et sjekklistepunkt uten definert,
+# målbar grense regnes som `nei` — en port man ikke kan måle, er ingen
+# port.»
+#
+# MÅLINGENE ER BEVART. Notatene under er ikke slettet — de sier hva
+# kjøringene faktisk viste. Veien til `ja` var den samme for alle tre: pek
+# på et artefakt i deploy/staging/artefakter/ med et krav_id som har
+# grenser i KRAVGRENSER, og navngi målingen som beviser punktet FOR M-2.
+# Den veien er gått: alle tre har nå sitt eget artefakt (`m02-suite-v1`,
+# `m02-fordeling-v1`, `wcag-kontroll-v2`), og hvert notat under bærer både
+# bindingen og tilstanden før den, som historikk.
+#
+# ÅPENT SPØRSMÅL TIL EIER: m01 har de samme tre punktene `ja` med ren
+# fritekst, og m01 er `aktiv`. Forskjellen jeg har lagt til grunn er at m01
+# EIER de målingene mens m02 låner dem, og at delingsbetingelsen derfor
+# bare biter her. For `revisjonslogg_korrekt` holder ikke den forskjellen —
+# det er M-2s eget punkt — og der er det formregelen over som gjelder,
+# altså den samme som m01 slipper unna. Jeg har ikke rørt m01: det er en
+# egen avgjørelse, ikke et funn i denne runden.
 staging_sjekkliste:
   tester_gronne_pa_staging:
     status: ja
+    krav_id: m02-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.m2_tester
+      - maalt.m2_feilet
+    artefakt: deploy/staging/artefakter/m02-suite-v1-20260822T184611Z.json
+    artefakt_sha256: d5c5a05016f81e4c0e804f5e82b3069f029d321341f719b4fcd39ef7d8611385
     notat: >-
+      BUNDET 2026-08-22: suitekjøringen finnes som artefakt i repoet —
+      2195/2195 grønne på verten (main 67f40ef, test-DB 1→55), og M-2s
+      andel er det PINNEDE utvalget (m2_tester=7, m2_feilet=0, målt mot
+      KRAVGRENSER['m02-suite-v1']). FRISKHETSGRENSEN er kjent og
+      sporet i #148 (K2-eskaleringen fra #147): suiten målte commiten
+      oppsett.commit, som er ancestor av — aldri lik — akseptcommiten;
+      ancestry-porten med avgrenset diff er egen maskin og egen PR.
+      Tilstanden før bindingen, som historikk:
+      MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Samme suite som m01, kjørt på staging etter hver merge. Revisjons-
       loggens egne porter ligger i test_api.py (evidensfelter, aktør fra
-      serverkontekst, idempotent replay uten ny loggpost) og i
-      test_kjorer_og_kryptering.py (append-only-triggerne).
+      serverkontekst, idempotent replay uten ny loggpost, rullet loggpost
+      ved feilet unntaksskriv) og i test_pg_og_attestering.py (append-only
+      i basen, runtime som ikke kan skru den av, triggeren etter
+      migrasjon). RETTET: dette notatet pekte på test_kjorer_og_kryptering
+      .py for append-only-triggerne, og det stemte ikke — den filen måler
+      migrasjonskjøreren, DEK-ene og tokenene, og nevner ikke
+      revisjonsloggen. Punktet lukkes når suitekjøringen finnes som
+      artefakt i repoet og M-2s andel av den er det PINNEDE utvalget i
+      `KRAVGRENSER['m02-suite-v1']['m2_andel_pakrevd']`.
   syntetisk_datasett_likt_lokalt:
     status: ja
+    krav_id: m02-fordeling-v1
+    bevismaalinger:
+      - maalt.antall_tillat
+      - maalt.antall_stopp
+      - maalt.antall_unntak
+    artefakt: deploy/staging/artefakter/m02-fordeling-v1-20260822T161849Z.json
+    artefakt_sha256: 50e7d51192c952311fb855db497386ba6489b594ca4f40a603f7580a72ce9471
     notat: >-
+      BUNDET 2026-08-22: fordelingen 84/3/93 over 180 hendelser drevet
+      gjennom den EKTE beslutningsveien (t-m02fordeling, policyvariant i
+      parset form), og artefaktet er re-målbart: porten regner tallene ut
+      av radene på nytt og holder bevisroten (settdriver + CLI-er +
+      policy-YAML) mot repoets bytes hver kjøring. Tilstanden før
+      bindingen, som historikk:
+      MÅLT, IKKE BUNDET (delt m01-kjøring uten `bevismaalinger`).
       Den samme kjøringen på 180 hendelser ga identisk fordeling lokalt og
       på staging — og fordelingen ER loggen: 84 TILLAT / 3 STOPP / 93 UNNTAK
-      er 180 loggposter med samme beslutningsfelt.
+      er 180 loggposter med samme beslutningsfelt. Tallene står her; det som
+      mangler er et hash-verifisert artefakt de kan regnes ut av på nytt.
   revisjonslogg_korrekt:
-    # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken.
+    # M-2s kjernepunkt. Her er M-2 ikke en delt måling, men hovedsaken —
+    # og nettopp derfor er det verst å la det stå ubundet: punktet modulen
+    # finnes for, er det ingen port måler.
     status: ja
+    krav_id: wcag-kontroll-v2
+    bevismaalinger:
+      - maalt.revisjonsrader_mot_bestilt
+      - maalt.revisjonsrad_avvik
+      - maalt.kjoringer_med_attestert_kvittering
+    artefakt: deploy/staging/artefakter/wcag-kontroll-v2-20260822T190624Z.json
+    artefakt_sha256: e4ec7c51a770e7275c046b4b2e53090bb456025ea660cb967da731dfaae47b26
     notat: >-
+      BUNDET 2026-08-22, tredelt (klarsignalet §2): rad-per-hendelse-
+      leddet bæres av den DELTE r21-målingen — 10/10 revisjonsrader mot
+      bestilt, 0 avvik, referert ved artefaktets sha (delingsregelen: to
+      punkter kan dele en måling, aldri en type måling); de to andre
+      leddene — aktør fra serverkontekst og append-only håndhevet i
+      basen — bæres av CI-portene i test_api.py og
+      test_pg_og_attestering.py, som m02-akseptens CI-attest krever
+      grønne. Tilstanden før bindingen, som historikk:
+      MÅLT, IKKE BUNDET (ingen `krav_id`, altså ingen målbar grense).
       Ekte beslutning gjennom sikker_beslutning_pg lagret med tenant, aktør
       og kilde fra konteksten — aldri fra payloaden. UPDATE og DELETE
       avvises av databasetriggeren, ikke av applikasjonskode. Evidensfeltene
       (handling, request_id, idempotency_key, policy_content_hash,
-      attestation_set_hash) kom i PR-005b.
+      attestation_set_hash) kom i PR-005b. Det nærmeste bundne tallet i dag
+      er `etterkontroll.historikk_komplett` i feilinjisering-m01-v1 — men
+      det måler at historikken er KOMPLETT, ikke at aktøren kom fra
+      konteksten eller at append-only håndheves i basen. Å binde punktet dit
+      ville vært å låne en konklusjon, og det er nøyaktig det
+      delingsregelen finnes for å hindre.
   feilinjisering_til_unntakskø:
     status: ja
     krav_id: feilinjisering-m01-v1

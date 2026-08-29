@@ -9,6 +9,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { el } from "../static/js/dom.js";
 import { plattformTelling } from "../static/js/plattformdata.js";
 import { KATALOG } from "../static/js/katalog.js";
+import { byggRuter } from "../static/js/sitekart.js";
 import {
   BeslutningBadge, KategoriTag, Tidspunkt, BegrunnelseKjede, StatusTidslinje,
   Lasteskjelett, TomTilstand, Feiltilstand, TilgangsVakt, Uautorisert,
@@ -48,6 +49,32 @@ test("KategoriTag/Tidspunkt/SensitiveData rendrer trygt", async () => {
   assert.equal(tid.getAttribute("datetime"), "2026-08-09T10:00:00+00:00");
   assert.equal(SensitiveData().textContent, t("ui.sensitiv.skjult"));
 });
+
+test("Tidspunkt: sonemerket er sonen det faktisk ble formatert i",
+  async () => {
+    // 22:30Z er 07:30 dagen etter i Tokyo. Formateres tidspunktet I sonen,
+    // står den timen der — uansett hvilken sone testkjøreren står i.
+    const iso = "2026-08-09T22:30:00+00:00";
+    const tokyo = Tidspunkt(iso, { tidssone: "Asia/Tokyo" });
+    assert.ok(tokyo.textContent.includes("07:30"),
+      `sonen ble ikke brukt: ${tokyo.textContent}`);
+    assert.ok(tokyo.textContent.endsWith("(Asia/Tokyo)"),
+      `sonen mangler i klartekst: ${tokyo.textContent}`);
+    // Og beviset som holder i ENHVER vertssone: to ulike soner kan ikke
+    // gi samme tekst. Faller `timeZone` ut, formateres begge i verten og
+    // de blir like — som da `(UTC)` sto over lokal tid.
+    const utc = Tidspunkt(iso, { tidssone: "UTC" });
+    assert.notEqual(utc.textContent, tokyo.textContent);
+    assert.ok(utc.textContent.endsWith("(UTC)"));
+    // Maskinlesbar verdi er urørt av presentasjonen.
+    assert.equal(tokyo.getAttribute("datetime"), iso);
+    // Uten sone påstås ingenting: leserens egen sone, ingen merkelapp.
+    assert.ok(!/\(/.test(Tidspunkt(iso).textContent));
+    // Ukjent sone: rå ISO, som bærer offsetten selv — aldri en ny
+    // merkelapp over feil klokkeslett.
+    assert.equal(Tidspunkt(iso, { tidssone: "Mars/Olympus" }).textContent,
+      iso);
+  });
 
 test("BegrunnelseKjede: ukjent kode faller trygt til råkode", async () => {
   const n = BegrunnelseKjede(["belop_over_grense", "helt_ukjent_kode_xyz"]);
@@ -216,11 +243,14 @@ test("Site-komponenter: status/fase/modulkort rendrer trygt", async () => {
 });
 
 test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () => {
+  // Rutene og tildelingen kommer fra produksjonsbyggeren her, så axe faktisk
+  // ser den LISTA skallet bygger i dag: modulmenyen blander nå lenker (moduler
+  // med arbeidsflate) og knapper (moduler som fyller kontekstpanelet), og en
+  // blandet liste var uprøvd av hel-side-reglene.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
   const { rot, hoved } = AppShell({
-    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt",
-    ruter: [{ nokkel: "oversikt" }, { nokkel: "policy" },
-            { nokkel: "beslutninger" }, { nokkel: "unntak" }],
-    paaSprak: () => {}, paaLoggUt: () => {},
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
+    moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {},
   });
   assert.ok(rot.querySelector("header"));
   assert.ok(rot.querySelector("nav"));
@@ -228,7 +258,21 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   assert.equal(rot.querySelector('a[aria-current="page"]').getAttribute("href"),
     "#/oversikt");
   assert.ok(rot.textContent.includes(t("ui.shell.undertittel")));
-  assert.ok(rot.textContent.includes(`4 · ${t("ui.shell.ruter")}`));
+  assert.ok(rot.textContent
+    .includes(`${ruter.length} · ${t("ui.shell.ruter")}`));
+
+  // HOPP-FORBI-LENKEN MÅ FORTSATT HOPPE FORBI NAVIGASJONEN (Cursor P2, WCAG
+  // 2.4.1 / #52). `.hoppelenke` i `index.html` peker på `#hovedinnhold`, og
+  // hele poenget er at navigasjonen ligger UTENFOR målet. Skallet har nå to
+  // navigasjonslandemerker, og venstre er den eneste annonserte veien til 038
+  // og M-57 — havner en av dem inne i `main`, lander hoppet på menyen igjen.
+  // Landingssiden porterer den samme relasjonen for `.site-hovednav`.
+  assert.equal(hoved.querySelector("nav"), null,
+    "navigasjonen ligger inne i hopp-målet — hoppelenken hopper ingensteds");
+  for (const n of rot.querySelectorAll("nav")) {
+    assert.ok(!hoved.contains(n), "et navigasjonslandemerke ligger inne i main");
+  }
+
   const b = await alvorligeBrudd(rot);   // hel-side-regler PÅ (har main+nav)
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
@@ -300,13 +344,27 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   assert.ok(rot.querySelector(".skall-topp"), "topp mangler");
   assert.ok(rot.querySelector("main#hovedinnhold"), "sentrum mangler");
   assert.ok(rot.querySelector(".skall-venstre"), "modulmeny mangler");
+  // 🔴 Sonen er den eneste annonserte veien til modulflatene (Cursor P2), og
+  // toppnavigasjonen lister dem med vilje ikke. Som `aside` fant den som
+  // hopper mellom navigasjonslandemerker bare plattformflatene. To `nav`-er
+  // krever hver sin etikett — her: `aria-label` mot `aria-labelledby`.
+  assert.ok(rot.querySelector("nav#modulmeny"),
+    "modulmenyen er ikke et navigasjonslandemerke");
+  const navlandemerker = [...rot.querySelectorAll("nav")];
+  assert.equal(navlandemerker.length, 2);
+  assert.ok(navlandemerker.every((n) =>
+    n.getAttribute("aria-label") || n.getAttribute("aria-labelledby")),
+  "et navigasjonslandemerke står uten etikett");
   assert.ok(rot.querySelector(".skall-kontekst"), "kontekstpanel mangler");
   assert.ok(rot.querySelector(".skall-status"), "statuslinje mangler");
 
   // Modulmenyen er gruppert etter fagområde, ikke én lang liste.
   assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
     "modulmenyen er ikke gruppert etter område");
-  assert.equal(rot.querySelectorAll(".skall-modul").length, 45,
+  // Nevneren er katalogen, ikke et innbakt tall: et literalt 45 her ville
+  // blitt en løgn i det katalogen vokste, og testen ville feilet på selve
+  // utvidelsen i stedet for på en menyfeil (Codex P1 på PR #99).
+  assert.equal(rot.querySelectorAll(".skall-modul").length, ALLE_MODULER.length,
     "modulmenyen viser ikke hele tildelingen");
 
   // 🔴 Statuslinja skal si det REGISTERET bærer. Spesifikasjonens «45 moduler
@@ -464,7 +522,8 @@ test("AppShell: søket filtrerer modulmenyen, og tomt treff sier det", async () 
   felt.value = "bank";
   felt.dispatchEvent(new window.Event("input"));
   const treff = [...rot.querySelectorAll(".skall-modul")].map((b) => b.textContent);
-  assert.ok(treff.length > 0 && treff.length < 45, `fikk ${treff.length} treff`);
+  assert.ok(treff.length > 0 && treff.length < ALLE_MODULER.length,
+    `fikk ${treff.length} treff`);
   assert.ok(treff.every((n) => n.toLowerCase().includes("bank")));
 
   felt.value = "finnesikkexyz";
@@ -688,4 +747,205 @@ test("Faner: forrige/neste følger trinnene og stopper i endene", async () => {
   assert.equal(rot.querySelector('[role="tabpanel"]:not([hidden])').textContent, "B");
   assert.equal(neste.disabled, true, "«neste» er aktiv på siste trinn");
   assert.equal(forrige.disabled, false);
+});
+
+
+test("AppShell: modulkortet ER inngangen til flaten; toppnav bærer bare plattformflatene", () => {
+  // Eiers arkitekturvedtak 24/8: venstre = modulnavigasjonen, topp =
+  // plattformflatene. Kort med flate navigerer; ruten står (dyplenker
+  // virker), men toppnav lister den ikke. Uten flate: panelet som før.
+  //
+  // RUTENE KOMMER FRA PRODUKSJONSBYGGEREN (Codex P1). Med et håndlaget
+  // ruteobjekt testet denne bare skallets halvdel av avtalen, og bommet
+  // derfor på at `byggRuter` kastet `modulflate` på vei ut — altså på at
+  // ingen ekte økt så noe av dette. `visApp` bygger rutene på nøyaktig
+  // denne ene måten, og da er det den måten testen skal bruke.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "acme",
+    ruter: byggRuter({ scopes: ["decisions:read"] }),
+    aktiv: "oversikt", sprak: "nb", moduler: [1, 57],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  // Toppnav: plattformflaten inne, modulflaten UTE. Selektoren peker på
+  // `.skall-nav` og ikke bare `nav`, for modulmenyen er nå selv et
+  // navigasjonslandemerke (Cursor P2) — og det er nettopp poenget: begge er
+  // navigasjon, spørsmålet er hvilken av dem ruten hører til.
+  assert.ok(rot.querySelector('nav.skall-nav a[href="#/oversikt"]'));
+  // BEGGE modulflatene, ikke bare den ene (Cursor P2): vedtaket og 038 gjelder
+  // like mye for WCAG kontroll, og med bare rekrutteringsraden målt kunne
+  // `modulflate: 56` falle ut av sitekartet uten at suiten rødnet — 038 tilbake
+  // i feil sone, og to innganger hvis kortet ble stående.
+  for (const rute of ["rekruttering", "wcagkontroll"]) {
+    assert.equal(rot.querySelector(`nav.skall-nav a[href="#/${rute}"]`), null,
+      `modulflate i toppnav: ${rute} — den bor i venstremenyen nå`);
+    assert.equal(rot.querySelector(`.skall-modul[href="#/${rute}"]`).tagName, "A",
+      `${rute} mangler kortet som nå er inngangen`);
+  }
+  // Kortet navigerer — og en navigasjon er en LENKE (Codex P2). Kortet er den
+  // eneste annonserte inngangen etter at oppføringen forlot toppnavigasjonen,
+  // så den må bære adressen sin: ny fane, kopier lenke, og «lenke» framfor
+  // «knapp» for den som hører flaten i stedet for å se den.
+  const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
+    .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
+  const flatekort = (rute) => brett.querySelector(`.skall-modul[href="#/${rute}"]`);
+  assert.equal(flatekort("rekruttering").tagName, "A",
+    "modulkortet med flate er ikke en lenke");
+  // ...og lenken heter det den ÅPNER (Cursor P2): flaten bærer
+  // `ui.rekruttering.tittel`, som er samme streng som `ui.nav.rekruttering` —
+  // ordet 038 ratifiserte, og det brukeren klikket på i toppnavigasjonen
+  // fram til nå. Katalognavnet pekte på en flate som het noe annet.
+  assert.equal(flatekort("rekruttering").textContent, t("ui.nav.rekruttering"));
+  assert.equal(kort(57), undefined,
+    "kortet står fortsatt med katalognavnet i stedet for flatens");
+  // `href` er hele påstanden, og med vilje: fragmentnavigasjonen ved klikk er
+  // nettleserens jobb nå, ikke vår, og jsdom utfører den ikke. Å legge en
+  // klikk-handler oppå lenken bare for å kunne måle den her ville vært å
+  // gjenreise mekanismen funnet ba oss fjerne. Adressen er den samme som
+  // dyplenken — `ruter.js` svarer på `#/rekruttering` — så det den peker på
+  // er alt dekket av rutertestene.
+  window.location.hash = "#/oversikt";
+  // Modul UTEN flate får panelet, aldri en død navigasjon — og skal fortsatt
+  // være en knapp: det finnes ingen adresse å peke på.
+  assert.equal(kort(1).tagName, "BUTTON",
+    "en flateløs modul utgir seg for å være en lenke");
+  kort(1).click();
+  assert.ok(brett.querySelector(".skall-kontekst-tittel"),
+    "flateløs modul mistet kontekstpanelet");
+  assert.equal(window.location.hash, "#/oversikt",
+    "flateløs modul endret adressen");
+});
+
+test("AppShell: flaten økten har rute til står i menyen, også utenfor tildelingen", () => {
+  // 🔴 TO PORTER SOM BLE SERIEKOBLET (Cursor P1). Ruten gates på SCOPE,
+  // menyraden på KATALOGTILDELING. Ingen rad i `_UTRULLING` har 56 eller 57,
+  // og en ukjent tenant har ingen tildeling i det hele tatt — så da
+  // oppføringen forlot toppnavigasjonen, forsvant WCAG kontroll og
+  // rekruttering fra hver eneste ekte økt uten å dukke opp noe annet sted.
+  // Testene så det ikke fordi de oppga `moduler: [1, 57]`; Nordvik har
+  // `(1, 2, 37)`.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  const kortene = (rot) => [...rot.querySelectorAll(".skall-modul")]
+    .map((e) => e.getAttribute("href"));
+
+  const nordvik = AppShell({ tenant: "Nordvik Regnskap AS", ruter,
+    aktiv: "oversikt", sprak: "nb", moduler: [1, 2, 37],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(nordvik.rot);
+  assert.ok(kortene(nordvik.rot).includes("#/wcagkontroll"),
+    "WCAG kontroll har ingen inngang i det hele tatt for en ekte tenant");
+  assert.ok(kortene(nordvik.rot).includes("#/rekruttering"),
+    "rekruttering har ingen inngang i det hele tatt for en ekte tenant");
+  // Tildelingen står ved siden av, som før — unionen er ikke katalogen
+  // tilbake.
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 5,
+    "menyen viser mer enn tildelingen pluss flatene økten har rute til");
+
+  // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
+  // fortsatt si fra at den ikke vet, ellers framstår de to radene som hele
+  // svaret på hva økten har.
+  const ukjent = AppShell({ tenant: "Nordvik Regnskap AS", ruter,
+    aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(ukjent.rot);
+  assert.deepEqual(kortene(ukjent.rot).sort(),
+    ["#/rekruttering", "#/wcagkontroll"],
+    "en ukjent tildeling mistet flatene økten har rute til");
+  assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
+    .includes(NB["ui.shell.moduler_ukjent"]),
+  "menyen sier ikke lenger fra at tildelingen mangler");
+
+  // Og motsatt vei: uten scopet finnes ruten ikke, og da finnes heller ikke
+  // kortet. Unionen åpner ingen ny dør — den er de rutene `byggRuter` alt gav.
+  const uten = AppShell({ tenant: "Nordvik Regnskap AS",
+    ruter: byggRuter({ scopes: [] }), aktiv: "kundeadmin", sprak: "nb",
+    moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(uten.rot);
+  assert.deepEqual(kortene(uten.rot).filter(Boolean), [],
+    "en økt uten ruten fikk likevel et kort som lover flaten");
+});
+
+test("AppShell: søket finner flateraden på begge navnene den har (Cursor P2)", () => {
+  // 🔴 Raden heter nå flaten sin («WCAG kontroll»), mens modulen fortsatt
+  // heter «Automatisk WCAG-kontroll» i utrullingstabellen, på kundeflaten og
+  // i kontekstpanelet. Med bare ett av navnene i høystakken mistet alltid det
+  // andre den eneste inngangen flaten har — og bindestreken gjør at det ene
+  // ikke er et delstreng-treff i det andre.
+  const brett = nyttBrett();
+  const { rot } = AppShell({ tenant: "acme",
+    ruter: byggRuter({ scopes: ["decisions:read"] }), aktiv: "oversikt",
+    sprak: "nb", moduler: [1, 2, 37], paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(rot);
+  const felt = brett.querySelector("#skall-sok");
+  const sok = (q) => {
+    felt.value = q;
+    felt.dispatchEvent(new window.Event("input"));
+    return [...brett.querySelectorAll(".skall-modul")]
+      .map((e) => e.getAttribute("href"));
+  };
+  assert.deepEqual(sok(NB["ui.nav.wcagkontroll"]), ["#/wcagkontroll"],
+    "flatens eget navn finner ikke raden");
+  assert.deepEqual(sok(NB["site.katalog.m56.navn"]), ["#/wcagkontroll"],
+    "modulens katalognavn finner ikke raden");
+  // En flateløs modul er uendret: ett navn, og det er katalogens.
+  assert.equal(sok(NB["site.katalog.m37.navn"]).length, 1);
+});
+
+test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
+  // 🔴 HVOR ER JEG (Codex P2). `settAktiv` oppdaterer bare `lenker`, og
+  // modulflatene er nettopp de rutene som er filtrert UT av den — mens
+  // `valgtModul` bare settes av `visKontekst`, som flateklikket hopper over.
+  // Modulflatene hadde altså verken visuell eller `aria-current`-markering
+  // noe sted etter at oppføringen flyttet til venstremenyen.
+  const brett = nyttBrett();
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  const skall = AppShell({ tenant: "acme", ruter, aktiv: "oversikt",
+    sprak: "nb", moduler: [1, 14, 56, 57],
+    paaSprak: () => {}, paaLoggUt: () => {} });
+  brett.append(skall.rot);
+  const kort = (n) => [...brett.querySelectorAll(".skall-modul")]
+    .find((e) => e.textContent === t(`site.katalog.m${n}.navn`));
+  // Raden med flate heter flaten sin (Cursor P2), så den slås opp på adressen.
+  const flatekort = (rute) => brett.querySelector(`.skall-modul[href="#/${rute}"]`);
+
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), null,
+    "flaten er merket før noen har navigert til den");
+  skall.settAktiv("rekruttering");
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
+    "den aktive modulflaten er umerket i menyen som eier den");
+  // Én om gangen, og ordet er «page» — samme som toppnavigasjonen bruker,
+  // fordi det er samme slags opplysning.
+  skall.settAktiv("wcagkontroll");
+  assert.equal(flatekort("wcagkontroll").getAttribute("aria-current"), "page");
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), null,
+    "to modulflater står som aktive samtidig");
+  // En plattformflate eier ingen modulrad: da skal ingen av dem være merket.
+  skall.settAktiv("oversikt");
+  assert.equal(flatekort("wcagkontroll").getAttribute("aria-current"), null,
+    "modulraden ble stående merket etter at brukeren forlot flaten");
+
+  // Panelvalget lever ved siden av, og de to kolliderer ikke: en modul har
+  // enten en flate eller ikke. Brukeren skal kunne lese om modul 14 i panelet
+  // mens hun står på rekrutteringsflaten.
+  skall.settAktiv("rekruttering");
+  skall.visKontekst(14, { fokuser: false });
+  assert.equal(kort(14).getAttribute("aria-current"), "true",
+    "panelvalget mistet markeringen sin");
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
+    "flatemarkeringen forsvant da panelet ble fylt");
+  // ...og markeringen overlever at søket tegner menyen på nytt, samme regel
+  // som panelvalget alt hadde.
+  const felt = brett.querySelector("#skall-sok");
+  felt.value = t("ui.nav.rekruttering");
+  felt.dispatchEvent(new window.Event("input"));
+  assert.equal(flatekort("rekruttering").getAttribute("aria-current"), "page",
+    "flatemarkeringen forsvant da søket tegnet menyen på nytt");
+
+  // DYPLENKEN ER FØRSTE TEGNING (Codex P2). Den som åpner `#/rekruttering`
+  // rett fra et bokmerke får skallet bygget med ruten som `aktiv`, og skal se
+  // hvor hun er med en gang — ikke først etter neste navigasjon.
+  const dyp = AppShell({ tenant: "acme", ruter, aktiv: "rekruttering",
+    sprak: "nb", moduler: [1, 57], paaSprak: () => {}, paaLoggUt: () => {} });
+  nyttBrett().append(dyp.rot);
+  assert.equal(dyp.rot.querySelector('.skall-modul[href="#/rekruttering"]')
+    .getAttribute("aria-current"), "page",
+  "en dyplenke inn i flaten er umerket i menyen");
 });

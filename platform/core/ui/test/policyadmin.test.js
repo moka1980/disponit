@@ -276,7 +276,11 @@ async function _aapneDetaljMed(h, tekst) {
   visPolicyadmin(h, ctx());
   await vent(() => h.querySelector("tbody button"));
   h.querySelector("tbody button").dispatchEvent(new window.Event("click"));
-  await vent(() => _finn(h, tekst));
+  // Vent på DETALJSIDEN (tilbakeveien), ikke bare på en knapp med riktig
+  // tekst: lista har nå egne Rediger/Slett-knapper per rad, og en tekst-
+  // match der ville plukket listeknappen mens detaljen ennå lastet.
+  await vent(() => _finn(h, t("ui.policyadmin.tilbake_til_liste"))
+    && _finn(h, tekst));
   return h;
 }
 
@@ -2741,9 +2745,12 @@ test("Forkast: bekreftelsen navngir UTKASTET, ikke bare serien", async () => {
       __post: async () => ({}) };
     const h = nyHoved();
     visPolicyadmin(h, ctx());
-    await vent(() => h.querySelectorAll("tbody button").length >= 2);
-    h.querySelectorAll("tbody button")[rad]
-      .dispatchEvent(new window.Event("click"));
+    // Radene har nå flere knapper (Åpne/Rediger/Slett) — velg Åpne per RAD,
+    // ikke knapp nummer `rad` i flat rekkefølge.
+    const aapne = () => [...h.querySelectorAll("tbody button")]
+      .filter((b) => b.textContent.trim() === t("ui.aapne"));
+    await vent(() => aapne().length >= 2);
+    aapne()[rad].dispatchEvent(new window.Event("click"));
     await vent(() => _finn(h, t("ui.policyadmin.handling.forkast")));
     _finn(h, t("ui.policyadmin.handling.forkast"))
       .dispatchEvent(new window.Event("click"));
@@ -2916,4 +2923,220 @@ test("Veien tilbake fra en dyplenket detalj rydder også lenken", async () => {
   // …og lista står der, tegnet ÉN gang: `replaceState` utløser ingen
   // `hashchange`, så ruteren tegner ikke flaten på nytt oppå denne.
   assert.ok(h.querySelector("tbody"), "lista kom ikke fram");
+});
+
+// --- «Aktive policyer» med sletting BOR i policyadministrasjonen -----------
+// Eier: «angre policy eller slett policy ser jeg på ingen steder, den bør
+// være her ved siden av …» — han sto i utkastlista. Slettingen fantes, men
+// på den lesende policy-flaten; en handling ingen finner, finnes ikke.
+
+test("Policyadmin: aktive policyer vises øverst, med sletting", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+        innholds_hash: "h2" }] },
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector(".aktive-policyer")
+    && h.textContent.includes("tjenestebedrift2"));
+  assert.ok(h.textContent.includes(t("ui.policy.aktive_tittel")));
+  // …og seksjonen står FØR utkastlista: det er der eier leter.
+  const seksjon = h.querySelector(".aktive-policyer");
+  const tabell = h.querySelector("table");
+  assert.ok(seksjon.compareDocumentPosition(tabell)
+    & Node.DOCUMENT_POSITION_FOLLOWING,
+  "aktive policyer må stå over utkastlista");
+  assert.ok([...h.querySelectorAll(".aktive-policyer button")]
+    .some((b) => b.textContent.trim() === t("ui.policy.slett")),
+  "slett-knappen mangler der eier leter");
+  // Identiteten vises OGSÅ når policyen er alene (Codex P2): operatøren skal
+  // se hva hun sletter FØR den irreversible bekreftelsen, ikke først inne i
+  // den. Kontroll: bind `merke(d)`-linja til `flere`-flagget igjen, så blir
+  // denne rød — mocken over har nøyaktig én aktiv policy.
+  const angre = h.querySelector(".policy-angre");
+  assert.ok(angre.textContent.includes(
+    `tjenestebedrift2 · ${t("ui.policy.versjon")} 1.0.0`),
+  "policyens identitet er usynlig i normaltilfellet med én aktiv");
+  assert.ok(angre.getAttribute("aria-label").includes("tjenestebedrift2"),
+    "skjermleseren får ikke vite hvilken policy seksjonen gjelder");
+});
+
+test("Policyadmin: fokus lander på overskriften etter sletting", async () => {
+  // Codex P2: bekreftelsesdialogen gir fokus tilbake til slett-knappen, men
+  // en vellykket sletting fjerner den knappen og tegner lista på nytt —
+  // uten `{ fokus: true }` sto tastaturbrukeren igjen på <body>. Speiler
+  // de andre brukerutløste liste-returene: fokus skal til flatens h1.
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+        innholds_hash: "h2" }] },
+    __post: async () => ({ ok: true, status: 200,
+      json: async () => ({ slettet: 1 }) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector(".policy-angre"));
+  // Etter slettingen finnes policyen ikke lenger blant de aktive.
+  SVAR["/v1/policy/aktive"] = { policyer: [] };
+  [...h.querySelectorAll(".policy-angre button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  const dlg = document.querySelector('[role="dialog"]');
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => !h.querySelector(".policy-angre")
+    && h.textContent.includes(t("ui.policy.aktive_ingen")));
+  await vent(() => document.activeElement
+    && document.activeElement.tagName === "H1");
+  assert.equal(document.activeElement.textContent,
+    t("ui.policyadmin.tittel"),
+    "fokus ble ikke flyttet til flatens overskrift etter slettingen");
+});
+
+test("Policyadmin: uten policy:write vises ingen slette-seksjon", async () => {
+  SVAR = { "/v1/policyutkast": LISTE,
+    "/v1/policy/aktive": { policyer: [
+      { policy_id: "p", versjon: "1.0.0", innholds_hash: "h" }] },
+    __post: async () => ({}) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:read"] }));
+  await vent(() => h.querySelector("tbody"));
+  assert.equal(h.querySelector(".aktive-policyer h2"), null,
+    "lesere skal ikke inviteres inn i en sletting de ikke kan utføre");
+});
+
+// --- Handlingene bor PÅ raden: Åpne | Rediger | Slett (eiers krav 17/8) ----
+
+test("Policyadmin: raden har Åpne, Rediger og Slett side ved side", async () => {
+  SVAR = { "/v1/policyutkast": { utkast: [
+      { utkast_id: "u-1", policy_id: "faktura-no", status: "validert",
+        utkastversjon: 2, opprettet: "2026-08-10T08:00:00+00:00" },
+      { utkast_id: "u-2", policy_id: "lonn-no", status: "aktivert",
+        utkastversjon: 1, opprettet: "2026-08-10T09:00:00+00:00" }] },
+    "/v1/policy/aktive": { policyer: [] },
+    __post: async () => ({ ok: true, status: 200, json: async () => ({}) }) };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector("tbody"));
+  const rader = [...h.querySelectorAll("tbody tr")];
+  const tekster = (tr) => [...tr.querySelectorAll(".handling-celle button")]
+    .map((b) => b.textContent.trim());
+  const validert = rader.find((tr) => tr.textContent.includes("faktura-no"));
+  assert.deepEqual(tekster(validert),
+    [t("ui.aapne"), t("ui.policyadmin.handling.rediger"),
+     t("ui.policyadmin.handling.slett")],
+    "et validert utkast skal kunne åpnes, redigeres og slettes fra raden");
+  // Et terminalt utkast kan bare åpnes — statusmaskinen slipper ingen vei ut.
+  const aktivert = rader.find((tr) => tr.textContent.includes("lonn-no"));
+  assert.deepEqual(tekster(aktivert), [t("ui.aapne")]);
+  // Skjermleseren må vite HVILKEN rad hver knapp gjelder: tre like «Slett»
+  // er ellers ikke et valg.
+  const slett = [...validert.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.slett"));
+  assert.ok(slett.getAttribute("aria-label").includes("u-1"));
+});
+
+test("Policyadmin: Slett fra lista forkastet utkastet og melder utfallet",
+  async () => {
+    let postet = null;
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policy/aktive": { policyer: [] },
+      __post: async (url) => {
+        postet = url.split("?")[0];
+        return { ok: true, status: 200,
+          json: async () => ({ utfall: "forkastet", utkast_id: "u-1" }) };
+      } };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+    await vent(() => h.querySelector("tbody"));
+    [...h.querySelectorAll(".handling-celle button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => document.querySelector('[role="dialog"]'));
+    const dlg = document.querySelector('[role="dialog"]');
+    // Dialogen navngir UTKASTET — to forslag i samme serie er ellers like.
+    assert.ok(dlg.textContent.includes("u-1"));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.forkast"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => postet);
+    assert.equal(postet, "/v1/policyutkast/u-1/forkast");
+    // Utfallet tegnes SYNLIG i lista (alert), ikke bare til aria-live —
+    // og lista er lastet på nytt rundt det.
+    await vent(() => [...h.querySelectorAll('[role="alert"]')]
+      .some((n) => n.textContent === t("ui.policyadmin.forkastet")));
+  });
+
+test("Policyadmin: Rediger på et validert utkast gjenåpner og åpner editoren",
+  async () => {
+    const poster = [];
+    SVAR = { "/v1/policyutkast": LISTE,
+      "/v1/policyutkast/u-1": DETALJ,
+      "/v1/policy/aktive": { policyer: [] },
+      __post: async (url) => {
+        poster.push(url.split("?")[0]);
+        return { ok: true, status: 200, json: async () =>
+          ({ utkast_id: "u-1", status: "utkast", utkastversjon: 2 }) };
+      } };
+    const h = nyHoved();
+    visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+    await vent(() => h.querySelector("tbody"));
+    [...h.querySelectorAll(".handling-celle button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    // Gjenåpning er en fullmaktsrelevant overgang (runden trekkes, ny
+    // validering kreves) — den skjer aldri uten bekreftelse.
+    await vent(() => document.querySelector('[role="dialog"]'));
+    const dlg = document.querySelector('[role="dialog"]');
+    assert.ok(dlg.textContent.includes(t("ui.policyadmin.gjenapne.tittel")));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => poster.length);
+    assert.equal(poster[0], "/v1/policyutkast/u-1/gjenapne");
+    // ... og editoren tok over flaten (den henter utkastet og viser tittelen).
+    await vent(() => h.textContent.includes(t("ui.editor.tittel")));
+  });
+
+test("Policyadmin: et sent gjenåpne-svar åpner ikke editoren over en annen"
+  + " visning", async () => {
+  // Codex P1: eier bekrefter gjenåpningen, navigerer videre mens POST-en er
+  // ute — og svaret kalte `aapneEditor` betingelsesløst: en foreldet editor
+  // tegnet seg over ruten hun sto i, med det hun hadde begynt på der.
+  // Kontroll: fjern `eierSkjermen(min)`-vilkåret i `redigerValidert`, så
+  // blir denne rød.
+  let slippGjenapne = null;
+  SVAR = { "/v1/policyutkast": LISTE, "/v1/policyutkast/u-1": DETALJ,
+    "/v1/policy/aktive": { policyer: [] },
+    __post: async () => {
+      await new Promise((r) => { slippGjenapne = r; });
+      return { ok: true, status: 200, json: async () =>
+        ({ utkast_id: "u-1", status: "utkast", utkastversjon: 2 }) };
+    } };
+  const h = nyHoved();
+  visPolicyadmin(h, ctx({ scopes: ["policy:write"] }));
+  await vent(() => h.querySelector("tbody"));
+  [...h.querySelectorAll(".handling-celle button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => document.querySelector('[role="dialog"]'));
+  [...document.querySelector('[role="dialog"]').querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policyadmin.handling.rediger"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => slippGjenapne);           // POST-en henger på nettet
+
+  // Eier går videre: åpner utkastets detaljside.
+  [...h.querySelectorAll(".handling-celle button")]
+    .find((b) => b.textContent.trim() === t("ui.aapne"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.policyadmin.tilbake_til_liste")));
+
+  slippGjenapne();
+  await vent(() => false, 20);               // la svaret få tegne, om det vil
+  assert.ok(!h.textContent.includes(t("ui.editor.tittel")),
+    "det sene svaret tegnet editoren over visningen eier gikk til");
+  assert.ok(h.textContent.includes(t("ui.policyadmin.tilbake_til_liste")),
+    "detaljsiden eier sto i ble revet bort");
 });

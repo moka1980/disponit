@@ -16,14 +16,25 @@ import { visPolicyadmin } from "./flater/policyadmin.js";
 import { visKundeadmin } from "./flater/kundeadmin.js";
 import { visVarsler } from "./flater/varsler.js";
 import { visAdmin } from "./flater/admin.js";
+import { visWcagKontroll } from "./flater/wcagkontroll.js";
+import { visRekruttering } from "./flater/rekruttering.js";
+import { visAdjudikator } from "./flater/adjudikator.js";
+import { visNokkeltall } from "./flater/nokkeltall.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
-  oversikt: visOversikt, policy: visPolicy,
+  oversikt: visOversikt, nokkeltall: visNokkeltall, policy: visPolicy,
   beslutninger: visBeslutninger, unntak: visUnntak,
   policyadmin: visPolicyadmin, kundeadmin: visKundeadmin,
   varsler: visVarsler,
   admin: visAdmin,
+  wcagkontroll: visWcagKontroll,
+  // M-57: ruten står i `sitekart.js` nå som serverendepunktene finnes.
+  // Oppføringen her er uansett ikke i seg selv en vei inn —
+  // `tillatteFlater` slipper bare gjennom flater som HAR en rute økten
+  // fikk, så scope-gaten bor ett sted.
+  rekruttering: visRekruttering,
+  adjudikator: visAdjudikator,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

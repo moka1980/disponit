@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disponit – Produktspesifikasjon v9.0</title>
+<style>
+:root{
+  --paper:#F6F8F7; --card:#FFFFFF; --ink:#14232B; --muted:#5A6E77;
+  --line:#D5DEDD; --auto:#0F7A5C; --autobg:#E8F3EE; --guard:#A05A00; --guardbg:#FBF2E3;
+  --f1:#0F7A5C; --f1bg:#E4F1EB; --f2:#1D6FA5; --f2bg:#E5EFF6;
+  --f3:#6E4FA0; --f3bg:#EEE9F6; --f4:#8A4A2B; --f4bg:#F5EAE3;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono","Menlo",monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{font-size:16px}
+body{background:var(--paper);color:var(--ink);font-family:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.55}
+a{color:var(--f2)}
+.wrap{max-width:1060px;margin:0 auto;padding:0 1.25rem}
+.eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+header.hero{border-bottom:1px solid var(--line);background:var(--card);padding:3rem 0 2.2rem}
+.hero .eyebrow{color:var(--auto)}
+.hero h1{font-size:clamp(2rem,4.5vw,3rem);font-weight:800;letter-spacing:-.02em;margin:.4rem 0 .9rem}
+.hero p.lead{max-width:46rem;color:var(--muted);font-size:1.05rem}
+.stamp{display:inline-block;font-family:var(--mono);font-size:.75rem;border:1px solid var(--line);border-radius:4px;padding:.25rem .6rem;margin-top:1.1rem;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:1.6rem}
+.stats div{background:var(--card);padding:.9rem 1rem}
+.stats b{display:block;font-size:1.55rem;font-weight:800;letter-spacing:-.02em}
+.stats span{font-size:.8rem;color:var(--muted)}
+.stats .n b{color:var(--auto)}
+
+section{padding:2.6rem 0}
+section h2{font-size:1.45rem;font-weight:800;letter-spacing:-.01em;margin:.35rem 0 1.1rem}
+section h2 + p.intro{max-width:46rem;color:var(--muted);margin:-.6rem 0 1.3rem}
+
+.notice{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--auto);border-radius:6px;padding:1rem 1.2rem;max-width:52rem}
+.notice b{color:var(--auto)}
+
+table.chg{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:.92rem}
+table.chg th,table.chg td{text-align:left;padding:.6rem .85rem;border-bottom:1px solid var(--line);vertical-align:top}
+table.chg th{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+table.chg tr:last-child td{border-bottom:0}
+table.chg td:first-child{font-family:var(--mono);white-space:nowrap;color:var(--auto);font-weight:600}
+
+.plat{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.9rem}
+.plat div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1rem 1.1rem}
+.plat b{display:block;margin-bottom:.3rem}
+.plat p{font-size:.88rem;color:var(--muted)}
+
+.phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.9rem}
+.ph{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1rem 1.1rem;border-top:4px solid var(--line)}
+.ph[data-f="1"]{border-top-color:var(--f1)} .ph[data-f="2"]{border-top-color:var(--f2)}
+.ph[data-f="3"]{border-top-color:var(--f3)} .ph[data-f="4"]{border-top-color:var(--f4)}
+.ph b{display:block}
+.ph .cnt{font-family:var(--mono);font-size:1.5rem;font-weight:700}
+.ph p{font-size:.86rem;color:var(--muted);margin-top:.25rem}
+
+.filterbar{position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line);padding:.7rem 0}
+.filterbar .row{display:flex;flex-wrap:wrap;gap:.55rem;align-items:center}
+.filterbar input[type=search],.filterbar select{font:inherit;font-size:.9rem;padding:.45rem .7rem;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.filterbar input[type=search]{flex:1 1 220px;min-width:180px}
+.filterbar label.chk{display:flex;gap:.4rem;align-items:center;font-size:.88rem;color:var(--muted);cursor:pointer}
+#count{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-left:auto}
+.filterbar :focus-visible{outline:3px solid var(--f2);outline-offset:2px}
+
+.phasehead{margin:2.1rem 0 .9rem;display:flex;align-items:baseline;gap:.7rem}
+.phasehead h3{font-size:1.15rem;font-weight:800}
+.phasehead .eyebrow{font-size:.7rem}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:.85rem;overflow:hidden}
+.card summary{list-style:none;cursor:pointer;padding:.95rem 1.15rem;display:block}
+.card summary::-webkit-details-marker{display:none}
+.card summary:focus-visible{outline:3px solid var(--f2);outline-offset:-3px}
+.mline{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center;font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--muted);margin-bottom:.35rem}
+.mid{font-weight:700;color:var(--ink)}
+.chip{border-radius:3px;padding:.1rem .45rem;font-weight:600}
+.chip.f1{background:var(--f1bg);color:var(--f1)} .chip.f2{background:var(--f2bg);color:var(--f2)}
+.chip.f3{background:var(--f3bg);color:var(--f3)} .chip.f4{background:var(--f4bg);color:var(--f4)}
+.chip.ny{background:var(--ink);color:#fff}
+.chip.endret{background:var(--guardbg);color:var(--guard)}
+.card summary h4{font-size:1.05rem;font-weight:700;letter-spacing:-.01em;display:inline}
+.card summary .goal{color:var(--muted);font-size:.92rem;margin-top:.3rem}
+.card summary .hint{font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:.45rem}
+.card[open] summary .hint .cl{display:none}
+.card:not([open]) summary .hint .op{display:none}
+.body{border-top:1px solid var(--line);padding:1.05rem 1.15rem 1.15rem;display:grid;gap:.95rem}
+.body h5{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:.3rem}
+.body ol{padding-left:1.2rem;font-size:.92rem;display:grid;gap:.25rem}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:.95rem}
+.grid2 p,.body>div>p{font-size:.9rem}
+.contract{display:grid;gap:.5rem}
+.contract .ln{font-family:var(--mono);font-size:.8rem;line-height:1.5;padding:.55rem .7rem;border-radius:5px;border-left:4px solid}
+.contract .g{background:var(--guardbg);border-color:var(--guard)}
+.contract .g b{color:var(--guard)}
+.contract .a{background:var(--autobg);border-color:var(--auto)}
+.contract .a b{color:var(--auto)}
+.meta{font-size:.82rem;color:var(--muted)}
+.meta b{color:var(--ink)}
+
+footer{border-top:1px solid var(--line);background:var(--card);padding:2.2rem 0 2.6rem;margin-top:2rem}
+.princ{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.9rem;margin-top:1rem}
+.princ div{border:1px solid var(--line);border-radius:8px;padding:.9rem 1rem}
+.princ b{display:block;margin-bottom:.25rem}
+.princ p{font-size:.86rem;color:var(--muted)}
+footer .fin{margin-top:1.6rem;font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+
+@media (max-width:640px){.grid2{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:no-preference){.card{transition:border-color .15s}.card:hover{border-color:var(--muted)}}
+@media print{
+  .filterbar{display:none}
+  .card{break-inside:avoid;border:1px solid #bbb}
+  .card .body{display:grid !important}
+  body{background:#fff}
+  details>.body{display:grid}
+}
+
+.skip{position:absolute;left:-9999px;top:0;background:var(--card);color:var(--ink);padding:.7rem 1rem;border:2px solid var(--f2);border-radius:0 0 6px 0;z-index:100}
+.skip:focus{left:0}
+:focus-visible{outline:3px solid var(--f2);outline-offset:2px}
+main:focus{outline:none}
+.fl{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.subh{font-size:1.05rem;font-weight:800;margin:1.8rem 0 .5rem}
+.chip.v7{background:var(--paper);color:var(--muted);border:1px solid var(--line)}
+.chip.kl{background:var(--f3bg);color:var(--f3)}
+table.chg caption{text-align:left}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#hovedinnhold">Hopp til hovedinnhold</a>
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Produkt- og kravspesifikasjon · versjon 9.0</p>
+    <h1>Disponit</h1>
+    <p class="lead">En modulær operasjonsplattform som utfører bedriftens rutineprosesser automatisk innenfor dokumenterte fullmakter — med sporbarhet, sikker rollback og maskinell avvikshåndtering. Vi bygger få, lette moduler helt ferdig først, og ekspanderer når kvalitet og verdi er bevist i produksjon.</p>
+    <div class="stats" role="list">
+      <div role="listitem"><b>57</b><span>konsoliderte moduler</span></div>
+      <div role="listitem" class="n"><b>1</b><span>ny i v9</span></div>
+      <div role="listitem"><b>14</b><span>MVP-moduler i fase 1</span></div>
+      <div role="listitem"><b>11</b><span>forretningsområder</span></div>
+      <div role="listitem"><b>100&nbsp;%</b><span>automatisk normalflyt</span></div>
+    </div>
+    <span class="stamp">v9.0 · 20. august 2026 · konfidensielt · spesifikasjon før implementering</span>
+  </div>
+</header>
+
+<main id="hovedinnhold" tabindex="-1">
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Autonomi</p>
+    <h2>Definisjon av «helautomatisert»</h2>
+    <div class="notice">
+      <b>En modul er komplett</b> når hele normalflyten utføres automatisk, alle handlinger er sporbare, hver handling bærer en erklært reversibilitetsklasse, og kjente avvik håndteres maskinelt av unntaksmotoren (modul 37). Handlinger utenfor kundens forhåndsgodkjente policy stoppes trygt, dokumenteres og legges i strukturert unntakskø — de blir aldri gjettet. Markedsføres som <b>«helautomatisk normaldrift med policybasert unntakshåndtering»</b>, ikke «null menneskelig innblanding».
+    </div>
+    <p>
+      Klassen er en av de tre modulregisteret godtar: <b>direkte</b> (handlingen kan rulles rett tilbake), <b>kompenserende</b> (den nøytraliseres av en motsatt handling, som en kreditnota) eller <b>irreversibel</b>. Et krav om at alt skal være reversibelt ville vært et krav ingen ærlig modul kan innfri: et sendt varsel eller en innsendt melding kan ikke kalles tilbake, og en modul som lovte det ville bare skjult klassen sin. Derfor er irreversibel tillatt — men bare med de harde vernene kontrollplanet faktisk håndhever: klassen står i modulkontrakten før modulen kan aktiveres, og unntaksmotoren reparerer handlingen aldri automatisk. Den går alltid til menneske. Kan handlingen i tillegg utføres automatisk, krever policyvalidatoren minst ett attestert vilkår — det er attestasjonen som bærer engangsnøkkelen (jti) kjernen konsumerer, så uten vilkår ville handlingen kunne spilles av på nytt. Grenser alene holder ikke: de begrenser hvor stor hver enkelt avspilling er, ikke hvor mange det blir. En irreversibel handling uten attestert vilkår kan derfor bare være <b>alltid_stopp</b>.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Endringslogg</p>
+    <h2>Hva er nytt fra v6 til v7</h2>
+    <p class="intro">v7 tetter hullene som gjensto etter gjennomgangen av v5 (100 moduler) og v6 (36 moduler): to manglende plattformmoduler fra topp&nbsp;12-listen, lønn, HR, abonnement, svindelvakt, telefoni, kampanje og ESG — samt full identitetslivssyklus.</p>
+    <table class="chg">
+      <thead><tr><th scope="col">Modul</th><th scope="col">Endring</th><th scope="col">Begrunnelse</th></tr></thead>
+      <tbody>
+        <tr><td>M-37</td><td><b>Ny:</b> Unntaks- og feilhåndteringsagent (fase 1)</td><td>Topp 12-anbefaling som manglet i v6. Uten felles unntaksmotor har hver modul sin egen, inkonsistente feilhåndtering.</td></tr>
+        <tr><td>M-38</td><td><b>Ny:</b> Kapasitets-, kø- og modellruter (fase 1)</td><td>Topp 12-anbefaling som manglet. Nødvendig for tenant-isolasjon, SLA og modellvalg fra første pilotkunde.</td></tr>
+        <tr><td>M-12</td><td><b>Utvidet:</b> fra kun offboarding til full identitetslivssyklus (opprettelse, rolleendring, tilgangsrevisjon, offboarding)</td><td>Halvparten av livssyklusen manglet; onboarding og revisjon er forutsetning for minste privilegium.</td></tr>
+        <tr><td>M-39</td><td><b>Ny:</b> Lønnsgrunnlagsagent (fase 2)</td><td>Fra 25-listen. Høyfrekvent, regelstyrt og godt egnet for automatisering med streng policy.</td></tr>
+        <tr><td>M-40</td><td><b>Ny:</b> HR- og medarbeideragent (fase 2)</td><td>v5 hadde HR, mål, anerkjennelse og kontrakter — alt falt ut i v6. Gjeninnført med eksplisitte AI&nbsp;Act/GDPR-grenser.</td></tr>
+        <tr><td>M-41</td><td><b>Ny:</b> Abonnements- og inntektsagent (fase 3)</td><td>Fra 25-listen. Kritisk både for kundene og for plattformens egen fakturering.</td></tr>
+        <tr><td>M-42</td><td><b>Ny:</b> Svindel- og transaksjonsvakt (fase 3)</td><td>Fra 25-listen. Forutsetning for å la agenter utføre betalinger innen policygrenser.</td></tr>
+        <tr><td>M-43</td><td><b>Ny:</b> Tale- og telefoniagent (fase 3)</td><td>v5 hadde fem telefonmoduler; v6 hadde ingen. Konsolidert til én kanal på plattformens sikkerhetsmotor.</td></tr>
+        <tr><td>M-44</td><td><b>Ny:</b> Kampanje- og markedsinnsiktsagent (fase 3)</td><td>Nyhetsbrev, A/B-test, segmentering og konkurrentmonitor fra v5 var borte i v6.</td></tr>
+        <tr><td>M-45</td><td><b>Ny:</b> Bærekrafts- og ESG-agent (fase 4)</td><td>v5 hadde bærekraftsrapportør. CSRD gjør dette til reelt behov i det europeiske markedet.</td></tr>
+        <tr><td>M-24</td><td><b>Utvidet:</b> SLA-måling og leverandørbetaling innen policygrenser</td><td>Dekker «SLA- og leveranseagent» og «Leverandørbetalingsagent» fra 25-listen uten nye moduler.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+<section aria-labelledby="h-v8">
+  <div class="wrap">
+    <p class="eyebrow">Endringslogg</p>
+    <h2 id="h-v8">Hva er nytt fra v7 til v8</h2>
+    <p class="intro">v8 tar inn idelisten og deler den i fire: ti forslag ble nye moduler, åtte ble utvidelser av moduler som allerede fantes, seks er parkert med begrunnelse, og ni gjelder styring og hører hjemme i plattformen framfor i katalogen. I tillegg kom M-56 Automatisk WCAG-kontroll til utenom idelisten, på lovkrav om universell utforming — elleve nye moduler i alt. Antallet moduler går derfor fra 45 til 56, ikke til 71.</p>
+
+    <h3 class="subh" id="h-v8-nye">Elleve nye moduler</h3>
+    <table class="chg">
+      <caption class="vh">Nye moduler i v8 med fase og begrunnelse</caption>
+      <thead><tr><th scope="col">Modul</th><th scope="col">Navn</th><th scope="col">Fase</th><th scope="col">Hvorfor egen modul</th></tr></thead>
+      <tbody>
+        <tr><td>M-46</td><td>Anbuds- og konkurransevakt</td><td>3</td><td>Ingen eksisterende modul leser offentlige kunngjøringer. Høy verdi per treff, ren lesing.</td></tr>
+        <tr><td>M-47</td><td>Myndighetsrapporteringsagent</td><td>3</td><td>M-34 dekker sertifisering, ikke pålagte innsendinger med frist.</td></tr>
+        <tr><td>M-48</td><td>Foretaks- og kredittvakt (KYB)</td><td>2</td><td>Brukes både mot kunder (M-18) og leverandører (M-24); derfor felles modul framfor duplikat.</td></tr>
+        <tr><td>M-49</td><td>Sanksjons- og hvitvaskingsvakt</td><td>2</td><td>Regulatorisk kontroll med egne lister og egen revisjonsplikt. Må kunne blokkere fail-closed.</td></tr>
+        <tr><td>M-50</td><td>Postjournal- og innsynsvakt</td><td>3</td><td>Salgsmuligheter fra offentlige data. Ingen dekning i v7.</td></tr>
+        <tr><td>M-51</td><td>Tilskudds- og støtteagent</td><td>3</td><td>Henter penger bedriften har krav på. Egen ordningskatalog og egne frister.</td></tr>
+        <tr><td>M-52</td><td>Toll- og HS-kodeagent</td><td>3</td><td>M-28 dekker transport, ikke fortolling. Feil HS-kode gir bot, ikke bare forsinkelse.</td></tr>
+        <tr><td>M-53</td><td>HMS- og avviksmottak</td><td>2</td><td>Lovpålagt i flere bransjer og helt fraværende i v7.</td></tr>
+        <tr><td>M-54</td><td>EHF- og Peppol-avviksretter</td><td>2</td><td>Egen teknisk kontrakt (XML-validering mot standard), ikke det samme som fakturabehandling. Retting klargjøres maskinelt, utsending signeres av menneske.</td></tr>
+        <tr><td>M-55</td><td>Merkevare- og IP-overvåker</td><td>4</td><td>Overvåkning uten utgående krav. Lav frekvens, derfor fase 4.</td></tr>
+        <tr><td>M-56</td><td>Automatisk WCAG-kontroll</td><td>3</td><td>Universell utforming er lovpålagt, og kontrollen bærer egen motor, eget rapportskjema og egen domeneverifisering — ingen eksisterende modul dekker den. Automatisk kontroll av nettsteder kunden har bevist DNS-kontroll over, med rapport som evidens. Modulen står foran akseptporten og settes i drift når den er bestått.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="subh" id="h-v8-utv">Åtte utvidelser — ingen nye modulnumre</h3>
+    <p class="intro">Disse forslagene lot seg dekke av moduler som allerede står i katalogen. Å gi dem egne numre ville blåst opp katalogen uten å tilføre evne. Hver utvidelse er skrevet inn i modulkortet sitt — normalflyt, sikkerhetsgrense og akseptansekrav — og kortet er merket <b>UTVIDET I V8</b>. Tabellen her er endringsloggen; kortet er kontrakten.</p>
+    <table class="chg">
+      <caption class="vh">Utvidelser av eksisterende moduler i v8</caption>
+      <thead><tr><th scope="col">Modul</th><th scope="col">Utvidelse</th><th scope="col">Begrunnelse</th></tr></thead>
+      <tbody><tr><td>M-14</td><td>Tre-veis matching mellom innkjøpsordre, pakkseddel og <b>inngående</b> faktura, med automatisk bokføring kun ved full match. Utleggskontroll mot policy: kvitteringer leses med OCR og kontrolleres mot bedriftens egne regler for hva som kan dekkes.</td><td>Begge deler gjelder inngående bilag, som er M-14s kontrakt — den kontrollerer allerede mot bestilling, avtale og mottak. M-25 er kundesiden (tilbud → ordre → levering → innbetaling) og var feil vert. M-24 er datakilde for ordrelinjene.</td></tr><tr><td>M-22</td><td>Utløpsvakt for sertifikater, lisenser og abonnement, og oppdagelse av ukjente SaaS-utgifter i regnskapet.</td><td>Shadow IT via fakturaanalyse hører hjemme her. Loginovervåking av ansatte er parkert (se under).</td></tr><tr><td>M-23</td><td>Foreslår nedbetalingsplan innenfor eierens forhåndsgodkjente grenser når kunden oppgir betalingsproblemer.</td><td>Forslag, ikke forhandling. Selve dialogen og inkassosporet er parkert.</td></tr><tr><td>M-24</td><td>Varsler når en leverandørs innkjøpspris stiger over terskel, og beregner hvilke egne priser som da ligger under marginpolicy.</td><td>Marginbeskyttelse deles: M-24 oppdager kostnadsøkningen, M-26 foreslår ny pris. Ingen av dem setter prisen.</td></tr><tr><td>M-26</td><td>Priselastisitet beregnet på egne historiske salgsdata, som rådgivende forslag med usikkerhetsintervall.</td><td>Rådgivende. Automatisk prisendring mot kunder er utenfor v1 uansett modulnummer.</td></tr><tr><td>M-27</td><td>Behovsprognose med sesong og leveringstid, som genererer innkjøpsforslag ved kritisk lav beholdning.</td><td>Lageroptimalisering fantes allerede som modul; prognosedelen var det som manglet.</td></tr><tr><td>M-30</td><td>Søker gjennom flere datakilder samtidig ved innsyns- og slettekrav, og produserer en samlet, kryptert innsynspakke.</td><td>GDPR-innsyn er allerede M-30. Ideen tilfører bredden i søket, ikke en ny modul.</td></tr><tr><td>M-34</td><td>Overvåker Lovdata, regjeringen.no og EU-bulletiner og varsler om regelendringer som treffer bedriftens bransje.</td><td>Rådgivende varsel med forslag til policyendring. Endrer aldri policy selv.</td></tr></tbody>
+    </table>
+
+    <h3 class="subh" id="h-v8-park">Seks forslag parkert</h3>
+    <p class="intro">Parkert betyr vurdert og avvist for nå, med grunn. Alle seks har det til felles at agenten ville handlet bindende utad, eller overvåket ansatte.</p>
+    <table class="chg">
+      <caption class="vh">Parkerte forslag med begrunnelse</caption>
+      <thead><tr><th scope="col">Forslag</th><th scope="col">Hva det ville gjort</th><th scope="col">Hvorfor ikke nå</th></tr></thead>
+      <tbody><tr><td>Inkassovarsel og begjæring om utlegg</td><td>Genererer prosesskriv til namsmannen.</td><td>Feil dokument å la en agent produsere. Et formriktig tvangsgrunnlag er rettslig bindende, og feil i det rammer kunden direkte. Kan snevres til standard purring og inkassovarsel som eget arbeid.</td></tr><tr><td>Forhandlende inndriver</td><td>Fri e-postdialog med kunden om nedbetaling.</td><td>Agenten ville inngått bindende avtaler i fritekst med tredjepart. M-23 får i stedet foreslå en plan et menneske godkjenner.</td></tr><tr><td>Bank- og renteforhandler</td><td>Krever renteendring fra bankradgiver.</td><td>Samme grunn: forhandling er ikke en rutineprosess med kjent normalflyt. Renteovervåkning uten utgående dialog kan vurderes senere.</td></tr><tr><td>Skygge-onboarding fra Slack og Teams</td><td>Fanger opp ansattes svar og bygger kunnskapsbase.</td><td>Kontinuerlig avlytting av ansattes samtaler. Krever drøftingsplikt og et rettslig grunnlag vi ikke har; verdien forsvarer ikke inngrepet.</td></tr><tr><td>Automatisk varselbrev ved IP-brudd</td><td>Sender krav til den som bruker varemerket.</td><td>Juridisk krav mot navngitt tredjepart. M-55 dokumenterer i stedet, og mennesket beslutter reaksjon.</td></tr><tr><td>Skanning etter API-nøkler som modul</td><td>Leter etter nøkler i filer og chat.</td><td>Hører hjemme i CI-porten i vårt eget repo, ikke som kundemodul. Sertifikat- og lisensutløp er derimot lagt til M-22.</td></tr></tbody>
+    </table>
+
+    <h3 class="subh" id="h-v8-styr">Ni styringsfunksjoner — plattform, ikke moduler</h3>
+    <p class="intro">Ideene om enterprise-styring er egenskaper ved kontrollplanet. Flere av dem er allerede bygget; det er verdt å vite hvilke.</p>
+    <table class="chg">
+      <caption class="vh">Styringsfunksjoner og status</caption>
+      <thead><tr><th scope="col">Funksjon</th><th scope="col">Status</th><th scope="col">Merknad</th></tr></thead>
+      <tbody><tr><td>Rollback-motor</td><td>Bygget</td><td>Rollback og reversibilitetsklasse ligger i kontrollplanet fra fase 1.</td></tr><tr><td>Fire-øyne-prinsipp</td><td>Bygget</td><td>Policyaktivering krever to attestasjoner; motoren gjør selve overgangen.</td></tr><tr><td>Strukturert begrunnelse</td><td>Bygget</td><td>Motoren returnerer maskinkoder med parametre, ikke fritekst. Revisjonsloggen lagrer koden, visningslaget oversetter.</td></tr><tr><td>Circuit breaker mot ustabile API-er</td><td>Delvis</td><td>M-11 har selvtest og M-37 har unntakskøen. Selve sikringen som fryser en modul etter gjentatte feil bør formaliseres.</td></tr><tr><td>Shadow execution og simulering</td><td>Registrert</td><td>Står som eget arbeidselement: rådgivende simulering som aldri blir et aktiveringskrav.</td></tr><tr><td>Tidsbegrenset policytest</td><td>Ny</td><td>Policy med utløpstid eller volumtak, med rapport på unntaksrate etterpå. Passer inn i policyadministrasjonen.</td></tr><tr><td>Regulatorisk policyforslag</td><td>Ny</td><td>Utfallet av M-34-utvidelsen: et forslag til policyendring som går gjennom ordinær aktivering.</td></tr><tr><td>Zero-knowledge policyhvelv</td><td>Vurderes</td><td>Krypterer policyen slik at leverandøren ikke kan lese den. Kolliderer med at motoren må evaluere policy server-side, og med support og feilsøking. Krever egen arkitekturrunde.</td></tr><tr><td>Eksport av arbeidsflyter</td><td>Ny</td><td>Kunden kan ta ut sine egne policyer og modulkonfigurasjoner i lesbart format. Reduserer innelåsing og er billig fordi motoren er deterministisk.</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="h-v9">
+  <div class="wrap">
+    <p class="eyebrow">Endringslogg</p>
+    <h2 id="h-v9">Hva er nytt fra v8 til v9</h2>
+    <p class="intro">v9 tar inn én modul fra eiers ATS-kravspesifikasjon, gjennom samme produktport som v8-runden: kandidaten ble omskrevet fra sidesystem til plattformmodul før opptak, og porten skilte katalogopptak fra byggeprioritet. Antallet moduler går fra 56 til 57; fase 3 går fra 19 til 20. Full spesifikasjon skrives først når modulen prioriteres som byggearbeid.</p>
+
+    <h3 class="subh" id="h-v9-ny">Én ny modul</h3>
+    <table class="chg">
+      <caption class="vh">Ny modul i v9 med fase og begrunnelse</caption>
+      <thead><tr><th scope="col">Modul</th><th scope="col">Navn</th><th scope="col">Fase</th><th scope="col">Hvorfor egen modul</th></tr></thead>
+      <tbody>
+        <tr><td>M-57</td><td><b>Ny:</b> Rekrutteringsagent (ATS)</td><td>Fase 3</td><td>Klarest betalingsvilje av kandidatene, og rekruttering er en rutineprosess med kjent normalflyt — men høyrisiko etter EU AI Act (vedlegg III), så mennesket beslutter hvert utfall: utfiltrering innstiller, aldri beslutter, og all utsendelse krever signatur per liste. Bygges etter M-16 (KPI-dashboards), som har produksjonsdata å vise og langt mindre ny tillitsflate — katalogopptak og byggeprioritet er skilt.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="subh" id="h-v9-begreper">Ingen nye katalogbegreper</h3>
+    <p class="intro">Kandidaten ble lagt fram med to oppfunne verdier — en sikkerhetsklasse for dokumentbehandling og et revisjonsnivå for rådgivende analyse pluss signert utsendelse. Ingen av dem er tatt inn. <b>kl</b> og <b>rev</b> er nettopp de feltene modulregisteret binder, og en modul med verdier utenfor CHECK-vilkårene i migrasjon 014 og 036 kan ikke registreres den dagen den skal bygges: den som implementerer måtte enten se bort fra sannhetskilden eller endre den. M-57 står derfor med <b>krever_outbox</b> og <b>irreversibel</b>, samme par som M-53. Klassen gjelder utsendelsen, ikke rangeringen: evalueringen er rådgivende og skriver bare artefakter, men modulen finnes ikke uten utsendelsen, og en sendt invitasjon eller et sendt avslag kan ikke kalles tilbake. At søknadsfilene leses i isolert container og ikke fra eksterne domener — så modulen ikke er <b>ekstern_lesing</b> i M-56-forstand — er en egenskap ved flyten og står beskrevet der, ikke som en klasse. Katalogen beskriver; registeret binder. En beskrivelse som låner registerets felt, slutter å være beskrivelse.</p>
+
+    <h3 class="subh" id="h-v9-beslutninger">Portens produktbeslutninger</h3>
+    <table class="chg">
+      <caption class="vh">Produktbeslutninger fra v9-runden</caption>
+      <thead><tr><th scope="col">Beslutning</th><th scope="col">Innhold</th></tr></thead>
+      <tbody>
+        <tr><td>Byggerekkefølge</td><td>M-16 før M-57. M-57 får nummeret nå; M-16 bygges først. M-57 står som neste store arbeidsmodulkandidat etterpå.</td></tr>
+        <tr><td>Avslagsmaler</td><td>Plattformkuraterte rammer med begrenset kundetilpasning: plattformen eier struktur, tillatte flettefelt, begrunnelsestyper og forbudet mot modellgenerert fritekst i masseavslag; kunden eier tone, firmatekst, kontaktinfo og forhåndsgodkjente tekstblokker. Signaturen står uansett.</td></tr>
+        <tr><td>Retensjon</td><td>Kundevalgt innenfor plattformdefinert spenn med streng standard: lukket prosess starter en eksplisitt slettefrist som ikke kan være ubegrenset eller glemmes; lovlige hold er senere eksplisitte tilstander, aldri en generell «ikke slett»-bryter. Spennet tallfestes i spesifikasjonen.</td></tr>
+        <tr><td>Parkert</td><td>Desktop-agent (lokal mappeovervåking), annonse-URL-uttrekk fra tredjepartssider (egen ekstern lesing-vurdering — derfor også ute av input i v1) og automatisk booking-forhandling. Egne beslutninger senere.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Arkitektur</p>
+    <h2>Felles plattform — bygges én gang</h2>
+    <p class="intro">Modulene er arbeidsflyter på samme sikre motor, ikke 57 separate applikasjoner. Fire plan, der unntakskø (M-37) og kapasitet/modellruting (M-38) nå er eksplisitte fase&nbsp;1-moduler i kontroll- og agentplanet.</p>
+    <div class="plat">
+      <div><b>1 · Tilkoblinger</b><p>OAuth, webhooks, filimport, e-post, kalender, CRM, ERP, bank og telefoni. Selvtest og token-fornyelse via M-11.</p></div>
+      <div><b>2 · Dataplan</b><p>Tenant-isolasjon, kryptering, normalisering, søk og datakvalitet (M-3). Objektlagring og retention-policy.</p></div>
+      <div><b>3 · Agentmotor</b><p>Jobbkø, lokale modeller, verktøy og minne. Prioritering, skalering og modellruting styres av M-38.</p></div>
+      <div><b>4 · Kontrollplan</b><p>Policy (M-1), revisjonslogg (M-2), unntaksmotor (M-37), rollback, varsler og observability.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Rekkefølge</p>
+    <h2>Fire faser — lette moduler først</h2>
+    <p class="intro">Ingen ny fase starter før alle moduler i forrige fase består akseptansekriteriene i produksjon hos pilotkunder.</p>
+    <div class="phases">
+      <div class="ph" data-f="1"><span class="cnt">14</span><b>Fase 1 · Fundament</b><p>Plattform, sikkerhet, fil, e-post, dokument, møte, kalender, kunnskap, backup, integrasjoner og identitet.</p></div>
+      <div class="ph" data-f="2"><span class="cnt">16</span><b>Fase 2 · Operasjoner</b><p>Økonomi, lønn, HR, kunde, innhold, avtaler, lisenser og rapportering.</p></div>
+      <div class="ph" data-f="3"><span class="cnt">20</span><b>Fase 3 · Autopiloter</b><p>Ende-til-ende-prosesser: fordring, innkjøp, ordre, telefoni, kampanje, svindelvakt, sikkerhet og personvern.</p></div>
+      <div class="ph" data-f="4"><span class="cnt">7</span><b>Fase 4 · Global skala</b><p>Lokalisering og skatt, prediksjon, compliance, kontinuitet, ESG og porteføljeoptimalisering.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Design og tilgjengelighet</p>
+    <h2>WCAG 2.1 AA — plattformkrav, ikke etterarbeid</h2>
+    <p class="intro">Gjeninnført fra v5 (falt ut i v6). Universell utforming er både konkurransefortrinn og lovkrav: European Accessibility Act gjelder digitale tjenester i EU fra juni 2025, og norsk likestillings- og diskrimineringslov stiller krav til IKT rettet mot allmennheten. Hvert modulgrensesnitt må bestå disse kravene som del av akseptansekriteriene — automatisk testet i CI før merge.</p>
+    <table class="chg">
+      <thead><tr><th scope="col">Kriterium</th><th scope="col">Krav</th><th scope="col">Implementering i plattformen</th></tr></thead>
+      <tbody>
+        <tr><td>1.1.1</td><td>Alt-tekst på bilder</td><td>Alt-attributter obligatorisk; dekorative elementer alt="". M-4 genererer alt-tekst automatisk.</td></tr>
+        <tr><td>1.3.1</td><td>Korrekt semantikk</td><td>h1–h6 i rekkefølge, ekte lister, th med scope, landemerker.</td></tr>
+        <tr><td>1.4.1</td><td>Farge ikke eneste informasjonsbærer</td><td>Status vises alltid som farge + ikon/tekst (som fase-chipene i dette dokumentet).</td></tr>
+        <tr><td>1.4.3</td><td>Kontrast minst 4,5:1</td><td>Fargetokens valideres automatisk i CI; ingen tekst under grensen slipper gjennom.</td></tr>
+        <tr><td>1.4.4</td><td>200 % zoom uten tap</td><td>Alle størrelser i rem/em; responsivt ned til mobil.</td></tr>
+        <tr><td>2.1.1</td><td>Full tastaturnavigasjon</td><td>Logisk tab-rekkefølge, skip-lenke, ingen tastaturfeller.</td></tr>
+        <tr><td>2.4.7</td><td>Synlig fokus</td><td>3px solid fokusring med offset på alle interaktive elementer.</td></tr>
+        <tr><td>3.3.1</td><td>Feilidentifisering</td><td>Feilmeldinger sier hva som gikk galt og hvordan det rettes — samme prinsipp som unntakskøen.</td></tr>
+        <tr><td>3.3.2</td><td>Ledetekst på alle felt</td><td>label med for-attributt; aldri placeholder som eneste ledetekst.</td></tr>
+        <tr><td>4.1.2</td><td>Navn, rolle, verdi</td><td>ARIA der semantisk HTML ikke rekker; aria-live for statusoppdateringer.</td></tr>
+      </tbody>
+    </table>
+    <div class="plat" style="margin-top:.9rem">
+      <div><b>Minimalistisk</b><p>Kun nødvendig innhold. Maks 3 handlingsvalg per skjermbilde. Ingen popups uten kritisk behov, ingen autospillende media.</p></div>
+      <div><b>To klikk</b><p>All hovedfunksjonalitet innen to klikk. Konsistent navigasjon, tekstbaserte knapper, forutsigbar plassering.</p></div>
+      <div><b>Testet, ikke lovet</b><p>Automatisk tilgjengelighetstest (axe-core) kjøres i CI på hver PR — WCAG-brudd blokkerer merge, som enhver annen feilende test.</p></div>
+      <div><b>Reduced motion</b><p>All animasjon respekterer prefers-reduced-motion. Bevegelse er aldri eneste signal.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Kunde null</p>
+    <h2>Plattformen driver sin egen bedrift</h2>
+    <p class="intro">Modulene automatiserer ikke bare kundenes bedrifter — de driver selskapet bak plattformen som «kunde null» på nøyaktig samme motor og samme policyer. Normaldriften av egen bedrift krever null manuelt arbeid. Formulert presist, med samme standard som kundeløftet: <b>helautomatisk normaldrift — teamet er bedriftens unntakshåndtering.</b></p>
+    <table class="chg">
+      <thead><tr><th scope="col">Funksjon</th><th scope="col">Automatiseres av</th><th scope="col">Normaldrift</th></tr></thead>
+      <tbody>
+        <tr><td>Onboarding</td><td>M-18 (kunde-onboarding) + M-41 (abonnement/betaling via Stripe) + M-12 (tilgang)</td><td>0 min per ny kunde — registrering, betaling, workspace og oppsett skjer maskinelt.</td></tr>
+        <tr><td>Support</td><td>M-17 (kundeservice) + M-9 (kunnskapsbase) + M-11 (selvtest oppdager feil før kunden gjør det)</td><td>Repeterende henvendelser løses automatisk; resten klassifiseres i unntakskø.</td></tr>
+        <tr><td>Drift</td><td>M-10 (backup/restore) + M-11 (integrasjoner) + M-38 (kapasitet/skalering) + M-29 (sikkerhet) + M-35 (kontinuitet)</td><td>Selvhelbredende innen kjente feilmønstre; kontrollert degradering ved overlast.</td></tr>
+        <tr><td>Fakturering og økonomi</td><td>M-41 (fornyelse/purring) + M-13 (avstemming) + M-23 (fordring) + M-42 (svindelvakt)</td><td>Hver krone sporbar fra betalingshendelse til hovedbok, uten manuelle steg.</td></tr>
+        <tr><td>Markedsføring</td><td>M-20 (nettside/innhold) + M-44 (kampanje, A/B, konkurrentmonitor)</td><td>Innhold, utsendelse og optimalisering kjører etter egen policy og samtykkeregler.</td></tr>
+        <tr><td>Kvalitet og overvåking</td><td>M-16 (KPI-dashboards) + M-31 (agentevaluering) + M-2 (revisjonslogg)</td><td>Teamets innsyn skjer via automatiske dashboards — punkt 3 i driftsmodellen.</td></tr>
+        <tr><td>Unntak</td><td>M-37 samler alt som stoppes av policy — fra kundene og fra egen drift</td><td>Dette er teamets ene løpende oppgave. KPI: unntak per 100 kunder per uke skal synke for hver modulversjon.</td></tr>
+      </tbody>
+    </table>
+    <div class="notice" style="border-left-color:var(--guard);margin-top:.9rem">
+      <b style="color:var(--guard)">Det som aldri blir null:</b> unntakskøen, policyendringer i tillitsankeret (M-1, M-2, M-37), produktutvikling — og det juridiske ansvaret et selskap må bære (daglig leder og styre, regnskaps- og skatteansvar, databehandleravtaler, bank/KYC). Systemet er selve bedriften i normaldrift; mennesker bærer ansvaret og håndterer det policyen stopper. Det er samme ærlige formulering som kundeløftet — og den gjør påstanden troverdig overfor seriøse kjøpere og investorer.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Omfang</p>
+    <h2>Katalogen fryses på 57</h2>
+    <div class="notice">
+      <b>Kompletthetskriterium:</b> «Alle moduler bedrifter trenger» kan ikke bevises fra et møterom — det bevises empirisk. Katalogen ble frosset på 45 i v7, hevet i v8 til 56 — 55 fra gjennomgangen av idelisten under samme krav, pluss M-56 på lovkrav — og heves i v9 til 57 med M-57 fra eiers ATS-kravspesifikasjon, gjennom samme produktport; nye moduler legges fortsatt kun til ved dokumentert behov fra pilotkunder, etter samme regel som policy-skjemaet: når nye piloter slutter å avdekke nye behov, er katalogen komplett. Vertikale v5-moduler (byggesak, saksbehandling, strømoptimalisering m.fl.) er bevisst utelatt fra den horisontale kjernen og bygges senere som bransjemoduler på samme plattform.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Utrulling</p>
+    <h2>Ingen endring går rett i produksjon — noensinne</h2>
+    <p class="intro">Plattformen oppdaterer aldri seg selv direkte. Hver endring — kode, policy-skjema, bransjemal eller modellversjon — går gjennom samme obligatoriske løype. Løypen er selv automatisert (ingen manuell deploy), men hvert steg er en port som må være grønn før neste starter. Produksjon og testmiljø er fysisk adskilt: testmiljøet har aldri tilgang til kundedata, og produksjon tar aldri imot uverifiserte artefakter.</p>
+    <table class="chg">
+      <thead><tr><th scope="col">Steg</th><th scope="col">Port</th><th scope="col">Blokkerer hvis</th></tr></thead>
+      <tbody>
+        <tr><td>1 · PR</td><td>Én modul per pull request. Draft (Claude) → spesifikasjonsreview (ChatGPT) → implementering (Claude Code) → kodereview (Codex).</td><td>PR blander moduler, mangler tester eller mangler review-dokumentasjon.</td></tr>
+        <tr><td>2 · CI</td><td>Enhetstester, én test per akseptansekriterium, negative policytester (bevis på at handling utenfor policy stoppes), WCAG-test (axe-core), sikkerhets- og secrets-skanning.</td><td>Én eneste test feiler — inkludert tilgjengelighet og negative tester.</td></tr>
+        <tr><td>3 · Testmiljø</td><td>Full plattform kjøres i isolert miljø med syntetiske data. Databasemigrasjoner testes med rollback-prøve. Integrasjoner testes mot sandkasser (Stripe test-mode, bank-sandbox), aldri mot ekte kundesystemer.</td><td>Migrasjon kan ikke rulles tilbake, eller ende-til-ende-flyt feiler.</td></tr>
+        <tr><td>4 · Modell- og agentevaluering (M-31)</td><td>Nye modellversjoner og prompts kjøres mot fasit- og regresjonssett. Kvalitet må være lik eller bedre enn versjonen i produksjon.</td><td>Kvalitetsscore synker, eller nye sikkerhetsregler brytes i evalueringen.</td></tr>
+        <tr><td>5 · Kanarikjøring</td><td>Ny versjon rulles ut til en liten andel tenants først (f.eks. 5 %, med kunde null alltid først). M-16 og M-37 overvåker feilrate, unntaksvolum og responstid mot baseline.</td><td>Avvik over terskel → automatisk stopp av utrulling.</td></tr>
+        <tr><td>6 · Full utrulling</td><td>Gradvis til 100 % med blå/grønn-bytte: forrige versjon står klar hele tiden.</td><td>—</td></tr>
+        <tr><td>7 · Automatisk rollback</td><td>Ved avvik etter utrulling byttes trafikken tilbake til forrige versjon maskinelt, uten menneskelig inngripen. Hendelsen logges i M-2 og klassifiseres i M-37.</td><td>Rollback er ikke mulig → endringen skulle aldri passert steg 3.</td></tr>
+      </tbody>
+    </table>
+    <div class="notice" style="margin-top:.9rem">
+      <b>Samme regel for policy og maler som for kode:</b> en endring i policy-skjemaet eller en bransjemal er også en «deploy» — den valideres mot skjemaet, kjøres mot syntetiske hendelser i testmiljø og versjoneres med rollback, før den aktiveres for kunder. Akseptansekravet i M-1 («versjonerer regler og ruller automatisk tilbake ugyldige endringer») håndheves dermed av samme løype.
+    </div>
+  </div>
+</section>
+
+<div class="filterbar">
+  <div class="wrap row">
+    <label class="fl" for="q">Søk</label><input id="q" type="search" placeholder="navn, område eller innhold">
+    <label class="fl" for="fArea">Område</label><select id="fArea"><option value="">Alle områder</option></select>
+    <label class="fl" for="fPhase">Fase</label><select id="fPhase">
+      <option value="">Alle faser</option><option value="1">Fase 1</option><option value="2">Fase 2</option><option value="3">Fase 3</option><option value="4">Fase 4</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="fNew"> Vis kun den nye i v9</label>
+    <span id="count" role="status" aria-live="polite"></span>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Katalog</p>
+    <h2>Modulkatalog — 57 moduler</h2>
+    <p class="intro">Hver modul er spesifisert med normalflyt, input/output, integrasjoner, sikkerhetsgrenser, KPI-er, akseptansekriterier og avhengigheter. En modul regnes som ferdig først når akseptansekriteriene består i produksjon.</p>
+    <div id="catalog"></div>
+  </div>
+</section>
+
+</main>
+<footer>
+  <div class="wrap">
+    <p class="eyebrow">Prinsipper</p>
+    <div class="princ">
+      <div><b>Ferdig før neste fase</b><p>Ingen ny fase før alle moduler består akseptansekriterier i produksjon hos pilotkunder.</p></div>
+      <div><b>Deterministisk først</b><p>Regler og validering brukes der de kan; språkmodellen brukes bare der språk eller semantikk kreves.</p></div>
+      <div><b>Sikker standard</b><p>Minste privilegium, ingen sletting uten retention-policy, idempotente handlinger og automatisk rollback.</p></div>
+      <div><b>Ærlig kostnadspåstand</b><p>«Ingen obligatorisk kostnad per LLM-token; lokale modeller er standard.» Integrasjoner (betaling, telefoni, e-post, bank) har egne kostnader.</p></div>
+    </div>
+    <p class="fin">Disponit · Prototype v9.0 · 20. august 2026 · Produktspesifikasjon før implementering · Bygger på v5 (100 moduler) og v6 (36 moduler)</p>
+  </div>
+</footer>
+
+<script>
+const M=[
+{n:1,name:'Policy- og fullmaktsmotor',area:'Plattform og sikkerhet',p:1,level:'Lett',goal:'Styrer nøyaktig hva hver agent kan lese, endre, sende, betale eller slette.',flow:['Importerer standardpolicy for kundens bransje og plan','Knytter roller, beløpsgrenser, tidsvinduer og dataklasser til handlinger','Validerer hver agenthandling før utførelse','Stopper, logger og klassifiserer handlinger utenfor policy','Versjonerer regler og ruller automatisk tilbake ugyldige endringer'],input:'Organisasjon, roller, fullmakter, risikonivå og integrasjonstilganger.',output:'Maskinlesbare tillatelser, beslutningslogg og blokkårsaker.',int:'SSO/IdP, alle interne moduler.',guard:'Standard er ingen skrivetilgang. Konflikt mellom regler gir alltid stopp.',kpi:'Andel policygodkjente handlinger; feilaktige tillatelser; tid til regelendring.',accept:'100 % av skrivehandlinger har policy-ID, aktør, input-hash og begrunnelse; blokkerte handlinger utføres aldri.',dep:'Autentisering, roller og revisjonsdatabase.'},
+{n:2,name:'Revisjonslogg og evidens',area:'Plattform og sikkerhet',p:1,level:'Lett',goal:'Gjør alle automatiske handlinger etterprøvbare uten manuell dokumentasjon.',flow:['Mottar hendelser fra alle moduler','Lagrer input-hash, regler, modell- og promptversjon','Knytter før- og ettertilstand til handlingen','Genererer signert tidslinje og revisjonspakke','Overvåker manglende eller brutte hendelseskjeder'],input:'Agenthendelser, systemlogger, policybeslutninger og resultatstatus.',output:'Uforanderlig aktivitetslogg, evidenspakker og avviksvarsler.',int:'Alle moduler, objektlagring, SIEM.',guard:'Persondata maskeres etter feltpolicy; append-only lagring; separat retention.',kpi:'Loggdekning; verifikasjonsfeil; tid til revisjonspakke.',accept:'Alle kritiske handlinger kan rekonstrueres ende til ende, og loggtap oppdages innen fem minutter.',dep:'Hendelsesbuss, klokkesynkronisering og kryptering.'},
+{n:3,name:'Datakvalitetsagent',area:'Data og kunnskap',p:1,level:'Lett',goal:'Hindrer at automasjoner handler på mangelfulle, gamle eller inkonsistente data.',flow:['Profilerer nye datakilder','Oppdager tomme felt, ugyldige formater og duplikater','Kobler poster med deterministisk og semantisk matching','Retter sikre formatfeil etter policy','Karantenerer usikre poster og publiserer kvalitetsscore'],input:'CSV, regneark, databaseuttrekk, CRM- og ERP-poster.',output:'Validerte datasett, feilrapport, karantene og kvalitetsscore.',int:'Filimport, CRM, ERP, datavarehus.',guard:'Originaldata beholdes; semantisk sammenslåing krever høy terskel og kan reverseres.',kpi:'Feilrate før/etter; falske sammenslåinger; automatisert rettingsgrad.',accept:'Ingen original overskrives; alle rettinger er reversible; testsett når minst avtalt presisjon.',dep:'Skjemaregister og objektlagring.'},
+{n:4,name:'Data- og filforvalter',area:'Data og kunnskap',p:1,level:'Lett',goal:'Samler data-rydder, sky-rydder og bildeorganisering i én sikker modul.',flow:['Indekserer mapper og metadata','Finner eksakte duplikater med hash','Klassifiserer dokumenter og bilder','Flytter filer etter retention- og mapperegler','Optimaliserer bilder og genererer alt-tekst','Rapporterer frigjort plass og foreldet innhold'],input:'Lokale mapper, objektlagring og tilkoblede skylagre.',output:'Søkbar katalog, ryddet struktur, karantene og lagringsrapport.',int:'SharePoint, Drive, Box, S3-kompatibel lagring.',guard:'Ingen permanent sletting; først karantene med konfigurerbar angrefrist.',kpi:'Duplikater fjernet; lagring spart; feilklassifisering; gjenopprettinger.',accept:'Hash-duplikater identifiseres 100 %; alle flytt og slett kan reverseres; tilgangsregler bevares.',dep:'Connector-rammeverk, OCR og tilgangskart.'},
+{n:5,name:'Dokument- og malagent',area:'Dokument og kommunikasjon',p:1,level:'Lett',goal:'Konsoliderer malgenerator, teksttilpasser og dokumentsammenligner.',flow:['Identifiserer godkjente dokumentfamilier','Bygger versjonerte maler med obligatoriske felt','Fyller mal fra strukturerte data','Tilpasser språk og kanal uten å endre fakta','Sammenligner versjoner semantisk og markerer risiko','Publiserer dokument med sporbar kildehenvisning'],input:'Godkjente dokumenter, profilmanual, strukturerte felt og målkanal.',output:'DOCX/PDF/HTML, endringsrapport og malregister.',int:'Kontorpakke, CRM, e-signering og filarkiv.',guard:'Juridiske klausuler er låste komponenter; ukjente felt markeres, aldri diktes.',kpi:'Tid spart; feltfeil; malbruk; endringer fanget.',accept:'Alle fakta spores til kildefelt; låste klausuler endres ikke; visuell og semantisk regresjonstest består.',dep:'Dokumentrenderer, versjonskontroll og kunnskapsbase.'},
+{n:6,name:'E-postoperasjonsagent',area:'Dokument og kommunikasjon',p:1,level:'Lett',goal:'Konsoliderer e-postagent, innboksrydding og vedleggsfinner.',flow:['Henter nye meldinger og trådkontekst','Klassifiserer prioritet, tema og forventet handling','Oppsummerer og foreslår eller sender svar etter policy','Finner korrekt vedleggsversjon og skanner den','Arkiverer avsluttede tråder og følger opp ubesvarte','Leverer kort daglig status'],input:'E-post, kontaktdata, kalender, kunnskapsbase og filer.',output:'Svar, oppgaver, arkivering, oppfølgingsvarsler og sporbarhet.',int:'Microsoft 365, Gmail, CRM, antivirus.',guard:'Nye mottakere, sensitive vedlegg og økonomiske/juridiske løfter krever eksplisitt policy.',kpi:'Automatisk løsningsgrad; feil mottaker; svartid; gjenåpnede saker.',accept:'Ingen melding sendes uten mottaker-, DLP- og faktasjekk; dublettsending forhindres idempotent.',dep:'E-postconnector, kontaktregister, DLP og modul 1–2.'},
+{n:7,name:'Møteoperasjonsagent',area:'Samarbeid og HR',p:1,level:'Lett',goal:'Konsoliderer møteforberedelse, referat, aksjoner og effektivitetsanalyse.',flow:['Bygger agenda fra mål, åpne saker og forrige referat','Transkriberer og identifiserer talere med samtykkestatus','Trekker ut beslutninger, risiko og aksjoner','Oppretter oppgaver med eier og frist','Følger opp til lukking','Måler varighet, kostnad og beslutningsgrad'],input:'Kalender, møtelyd, agenda, oppgaver og deltakerroller.',output:'Agenda, transkripsjon, referat, beslutningslogg og oppgaver.',int:'Kalender, videomøte, prosjektverktøy og dokumentarkiv.',guard:'Opptak starter kun med gyldig policy/varsling; lav sikkerhet merkes som ubekreftet.',kpi:'Aksjoner fanget; oppfølging lukket; møtetid spart; talerpresisjon.',accept:'Beslutninger kan spores til tidskode; ingen opptak uten tillatelse; oppgaver dupliseres ikke.',dep:'Lokal tale-til-tekst, kalender og oppgaveconnector.'},
+{n:8,name:'Kalender- og kapasitetsagent',area:'Samarbeid og HR',p:1,level:'Lett',goal:'Samler kalenderoptimalisering, oppgavefordeling og enkel ferieplanlegging.',flow:['Leser tilgjengelighet, arbeidstid og prioriteringer','Reserverer fokus- og buffertid','Foreslår eller gjennomfører møteflytting etter regler','Fordeler oppgaver etter kompetanse, kapasitet og frist','Replanlegger ved fravær eller blokkering','Kontrollerer overbelastning og hviletid'],input:'Kalendere, oppgavekø, kompetanseprofiler, arbeidstid og fravær.',output:'Optimal kalender, oppgaveeierskap, kapasitetsprognose og avvik.',int:'Kalender, HRIS og prosjektverktøy.',guard:'Ingen helsevurdering eller skjult produktivitetsscore; lokale arbeidstidsregler må konfigureres.',kpi:'Fokusblokker; fristbrudd; ombookinger; kapasitetsbalanse.',accept:'Ingen dobbeltbooking; arbeidstids- og fraværsregler brytes aldri; alle flytt varsles.',dep:'Kalenderconnector, rollekatalog og policy.'},
+{n:9,name:'Kunnskaps- og ordlisteagent',area:'Data og kunnskap',p:1,level:'Lett',goal:'Bygger en kildebasert bedriftswiki og forklarer forkortelser og prosedyrer.',flow:['Indekserer godkjente kilder','Trekker ut begreper, eiere og gyldighetsdato','Fjerner dubletter og peker på motstrid','Besvarer spørsmål med presise kildepekere','Varsler dokumenteier om foreldet kunnskap','Publiserer rollebasert ordliste og onboardingvisning'],input:'Dokumenter, intranett, prosedyrer og godkjent kommunikasjon.',output:'Søk, svar med kilder, ordliste, konflikt- og utløpsvarsler.',int:'Filarkiv, intranett, chat og onboarding.',guard:'Svar uten tilstrekkelig kildegrunnlag avvises; tilgang arves fra kilden.',kpi:'Kildedekning; ubesvarte spørsmål; foreldede sider; svarpresisjon.',accept:'Hvert faktasvar har kilde og gyldighetsdato; brukere ser aldri kilder de mangler tilgang til.',dep:'Søk/vektordatabase, tilgangsfilter og dokumentindeks.'},
+{n:10,name:'Backup- og gjenopprettingsagent',area:'IT og drift',p:1,level:'Lett',goal:'Verifiserer at backup faktisk kan gjenopprettes, ikke bare at jobben rapporterer grønt.',flow:['Kartlegger systemer mot backup-policy','Kontrollerer fullføring, størrelse og kryptering','Gjenoppretter automatisk utvalg i isolert miljø','Kjører integritets- og applikasjonstester','Sammenligner RPO/RTO med mål','Oppretter evidens og reparerer kjente feil'],input:'Backupjobber, systemregister, RPO/RTO og testskript.',output:'Verifisert restore-status, avvik, automatisk reparasjon og revisjonsbevis.',int:'Backupplattform, objektlagring, virtualisering og varsling.',guard:'Restore-test isoleres fra produksjon; backup kan ikke slettes av samme identitet.',kpi:'Restore-suksess; faktisk RPO/RTO; utestede systemer; avvikstid.',accept:'Minst én automatisert restore-test per policyperiode; manipulert eller manglende backup oppdages.',dep:'Isolert testmiljø, secrets vault og systemregister.'},
+{n:11,name:'Integrasjons- og selvtestagent',area:'IT og drift',p:1,level:'Lett',goal:'Overvåker connectors, API-kontrakter, tokens og sentrale arbeidsflyter.',flow:['Kjører syntetiske lesetester kontinuerlig','Validerer skjema og API-kontrakt','Fornyer tokens før utløp','Gjenprøver med backoff og kretsbryter','Bytter til sikker kø ved nedetid','Reparerer kjente feil og verifiserer resultat'],input:'Connectorregister, helsesjekker, API-skjema og feilkatalog.',output:'Helsestatus, reparasjon, køstatus og rotårsaksrapport.',int:'Alle eksterne systemer og observability.',guard:'Ingen destruktiv syntetisk test; secrets eksponeres aldri i logg.',kpi:'Oppetid; automatisk reparasjonsgrad; MTTR; tapte/dupliserte jobber.',accept:'Tokenutløp varsles før brudd; ingen jobber mistes; hver retry er idempotent.',dep:'Jobbkø, secrets vault, connector-SDK og modul 2.'},
+{n:12,name:'Identitets- og tilgangsagent (JML)',area:'IT og drift',p:1,level:'Lett',v7:'endret',goal:'Utvidet i v7: hele livssyklusen — opprettelse, rolleendring, tilgangsrevisjon og sikker offboarding.',flow:['Mottar verifisert livssyklushendelse fra HRIS (start, endring, slutt)','Oppretter kontoer og tildeler minste privilegium fra rollekatalog','Justerer tilgang automatisk ved rolle- eller avdelingsbytte','Kjører periodiske tilgangsrevisjoner og fjerner ubrukt tilgang','Deaktiverer tilgang i riktig rekkefølge ved slutt og overfører eierskap','Roterer delte secrets, frigjør lisenser og verifiserer null gjenværende tilgang'],input:'HR-hendelser, identitetskatalog, rollekatalog, systemregister og overføringsregler.',output:'Provisjonerte/deaktiverte kontoer, tilgangsrevisjoner, overført eierskap, lisensbesparelse og attestasjon.',int:'HRIS, IdP/SSO, e-post, SaaS, vault og filarkiv.',guard:'Krever verifisert livssyklushendelse; privilegert tilgang gis kun tidsbegrenset; legal hold og bevaringskrav går foran sletting.',kpi:'Tid til provisjonering/stenging; foreldreløse kontoer; ubrukt tilgang fjernet; lisenser frigjort.',accept:'Ny bruker har korrekt minstetilgang innen SLA; kritiske tilganger stenges innen SLA; ingen data slettes i strid med retention/legal hold.',dep:'Systemregister, IdP, HRIS, rollekatalog og modul 1–2.'},
+{n:13,name:'Bankavstemmingsagent',area:'Økonomi',p:2,level:'Medium',goal:'Matcher bank, faktura, gebyr, refusjon og hovedbok automatisk.',flow:['Importerer transaksjoner og åpne poster','Normaliserer referanser, valuta og motpart','Matcher med regler før probabilistisk matching','Bokfører sikre treff og klassifiserer differanser','Håndterer kjente gebyr- og valutadifferanser','Lukker periode og produserer avstemmingsbevis'],input:'Banktransaksjoner, kunde-/leverandørreskontro og hovedbok.',output:'Avstemte poster, bokføringsforslag, differanseliste og bevis.',int:'Bank/Open Banking, ERP og betalingsleverandør.',guard:'Beløps- og sikkerhetsterskler; aldri opprette fiktiv motpost for å tvinge balanse.',kpi:'Automatisk matchgrad; feilmatch; åpne differanser; dager til periodestengning.',accept:'Alle bokførte matcher balanserer og kan reverseres; lavsikkerhet forblir åpen.',dep:'ERP- og bankconnector, kontoplan og policy.'},
+{n:14,name:'Faktura- og utleggsagent',v8:'utvidet',area:'Økonomi',p:2,level:'Medium',goal:'Samler kvitteringsskanning, utleggskontroll og tre-veis fakturakontroll i én flyt.',flow:['Fanger dokument fra e-post, app eller EHF','OCR-leser og validerer leverandør, MVA, beløp og konto','Kontrollerer dublett og matcher tre-veis mellom innkjøpsordre, pakkseddel og inngående faktura','Bokfører automatisk kun ved full match; delvis match går til unntakskøen','Leser kvittering med OCR og kontrollerer utlegget mot bedriftens egne dekningsregler','Konterer etter regler og historikk','Sender godkjent post til ERP eller ber automatisk om manglende data','Arkiverer bilag og revisjonsspor'],input:'Faktura, kvittering, innkjøpsordre, pakkseddel, avtale, mottak, utleggsregler og kontoplan.',output:'Validert og kontert bilag, avvik, kreditnotaforespørsel og arkiv.',int:'ERP, EHF/Peppol, e-post og innkjøpssystem.',guard:'Bankkontoendring verifiseres separat; ingen betaling i denne modulen.',kpi:'Berøringsfri grad; dubletter stoppet; konteringspresisjon; behandlingstid.',accept:'Sum, skatt og valuta valideres; samme bilag kan ikke bokføres to ganger; delvis tre-veis match bokføres aldri automatisk; utlegg utenfor dekningsreglene avvises til unntakskøen.',dep:'OCR, leverandørregister, ERP og modul 3.'},
+{n:15,name:'Likviditets- og kostnadsagent',area:'Økonomi',p:2,level:'Medium',goal:'Gir kontinuerlig kontantprognose og finner dokumenterbare kostnadstiltak.',flow:['Samler saldo, forfall, lønn, abonnement og prognose','Genererer basis-, oppside- og nedsidebane','Forklarer drivere og usikkerhet','Finner dubletter, ubrukte lisenser og prisavvik','Simulerer tiltak med effekt og reversibilitet','Overvåker faktisk resultat mot prognose'],input:'Bank, reskontro, budsjett, lønnsplan, kontrakter og bruksmålinger.',output:'13-ukers prognose, varsler, scenarioer og tiltakskø.',int:'Bank, ERP, HRIS og SaaS-register.',guard:'Forslag merkes som prognose; oppsigelser og betalinger utføres bare via egne policykontrollerte moduler.',kpi:'Prognosefeil; varslingstid; realiserte besparelser; falske varsler.',accept:'Alle tall kan spores til kilde; scenarioer balanserer; prognosefeil måles etter hver periode.',dep:'Modul 13–14, kontraktsdata og datakvalitet.'},
+{n:16,name:'Rapporterings- og KPI-agent',area:'Analyse og ledelse',p:2,level:'Medium',goal:'Samler KPI-overvåking, rapportering og innsiktsanalyse.',flow:['Kobler strategi til målbare KPI-definisjoner','Henter og validerer data etter fast plan','Beregner KPI med versjonert formel','Forklarer avvik med kildebelagte drivere','Genererer ledelses-, måneds- og styrerapport','Distribuerer riktig visning per rolle'],input:'Datakilder, KPI-katalog, budsjett, mål og rapportmal.',output:'Dashboard, rapportpakke, avviksforklaring og tiltak.',int:'ERP, CRM, HRIS, analyseverktøy og presentasjon.',guard:'Ingen automatisk årsakspåstand uten testbar evidens; tall låses med periodeversjon.',kpi:'Datadekning; rapporttid; formelfeil; tiltak fra avvik.',accept:'Hvert tall har formel, eier, kilde og oppdateringstid; totalsummer avstemmes.',dep:'Datakvalitet, connectorer og dokumentagent.'},
+{n:17,name:'Kundeserviceagent',area:'Kunde og salg',p:2,level:'Medium',goal:'Løser repeterende kundesaker i alle godkjente kanaler.',flow:['Identifiserer kunde, språk, produkt og intensjon','Henter avtale, ordre og relevant kunnskap','Utfører godkjent handling eller gir kildebasert svar','Bekrefter resultat med kunden','Oppretter og kategoriserer sak når sikkerhetskravet ikke møtes','Lærer kun fra kvalitetssikrede avslutninger'],input:'Melding/samtale, CRM, ordre, avtale og kunnskapsbase.',output:'Svar, utført servicehandling, sak, kundesammendrag og kvalitetsscore.',int:'E-post, chat, telefoni, CRM, ordre og kunnskapsbase.',guard:'Identitetskontroll før kontohandlinger; refusjon og persondata styres av policy.',kpi:'Automatisk løsningsgrad; førstegangsløsning; feilhandling; kundetilfredshet.',accept:'Ingen kontoopplysning uten verifisering; alle svar har kilde; handling bekreftes i kildesystem.',dep:'Modul 1, 6, 9 og CRMconnector.'},
+{n:18,name:'Kunde-onboardingagent',area:'Kunde og salg',p:2,level:'Medium',goal:'Tar en ny kunde fra betaling til aktiv og konfigurert bruker.',flow:['Mottar betalt abonnement eller signert ordre','Oppretter tenant, administrator og grunnroller','Samler mål og datakilder gjennom dynamisk veiviser','Kobler og tester integrasjoner','Aktiverer anbefalt modulpakke og policy','Måler aktivering og sender rollebasert opplæring'],input:'Ordre, firmadata, brukerdata, plan og valgte systemer.',output:'Aktiv workspace, connectors, policy, opplæring og onboardingstatus.',int:'Betaling, CRM, IdP, e-post og alle connectorer.',guard:'Ingen produksjonsskriving før test og eksplisitt fullmakt; minste tilgang er standard.',kpi:'Tid til verdi; fullføringsgrad; connectorfeil; aktivering etter 7/30 dager.',accept:'Tenant-isolasjonstest består; minst én verdiflyt kjører; alle fullmakter er dokumentert.',dep:'Provisionering, betaling, modul 1, 9 og 11.'},
+{n:19,name:'Kundehelse- og fornyelsesagent',area:'Kunde og salg',p:2,level:'Medium',goal:'Samler kundehelse, VIP-oppfølging, churnvarsling og fornyelse.',flow:['Beregner forklarbar helsescore fra avtalt data','Oppdager negativ endring og rotindikatorer','Velger tillatt tiltak etter segment og årsak','Sender relevant hjelp eller starter serviceflyt','Forbereder fornyelse og oppgraderingsalternativ','Måler effekt og kalibrerer score'],input:'Produktbruk, saker, betaling, leveranser, kommunikasjon og avtale.',output:'Helsescore, forklaring, tiltak, fornyelse og effektmåling.',int:'CRM, produktanalyse, support og abonnement.',guard:'Ingen bruk av sensitive persondata; score brukes på kundeforhold, ikke enkeltansatte.',kpi:'Churn; fornyelsesgrad; tiltakseffekt; presisjon/recall for risiko.',accept:'Hver score har forklarbare drivere; backtest dokumenteres; urettmessige segmentforskjeller overvåkes.',dep:'CRM, abonnement, rapportering og evalueringsrammeverk.'},
+{n:20,name:'Nettside- og innholdsagent',area:'Markedsføring',p:2,level:'Medium',goal:'Samler nettsidevedlikehold, nyhetsbrev, kanaltilpasning og enkel SEO.',flow:['Skanner teknisk helse, lenker, metadata og foreldet innhold','Prioriterer dokumenterbare feil','Reparerer reversible tekniske problemer','Genererer kildebasert innhold fra godkjent brief','Tilpasser til kanal, språk og merkevare','Publiserer, måler og tilbakefører ved negativ effekt'],input:'CMS, profilmanual, produktkilder, kampanjekalender og analyse.',output:'Oppdatert nettside, innholdspakke, endringslogg og resultatmåling.',int:'CMS, e-postplattform, analyse og sosiale kanaler.',guard:'Ingen udokumenterte produktpåstander; publisering krever policy, forhåndsvisning og automatisk rollback.',kpi:'Døde lenker; publiseringstid; konvertering; tilgjengelighetsfeil; rollback.',accept:'Lenker og skjema testes før publisering; fakta spores; WCAG- og merkevarekontroll består.',dep:'Dokumentagent, connectorer og webtest.'},
+{n:21,name:'Avtale- og fristagent',area:'Juridisk og compliance',p:2,level:'Medium',goal:'Samler avtalevakt, offentlige frister, årshjul og sertifikatutløp.',flow:['Trekker ut parter, datoer, plikter, priser og oppsigelse','Kobler plikter til eier og datakilde','Bygger årshjul og maskinelle fristregler','Forbereder innsending eller handling før frist','Verifiserer mottak og arkiverer bevis','Oppdaterer register ved endring eller fornyelse'],input:'Avtaler, myndighetskalender, sertifikater og organisasjonsdata.',output:'Forpliktelsesregister, årshjul, ferdige pakker og leveringsbevis.',int:'E-signering, filarkiv, kalender og offentlige integrasjoner.',guard:'Juridisk fortolkning merkes med sikkerhet; innsending skjer bare der mandat og maskinelt grensesnitt finnes.',kpi:'Frister overholdt; plikter uten eier; feiluttrekk; verifisert innsending.',accept:'Kritiske datoer dobbelvalideres; ingen frist lukkes uten kvittering eller eksplisitt status.',dep:'Dokumentanalyse, kalender, identitets- og landpakker.'},
+{n:22,name:'SaaS- og lisensagent',v8:'utvidet',area:'IT og drift',p:2,level:'Medium',goal:'Optimaliserer programvarelisenser og abonnementer etter faktisk bruk og kontrakt, og vokter utløp av sertifikater og lisenser.',flow:['Kartlegger kjøp, tildelte seter og innlogging','Matcher konto til ansatt, team og koststed','Finner ubrukt, duplisert og overdimensjonert lisens','Varsler i god tid før sertifikat, lisens eller abonnement utløper','Finner ukjent utgift til skytjenester i regnskapet og knytter den til eier og kontrakt','Varsler etter policy og venter karantenetid','Nedgraderer eller avslutter automatisk','Avstemmer faktura og realisert besparelse'],input:'SSO-logger, leverandørportal, faktura, kontrakt, sertifikatregister og HRIS.',output:'Lisensregister, endringer, kostnadsfordeling og besparelse.',int:'IdP, ERP, leverandør-API og HRIS.',guard:'Kritiske systemer og legal hold ekskluderes; tilgang kan gjenopprettes i angreperioden.',kpi:'Ubrukte lisenser; sparebeløp; feilaktig fjerning; gjenopprettingstid.',accept:'Ingen lisens fjernes uten dokumentert inaktivitet og policy; fakturareduksjon verifiseres; ingen utløpsdato passerer uvarslet; hver ukjent utgift får eier eller blir et unntak.',dep:'Modul 12, 14, kontraktsregister og SSO.'},
+{n:23,name:'Kundefordringsagent',v8:'utvidet',area:'Økonomi',p:3,level:'Avansert',goal:'Automatiserer fakturering, forfallsoppfølging og innbetaling innen kundens regler.',flow:['Oppretter faktura fra verifisert leveranse eller abonnement','Leverer i korrekt kanal og format','Overvåker mottak, forfall og innsigelser','Sender sekvens av vennlige, kontekstuelle påminnelser','Tilbyr tillatte betalingsalternativer','Foreslår nedbetalingsplan innenfor eierens forhåndsgodkjente grenser når kunden melder betalingsproblemer','Matcher betaling og lukker eller overfører tvist'],input:'Ordre, leveranse, avtale, fakturaregler og innbetaling.',output:'Faktura, påminnelse, betalingsplan, tvist og lukket reskontro.',int:'ERP, EHF/Peppol, betaling, e-post og CRM.',guard:'Inkassosteg og betalingsplan følger land- og kundepolicy; tvist pauses automatisk. Nedbetalingsplanen er et FORSLAG innenfor forhåndsgodkjente grenser; agenten forhandler aldri i fritekst.',kpi:'DSO; betalt ved forfall; automatisk avklaring; klager; tapsgrad.',accept:'Ingen feil faktura eller dobbel purring; betaling stopper videre kontakt; alle gebyrer valideres mot landregel; ingen nedbetalingsplan utenfor eierens forhåndsgodkjente grenser.',dep:'Modul 13, 14, 21 og landpakke.'},
+{n:24,name:'Leverandør- og innkjøpsagent',v7:'endret',v8:'utvidet',area:'Innkjøp og logistikk',p:3,level:'Avansert',goal:'Utvidet i v7: leverandør-onboarding, innkjøp, kvalitet, SLA-måling, avtalefornyelse og betaling av godkjente fakturaer innen policygrenser. Utvidet i v8 med kostnadsvakt på innkjøpspris.',flow:['Verifiserer leverandøridentitet, konto, skatt og sertifikater','Samler behov og lager forespørsel','Innhenter og normaliserer tilbud','Scorer pris, risiko, kvalitet og levering etter policy','Oppretter bestilling og overvåker bekreftelse','Måler leveranse og starter fornyelse eller alternativsøk','Varsler når en leverandørs innkjøpspris stiger over terskel','Beregner hvilke av bedriftens egne priser som da havner under marginpolicy'],input:'Behov, leverandørdata, tilbud, kontrakt, mottak og kvalitetsavvik.',output:'Godkjent leverandør, sammenligning, PO, leveransescore og fornyelse.',int:'ERP, innkjøpssystem, bankverifisering og sanksjons-/firmaregister.',guard:'Kontonummerendring verifiseres uavhengig; habilitet, sanksjoner og beløpsgrenser håndheves. Setter aldri utpris selv: kostnadsvarselet går til modul 26, som foreslår ny pris.',kpi:'Syklustid; besparelse; avvik; leverandørrisiko; automatisk PO-grad.',accept:'Ingen PO til uverifisert leverandør; valgt tilbud kan forklares; mottak kobles til bestilling; kostnadsøkning over terskel varsles med de berørte prislinjene.',dep:'ERP, firmaregistre, kontraktsagent og policy.'},
+{n:25,name:'Ordre-til-betaling-agent',area:'Kunde og salg',p:3,level:'Avansert',goal:'Binder tilbud, ordre, levering, fakturering og betaling sammen uten manuelle overleveringer.',flow:['Konverterer akseptert tilbud til validert ordre','Reserverer kapasitet eller lager','Orkestrerer levering og statuskommunikasjon','Verifiserer leveransegrunnlag','Utløser faktura og inntektsføring','Matcher betaling og oppdaterer kunde og prognose'],input:'Tilbud, avtale, produkt, pris, lager/kapasitet og betaling.',output:'Ordre, leveranse, faktura, regnskapspost og kundestatus.',int:'CRM, ERP, lager, logistikk, betaling og e-signering.',guard:'Pris, rabatt, kreditt og leveranse må bestå separate policykontroller; kompenserende transaksjoner ved feil.',kpi:'Berøringsfri ordregrad; ordre-til-kontant-tid; feilordre; fakturaavvik.',accept:'Én korrelasjons-ID følger hele flyten; restart skaper aldri duplikat; økonomi avstemmes.',dep:'Tilbuds-, lager-, faktura-, betalings- og connector-moduler.'},
+{n:26,name:'Tilbuds- og prisagent',v8:'utvidet',area:'Kunde og salg',p:3,level:'Avansert',goal:'Genererer faktabaserte tilbud med kontrollerte priser og rabatter.',flow:['Kvalifiserer krav og manglende informasjon','Velger godkjent produktkonfigurasjon','Beregner kost, margin, valuta og prisregel','Genererer tilbud fra låst mal','Sender, følger opp og registrerer respons','Måler vinnrate og margin uten å endre prispolicy selv','Beregner priselastisitet på bedriftens egne historiske salgsdata','Leverer elastisiteten som rådgivende forslag med usikkerhetsintervall'],input:'Kundekrav, produktkatalog, kost, prisliste, kapasitet, historiske salgsdata og kontraktsvilkår.',output:'Validert tilbud, prisforklaring, oppfølging og salgsdata.',int:'CRM, CPQ, ERP, e-signering og dokumentagent.',guard:'Minstemargin og maksimal rabatt kan ikke overskrides; ingen diskriminerende personprising. Elastisitetsforslaget er RÅDGIVENDE: ingen pris mot kunde endres automatisk.',kpi:'Tilbudstid; vinnrate; margin; prisfeil; endringsrunder.',accept:'Alle linjer har gyldig SKU, prisregel og kostgrunnlag; utløpt pris kan ikke sendes; hvert elastisitetsforslag oppgir usikkerhetsintervall og datagrunnlag.',dep:'Produktkatalog, dokumentagent, CRM og policy.'},
+{n:27,name:'Lager- og påfyllingsagent',v8:'utvidet',area:'Innkjøp og logistikk',p:3,level:'Avansert',goal:'Automatiserer varetelling, etterspørselsprognose og påfyll innen sikre grenser.',flow:['Avstemmer fysisk/digital beholdning fra hendelser og telling','Korrigerer kjente transaksjonsforsinkelser','Prognostiserer etterspørsel med sesong, ledetid og usikkerhetsbånd','Beregner bestillingspunkt, sikkerhetslager og MOQ','Genererer innkjøpsforslag når beholdningen er kritisk lav','Oppretter PO innen leverandør- og beløpspolicy','Måler utsolgt, svinn og prognosefeil'],input:'Lagerbevegelser, salg, sesong, ledetid, MOQ og leverandør.',output:'Beholdning, avvik, prognose, påfyllingsordre og risiko.',int:'WMS, ERP, POS, innkjøp og skanner/IoT.',guard:'Store avvik og nye produkter karanteneres; prognosen får aldri skjule fysisk differanse.',kpi:'Servicegrad; lagerdager; svinn; prognosefeil; hasteordre.',accept:'Ingen negativ lagerbeholdning skjules; PO respekterer maksverdi, MOQ og godkjent leverandør; kritisk lav beholdning gir alltid et innkjøpsforslag.',dep:'Datakvalitet, innkjøpsagent, ERP/WMS.'},
+{n:28,name:'Logistikk- og transportagent',area:'Innkjøp og logistikk',p:3,level:'Avansert',goal:'Planlegger forsendelser og ruter etter pris, tid, kapasitet og utslipp.',flow:['Mottar leveringsklare ordre og krav','Validerer adresse, dimensjon, fareklasse og tidsvindu','Henter tilgjengelige transportalternativer','Optimaliserer konsolidering, rute og transportør','Bestiller, skriver etikett og sporer hendelser','Ombooker automatisk ved kjente avvik'],input:'Ordre, lagerlokasjon, adresse, kolli, SLA og transportpriser.',output:'Booking, rute, etikett, sporing, ETA og avviksbehandling.',int:'WMS, transportører, kart/adresse og kundekommunikasjon.',guard:'Farlig gods, toll og persondata følger land- og transportørregler; ingen ulovlig ruteoptimalisering.',kpi:'Kost per sending; levering i tide; fyllgrad; ombooking; utslipp.',accept:'Adresse og tjeneste valideres før booking; samme kolli bestilles aldri to ganger.',dep:'Ordremodul, carrier-connectors og landpakke.'},
+{n:29,name:'Sikkerhets- og hendelsesagent',area:'Plattform og sikkerhet',p:3,level:'Avansert',goal:'Oppdager, avgrenser og reparerer kjente sikkerhetshendelser automatisk.',flow:['Korrelaterer identitet, endepunkt, nettverk og applikasjonshendelser','Scorer hendelse med forklarbare regler','Isolerer konto, token eller workload innen policy','Samler tidslinje og berørte data','Roterer secrets og lukker kjente sårbarheter','Verifiserer gjenoppretting og produserer rapport'],input:'SIEM, IdP, EDR, skanner, applikasjonslogger og aktivaregister.',output:'Inneslutning, reparasjon, evidens, varslingsgrunnlag og læringsregel.',int:'SIEM, EDR, cloud/Kubernetes, IdP og secrets vault.',guard:'Kill-switch, tofaktor for utvidet inngrep og forhåndsdefinerte playbooks; ingen fri kommandokjøring.',kpi:'MTTD/MTTR; automatisk containment; falske positive; gjentakelse.',accept:'Simulerte hendelser innesluttes innen SLA; produksjonstilgang begrenses minst mulig; alt kan etterprøves.',dep:'Aktivaregister, policy, revisjonslogg og observability.'},
+{n:30,name:'Personvern- og datasubjektagent',v8:'utvidet',area:'Juridisk og compliance',p:3,level:'Avansert',goal:'Automatiserer datakart, retention og forespørsler om innsyn, retting og sletting.',flow:['Oppdager persondata og knytter dem til formål og behandlingsgrunnlag','Vedlikeholder behandlings- og databehandlerregister','Verifiserer identitet ved datasubjektforespørsel','Søker alle registrerte datakilder samtidig ved innsyns- og slettekrav','Bygger én samlet, kryptert innsynspakke','Retter, begrenser eller sletter etter regler og unntak','Dokumenterer utførelse og frist'],input:'Datakatalog, behandlingsgrunnlag, retention, systemer og verifisert forespørsel.',output:'Register, eksportpakke, maskinelle endringer, unntaksgrunn og bevis.',int:'Alle datakilder, identitet, arkiv og saksbehandling.',guard:'Legal hold, regnskapsplikt og tredjepartsdata beskyttes; identitet må være verifisert.',kpi:'Fristoverholdelse; systemdekning; feil utlevering; automatisert oppfyllelse.',accept:'Ingen data utleveres til feil person; alle systemer rapporterer resultat; unntak har hjemmel og spor; innsynspakken er kryptert og dekker hver kilde i datakartet.',dep:'Datakatalog, connectorer, policy og landpakke.'},
+{n:31,name:'Agentkvalitet og modellstyring',area:'Plattform og sikkerhet',p:3,level:'Avansert',goal:'Tester og overvåker modeller, prompts, verktøy og arbeidsflyter før og etter produksjonssetting.',flow:['Versjonerer modell, prompt, verktøy og datasett','Kjører golden-sett, sikkerhets- og regresjonstester','Sammenligner kvalitet, ventetid og ressursbruk','Canary-ruter en liten andel produksjonsjobber','Oppdager drift og stopper dårlig versjon','Publiserer model card og evalueringsrapport'],input:'Testsett, produksjonsfeedback, modellartefakter, prompts og terskler.',output:'Go/no-go, scorekort, canaryresultat, rollback og dokumentasjon.',int:'CI/CD, modellserver, observability og revisjonslogg.',guard:'Ingen selvmodifisering direkte i produksjon; hver versjon må passere uavhengige terskler.',kpi:'Regresjoner fanget; produksjonsfeil; drift; kvalitet per språk/segment.',accept:'Alle kritiske arbeidsflyter har testsett; automatisk rollback utløses ved terskelbrudd.',dep:'CI/CD, anonymisert evalueringslager og modul 2.'},
+{n:32,name:'Global lokaliserings- og skatteagent',area:'Juridisk og compliance',p:4,level:'Strategisk',goal:'Tilpasser produkt, dokumenter, abonnement og indirekte skatt til hvert marked.',flow:['Bestemmer kundens og transaksjonens jurisdiksjon','Velger språk, valuta, tid, nummer- og dokumentformat','Overvåker registreringsterskler og produktklassifisering','Beregner skatt via versjonert landregel eller godkjent leverandør','Produserer lokale fakturafelter og rapportgrunnlag','Oppdaterer landpakke etter signert regelversjon'],input:'Kunde-/selgerlokasjon, produkt, transaksjon, registrering og landpakke.',output:'Lokalisert opplevelse, korrekt skatt, faktura og rapportgrunnlag.',int:'Betaling, ERP, skatt, oversettelse og produktkonfigurasjon.',guard:'Landlansering er deaktivert uten komplett og testet landpakke; usikker jurisdiksjon stopper transaksjonen.',kpi:'Skatteavvik; lokaliseringsfeil; dekkede land; manuelle korreksjoner.',accept:'Golden-scenarier per land passerer; avrunding og valuta avstemmes; regelversjon lagres per transaksjon.',dep:'Landpakker, skatteregelmotor, betaling og juridisk vedlikehold.'},
+{n:33,name:'Prediksjons- og scenarioagent',area:'Analyse og ledelse',p:4,level:'Strategisk',goal:'Samler etterspørsels-, salg-, likviditets-, churn- og kapasitetsprognoser med målbar usikkerhet.',flow:['Velger godkjent prognosemodell per mål og datamengde','Backtester mot naive baselines','Genererer punkt- og intervallprognose','Forklarer viktigste observerbare drivere','Kjører kontrollerte scenarioer','Måler faktisk resultat og rekalibrerer'],input:'Historiske tidsserier, planlagte hendelser, eksterne godkjente signaler og mål.',output:'Prognose, usikkerhetsintervall, scenario, driveranalyse og scorekort.',int:'Datavarehus, økonomi, CRM, lager og HRIS.',guard:'Prognoser er ikke fakta; ingen personalavgjørelse eller automatisk handling uten separat policy.',kpi:'MAE/MAPE; intervalltreff; verdi mot baseline; drift.',accept:'Slår avtalt baseline på holdout; usikkerhet er kalibrert; lekkasje- og bias-test består.',dep:'Datakvalitet, historikk, evaluering og KPI-katalog.'},
+{n:34,name:'Compliance- og sertifiseringsagent',v8:'utvidet',area:'Juridisk og compliance',p:4,level:'Strategisk',goal:'Kontinuerlig samler kontrollbevis, overvåker regelverkskilder og vedlikeholder sertifiseringer og kundespørreskjema.',flow:['Kartlegger krav til kontroller, eiere og evidenskilder','Henter bevis automatisk etter plan','Tester teknisk kontroll der mulig','Åpner og følger opp avvik til lukking','Fyller spørreskjema fra godkjent evidens','Genererer revisjons- og sertifiseringspakke','Overvåker Lovdata, regjeringen.no og EU-bulletiner for regelendringer som treffer bedriftens bransje','Varsler med forslag til policyendring som må gjennom ordinær aktivering'],input:'Kontrollrammeverk, systemregister, policy, logger og leverandørbevis.',output:'Kontrollstatus, evidens, avvik, spørreskjema og revisjonspakke.',int:'GRC, SIEM, HRIS, cloud, ticketing, dokumentarkiv, Lovdata, regjeringen.no og EU-bulletiner.',guard:'Markerer manglende bevis; påstår aldri compliance uten komplett kontrollstatus og gyldighetsperiode. Endrer ALDRI policy selv: en regelendring blir et forslag, aldri et vedtak.',kpi:'Automatisk evidensgrad; åpne avvik; kontrollfeil; revisjonstid.',accept:'Hver kontroll har eier, frekvens, test og bevis; utløpt evidens kan ikke brukes; hvert regelvarsel oppgir kilde og ikrafttredelsesdato, og ingen policyendring skjer utenom ordinær aktivering.',dep:'Revisjonslogg, systemregister, sikkerhetsagent og land/rammeverkspakker.'},
+{n:35,name:'Krise- og kontinuitetsagent',area:'IT og drift',p:4,level:'Strategisk',goal:'Holder kontinuitetsplaner oppdatert og orkestrerer dokumenterte hendelser.',flow:['Kartlegger kritiske tjenester, avhengigheter og kontaktveier','Vedlikeholder playbooks fra faktisk arkitektur','Simulerer scenario og måler RTO/RPO','Aktiverer riktig plan fra verifisert hendelse','Fordeler maskinelle handlinger og statuskommunikasjon','Avslutter med gjenopprettingstest og etteranalyse'],input:'Tjenestekatalog, BIA, avhengigheter, beredskapskontakter og hendelser.',output:'Oppdatert plan, øvelsesrapport, hendelsestidslinje, status og tiltak.',int:'Observability, backup, varsling, statuspage og ticketing.',guard:'Tydelig aktiveringspolicy og kill-switch; ekstern krisekommunikasjon bruker godkjente maler og fakta.',kpi:'Øvelsesfrekvens; faktisk RTO/RPO; kontaktdekning; gjentatte funn.',accept:'Kvartalsvis automatisert øvelse; kontakt- og avhengighetskart er ferskt; restore verifiseres.',dep:'Backupagent, systemregister, kommunikasjon og sikkerhetsagent.'},
+{n:36,name:'Bedriftsoptimalisator',area:'Analyse og ledelse',p:4,level:'Strategisk',goal:'Prioriterer forbedringer på tvers av modulene uten å overstyre deres sikkerhetsgrenser.',flow:['Leser standardiserte KPI-er, avvik og kapasitetsdata','Oppdager sammenfall og tester alternative forklaringer','Beregner forventet verdi, risiko og reversibilitet','Rangerer tiltak mot strategi og begrensninger','Aktiverer bare forhåndsgodkjente eksperimenter','Måler kausal effekt og avslutter eller skalerer'],input:'KPI-katalog, modulresultater, strategi, budsjett, risiko og eksperimenthistorikk.',output:'Prioritert tiltakskø, scenario, eksperiment, effekt og lederoversikt.',int:'Alle moduler via hendelses- og KPI-lag.',guard:'Kan aldri utvide egen fullmakt; korrelasjon presenteres ikke som årsak; porteføljestopp tilgjengelig.',kpi:'Dokumentert nettoeffekt; mislykkede eksperimenter; tid til effekt; risikoavvik.',accept:'Hvert tiltak har hypotese, baseline, stoppregel, eierpolicy og effektmåling; ingen direkte tilgang uten modulgrensesnitt.',dep:'Modul 1–35, moden dataplattform og dokumentert produksjonshistorikk.'},
+{n:37,name:'Unntaks- og feilhåndteringsagent',area:'Plattform og sikkerhet',p:1,level:'Lett',v7:'ny',goal:'Én felles motor som klassifiserer alle feil og avvik, reparerer det som er trygt, og isolerer resten uten at noe går tapt.',flow:['Mottar alle feil, policystopp og avvik fra samtlige moduler','Klassifiserer etter type, alvorlighet, tenant og rotårsak','Utfører kjente, trygge reparasjoner automatisk (retry, re-synk, re-validering)','Ruller tilbake delvis utførte handlinger til sist kjente gode tilstand','Isolerer uløselige saker i en strukturert unntakskø med full kontekst','Lærer nye reparasjonsmønstre først etter at de er verifisert i testmiljø'],input:'Feilhendelser, policystopp, jobbstatus, rotårsakskatalog og reparasjonsbibliotek.',output:'Løste avvik, rollback-bevis, unntakskø med kontekst og trendrapport per feiltype.',int:'Alle moduler, jobbkø, revisjonslogg og varsling.',guard:'Reparasjoner må være idempotente og reversible; ukjente feiltyper repareres aldri automatisk — de isoleres; maks antall automatiske forsøk per sak.',kpi:'Automatisk løsningsgrad; gjentakende feil; tid i unntakskø; mislykkede rollbacks (mål: null).',accept:'Ingen sak forsvinner; hver automatisk reparasjon kan spores og reverseres; unntakskøen har alltid komplett kontekst for videre maskinell eller policystyrt behandling.',dep:'Modul 1–2, jobbkø og testmiljø.'},
+{n:38,name:'Kapasitets-, kø- og modellruter',area:'Plattform og sikkerhet',p:1,level:'Lett',v7:'ny',goal:'Sørger for at riktig modell kjører riktig jobb til riktig tid — og at ingen tenant kan spise all kapasitet.',flow:['Prioriterer innkommende jobber etter SLA, tenant-plan og hastegrad','Ruter hver oppgave til riktig lokal modell etter språk, kompleksitet, kostnad og sensitivitet','Skalerer inferensnoder opp og ned etter kølengde og responstid','Håndhever rate- og kostnadsgrenser per tenant','Degraderer kontrollert ved overbelastning (kø fremfor feil)','Rapporterer kapasitet, forbruk og modellvalg per tenant'],input:'Jobbkø, tenant-planer, modellkatalog med kostnads- og kvalitetsprofil, nodestatus.',output:'Prioritert kjøreplan, modellvalg per jobb, skaleringsbeslutninger og forbruksrapport.',int:'Ollama/inferensnoder, jobbkø, observability og fakturagrunnlag. Scorekortene fra modul 31 forbedrer modellvalget når den modulen lander i fase 3 — ruteren virker uten dem.',guard:'Sensitive dataklasser rutes aldri til modeller uten godkjent profil; én tenant kan aldri blokkere andres SLA; nedskalering dreper aldri pågående jobber.',kpi:'P95-responstid; kø-tid per prioritet; kostnad per 1000 jobber; SLA-brudd (mål: null).',accept:'Alle jobber får modellvalg logget med begrunnelse; tenant-grenser håndheves målbart; systemet degraderer uten datatap ved 10x normal last.',dep:'Modul 1–2, modellkatalog, jobbkø og GPU/inferensinfrastruktur.'},
+{n:39,name:'Lønnsgrunnlagsagent',area:'Økonomi',p:2,level:'Medium',v7:'ny',goal:'Samler og validerer hele lønnsgrunnlaget automatisk, slik at lønnskjøring aldri venter på manuell datainnsamling.',flow:['Henter timer, fravær, ferie, tillegg og utlegg fra kildesystemer','Validerer mot arbeidsplan, tariff/avtaleregler og arbeidstidsbestemmelser','Oppdager hull, dubletter og urimelige verdier og innhenter manglende data maskinelt','Beregner variable poster etter konfigurerte regler','Sender komplett, validert grunnlag til lønnssystemet innen frist','Avstemmer resultatet mot forrige periode og forklarer avvik'],input:'Timeføring, fraværsregister, arbeidsplaner, tariffregler, utleggsdata og lønnssystemets kalender.',output:'Validert lønnsgrunnlag, avvikslogg, avstemmingsrapport og revisjonsspor.',int:'Timeføringssystem, HRIS, lønnssystem og modul 14.',guard:'Endrer aldri satser eller lønnsnivå; beregninger følger kun forhåndsgodkjente regler; personopplysninger behandles etter feltpolicy; grunnlag utenfor toleranse stoppes.',kpi:'Berøringsfri grad; feil oppdaget før lønnskjøring; tid fra periodeslutt til levert grunnlag; korreksjoner etter kjøring.',accept:'Grunnlaget balanserer mot kildedata; alle avvik er klassifisert før frist; ingen lønnskjøring med uvaliderte poster.',dep:'Modul 3, HRIS-connector og lønnssystem-integrasjon.'},
+{n:40,name:'HR- og medarbeideragent',area:'Samarbeid og HR',p:2,level:'Medium',v7:'ny',goal:'Automatiserer medarbeiderreisen — onboarding, pulsmåling, måloppfølging, anerkjennelse og dokumenter — innen strenge policygrenser.',flow:['Kjører onboardingløp med oppgaver, utstyr og opplæring fra mal','Gjennomfører anonymiserte pulsmålinger og aggregerer trender på gruppenivå','Følger opp mål og frister og varsler eiere ved avvik','Genererer merkedags- og anerkjennelsesmeldinger etter kundens regler','Produserer ansettelseskontrakter og attester fra låste, godkjente maler','Vedlikeholder personalhåndbok og svarer på HR-spørsmål med kildepekere'],input:'HRIS-data, målstruktur, godkjente dokumentmaler, pulssvar og personalhåndbok.',output:'Onboardingstatus, aggregerte trendrapporter, kontrakter/attester fra mal og oppdatert håndbok.',int:'HRIS, e-signering, kalender, modul 5 og 9.',guard:'AI Act/GDPR: ingen automatiske beslutninger med rettsvirkning for enkeltpersoner (ansettelse, oppsigelse, lønn); ingen individprofilering eller produktivitetsscore; pulssvar er alltid anonyme med minste gruppestørrelse; juridiske klausuler er låste.',kpi:'Onboarding fullført i tid; svarprosent puls; mål fulgt opp; dokumenter uten feltfeil.',accept:'Alle individrettede beslutninger utenfor policy stoppes og legges i unntakskø; kontrakter kan alltid spores til malversjon og kildefelt; anonymitetsgrenser brytes aldri.',dep:'Modul 1, 5, 9, 37 og HRIS-connector.'},
+{n:41,name:'Abonnements- og inntektsagent',area:'Økonomi',p:3,level:'Avansert',v7:'ny',goal:'Håndterer hele abonnementslivssyklusen — oppgradering, nedgradering, proration, fornyelse, purring og inntektsavstemming.',flow:['Utfører plan-endringer med korrekt proration og kreditering','Kjører fornyelser og håndterer feilede betalinger med smart purreløp','Oppdager bruks- og betalingsmønstre som tilsier opp- eller nedgradering','Avstemmer betalingsleverandør mot ERP og inntektsføring per periode','Beregner MRR, churn og netto inntektsretensjon fra kildedata','Håndterer oppsigelser, angrefrist og refusjon etter regelverk og policy'],input:'Abonnementsdata, betalingshendelser, bruksmålinger, prisbok og regnskapsregler.',output:'Korrekte abonnementsendringer, inntektsavstemming, purrestatus og SaaS-nøkkeltall.',int:'Stripe/betalingsleverandør, ERP, modul 13 og 23.',guard:'Prisendringer kun fra godkjent prisbok; refusjon over terskel krever policy; ingen sperring av kunde uten fullført varslingsløp; inntektsføring følger konfigurert regnskapsstandard.',kpi:'Berøringsfri fornyelsesgrad; ufrivillig churn reddet; avstemmingsdifferanser; dager til inntektsstengning.',accept:'Hver krone kan spores fra betalingshendelse til hovedbok; proration er alltid matematisk etterprøvbar; ingen dobbeltfakturering.',dep:'Betalingsconnector, ERP, modul 1–2 og 13.'},
+{n:42,name:'Svindel- og transaksjonsvakt',area:'Økonomi',p:3,level:'Avansert',v7:'ny',goal:'Oppdager og stopper unormale betalinger, kontonummerendringer, duplikate krav og leverandørsvindel før penger forlater kontoen.',flow:['Etablerer normalmønster per leverandør, kunde og betalingstype','Skanner alle utgående betalinger mot mønster, register og sanksjonslister','Verifiserer bankkontoendringer via uavhengig kanal før de tas i bruk','Oppdager duplikate fakturaer, splittede beløp under godkjenningsgrenser og fiktive leverandører','Fryser mistenkelige transaksjoner automatisk og dokumenterer grunnlaget','Oppdaterer mønstre kontinuerlig og rapporterer trusselbilde'],input:'Betalingsstrøm, leverandørregister, fakturahistorikk, kontoendringer og eksterne registre.',output:'Fryste transaksjoner med begrunnelse, verifiserte kontoendringer, svindelrapport og falsk-positiv-statistikk.',int:'Bank, ERP, leverandørregister, modul 13–14 og 24.',guard:'Frysing er alltid reversibel og logges; ingen transaksjon slippes automatisk etter frys uten at policyvilkår er oppfylt; kontonummerendring uten uavhengig verifikasjon blokkeres alltid.',kpi:'Stoppede svindelforsøk; falske positiver; verifikasjonstid for kontoendring; tap (mål: null).',accept:'Alle utgående betalinger er skannet før utførelse; uverifiserte kontoendringer kan aldri brukes; hver frys har komplett beslutningsgrunnlag.',dep:'Modul 1–2, 13–14, 24 og bankconnector.'},
+{n:43,name:'Tale- og telefoniagent',area:'Kunde og salg',p:3,level:'Avansert',v7:'ny',goal:'Samler v5-modulene for telefon, oppringning, kø, tolk og samtaleanalyse i én kanal på plattformens sikkerhetsmotor.',flow:['Besvarer innkommende anrop, identifiserer sak og løser innenfor godkjent handlingsrom','Styrer kø, tilbakeringing og prioritet etter kundens regler','Gjennomfører utgående anrop for avtalte formål (bekreftelser, påminnelser, purring etter policy)','Transkriberer lokalt i sanntid og oversetter ved språkbarriere','Trekker ut intensjon, sentiment og aksjoner og oppretter saker/oppgaver','Analyserer samtalemønstre aggregert for kvalitetsforbedring'],input:'Telefoni-/SIP-integrasjon, kundedata, kunnskapsbase, samtaleregler og åpningstider.',output:'Løste henvendelser, tilbakeringinger, transkripsjoner, saker og aggregert samtaleinnsikt.',int:'Telefoni/SIP-leverandør, CRM, modul 9, 17 og 23.',guard:'Agenten identifiserer seg alltid som automatisert; opptak og transkripsjon kun med gyldig hjemmel og varsling; økonomiske løfter og bindende avtaler krever eksplisitt policy; eskaleringsregler er kundens egne.',kpi:'Løst i første samtale; ventetid; transkripsjonspresisjon; samtaler utenfor policy (mål: null).',accept:'Ingen samtale uten identifikasjon og hjemmelssjekk; alle løfter gitt i samtale er sporbare til policy; tolkning merkes med sikkerhetsnivå.',dep:'Telefoniconnector, lokal tale-til-tekst, modul 1–2, 9 og 17.'},
+{n:44,name:'Kampanje- og markedsinnsiktsagent',area:'Markedsføring',p:3,level:'Avansert',v7:'ny',goal:'Samler v5-modulene for nyhetsbrev, A/B-test, segmentering og konkurrentovervåking i én målbar markedsmotor.',flow:['Segmenterer mottakere fra CRM-data og samtykkestatus','Planlegger og produserer kampanjeinnhold fra godkjent profilmanual','Kjører A/B-tester med automatisk vinnervalg etter signifikansgrenser','Overvåker konkurrenters priser, produkter og synlighet fra åpne kilder','Justerer utsendelsestid, kanal og frekvens etter respons','Rapporterer attribusjon og faktisk effekt mot mål'],input:'CRM, samtykkeregister, profilmanual, kampanjemål, åpne konkurrentkilder og resultatdata.',output:'Segmenter, kampanjer, testresultater, konkurrentvarsler og effektrapport.',int:'E-postutsendelse, CRM, nettanalyse, modul 20 og 26.',guard:'Utsendelse kun til gyldig samtykke; frekvenstak per mottaker; konkurrentdata kun fra åpne, lovlige kilder; påstander i innhold må ha kildegrunnlag; ingen prisbeslutning — kun innsikt til modul 26.',kpi:'Engasjement per segment; avmeldingsrate; testgevinst; tid fra konkurrentendring til varsel.',accept:'Ingen utsendelse uten samtykkesjekk; hver A/B-konklusjon er statistisk etterprøvbar; alle konkurrentpåstander har kilde-URL og tidsstempel.',dep:'Modul 3, 5, 20 og samtykkeregister.'},
+{n:45,name:'Bærekrafts- og ESG-agent',area:'Analyse og ledelse',p:4,level:'Strategisk',v7:'ny',goal:'Samler ESG-data kontinuerlig og produserer revisjonsklar bærekraftsrapportering (CSRD/ESRS) uten manuell datainnsamling.',flow:['Henter energi-, transport-, innkjøps- og avfallsdata fra kildesystemer','Beregner utslipp (scope 1–3) med dokumenterte faktorer og metode','Overvåker terskler for rapporteringsplikt per marked','Samler leverandørdata via strukturerte forespørsler','Genererer rapportutkast etter gjeldende standard med full kildesporing','Følger opp mål og tiltak og varsler ved avvik fra bane'],input:'Energidata, reiseregninger, innkjøpsdata, leverandørsvar, utslippsfaktorer og rapporteringsstandarder.',output:'ESG-datasett, utslippsregnskap, revisjonsklar rapport og målstatus.',int:'ERP, modul 14, 24, 28 og offentlige faktorregistre.',guard:'Alle tall må ha kilde og faktorversjon; estimater merkes eksplisitt som estimat; ingen påstand uten datagrunnlag (anti-grønnvasking); standardversjoner låses per rapportperiode.',kpi:'Datadekning per ESRS-krav; estimatandel; tid til rapport; revisjonsmerknader.',accept:'Hvert tall i rapporten kan spores til kilde og metode; endring i faktorer re-beregner historikk sporbart; rapport består ekstern valideringssjekk.',dep:'Modul 3, 14, 24 og faktorbibliotek.'},
+{"n": 46, "name": "Anbuds- og konkurransevakt", "area": "Kunde og salg", "p": 3, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Finner offentlige anbud som faktisk passer bedriften, og lager et sporbart førsteutkast.", "flow": ["Henter kunngjøringer fra Doffin og TED via API innenfor avtalte søk", "Filtrerer deterministisk på NACE, geografi, verdi og frist", "Scorer match mot bedriftens kvalifikasjoner og referanser", "Lager utkast til svar bygget kun på godkjente kildedokumenter", "Varsler med frist og legger manglende kvalifikasjonskrav i unntakskøen"], "input": "Anbudsportalenes API-er, bedriftsprofil, kvalifikasjonsbevis og tidligere besvarelser.", "output": "Rangert treffliste, fristvarsel, utkast med kildehenvisning per avsnitt.", "int": "Doffin, TED, dokumentarkiv, CRM, kalender.", "guard": "Sender aldri inn tilbud. Utkast markerer hvert faktapunkt med kilde; udekkede krav blir unntak, aldri utfylt gjetning. CRM og kalender leses bare — frist og treff vises i plattformens egne flater, så modulen holder seg innenfor ekstern lesing.", "kpi": "Relevante treff per uke; falske treff; timer spart per besvarelse; andel utkast som brukes.", "accept": "Ingen innsending uten menneskelig signatur; hvert faktautsagn i utkastet peker på et kildedokument; frister varsles før de utløper.", "dep": "M-1, M-2, M-37, dokumentarkiv."},
+{"n": 47, "name": "Myndighetsrapporteringsagent", "area": "Juridisk og compliance", "p": 3, "level": "Middels", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Klargjør lovpålagte innsendinger til Altinn, SSB og skattemyndigheter uten manuell skjemautfylling.", "flow": ["Holder oversikt over hvilke skjemaer bedriften faktisk er pålagt og når", "Henter tallene fra regnskap og ERP via API", "Validerer mot skjemaets egne regler for innsending", "Legger ferdig utfylt innsending til godkjenning i unntakskøen", "Sender den godkjente innsendingen gjennom outbox til Altinn eller SSB og følger den til kvittering", "Arkiverer kvittering og referansenummer som evidens"], "input": "Regnskap, lønnssystem, ERP, skjemadefinisjoner og frister.", "output": "Ferdig utfylt innsending, avviksliste, kvittering og fristoversikt.", "int": "Altinn, SSB, regnskapssystem, ERP.", "guard": "Innsending skjer aldri automatisk i v1. Avvik mellom kilder stopper innsendingen; tall diktes aldri. Innsendingen etter godkjenning er den utadrettede handlingen klassen krever_outbox finnes for å kontrollere: den går signert gjennom outbox, aldri direkte fra klargjøringssløyfen, og en feil rettes kompenserende med korrigert innsending — et innsendt skjema trekkes aldri tilbake i stillhet.", "kpi": "Frister overholdt; skjemaer avvist av mottaker; timer per innsending.", "accept": "Hvert tall i skjemaet spores til kildepost; ingen innsending uten menneskelig godkjenning; hver innsending går gjennom outbox og har kvittering med mottakerens referansenummer, skjer nøyaktig én gang, og en omkjøring gir aldri dobbel innsending.", "dep": "M-1, M-2, M-37, regnskapsconnector."},
+{"n": 48, "name": "Foretaks- og kredittvakt (KYB)", "area": "Økonomi", "p": 2, "level": "Lett", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Sjekker hvem motparten er og om den tåler kreditt, før det gis betalingsutsettelse.", "flow": ["Slår opp organisasjonsnummer i offentlige foretaksregistre", "Henter roller, reelle rettighetshavere og regnskapsstatus", "Henter kredittscore og betalingsanmerkninger fra avtalt leverandør", "Foreslår kredittgrense etter bedriftens egen policy", "Overvåker eksisterende motparter og varsler ved forverring"], "input": "Organisasjonsnummer, foretaksregister, kredittleverandør og bedriftens kredittpolicy.", "output": "Motpartsprofil, foreslått kredittgrense, endringsvarsel og evidenspakke. Kredittgrensen er inngang til fordringsagenten M-23, ikke omvendt.", "int": "Brreg, OpenCorporates, kredittleverandør, CRM, ERP.", "guard": "Setter aldri kredittgrensen selv. Avslag er alltid en menneskelig beslutning; oppslag logges som behandling av persondata. CRM og ERP leses bare — modulen skriver ingen motpartsdata tilbake, så den holder seg innenfor ekstern lesing.", "kpi": "Tap på fordring; tid til godkjent kunde; andel motparter med gyldig sjekk.", "accept": "Ingen kredittgrense endres uten menneskelig godkjenning; hvert oppslag har formål, hjemmel og tidsstempel i loggen.", "dep": "M-1, M-2, M-18."},
+{"n": 49, "name": "Sanksjons- og hvitvaskingsvakt", "area": "Juridisk og compliance", "p": 2, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Hindrer at bedriften handler med parter på internasjonale sanksjonslister.", "flow": ["Sjekker nye og eksisterende motparter mot EU-, OFAC- og FN-lister", "Kontrollerer også styremedlemmer og reelle rettighetshavere", "Skiller deterministisk mellom eksakt treff og navnelikhet", "Stopper handel med motparten ved treff og oppretter sak", "Kjører periodisk ny kontroll når listene oppdateres"], "input": "Motpartsdata, eierskapsdata og offisielle sanksjonslister.", "output": "Treffrapport med kilde og listeversjon, blokkering og revisjonsspor.", "int": "EU consolidated list, OFAC, FN, foretaksregistre.", "guard": "Treff blokkerer fail-closed og løses kun av menneske. Navnelikhet er aldri automatisk avfeid.", "kpi": "Falske treff; tid til avklaring; andel motparter kontrollert innen frist.", "accept": "Ingen transaksjon mot blokkert motpart kan gjennomføres; hvert treff viser listeversjon og matchgrunnlag.", "dep": "M-1, M-2, M-37, M-48."},
+{"n": 50, "name": "Postjournal- og innsynsvakt", "area": "Kunde og salg", "p": 3, "level": "Lett", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Fanger opp offentlige saker som er kommersielt relevante for bedriften.", "flow": ["Overvåker offentlige postjournaler på avtalte etater og nøkkelord", "Klassifiserer dokumenttype og relevans deterministisk", "Oppsummerer treffet uten å gjengi dokumentet", "Oppretter oppfølging i CRM med lenke til kilden", "Undertrykker duplikater på tvers av etater"], "input": "Offentlige journal-API-er, nøkkelordsprofil og CRM.", "output": "Daglig treffliste med kildelenke, relevansscore og CRM-oppfølging.", "int": "eInnsyn og tilsvarende journaler, CRM.", "guard": "Kun offentlig tilgjengelige kilder. Dokumenter lagres ikke i fulltekst; kun referanse og kort sammendrag. Oppfølgingen i CRM er en skriving i et eksternt system og går gjennom outbox med signatur og kvittering — aldri direkte fra lesesløyfen.", "kpi": "Relevante treff; falske treff; salgsmuligheter åpnet fra treff.", "accept": "Alle treff har kildelenke og tidsstempel; ingen kilde utenfor avtalt liste; ingen fulltekstkopi lagres; hver CRM-oppfølging har outbox-kvittering, opprettes nøyaktig én gang per treff og kan trekkes tilbake kompenserende.", "dep": "M-1, M-2, CRM-connector."},
+{"n": 51, "name": "Tilskudds- og støtteagent", "area": "Økonomi", "p": 3, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Finner støtteordninger bedriften faktisk kvalifiserer til, og lager et førsteutkast.", "flow": ["Vedlikeholder katalog over aktive ordninger med krav og frister", "Matcher krav mot bedriftens prosjekter, timer og kostnader", "Beregner sannsynlig støttebeløp innenfor ordningens regler", "Lager søknadsutkast bygget på bedriftens egne dokumenter", "Varsler frist og lagrer søknad og vedtak som evidens"], "input": "Prosjektbeskrivelser, timelister, regnskap og ordningskatalog.", "output": "Kvalifiseringsrapport, beløpsestimat, søknadsutkast og fristvarsel.", "int": "Ordningsportaler, ERP, timeregistrering, dokumentarkiv.", "guard": "Sender aldri inn søknad. Estimat presenteres som estimat med forutsetninger, aldri som lovnad.", "kpi": "Ordninger identifisert; søknader sendt; innvilget beløp; timer per søknad.", "accept": "Ingen innsending uten menneskelig signatur; hvert tall i utkastet spores til kildepost; frister varsles i tide.", "dep": "M-1, M-2, M-16, dokumentarkiv."},
+{"n": 52, "name": "Toll- og HS-kodeagent", "area": "Innkjøp og logistikk", "p": 3, "level": "Middels", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Klassifiserer varer og kontrollerer tolldokumenter mot bestillingen.", "flow": ["Foreslår HS-kode fra produktbeskrivelse mot offisiell tolltariff", "Leser tolldeklarasjon, fraktbrev og tollfaktura", "Matcher varelinjer, verdi og valuta mot innkjøpsordren", "Beregner forventet toll og avgift deterministisk", "Ruter avvik og ukjente koder til unntakskøen", "Sender den godkjente deklarasjonen til Tolletaten eller speditør og følger den til kvittering"], "input": "Produktkatalog, innkjøpsordre, tolldokumenter og offisiell tolltariff.", "output": "Foreslått HS-kode med begrunnelse, avviksrapport, kontrollert deklarasjon og innsendingskvittering.", "int": "Tolletaten, EU TARIC, ERP, speditør.", "guard": "HS-kode er alltid et forslag med tariffhenvisning. Ny eller tvilsom kode går til unntak, aldri automatisk deklarasjon. Innsendingen etter godkjenning er den utadrettede handlingen klassen krever_outbox finnes for å kontrollere: den går signert gjennom outbox, aldri direkte fra kontrollsløyfen, og en feil rettes kompenserende med ny deklarasjon — en sendt deklarasjon slettes aldri.", "kpi": "Avvik fanget før innsending; korrigeringer i etterkant; tid per deklarasjon.", "accept": "Hver foreslått kode viser tariffnummer og begrunnelse; ingen deklarasjon sendes uten menneskelig godkjenning; hver innsending har outbox-kvittering med deklarasjonsreferanse, skjer nøyaktig én gang, og en omkjøring gir aldri dobbel deklarasjon.", "dep": "M-1, M-2, M-24, M-28, M-37."},
+{"n": 53, "name": "HMS- og avviksmottak", "area": "Samarbeid og HR", "p": 2, "level": "Lett", "v8": "ny", "kl": "krever_outbox", "rev": "irreversibel", "goal": "Senker terskelen for å melde avvik, og sikrer at meldingen faktisk havner i protokollen.", "flow": ["Tar imot avvik via e-post, skjema og SMS — og via talemelding når taleagenten er i drift", "Strukturerer melding til dato, sted, type og involverte roller", "Klassifiserer alvorlighet etter bedriftens egen HMS-matrise", "Oppretter sak i HMS-protokollen og varsler verneombud", "Følger opp tiltak til lukking og produserer årsrapport"], "input": "Innmeldte avvik i fritekst eller tale, HMS-matrise og rolleoversikt.", "output": "Strukturert avvikssak, varsel, tiltaksliste og rapportgrunnlag.", "int": "E-post, SMS, HMS-system, oppgaveverktøy. Talekanalen kommer fra M-43 og er en utvidelse: mottaket er komplett uten den.", "guard": "Nedgraderer aldri alvorlighet automatisk. Personskade varsles alltid til menneske umiddelbart, uansett klassifisering. Både saksopprettelsen i HMS-systemet og varselet til verneombud er eksterne skrivinger og går gjennom outbox; et sendt varsel kan ikke kalles tilbake, så det sendes nøyaktig én gang.", "kpi": "Meldte avvik per måned; tid til varsling; andel lukkede tiltak; feilklassifisering.", "accept": "Ingen melding går tapt eller lukkes automatisk; personskade varsles innen avtalt tid; klassifisering kan overstyres av menneske; hver sak og hvert varsel har outbox-kvittering, og en omkjøring gir aldri dobbeltvarsel.", "dep": "M-1, M-2, M-37."},
+{"n": 54, "name": "EHF- og Peppol-avviksretter", "area": "Økonomi", "p": 2, "level": "Middels", "v8": "ny", "kl": "krever_outbox", "rev": "kompenserende", "goal": "Finner årsaken når en faktura avvises i det elektroniske fakturanettverket, og klargjør rettingen for signatur.", "flow": ["Fanger opp avvisningsmeldinger fra Peppol-aksesspunktet", "Tolker feilkoden deterministisk mot EHF-standarden", "Slår opp korrekt organisasjonsnummer og mva-status i offentlige registre", "Retter det avviste feltet og validerer XML mot skjema på nytt", "Legger rettet faktura til signatur, sender etter godkjenning og følger til levering"], "input": "Avviste EHF-fakturaer, feilmeldinger, foretaksregister og kundedata.", "output": "Rettet og validert faktura, leveringsbekreftelse og feilstatistikk.", "int": "Peppol-aksesspunkt, regnskapssystem, Brreg, VIES.", "guard": "Retter kun felt som kan verifiseres mot et autoritativt register. Beløp, varelinjer og mva-sats endres aldri. Ingen ny utsending uten menneskelig signatur — resend er den eksterne handlingen klassen krever_outbox finnes for å kontrollere.", "kpi": "Andel avvisninger løst uten manuell utredning; tid fra avvisning til levering; gjentatte avvisninger.", "accept": "Ingen utsending uten signatur; ingen beløpsendring i det hele tatt; hver retting logger felt, gammel verdi, ny verdi og kilde; ingen dobbeltsending.", "dep": "M-1, M-2, M-14, M-37."},
+{"n": 55, "name": "Merkevare- og IP-overvåker", "area": "Juridisk og compliance", "p": 4, "level": "Middels", "v8": "ny", "kl": "ekstern_lesing", "rev": "direkte", "goal": "Oppdager uautorisert bruk av bedriftens navn, logo og innhold.", "flow": ["Overvåker søk, annonser, domenenavn og markedsplasser", "Sammenligner funn mot registrerte varemerker og eget innhold", "Vurderer sannsynlighet for forveksling deterministisk", "Dokumenterer funnet med tidsstempel, skjermbilde og URL", "Legger saken til menneskelig vurdering"], "input": "Varemerkeregister, egen mediebank, søkemotorer og annonseplattformer.", "output": "Dokumentert funnliste med bevisbyrde og prioritering.", "int": "Søk-API-er, annonseplattformer, domeneregistre, varemerkeregister.", "guard": "Sender aldri juridiske krav eller klager. Modulen dokumenterer og rapporterer; enhver reaksjon besluttes av menneske.", "kpi": "Reelle funn; falske funn; tid fra publisering til oppdagelse.", "accept": "Ingen utgående henvendelse til tredjepart; hvert funn har URL, tidsstempel og bevaringskopi.", "dep": "M-1, M-2, M-20, M-37."}
+,
+{"n":56,"name":"Automatisk WCAG-kontroll","area":"Juridisk og compliance","p":3,"level":"Middels","v8":"ny","kl":"ekstern_lesing","rev":"direkte","goal":"Kjører automatisk WCAG 2.1-kontroll av et nettsted kunden har bevist DNS-kontroll over, og lagrer en rapport som evidens.","flow":["Mottar bestilling gjennom beslutningsveien, eller fra en aktiv plan","Kontrollerer at hostnamet er verifisert for tenanten, og på nytt før hver forespørsel","Kjører axe-core i isolert browser-container der egressen er stengt inne i nettleseren: hver forespørsel og websocket avskjæres, vertsnavn pinnes til den verifiserte adressen, og alt annet blokkeres og telles","Pakker funn til lukket rapportskjema med versjoner og dekningsbegrensninger","Laster opp rapporten og kvitterer signert"],"input":"Hostname og sti kunden har verifisert, kravsett, omfang og maks antall sider.","output":"Rapport med funn per regel, sammendrag, hvilke sider som faktisk ble kontrollert, og hva som ikke ble vurdert.","int":"axe-core, Chromium i container med egressvakt i nettleseren, artefaktlager.","guard":"Kontrollerer aldri et hostname uten bevist DNS-kontroll. Respekterer robots.txt og hastighetsgrense. Rapporten sier aldri at nettstedet oppfyller WCAG — kun hva den automatiske kontrollen fant, og at manuelle kriterier ikke er vurdert.","kpi":"Kontroller fullført innen frist; funn som matcher fasit på testnettsted; andel kjøringer med dekningsbegrensninger.","accept":"Ingen trafikk mot uverifisert domene; rapport uten versjonsdigester avvises; avkorting og blokkerte eksterne ressurser står som tekst i rapporten.","dep":"M-1, M-2, M-37, modulregister, domenekontroll."},
+{"n":57,"name":"Rekrutteringsagent (ATS)","area":"Samarbeid og HR","p":3,"level":"Krevende","v9":"ny","merknad":"Byggerekkefølge: etter M-16 (KPI-dashboards). Katalogopptak og byggeprioritet er skilt — hva modulen faktisk ER til enhver tid, står i modulregisteret, ikke her. Kontraktklassen gjelder utsendelsen, ikke rangeringen: selve evalueringen er rådgivende og skriver bare artefakter, men modulen finnes ikke uten utsendelsen, og en sendt invitasjon eller et sendt avslag kan ikke kalles tilbake.","kl":"krever_outbox","rev":"irreversibel","goal":"Leser og rangerer opptil 5000 søknader mot stillingens krav, forbereder intervjuspørsmål og innstiller svar — mennesket beslutter hvem som går videre og godkjenner all utsendelse.","flow":["Mottar bestilling gjennom beslutningsveien med stillingsprofil og søknadsbunt (ZIP)","Pakker ut og trekker tekst fra PDF, Word og HTML i isolert container","Blinder som standard: navn, kjønn, alder, adresse, bilde og kontaktfelt maskeres før evaluering","Grovsorterer mot absolutte minimumskrav, deretter detaljevaluering av resten","Lagrer rangering, funn og skreddersydde intervjuspørsmål som artefakt per kandidat","Innstiller intervjuinvitasjoner og malbaserte avslag — sendes først etter menneskelig signatur per liste"],"input":"Stillingsprofil med vektede krav, søknadsbunt (ZIP med PDF/DOCX/HTML).","output":"Rangert kandidatliste med begrunnede funn per kandidat, intervjuforberedelse, og innstilte utsendelser som venter på signatur.","int":"Dokumentparsing i container, artefaktlager, e-postutsendelse gjennom plattformens signerte utsendingsvei; invitasjonen bærer lenke til tidsvalg — modulen har ingen M-6- eller M-8-avhengighet og bygger ingen egen kalenderintegrasjon.","guard":"Ingen kandidat avslås eller kontaktes uten menneskelig signatur — automatisk utfiltrering innstiller, aldri beslutter (GDPR art. 22; EU AI Act høyrisiko, vedlegg III). Blindet evaluering (personalia skjult) er standard på — de maskerte feltene er navngitt i flyten; modulen påstår ikke anonymisering ut over dem. Avslag er malbaserte med flettefelt fra sporbare funn — aldri frigenerert prosa i masseutsendelse. Rangering vises som rangering med synlige vekter, aldri som målt sannhet. Søkerdata slettes etter fastsatt frist når prosessen lukkes.","kpi":"Andel bunter ferdig rangert innen frist; andel innstillinger signert uendret; klager på avslagsinnhold (mål: null); slettefrister overholdt.","accept":"Ingen utsendelse uten signaturhendelse; evaluering kjørt blindet med mindre eier eksplisitt har skrudd det av (auditert); risikofunn uten kildereferanse i søknadsteksten avvises; biasmåling dokumentert per modellversjon.","dep":"M-1, M-2, M-37, artefaktlager, outbox."}
+];
+const areaOrder=[...new Set(M.map(m=>m.area))].sort((a,b)=>a.localeCompare(b,'nb'));
+const sel=document.getElementById('fArea');
+areaOrder.forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent=a;sel.appendChild(o);});
+
+const cat=document.getElementById('catalog');
+const phaseNames={1:'Fase 1 · Fundament',2:'Fase 2 · Operasjoner',3:'Fase 3 · Autopiloter',4:'Fase 4 · Global skala'};
+const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+// «Ny i denne versjonen» står ETT sted. Da v9 kom ble merket byttet fra v8 til
+// v9 i kortet, men filteret i render() ble stående på v8 (Codex P2 på #118):
+// avkrysningen lovet den ene nye i v9 og viste de elleve i v8. Med predikatet
+// samlet her kan de to ikke lenger si hver sin ting — neste versjonsbump
+// endrer denne linjen, og både merke, data-attributt og filter følger med.
+const NY_I = 'v9';
+const erNy = m => m[NY_I] === 'ny';
+
+// Og MERKETEKSTEN avledes av NY_I, ikke skrevet av (Codex P2 på #118, sjette
+// runde). Linjen som tegnet merket var en kjede av literaler: `NY I V9` for
+// den nye, og en fallback som bare kjente v8 og v7. Ved `NY_I = 'v10'` ville
+// den ene linjen over sagt v10 mens kortet fortsatt sto på «NY I V9», og
+// M-57 ville mistet sitt historiske merke helt — det er ingen gren for v9 i
+// fallbacken. Versjonsbumpet var lovet som én linje; da må merket følge den.
+//
+// Modulen bærer selv merkene sine som felt (`v7`, `v8`, `v9`), så det nyeste
+// feltet modulen har ER merket. Ingen liste over versjoner å vedlikeholde:
+// neste utgave legger til `v10: 'ny'` på de nye kortene, og resten står.
+const VERSJONSFELT = /^v(\d+)$/;
+const MERKEORD = {ny: 'Ny', utvidet: 'Utvidet', endret: 'Utvidet'};
+function versjonsmerke(m){
+  const nyeste = Object.keys(m)
+    .filter(k => VERSJONSFELT.test(k) && MERKEORD[m[k]])
+    .sort((a,b) => Number(b.slice(1)) - Number(a.slice(1)))[0];
+  if(!nyeste) return '';
+  const tekst = `${MERKEORD[m[nyeste]]} i ${nyeste}`;
+  return nyeste === NY_I
+    ? `<span class="chip ny">${tekst.toUpperCase()}</span>`
+    : `<span class="chip v7">${tekst}</span>`;
+}
+
+function card(m){
+  const id='M-'+String(m.n).padStart(2,'0');
+  const tag=versjonsmerke(m);
+  // Ingen statusbrikke her. Katalogen bærer STRUKTUR — nummer, navn, område,
+  // fase — ikke tilstand; hva en modul FAKTISK er, står i `MODULSTATUS` i
+  // plattformdata.js, avledet av manifestene og pinnet av test_ui_kontrakt.py.
+  // M-57 bar en stund et eget `status: "planlagt"` som ble tegnet rett inn
+  // (Codex P2 på #118). Generatoren kaster feltet, så denne siden ville blitt
+  // stående på PLANLAGT når manifestet førte modulen videre til bygges eller
+  // i drift. Samme feil ble tatt ut for M-56 i #109; den skal ikke tilbake.
+  const kl=m.kl?`<span class="chip kl">${esc(m.kl)}</span><span class="chip kl">${esc(m.rev)}</span>`:'';
+  return `<details class="card" data-n="${m.n}" data-area="${esc(m.area)}" data-phase="${m.p}" data-new="${erNy(m)?1:0}">
+  <summary>
+    <div class="mline"><span class="mid">${id}</span><span class="chip f${m.p}">FASE ${m.p}</span><span>${esc(m.level).toUpperCase()}</span><span>${esc(m.area).toUpperCase()}</span>${tag}${kl}</div>
+    <h4>${esc(m.name)}</h4>
+    <p class="goal">${esc(m.goal)}</p>${m.merknad?`<p class="goal"><b>${esc(m.merknad)}</b></p>`:''}
+    <p class="hint"><span class="cl">▸ Vis full spesifikasjon</span><span class="op">▾ Skjul spesifikasjon</span></p>
+  </summary>
+  <div class="body">
+    <div><h5>Normalflyt — utføres automatisk</h5><ol>${m.flow.map(f=>`<li>${esc(f)}</li>`).join('')}</ol></div>
+    <div class="grid2">
+      <div><h5>Input</h5><p>${esc(m.input)}</p></div>
+      <div><h5>Output</h5><p>${esc(m.output)}</p></div>
+    </div>
+    <div class="grid2">
+      <div><h5>Integrasjoner</h5><p>${esc(m.int)}</p></div>
+      <div><h5>KPI-er</h5><p>${esc(m.kpi)}</p></div>
+    </div>
+    <div class="contract">
+      <div class="ln g"><b>SIKKERHETSGRENSE</b> · ${esc(m.guard)}</div>
+      <div class="ln a"><b>AKSEPTANSEKRAV</b> · ${esc(m.accept)}</div>
+    </div>
+    <p class="meta"><b>Avhengigheter:</b> ${esc(m.dep)}</p>
+  </div>
+</details>`;
+}
+
+function render(){
+  const q=document.getElementById('q').value.trim().toLowerCase();
+  const fa=sel.value, fp=document.getElementById('fPhase').value, fn=document.getElementById('fNew').checked;
+  let html='',shown=0;
+  for(const p of [1,2,3,4]){
+    const list=M.filter(m=>m.p===p)
+      .filter(m=>!fa||m.area===fa)
+      .filter(m=>!fp||String(m.p)===fp)
+      .filter(m=>!fn||erNy(m))
+      .filter(m=>!q||(m.name+' '+m.goal+' '+(m.merknad||'')+' '+m.area+' '+m.guard+' '+m.accept).toLowerCase().includes(q))
+      .sort((a,b)=>a.n-b.n);
+    if(!list.length)continue;
+    shown+=list.length;
+    html+=`<div class="phasehead"><h3>${phaseNames[p]}</h3><span class="eyebrow">${list.length} moduler</span></div>`;
+    html+=list.map(card).join('');
+  }
+  cat.innerHTML=html||`<p class="intro">Ingen moduler matcher filteret. Nullstill søket for å se alle ${M.length}.</p>`;
+  document.getElementById('count').textContent=shown+' / '+M.length+' moduler';
+}
+['q','fArea','fPhase','fNew'].forEach(id=>document.getElementById(id).addEventListener(id==='q'?'input':'change',render));
+
+// Fasetellerne står som tall i markupen så de også vises uten JavaScript og på
+// papir, men v9 la til M-57 i fase 3 uten å endre 19-tallet (Codex P2 på #118).
+// Er JavaScript på, teller vi dem opp fra `M` og overskriver: da er katalogen
+// selv fasiten, og et hardkodet tall som er blitt feil retter seg selv.
+document.querySelectorAll('.ph').forEach(el=>{
+  const f=Number(el.dataset.f);
+  el.querySelector('.cnt').textContent=M.filter(m=>m.p===f).length;
+});
+render();
+window.addEventListener('beforeprint',()=>document.querySelectorAll('details.card').forEach(d=>d.open=true));
+</script>
+</body>
+</html>

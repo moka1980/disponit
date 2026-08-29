@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { byggRuter, harScope, hashForDypLenke, tillatteFlater, visningFraSok }
-  from "../static/js/sitekart.js";
+import { byggRuter, harScope, hashForDypLenke, synligeSakstyper,
+  tillatteFlater, visningFraSok } from "../static/js/sitekart.js";
 
 const HER = dirname(fileURLToPath(import.meta.url));
 const locale = (navn) => JSON.parse(readFileSync(
@@ -16,6 +16,42 @@ test("harScope: leser scopes fra sesjon uten kast", () => {
   assert.equal(harScope({}, "policy:write"), false);
 });
 
+test("synligeSakstyper: køene avledes av `security:read`, ikke av flaten", () => {
+  // Uten scopet finnes nøyaktig én kø — og det er serverens standard, så
+  // inngangen er uendret for alle som har flaten i dag.
+  assert.deepEqual(synligeSakstyper({ scopes: ["exceptions:read"] }),
+    ["normal"]);
+  assert.deepEqual(synligeSakstyper({}), ["normal"]);
+  // Med scopet er alle tre nåbare — og `normal` står først, så
+  // standardvisningen ikke flytter seg for den som får scopet.
+  const alle = synligeSakstyper({ scopes: ["exceptions:read",
+                                           "security:read"] });
+  assert.deepEqual(alle, ["normal", "sikkerhet", "drift"]);
+  assert.equal(alle[0], "normal");
+});
+
+test("synligeSakstyper speiler serverens `synlige_sakstyper`", () => {
+  // Codex P2: to avledninger av samme køregel er én for mye. Nøkkeltallene
+  // teller over serverens liste, unntaksflaten når klientens — glir de fra
+  // hverandre, teller kortet rader flaten ikke har noen vei til, og «hele
+  // listen» blir igjen et løfte som ikke holdes. Her krysses de mekanisk.
+  const py = readFileSync(
+    join(HER, "..", "..", "api", "app.py"), "utf8");
+  const m = py.match(/^SAKSTYPER = \(([^)]+)\)/m);
+  assert.ok(m, "fant ikke `SAKSTYPER` i api/app.py");
+  const serverAlle = m[1].match(/"([^"]+)"/g).map((s) => s.slice(1, -1));
+  assert.deepEqual(synligeSakstyper({ scopes: ["security:read"] }), serverAlle,
+    "klientens køliste har glidd fra serverens SAKSTYPER");
+  // …og at det er `security:read` som skiller, ikke noe annet scope: uten
+  // det svarer serveren `scope_mangler` på alt utenom `normal`.
+  const smal = py.match(
+    /def synlige_sakstyper[\s\S]*?if "([^"]+)" in scopes:\s*\n\s*return SAKSTYPER\s*\n\s*return \(("[^"]+"),?\)/);
+  assert.ok(smal, "fant ikke regelen i `synlige_sakstyper`");
+  assert.equal(smal[1], "security:read");
+  assert.deepEqual(synligeSakstyper({ scopes: [] }),
+    [smal[2].slice(1, -1)]);
+});
+
 test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // Uten scopes finnes bare kundeflaten: den leser det økten allerede har fått
   // og kaller ikke noe endepunkt. Alle de andre ville lovet en flate serveren
@@ -24,8 +60,48 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
     ["kundeadmin"]);
   const alle = byggRuter({ scopes: ["decisions:read", "exceptions:read",
     "policy:read"] }).map((r) => r.nokkel);
+  // 038/039: WCAG-kontroll er ÉN rute, og den står bak flatens SVAKESTE del
+  // (Codex P2). `leser` her har `decisions:read` og skal fortsatt nå
+  // rapportene sine — `GET /v1/rapport/{id}` krever bare det. Med
+  // mutasjonsscopet på hele oppføringen inndro sammenslåingen tilgang de
+  // hadde før den.
+  // M-57: rekruttering sto ute til serverarmen fantes (Codex P1 / Cursor
+  // P1). Endepunktene er registrert i `app.py` nå, så ruten er inne — bak
+  // flatens svakeste ledd (`decisions:read`), med mutasjonene gatet i
+  // `RUTESCOPE` på `bestilling:opprett`.
   assert.deepEqual(alle,
-    ["oversikt", "policy", "beslutninger", "unntak", "kundeadmin"]);
+    ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
+      "kundeadmin", "wcagkontroll", "rekruttering"]);
+  // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
+  // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
+  // og demo-stien lander på reserveflaten (Oversikt) i stedet.
+  assert.ok(tillatteFlater(byggRuter({ scopes: ["decisions:read"] }),
+    { rekruttering: "flate", oversikt: "flate" }).rekruttering,
+  "leseøkten når ikke rekrutteringsflaten");
+  const medBestilling = byggRuter({ scopes: ["decisions:read",
+    "bestilling:opprett"] }).map((r) => r.nokkel);
+  assert.ok(medBestilling.includes("wcagkontroll"));
+  assert.ok(!medBestilling.includes("bestilling") &&
+    !medBestilling.includes("rapport"), "de gamle enkeltrutene er borte");
+  // ...og uten `decisions:read` finnes ruten ikke: da er det ingen fane
+  // igjen på flaten.
+  assert.ok(!byggRuter({ scopes: ["policy:read"] })
+    .map((r) => r.nokkel).includes("wcagkontroll"));
+});
+
+test("byggRuter: modulflaten følger med ut av byggeren (Codex P1)", () => {
+  // 🔴 Mappingen plukket bare `nokkel`, og `byggRuter` er den ENESTE veien
+  // `visApp` gir skallet rutene sine. Vedtaket fra 24/8 sto altså i
+  // sitekartet uten å nå fram til en eneste ekte økt: modulflatene ble
+  // liggende i toppnav, og modulkortene åpnet panelet i stedet for flaten.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  assert.equal(ruter.find((r) => r.nokkel === "wcagkontroll").modulflate, 56);
+  assert.equal(ruter.find((r) => r.nokkel === "rekruttering").modulflate, 57);
+  // Plattformflatene har ingen — det er nettopp forskjellen skallet leser.
+  assert.equal(ruter.find((r) => r.nokkel === "oversikt").modulflate, undefined);
+  // `scope` blir derimot IGJEN: det er brukt opp i filteret over, og en rute
+  // som bærer det videre later som den fortsatt gates på noe.
+  assert.ok(ruter.every((r) => !("scope" in r)));
 });
 
 test("byggRuter: godkjenner får ikke policyruten den ikke kan lese", () => {
@@ -103,6 +179,36 @@ test("tillatteFlater: direkte hash kan ikke nå en flate uten scope", () => {
   assert.equal(med.policyadmin, undefined);
 });
 
+// Rollen `admin` i `autorisasjon.py`: lesescopene + planforvaltningen. Den
+// har verken `policy:write` eller `policy:activate`.
+const ADMINSCOPES = ["decisions:read", "exceptions:read", "policy:read",
+  "security:read", "bestilling:opprett", "plan:opprett", "plan:aktiver",
+  "plan:gjenoppta"];
+
+test("byggRuter: mottakeren av et planvarsel når innboksen sin", () => {
+  // Codex P2: ruten sto bak `kanForvaltePolicy` alene. 044 sender pause- og
+  // bruddvarsler til administratoren som aktiverte planen — en rolle uten
+  // `policy:write`/`policy:activate` — så skallet pollet aldri `/v1/varsel`
+  // for henne. Varselet ble skrevet, men ingen kunne se det, og en
+  // administrator som hadde valgt `kun_portal` satt igjen uten både e-post
+  // og portalspor.
+  const admin = byggRuter({ scopes: ADMINSCOPES }).map((r) => r.nokkel);
+  assert.ok(admin.includes("varsler"), admin);
+  // Planen er en fane under wcagkontroll (eier 19/8) — veien varselet
+  // peker på er samleflatens rute.
+  assert.ok(admin.includes("wcagkontroll"),
+    "veien planvarselet peker på må finnes");
+  // Policyforvalteren står uendret.
+  assert.ok(byggRuter({ scopes: ["policy:read", "policy:write"] })
+    .map((r) => r.nokkel).includes("varsler"));
+  // En ren leser blir ikke varslet og får ingen tom innboks i menyen.
+  assert.ok(!byggRuter({ scopes: ["decisions:read", "policy:read"] })
+    .map((r) => r.nokkel).includes("varsler"));
+  // ... og hver rolle som KAN motta bærer `policy:read`, som er scopet
+  // `GET /v1/varsel` krever — ellers ville menyen lovet en 403.
+  assert.ok(ADMINSCOPES.includes("policy:read"));
+});
+
 test("visningFraSok: returnerer kun tilgjengelig visning", () => {
   const ruter = byggRuter({ scopes: ["policy:write", "security:read"] });
   assert.equal(visningFraSok("?visning=kundeadmin", ruter), "kundeadmin");
@@ -122,6 +228,26 @@ test("hashForDypLenke: hash settes én gang, ellers navigerer ruteren selv", () 
   assert.equal(hashForDypLenke("", "", ruter), null);
   assert.equal(hashForDypLenke("?visning=admin", "", byggRuter({ scopes: [] })),
     null);
+});
+
+// Codex P2: dyplenken er den andre veien inn i en fjernet rute. `?visning=plan`
+// sto i lagrede lenker fra da planen var sin egen flate, og `visningFraSok`
+// svarer bare på ruter økten HAR — en fjernet rute har ingen, så lenken falt
+// tvers gjennom til ruterens reserve (Oversikt).
+test("hashForDypLenke: den arvede planvisningen peker på fanen", () => {
+  const kunde = byggRuter({ scopes: ["decisions:read"] });
+  assert.equal(hashForDypLenke("?visning=plan", "", kunde),
+    "#/wcagkontroll/plan");
+  // Hash-en er fortsatt sannheten når den finnes: ÉN av delene skal skje.
+  assert.equal(hashForDypLenke("?visning=plan", "#/unntak", kunde), null);
+  // Aliaset er ingen vei rundt scopet: uten `decisions:read` finnes ikke
+  // flaten det peker på, og da settes ingen hash.
+  assert.equal(hashForDypLenke("?visning=plan", "", byggRuter({ scopes: [] })),
+    null);
+  // Og det er BARE de arvede nøklene: et arvet oppslag skal ikke svare på det
+  // et objektoppslag ville arvet fra prototypen.
+  assert.equal(hashForDypLenke("?visning=constructor", "", kunde), null);
+  assert.equal(hashForDypLenke("?visning=__proto__", "", kunde), null);
 });
 
 // En rute uten etikett er ikke en kosmetisk mangel: `AppShell` slår opp
@@ -150,4 +276,34 @@ test("Hver rute byggRuter kan gi har en nav-etikett i BEGGE locale-sett", () => 
         `${navn}.json mangler ${nokkel}`);
     }
   }
+});
+
+test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
+  // 🔴 LÅST, IKKE BARE KOMMENTERT (Cursor P2). Modulkortet er den eneste
+  // annonserte inngangen til flaten, og det er `ui.nav.<rute>` som står på
+  // kortet mens flaten selv bærer sin egen tittelnøkkel. At de to er samme
+  // streng i dag er hele begrunnelsen for at kortet SKAL hete det — men uten
+  // en port var likheten en tilfeldighet to oversettere kunne bryte hver for
+  // seg, og da peker den eneste inngangen på en side som heter noe annet.
+  //
+  // Begge locale-sett, fordi en engelsk avvikelse er like usynlig herfra.
+  const par = [
+    ["ui.nav.wcagkontroll", "ui.wcag.tittel"],
+    ["ui.nav.rekruttering", "ui.rekruttering.tittel"],
+  ];
+  for (const navn of ["nb", "en"]) {
+    const tekster = locale(navn);
+    for (const [lenke, tittel] of par) {
+      assert.ok(tekster[lenke] && tekster[tittel],
+        `${navn}.json mangler ${lenke} eller ${tittel}`);
+      assert.equal(tekster[lenke], tekster[tittel],
+        `${navn}: kortet sier «${tekster[lenke]}», flaten «${tekster[tittel]}»`);
+    }
+  }
+  // Og parene skal dekke NØYAKTIG de rutene som er modulflater: får en ny
+  // flate `modulflate` uten en rad her, er den ikke låst av noe.
+  assert.deepEqual(byggRuter({ scopes: ["decisions:read"] })
+    .filter((r) => r.modulflate).map((r) => `ui.nav.${r.nokkel}`).sort(),
+  par.map(([lenke]) => lenke).sort(),
+  "en modulflate mangler i likhetsporten over");
 });

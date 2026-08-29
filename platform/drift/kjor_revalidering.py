@@ -48,7 +48,20 @@ def _txt_oppslag(server: str):
         r = dns.resolver.Resolver(configure=False)
         r.nameservers = [server]
         r.lifetime = 5.0
-        svar = r.resolve(hostname, "TXT")
+        try:
+            svar = r.resolve(hostname, "TXT")
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            # ET AUTORITATIVT NEI ER ET SVAR (Codex P2). Navnet finnes ikke,
+            # eller det har ingen TXT-post: da VET vi at beviset ikke står der,
+            # og det er en helt annen ting enn at vi ikke fikk kontakt. Kastet
+            # oppslaget her, ble utfallet «uenige resolvere» — samme bøtte som
+            # en resolver som er nede. For førstegangsverifiseringen er det
+            # normaltilstanden rett etter utstedelsen (kunden har ikke lagt ut
+            # posten ennå), så en alarm på den bøtta ville stått rødt støtt.
+            # Tom mengde: to resolvere som begge sier «ingen TXT» ER enige, og
+            # basen avviser beviset som manglende — `ikke_bevist`, ikke feil.
+            # Timeout, SERVFAIL og NoNameservers slipper fortsatt ut som feil.
+            return frozenset()
         return frozenset(
             b"".join(rr.strings).decode("utf-8", "replace") for rr in svar)
 

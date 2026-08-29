@@ -274,6 +274,14 @@ def _r1_reinnsending(payload: dict, kl: Klassifisering) -> Reparasjonsplan:
     mangler = oppdragsskjema.mangler_paakrevde(t.navn, minimert)
     if mangler:
         return Reparasjonsplan("manuell", f"oppdrag_ufullstendig:{mangler}")
+    # ... og feltene må ha LOVLIGE verdier, ikke bare finnes (Codex P1).
+    # Et oppdrag med `omfang: "alt"` eller `maks_sider: 0` er dødfødt: det
+    # kan aldri gi en rapport som validerer, men det kan bli claimet og
+    # kjørt — altså ekstern trafikk mot kundens nettsted for en
+    # bestilling ingen kunne oppfylt. Da skal oppdraget ikke opprettes.
+    ugyldige = oppdragsskjema.bryter_feltkontrakten(t.navn, minimert)
+    if ugyldige:
+        return Reparasjonsplan("manuell", f"oppdrag_ugyldig:{ugyldige}")
     return Reparasjonsplan("oppdrag", "reinnsending_planlagt",
                            maalhandling=handling, oppdragstype=t.navn,
                            reparasjonsinput=minimert)
@@ -420,6 +428,9 @@ def planlegg_kompensasjon(policy: dict, *, opprinnelig_handling: str,
     mangler = oppdragsskjema.mangler_paakrevde(t.navn, minimert)
     if mangler:
         return Reparasjonsplan("manuell", f"kompensasjon_ufullstendig:{mangler}")
+    ugyldige = oppdragsskjema.bryter_feltkontrakten(t.navn, minimert)
+    if ugyldige:
+        return Reparasjonsplan("manuell", f"kompensasjon_ugyldig:{ugyldige}")
 
     return Reparasjonsplan(
         "oppdrag", "kompensasjon_planlagt", maalhandling=maalhandling,

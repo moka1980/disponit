@@ -36,6 +36,7 @@ feil.
 Budsjettet (§2.2) er absolutt for kø 2 + kø 3 samlet:
 
     N = antall rader med status IN ('verifisert','avklaring_kreves')
+        og navn utenfor de reserverte TLD-ene (064, #209)
     K = ceil(0.10 * N)
 
 K håndheves med `LIMIT`, ikke som forventning. Rader fra kø 2 som ikke får plass
@@ -51,10 +52,14 @@ scheduleren. Hvor jevnt radene faktisk fordeler seg er en MÅLT driftsegenskap �
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
+
+import psycopg
 
 #: Andel av populasjonen som kan revalideres per kjøring (kø 2 + kø 3).
 TAK_ANDEL = 0.10
@@ -218,6 +223,87 @@ def enig_svar(resolvere: Sequence[Resolver],
     return frozenset(svar[0])
 
 
+#: EIERNAVNET UTFORDRINGEN LIGGER PÅ (Codex P1).
+#:
+#: Beviset lå før på selve vertsnavnet. For et typisk `www.dittfirma.no` er
+#: det et navn kunden IKKE kan legge en TXT-post på: eieren av et CNAME kan
+#: per RFC 1034 §3.6.2 ikke ha andre poster ved siden av seg, og et rekursivt
+#: TXT-oppslag følger aliaset til målsonen — en leverandørs sone, ikke
+#: kundens. Selvbetjeningen ber alltid om NØYAKTIG vertsnavnet
+#: (`wildcard=false`), så å bevise apex i stedet er ingen vei rundt: slike
+#: nettsteder kunne aldri blitt verifisert.
+#:
+#: Et eget underetikett-navn kan alltid bære posten, og ligger i kundens egen
+#: sone selv når vertsnavnet er et alias. Understreken er med vilje: `_`-navn
+#: er reservert for tjenestebruk (RFC 8552) og kolliderer ikke med et
+#: vertsnavn noen har.
+UTFORDRINGSPREFIKS = "_disponit-challenge"
+
+#: DNS-navnegrensen: 253 tegn i presentasjonsform, uten avsluttende punktum.
+#: Samme tall som `er_kanonisk_hostname` (018) gjerder vertsnavnet med.
+MAKS_DNS_NAVN = 253
+
+#: Lengste VERTSNAVN som kan bære en utfordring (Codex P2).
+#:
+#: Utfordringsnavnet er lengre enn vertsnavnet, og grensen gjelder navnet som
+#: faktisk slås opp. Et vertsnavn på 234–253 tegn er selv fullt lovlig — 018
+#: tar det, basen lagrer det — men `_disponit-challenge.` foran gir et navn
+#: over 253, altså et navn kunden ikke KAN publisere og arbeideren aldri kan
+#: finne. Utstedelsen svarte likevel 201 med en oppskrift som så riktig ut,
+#: og domenet ble stående uverifisert for alltid uten at noe sa hvorfor.
+#:
+#: Prefiksplassen reserveres derfor i valideringen, og den regnes HER, av
+#: prefikset selv: byttes prefikset, flytter grensen seg med det. Porten i
+#: `test_domene_selvbetjening` holder API-ets kopi mot denne.
+MAKS_UTFORDRET_VERTSNAVN = MAKS_DNS_NAVN - len(UTFORDRINGSPREFIKS) - 1
+
+
+def utfordringsnavn(hostname: str) -> str:
+    """Eiernavnet utfordrings-TXT-en skal publiseres på for `hostname`.
+
+    ÉN kilde til denne sannheten, brukt av alle tre som må være enige om den:
+    utstedelsen (`POST /v1/domener` svarer med navnet), førstegangs-
+    verifiseringen og revalideringen. Blir de uenige, publiserer kunden på ett
+    navn og arbeideren leter på et annet — og domenet står «ikke verifisert»
+    uten at noe sier hvorfor. Porten som holder API-svaret mot denne
+    funksjonen ligger i `test_domene_selvbetjening`.
+    """
+    return f"{UTFORDRINGSPREFIKS}.{hostname}"
+
+
+def utfordringssvar(resolvere: Sequence[Resolver], hostname: str, *,
+                    ogsa_vertsnavnet: bool) -> frozenset[str] | None:
+    """`enig_svar` for utfordringsnavnet — og for ARVEN, når den gjelder.
+
+    `ogsa_vertsnavnet` skiller de to veiene inn:
+
+    * FØRSTEGANGSVERIFISERINGEN (039) er ny med denne endringen. Kontrakten
+      er `txt_navn` i utstedelsessvaret, og det navnet er utfordringsnavnet —
+      det finnes ingen kunde som har publisert noe annet sted. Ett oppslag per
+      rad, så tidsbudsjettet bak `VERIFISERING_TAK` står urørt.
+    * REVALIDERINGEN møter rader som ble verifisert FØR dette navnet fantes,
+      med beviset på det bare vertsnavnet. Leter den bare på det nye navnet,
+      ville hver eneste av dem mistet autorisasjonen ved neste kjøring. Derfor
+      slås begge opp og mengdene slås sammen. Det svekker ingenting: beviset
+      er en sha256 databasen holder mot `challenge_token_hash`, så et ekstra
+      navn i søket kan ikke fabrikere et treff — det kan bare finne det der
+      det faktisk ble lagt.
+
+    Er ETT av oppslagene uenig/nede mens det andre svarer, brukes svaret som
+    kom. «Vi fikk ikke kontakt med det ene navnet» skal ikke kunne rive et
+    bevis vi faktisk fant på det andre. Er BEGGE None, er svaret None —
+    uenighet, ikke «ingen post».
+    """
+    navn = [utfordringsnavn(hostname)]
+    if ogsa_vertsnavnet:
+        navn.append(hostname)
+    funnet = [s for s in (enig_svar(resolvere, n) for n in navn)
+              if s is not None]
+    if not funnet:
+        return None
+    return frozenset().union(*funnet)
+
+
 def enige(resolvere: Sequence[Resolver], hostname: str) -> bool:
     """Er resolverne enige? Ren enighetsprøve — sier INGENTING om kontroll.
 
@@ -237,6 +323,11 @@ def kandidater(conn, minutt_fra: int, minutt_til: int, K: int
     sett én tenant om gangen og regnet budsjettet på feil nevner. Der ligger
     også `LIMIT`, slik at K-invarianten ikke kan brytes av en endring i denne
     orkestreringen.
+
+    Siden 064 filtrerer utvalget bort navn under reserverte TLD-er (RFC 6761:
+    `.test`, `.example`, `.invalid`, `.localhost`). De kan aldri resolves, så
+    de er verken kandidater eller bevis om resolvernes helse — sto de igjen,
+    bodde de permanent i kø 1 og utgjorde hele alarmens nevner (#209).
     """
     return conn.execute(
         "SELECT tenant, hostname, ko FROM revalideringskandidater(%s,%s,%s,%s,%s)",
@@ -245,7 +336,12 @@ def kandidater(conn, minutt_fra: int, minutt_til: int, K: int
 
 
 def budsjett(conn) -> tuple[int, int]:
-    """(N, K). K = ceil(0.10 * N), hardt tak for kø 2 + kø 3 SAMLET."""
+    """(N, K). K = ceil(0.10 * N), hardt tak for kø 2 + kø 3 SAMLET.
+
+    N teller det PLUKKBARE: reserverte TLD-er er ute av nevneren siden 064,
+    samme predikat som utvalget. Ellers ville K vært et tak over rader som
+    ikke finnes.
+    """
     N = int(conn.execute("SELECT revalideringspopulasjon()").fetchone()[0])
     return N, math.ceil(TAK_ANDEL * N)
 
@@ -334,7 +430,10 @@ def _utfor(conn, rader, resolvere, aktor, res: Revalideringsresultat,
         aktive += 1
         topp = max(topp, aktive)
         try:
-            return rad, enig_svar(resolvere, rad[1])
+            # ARVEN TAS MED (Codex P1): rader som ble verifisert før
+            # utfordringsnavnet fantes, har beviset på det bare vertsnavnet.
+            return rad, utfordringssvar(resolvere, rad[1],
+                                        ogsa_vertsnavnet=True)
         finally:
             aktive -= 1
 
@@ -379,3 +478,259 @@ def _skriv_resultat(conn, tenant, hostname, txt, aktor,
         # uenighet — resolverne var jo enige.
         conn.rollback()
         res.oppslagsfeil += 1
+
+# ---------------------------------------------------------------------------
+# 039 — førstegangsverifisering av selvbetjente challenges
+# ---------------------------------------------------------------------------
+
+#: Egen arbeidernøkkel: verifiseringspasset er lite og hyppig (5 min) og
+#: skal ikke vente på — eller blokkere — den timeplanlagte revalideringen.
+VERIFISERINGSNOKKEL = 915_774_203
+
+#: DE FORVENTEDE UTFALLENE, navngitt (Codex P2).
+#:
+#: Et `except Exception` rundt bekreftelseskallet gjorde ALT til «ikke bevist»:
+#: en funksjon som ikke er utrullet, et grant eller et eierskap som er feil, en
+#: programmeringsfeil i SQL-en. Hver rad ble rullet tilbake, telleren gikk opp,
+#: og `main()` returnerte 0 — så systemd noterte et vellykket pass mens
+#: HVER ENESTE challenge sto ubehandlet, i det uendelige, uten en rød unit.
+#:
+#: `bekreft_domenechallenge` reiser `invalid_parameter_value` for de tre
+#: ordinære neiene (raden finnes ikke, utfordringen er utløpt/aldri utstedt,
+#: beviset står ikke i TXT-svaret); `no_data_found` er formen 016-veiene
+#: bruker for «raden er borte». Alt annet er ikke et svar om DNS-bevis, og
+#: skal felle oneshot-unitten.
+MANGLENDE_BEVIS = (psycopg.errors.InvalidParameterValue,
+                   psycopg.errors.NoDataFound)
+
+#: Kappløpene: en annen tenant verifiserte samme hostname i det vi skrev
+#: (delindeksen `en_verifisert_per_hostname`), eller låsingen kolliderte.
+#: Forventet under samtidighet, og riktig svar er «prøv igjen neste pass» —
+#: men det er ikke det samme som at beviset manglet, og skal ikke telles der.
+KAPPLOP = (psycopg.errors.UniqueViolation,
+           psycopg.errors.SerializationFailure,
+           psycopg.errors.DeadlockDetected,
+           psycopg.errors.LockNotAvailable)
+
+#: FRISTEN ER PASSETS, IKKE SYSTEMDS (Codex P2).
+#:
+#: `disponit-domeneverifisering.service` gir kjøringen 4 minutter
+#: (TimeoutStartSec). Passet stanser derfor seg selv godt innenfor, og det gjør
+#: det MELLOM to ferdige oppslag — det ene punktet der ingenting er halvveis
+#: skrevet. Resten av køen står `ventende` og tas av neste timerkjøring om fem
+#: minutter; køen ER tilstanden, og en oneshot som stanser er ikke en jobb som
+#: mislyktes. TimeoutStartSec blir da et sikkerhetsnett som ikke skal utløses.
+#: Tallene hører sammen og skal endres sammen.
+VERIFISERING_FRIST_S = 180
+
+#: Batchtaket per pass. UTLEDET, ikke valgt: med C = `SAMTIDIGHET` oppslag i
+#: parallell og et verste tilfelle på ~10 s per hostname (to resolvere à 5 s
+#: levetid, serielt i `enig_svar`) bruker et fullt tak
+#: ceil(100/8) · 10 s = 130 s — innenfor fristen, med margin for DB-skrivingene.
+#: Taket lå før på 200 SERIELLE oppslag, altså opptil 2000 s mot en unit som
+#: dør etter 240: en kohort med trege navn foran i `challenge_utstedt`-
+#: rekkefølgen spiste hele vinduet, neste kjøring plukket de SAMME radene, og
+#: kundene bak dem ble sultet til utfordringen deres utløp.
+#:
+#: Taket ALENE er likevel bare et nytt gjerde (Codex P1): står det flere gyldige
+#: utfordringer enn taket og de eldste kundene aldri publiserer TXT-posten sin,
+#: er «de eldste først» de SAMME radene hver kjøring — en manglende post flytter
+#: jo ingenting. Derfor roterer plukket: `ventende_domenechallenges` stempler
+#: radene den returnerer (`challenge_forsokt`, 039) og tar de minst nylig
+#: forsøkte først, så hele populasjonen kommer gjennom taket. Taket bestemmer
+#: hvor mye ETT pass rekker; stempelet bestemmer at det blir en ANNEN kohort
+#: neste gang.
+VERIFISERING_TAK = 100
+
+
+def kjor_ventende(conn, resolvere, *, aktor: str = "domeneverifisering",
+                  grense: int = VERIFISERING_TAK,
+                  samtidighet: int = SAMTIDIGHET,
+                  frist_s: float = VERIFISERING_FRIST_S) -> dict:
+    """Ett verifiseringspass: plukk challenges kryss-tenant
+    (`ventende_domenechallenges`, 039), slå opp TXT med samme
+    diversitetskrav som revalideringen (≥2 enige, uavhengige resolvere),
+    og la DATABASEN holde svaret mot hashen (`bekreft_domenechallenge`).
+
+    Plukket er `ventende` OG den M-37-AVVISTE kandidaten (`tilbakekalt` med
+    motpart) — den siste beholder statusen sin hele veien, for det er nettopp
+    den 018 kjenner igjen som en reapplikasjon. Hennes bevis fører derfor til
+    en ny avklaringsgenerasjon (`konflikt:*`), aldri til `verifisert`.
+
+    Arbeideren kan ikke fabrikere et bevis: funksjonen sammenligner
+    sha256 av de fergede TXT-verdiene mot `challenge_token_hash` den selv
+    lagrer, og statusovergangen eies av `verifiser_domenekontroll` med
+    alle avklarings-/overtakelsesportene urørt.
+
+    `konflikt:*`-svar TELLES OG NAVNGIS, men saken opprettes ikke herfra:
+    `opprett_overtakelsessak` krypterer payloaden med tenantens DEK og
+    skriver `revisjonslogg` + `unntak` — runtime-autoritet med
+    nøkkelmateriale, som denne rollen med vilje ikke har.
+
+    Den blir likevel opprettet (Codex P1). Konflikten er ikke en melding
+    som må videreformidles, men en TILSTAND: raden står `avklaring_kreves`
+    med `konflikt_motpart`, og M-37-arbeideren — som HAR både DEK og
+    runtime-DML — drenerer nøyaktig de radene til saker
+    (`sikre_ventende_overtakelsessaker`, migrasjon 039). Loggposten her er
+    derfor et driftsspor, ikke den eneste sporen av konflikten: dør denne
+    prosessen rett etter commiten, finner dreneringen raden uansett.
+
+    Bare de FORVENTEDE utfallene fanges per rad (`MANGLENDE_BEVIS`,
+    `KAPPLOP`). En manglende funksjon, et feil grant eller en SQL-feil er
+    ikke «ikke bevist» — den slipper ut og feller unitten, for et pass som
+    rapporterer 0 mens ingenting ble behandlet er verre enn et rødt pass.
+
+    Oppslagene kjøres med fast samtidighetsgrense og passet har sin EGEN
+    frist — se `_verifiser_rader`.
+    """
+    res = {"plukket": 0, "verifisert": 0, "konflikt": 0, "uenige": 0,
+           "ikke_bevist": 0, "kapplop": 0, "annet": 0, "ubehandlet": 0}
+    fikk = conn.execute("SELECT pg_try_advisory_lock(%s)",
+                        (VERIFISERINGSNOKKEL,)).fetchone()[0]
+    if not fikk:
+        res["hoppet_over"] = True
+        return res
+    try:
+        rader = conn.execute(
+            "SELECT tenant, hostname FROM ventende_domenechallenges(%s)",
+            (grense,)).fetchall()
+        # COMMIT, ikke rollback (Codex P1). Plukket STEMPLER radene
+        # (`challenge_forsokt`, 039) — det er stempelet som gjør utvalget til
+        # en roterende kø i stedet for de samme eldste radene hvert femte
+        # minutt. Rulles det tilbake, er taket igjen et gjerde kundene bak
+        # aldri kommer forbi. Egen transaksjon, før oppslagene: bekreftelsene
+        # under committer én rad om gangen og skal ikke kunne dra plukket med
+        # seg i en rollback.
+        conn.commit()
+        res["plukket"] = len(rader)
+        _verifiser_rader(conn, rader, resolvere, aktor, res, samtidighet,
+                         frist_s)
+        # BRED RESOLVERFEIL ER EN ALARM, ikke en teller (Codex P2). Samme
+        # terskel og samme kontrakt som revalideringens §2.4-alarm: uten en
+        # konsument var `uenige` et felt ingen leser, og et pass der BEGGE
+        # resolverne var nede så nøyaktig ut som et pass der ingen kunde ennå
+        # hadde lagt ut TXT-posten sin — begge «vellykket», mens hver eneste
+        # selvbetjening sto stille.
+        #
+        # Nevneren er radene som faktisk BLE slått opp: rader vi ikke rakk før
+        # fristen sier ingenting om resolverne. Og `uenige` betyr her nettopp
+        # transportsvikt eller uenighet — et autoritativt «ingen TXT-post»
+        # bæres som et TOMT svar (`_txt_oppslag`) og teller som `ikke_bevist`,
+        # som er kundens normaltilstand rett etter utstedelsen.
+        res["vurdert"] = res["plukket"] - res["ubehandlet"]
+        res["alarm_utlost"] = bool(
+            res["vurdert"] and res["uenige"] / res["vurdert"] > ALARM_ANDEL)
+        return res
+    finally:
+        # ROLLBACK FØRST (Codex P2). Slipper en uventet feil ut av løkka, står
+        # transaksjonen abortert, og et `SELECT` her ville feilet med
+        # InFailedSqlTransaction og MASKERT den egentlige årsaken — nøyaktig
+        # den feilen unitten skal melde. Låsen er sesjonsscopet og overlever
+        # rollbacken, så den skal fortsatt slippes; er forbindelsen borte, dør
+        # den med sesjonen uansett, og da er det ikke opplåsingen som er
+        # nyheten.
+        try:
+            conn.rollback()
+            conn.execute("SELECT pg_advisory_unlock(%s)",
+                         (VERIFISERINGSNOKKEL,))
+            conn.commit()
+        except psycopg.Error:
+            pass
+
+
+def _verifiser_rader(conn, rader, resolvere, aktor, res: dict,
+                     samtidighet: int, frist_s: float) -> None:
+    """Oppslagene med fast samtidighetsgrense; DB-kallene serielt (Codex P2).
+
+    Passet var SERIELT: opptil 200 hostnames etter hverandre, hvert med
+    resolverkall som hver har fem sekunders levetid, mot en unit som dør etter
+    fire minutter. En kohort med trege eller tidsavbrutte navn foran i
+    `challenge_utstedt`-rekkefølgen spiste hele vinduet før de friske bak dem
+    ble nådd — og fordi utvalget alltid tar de ELDSTE først, plukket neste
+    kjøring nøyaktig de samme radene. Kundene bak dem ble sultet helt til
+    utfordringen deres utløp.
+
+    Tre ting løser det, og de virker sammen:
+
+    1. `SAMTIDIGHET` parallelle oppslag, samme grense og samme grunn som
+       `_utfor`: oppslagene er I/O, DB-en har fortsatt nøyaktig én skriver.
+    2. `as_completed`, ikke innsendingsrekkefølge. De FRISKE navnene fullfører
+       først og skrives først; et navn som står og venter på timeout blokkerer
+       ikke lenger noen bak seg. Det er dette som fjerner selve sultingen —
+       fristen under er bare et nett.
+    3. Passets EGEN frist, sjekket MELLOM to ferdige oppslag: det ene punktet
+       der ingenting er halvveis skrevet. Radene vi ikke rakk telles som
+       `ubehandlet` og står `ventende` til neste kjøring om fem minutter.
+       Traff systemd-timeouten i stedet, ville et SIGTERM landet hvor som
+       helst — også mellom bekreftelsen og commiten.
+    """
+    if not rader:
+        return
+    frist = time.monotonic() + frist_s
+    pool = ThreadPoolExecutor(max_workers=samtidighet)
+    try:
+        # `utfordringssvar` slår opp UTFORDRINGSNAVNET (Codex P1), ikke
+        # vertsnavnet: det er navnet utstedelsen ga kunden, og det eneste hun
+        # kan legge en TXT-post på når vertsnavnet er et CNAME. Ett oppslag per
+        # rad — arven under `ogsa_vertsnavnet` hører til revalideringen, der
+        # det finnes rader eldre enn navnet; her finnes det ingen.
+        #
+        # `enig_svar` leses opp inne i `utfordringssvar`, altså ved kall og
+        # ikke ved import: testene bytter den ut på modulen, og en tidlig
+        # binding ville gjort dem tannløse.
+        oppslag = {pool.submit(utfordringssvar, resolvere, h,
+                               ogsa_vertsnavnet=False): (t, h)
+                   for t, h in rader}
+        behandlet = 0
+        for ferdig in as_completed(oppslag):
+            if time.monotonic() >= frist:
+                res["frist_naadd"] = True
+                break
+            tenant, hostname = oppslag[ferdig]
+            behandlet += 1
+            _skriv_bekreftelse(conn, tenant, hostname, ferdig.result(), aktor,
+                               res)
+        res["ubehandlet"] = len(rader) - behandlet
+    finally:
+        # Ikke `with`: de oppslagene som fortsatt er i luften når fristen slår
+        # inn skal ikke ventes ut. `cancel_futures` tar det som ikke har
+        # startet; de som kjører dør med prosessen, og har ingen tilstand å
+        # etterlate — de har ikke rørt basen.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _skriv_bekreftelse(conn, tenant, hostname, txt, aktor,
+                       res: dict) -> None:
+    """Ett ferdig oppslag: commit eller rollback, og telleren som følger med."""
+    if txt is None:
+        res["uenige"] += 1
+        return
+    try:
+        svar = conn.execute(
+            "SELECT bekreft_domenechallenge(%s,%s,%s,%s)",
+            (tenant, hostname, aktor, sorted(txt))).fetchone()[0]
+        conn.commit()
+    except MANGLENDE_BEVIS:
+        # Bevis ikke funnet i TXT, utfordringen utløpt, eller raden finnes
+        # ikke lenger. Alt dette er ORDINÆRE utfall: ingen påstand om
+        # suksess, prøv igjen neste pass.
+        conn.rollback()
+        res["ikke_bevist"] += 1
+        return
+    except KAPPLOP:
+        # Raden flyttet seg under oss (annen tenant verifiserte samme
+        # hostname, vranglås, låsen var tatt). Telles for seg: et kappløp er
+        # ikke det samme som «beviset sto ikke i DNS», og de to skal ikke
+        # kunne skjule hverandre i én teller.
+        conn.rollback()
+        res["kapplop"] += 1
+        return
+    if svar == "verifisert":
+        res["verifisert"] += 1
+    elif isinstance(svar, str) and svar.startswith("konflikt:"):
+        res["konflikt"] += 1
+        print(json.dumps({"hendelse": "domene_overtakelseskonflikt",
+                          "hostname": hostname,
+                          "motpart": svar.split(":", 1)[1]}), flush=True)
+    else:
+        res["annet"] += 1

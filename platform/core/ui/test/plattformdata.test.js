@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  MODULOVERSIKT, MODULSTATUS, TILBUD, erTilgjengelig, erTilgjengeligFor,
+  FASEOVERSIKT, MODULOVERSIKT, MODULSTATUS, TILBUD,
+  erTilgjengelig, erTilgjengeligFor,
   heroTekstNokkel, produksjonsmiljo, settProduksjonsmiljo,
   heroTekstNokkelFor, modulStatus, modulerFraIder, modulmerke,
   plattformTelling, tenantTelling,
@@ -18,11 +19,18 @@ const LOKALER = ["nb", "en"].map((sprak) =>
 
 test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // Verdiene er avledet av manifestene (pinnet i test_ui_kontrakt.py): M-1 er
-  // godkjent og kjører — men på STAGING, så flaten sier `klargjort`. `i_drift`
-  // krever `driftstilstand: produksjon`, altså en utrulling hos kunder, og den
-  // finnes ikke ennå. M-2/M-37 er under utvikling, M-38 har intet manifest.
+  // godkjent og kjører — men på STAGING, så flaten sier `klargjort`.
+  // `i_drift` krever `driftstilstand: produksjon`, altså en utrulling hos
+  // kunder, og den finnes ikke ennå. M-37 er under utvikling, M-38 har intet
+  // manifest.
+  //
+  // M-2 gikk til `i_drift` 2026-08-23: m02-aksepthendelsen står i basen
+  // (innholdsadressert mot commit 2aaca01), og manifestet sier
+  // aktiv/produksjon. Denne testen og `MODULSTATUS` er to sider av samme
+  // påstand og må flytte seg sammen — ellers er den ene bare en kopi av
+  // den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
-  assert.equal(modulStatus(2), "bygges");
+  assert.equal(modulStatus(2), "i_drift");
   assert.equal(modulStatus(38), "planlagt");
   assert.equal(modulStatus(45), "planlagt");
 });
@@ -31,12 +39,12 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
   // Regelen er BINDINGEN, ikke tallet: hver `i_drift` her må ha
   // `driftstilstand: produksjon` i sitt manifest, og
   // `test_ui_kontrakt.py::test_modulstatus_folger_manifestene` håndhever den
-  // retningen. Ingen har det i dag — M-1 kjører på staging-serveren, og
-  // `docs/DEPLOY.md` reserverer produksjon for en egen VPS med kundedata.
+  // retningen. M-2 og M-56 har det siden akseptflippen 2026-08-23 — begge
+  // aksepthendelsene står i basen, og manifestene er flippet sammen.
   assert.deepEqual(
     Object.entries(MODULSTATUS).filter(([, s]) => s === "i_drift")
       .map(([id]) => Number(id)),
-    [], "en modul påstår drift hos kunder — sjekk manifestets driftstilstand");
+    [2, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
@@ -114,15 +122,79 @@ test("site.hero.tilbud: tilbudsteksten overlever hver utrullingstilstand", () =>
   // flyttet beskrivelsen tilbake dit den forsvinner igjen.
   const utrullingsavhengige = ["site.hero.tekst", "site.hero.tekst_bygges",
                                "site.hero.tekst_delvis"];
+  // Sentinelene er per språk: tilbudsteksten (claude.ai, INNHOLD 19/8) er
+  // norsk prosa uten anglisismene «compliance»/«HR», så vaktene er to
+  // områdeord som BARE tilbudsbeskrivelsen nevner.
+  const sentineler = { nb: ["fakturering", "avstemming"],
+                       en: ["invoicing", "reconciliation"] };
   for (const [sprak, sett] of LOKALER) {
     const tilbud = sett["site.hero.tilbud"];
-    for (const omrade of ["compliance", "HR"]) {
+    for (const omrade of sentineler[sprak]) {
       assert.ok(tilbud.includes(omrade),
         `site.hero.tilbud nevner ikke ${omrade} i locales/${sprak}.json`);
       for (const nokkel of utrullingsavhengige) {
         assert.ok(!sett[nokkel].includes(omrade),
           `${nokkel} bærer tilbudsteksten (${omrade}) i locales/${sprak}.json` +
           " — den forsvinner da i de andre utrullingstilstandene");
+      }
+    }
+  }
+});
+
+test("FASEOVERSIKT: ingen fase står planlagt med en påbegynt modul i seg", () => {
+  // Codex P2 på #152: M-56 gikk `i_drift` mens `site.fase.autopiloter` sto
+  // igjen på `planlagt` — samme adminside viste kortet i drift og fasen som
+  // ikke påbegynt. Statusen var skrevet, ikke avledet.
+  //
+  // Testen påstår om REGELEN, ikke om de fire verdiene: hver fase med minst
+  // én påbegynt modul må være aktiv, og en fase uten skal ikke være det.
+  // Da flytter porten seg av seg selv neste gang en modul skifter fase
+  // eller tilstand.
+  for (const fase of FASEOVERSIKT) {
+    const paabegynte = MODULOVERSIKT.filter(
+      (mod) => mod.fase_nokkel === fase.navn_nokkel &&
+        mod.status !== "planlagt");
+    assert.equal(fase.status, paabegynte.length ? "aktiv" : "planlagt",
+      `${fase.navn_nokkel} står ${fase.status} med ${paabegynte.length}` +
+      " påbegynte moduler i seg");
+  }
+  // Slik plattformen faktisk står etter flippet: fasen M-56 ligger i er
+  // aktiv, og de to fasene uten en eneste modul er det ikke.
+  const status = Object.fromEntries(
+    FASEOVERSIKT.map((f) => [f.navn_nokkel, f.status]));
+  assert.equal(status["site.fase.autopiloter"], "aktiv");
+  assert.equal(status["site.fase.fundament"], "aktiv");
+  assert.equal(status["site.fase.operasjoner"], "planlagt");
+  assert.equal(status["site.fase.global"], "planlagt");
+  // Etiketten må finnes på begge språk, ellers rendres nøkkelen som merke.
+  for (const [sprak, sett] of LOKALER) {
+    for (const verdi of ["aktiv", "planlagt"]) {
+      assert.ok(sett[`site.fase_status.${verdi}`],
+        `site.fase_status.${verdi} mangler i locales/${sprak}.json`);
+    }
+  }
+});
+
+test("hero-tekstene sier ikke at en modul i drift venter på akseptporten", () => {
+  // Codex P2 på #152: `tekst_bygges` navnga WCAG-kontrollen og lovte at den
+  // «settes i drift når [akseptporten] er bestått». Da M-56 ble flippet til
+  // `i_drift` sto den setningen igjen som en ANNEN påstand om samme
+  // utrullingstilstand enn `MODULSTATUS` — og den vises på den anonyme
+  // forsiden, som er nettopp der ingen leser manifestet.
+  //
+  // Porten er per språk fordi setningen er prosa, ikke en nøkkel: den
+  // fanger den fremtidsformen som ble skrevet om, ikke enhver omtale av
+  // akseptporten.
+  if (modulStatus(56) !== "i_drift") return;
+  const ventende = { nb: ["står foran akseptporten"],
+                     en: ["is at the acceptance gate"] };
+  for (const [sprak, sett] of LOKALER) {
+    for (const nokkel of ["site.hero.tekst", "site.hero.tekst_bygges",
+                          "site.hero.tekst_delvis", "site.hero.tilbud"]) {
+      for (const frase of ventende[sprak]) {
+        assert.ok(!sett[nokkel].includes(frase),
+          `${nokkel} sier «${frase}» i locales/${sprak}.json mens M-56 står` +
+          " i_drift — forsiden motsier MODULSTATUS");
       }
     }
   }
@@ -176,14 +248,14 @@ test("modulerFraIder: kundens tildeling, ikke plattformkatalogen", () => {
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
-  // En tenant med M-1 (klargjort) og M-2 (bygges): ingen i drift, to under
-  // arbeid — og resten av katalogen er planlagt for kunden. Tildelingen er
-  // ID-er fra den autentiserte veien, ikke et oppslag i klientpakken.
-  // Tellingen følger MODULSTATUS: `iDrift` er utrulling hos kunder, og M-1
-  // kjører på staging-serveren, ikke der.
+  // En tenant med M-1 (klargjort) og M-2 (i_drift etter akseptflippen
+  // 2026-08-23): én i drift, én under arbeid — og resten av katalogen er
+  // planlagt for kunden. Tildelingen er ID-er fra den autentiserte veien,
+  // ikke et oppslag i klientpakken. Tellingen følger MODULSTATUS: `iDrift`
+  // er utrulling hos kunder.
   const telling = tenantTelling(modulerFraIder([1, 2]));
-  assert.equal(telling.iDrift, 0);
-  assert.equal(telling.underArbeid, 2);
+  assert.equal(telling.iDrift, 1);
+  assert.equal(telling.underArbeid, 1);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);

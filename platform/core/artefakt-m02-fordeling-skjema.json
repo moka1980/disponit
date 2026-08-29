@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m02fordelingartefakt-v1.json",
+  "title": "m02 fordelingsartefakt (m02-fordeling-v1)",
+  "comment": "Det syntetiske settet (84 TILLAT / 3 STOPP / 93 UNNTAK = 180) drevet gjennom beslutningsveien og maalt i revisjonsloggen. REPRODUSERT, ikke historisk: m01-rundens opprinnelige rader finnes ikke i denne basen (maalt 2026-08-21). Radene baeres i artefaktet saa fordelingen kan RE-REGNES av porten; CI driver samme sett mot lokal base (test_m02_fordeling), saa likt lokalt er en staaende maaling. Skrevet av deploy/staging/m02-fordeling-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "rader"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m02-fordeling-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "tenant",
+        "vert",
+        "sett_versjon",
+        "sett_sha256",
+        "bevisrot_sha256"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m02_revisjonslogg"
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sett_versjon": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m02_fordeling.py) slik staging FAKTISK kjoerte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene - samme form som datasett_sha256 (SP-11, paragraf 1.2)."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "comment": "Tillitsgrensens anker (#131-K2/#132): EN digest over hele m02-produsentflaten (manifestskjema.M02_BEVISROT_FILER), re-regnet av porten over sitt eget tre. Artefaktet beviser KJOERINGEN - verten bindes av deploymentkjeden."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "antall_tillat",
+        "antall_stopp",
+        "antall_unntak"
+      ],
+      "properties": {
+        "antall_tillat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "antall_stopp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "antall_unntak": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "rader": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "prefixItems": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "enum": [
+              "TILLAT",
+              "STOPP",
+              "UNNTAK"
+            ]
+          }
+        ]
+      },
+      "comment": "[loggpost_id, beslutning] per hendelse - fordelingens raadata."
+    }
+  }
+}

@@ -1,0 +1,50 @@
+# Auto-deploy (#177, eiervedtak 24/8): main → disponit-srv når CI er
+# grønn PÅ main. Kjører i skyen — natten er maskinuavhengig.
+#
+# Sikkerhetsformen:
+# * trigges av workflow_run (CI, main, success) og deployer
+#   `head_sha` — aldri «main nå» (CI-grønn-på-feil-commit-klassen),
+# * SSH som `disponitdeploy` med dedikert nøkkel (secret DEPLOY_SSH_KEY)
+#   og PINNET vertsnøkkel (DEPLOY_KNOWN_HOSTS) — aldri
+#   StrictHostKeyChecking=no,
+# * på serveren: sudoers avgrenset til NØYAKTIG
+#   /usr/local/lib/disponit-deploy.sh (rot-eid, validerer sha-en og
+#   krever ancestor-av-main), som kjører opp.sh — med #172-preflighten
+#   (checksum før vinduet) og selv-reverseringen i det.
+#
+# Workflow-filer merges FOR HÅND av eier (stående regel).
+name: Deploy til disponit-srv
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-disponit-srv
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-oppsett (pinnet vert)
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+      - name: Deploy head_sha
+        run: |
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes \
+              disponitdeploy@81.88.19.25 \
+              sudo /usr/local/lib/disponit-deploy.sh \
+              "${{ github.event.workflow_run.head_sha }}"

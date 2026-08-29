@@ -1,0 +1,116 @@
+# M-57 Rekrutteringsagent (ATS) — modulmanifest.
+#
+# Status er UNDER_UTVIKLING til M-57-aksepten (ordinær deployment-aksept,
+# 049–053) er kjørt og skrevet i basen — flippet til aktiv/produksjon er
+# katalogens AVLESNING av en aksepthendelse, aldri en påstand i forkant
+# (m56/m02-formen). Evidensgrensen `m57-v1` er registrert i
+# manifestskjema.KRAVGRENSER FØR byggingen (klarsignalet §0), og hvert
+# sjekklistepunkt under peker dit: et punkt uten definert, målbar grense
+# regnes som nei.
+#
+# Det bærende (klarsignalet §1): evalueringen er RÅDGIVENDE — den skriver
+# artefakter og ingenting utad. Utsendelsen er IRREVERSIBEL og skjer kun
+# fordi et menneske signerte; den er ikke et modulnoppdrag, men en
+# signaturbundet frigivelse gjennom 056-kjeden.
+# `m57_ats`, ikke `ats` (Cursor P1). Tre kanoner sier alt `m57_ats` —
+# kontraktens `eiermodul`, 056/057s CHECK-er og akseptartefaktets
+# `oppsett.modul` — og `registry.les_manifester` faller selv tilbake på
+# MAPPENAVNET når `id` mangler, altså `m57_ats`. En fjerde stavemåte her
+# er ikke en teknisk feil i dag (registerets id og `auth.modul_id` er to
+# forskjellige registre: det siste kommer fra `modultoken`/`modulhode`,
+# registrert ved onboarding), men den er nøyaktig fellen som alt har
+# kostet denne PR-en to runder som `m_ats`: den som skal registrere
+# modulen ved onboarding leser manifestet for å vite hva den heter.
+id: m57_ats
+navn: Rekrutteringsagent (ATS)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter:
+  - m01_policy                 # bestilling går gjennom beslutningsveien
+  - m02_revisjonslogg          # én skrivevei til evidenskjeden
+kjerne: platform/modules/m57_ats
+i18n_prefiks: m57ats
+
+# NOTATENES ORDLYD (eiers dom 14:33 på #153, C-armen til issue #166):
+# et notat sier hva punktet KREVER og hvilken måling som beviser det —
+# aldri mer enn porten faktisk måler. `_bevismaalinger_finnes` bekrefter
+# at en påberopt sti FINNES i artefaktet; den sier ingenting om at
+# målingen beviser NETTOPP dette punktet (den sier det selv i sin egen
+# docstring: «det er reviewansvar»). Fem av punktene under har derfor
+# ingen måling i `m57-v1` ennå, og notatet skal si det rett ut i stedet
+# for å love en akseptarc som skal bevise det. Punktbindingen som gjør
+# dette MEKANISK — et punkt uten erklærte målinger er uflippbart — er
+# #166; til den lander er ordlyden her den eneste ærligheten vi har.
+# «Et manifest skal aldri lese sterkere enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet
+      (m02-suite-formen) — suitetotaler, feiltall, modulandel og
+      stagingidentitet bundet til den aksepterte revisjonen. MÅLINGEN
+      FINNES IKKE i `m57-v1`: grensen bærer invariantpar, to ja-punkter
+      og ytelsesparet, ingen suitemålinger og ingen stagingidentitet.
+      Punktet er derfor ikke flippbart på evidens ennå (#166).
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
+      lokalt (CI) og på staging, med BEGGE datasett-identitetene i
+      artefaktet og en byte-likhet mellom dem, målt sammen med
+      fasit-resultatet (m02-fordelingsformen). MÅLINGEN FINNES IKKE i
+      `m57-v1`: hverken lokal eller staging datasett-digest er med, og
+      grensen sammenlikner dem ikke. Ikke flippbart på evidens ennå
+      (#166).
+  revisjonslogg_korrekt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
+      står i revisjonsloggen, målt som hendelser med identitet — ikke som
+      en påstand om at de gjør det. MÅLINGEN FINNES IKKE i `m57-v1`:
+      grensen bærer ingen revisjonsmålinger. Merk at avskruingsdøra selv
+      står utsatt i #159 (den er i dag selvattestert), så dette punktet
+      kan ikke bevises før #159 har gitt den en varig hendelse. Ikke
+      flippbart på evidens ennå (#166).
+  feilinjisering_til_unntakskø:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
+      promotert liste (SP-3) OG at den faktisk leverte en post i
+      unntakskøen — et talt eller navngitt køelement bundet til den
+      injiserte jobben. MÅLINGEN FINNES IKKE i `m57-v1` for andre
+      halvdel: `kjoring_delvis_resultat_promotert` beviser bare at noe
+      IKKE ble promotert, og en kjøring som mister feilen helt består
+      den like godt som en som køer den. Ikke flippbart på evidens ennå
+      (#166).
+  ytelse_bestatt:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
+      `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) i
+      `m57-v1` — de to SAMMEN, siden en varighet uten last er en tom
+      kjøring og en full bunt uten varighet bare er en påstand om at det
+      gikk. MÅLINGEN FINNES: dette er det ene punktet med en ekte,
+      pinnet grense i `m57-v1` (§0, før bygging). Statusen er `nei` fordi
+      prøvekjøringen ikke er kjørt, ikke fordi grensen mangler. Avvik i
+      prøvekjøringen oppdaterer klarsignalet, aldri porten. Merk at
+      240-minuttersfristen selv står utsatt i #165 (den er lengre enn
+      lease-taket som dekker den).
+  rollback_testet:
+    status: nei
+    krav_id: m57-v1
+    notat: >-
+      KREVER: 049-flippedrillen for modulens RELEASE — at forrige
+      M-57-release kan gjenoppta arbeid etter rollback, med
+      release-digest, drenering, claim og promotering målt, slik
+      `rollback-m56-v1` gjør det. MÅLINGEN FINNES IKKE i `m57-v1`: det
+      eneste M57-feltet som kan påberopes er
+      `ddl_begge_kjoringer_gronne`, og det er SP-10/DDL-idempotens — en
+      annen ting enn en releaseflipp. Ikke flippbart på evidens ennå
+      (#166).

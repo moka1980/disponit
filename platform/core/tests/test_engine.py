@@ -203,6 +203,39 @@ def test_irreversibel_uten_rammer_avvises(tjeneste):
     assert any("irreversibel" in f for f in valider_policy(p))
 
 
+def test_irreversibel_auto_med_bare_grenser_avvises(tjeneste):
+    """Grenser alene er ikke nok for en irreversibel handling som kan kjøre
+    automatisk. Replay-vernet henger på attestasjonens jti, og attestasjonen
+    finnes bare fordi et vilkår krever den — uten vilkår er jti-listen tom og
+    handlingen kan spilles av på nytt. Grensene begrenser hver avspilling,
+    ikke antallet.
+
+    MUTASJONEN SOM DREPER DENNE: la regelen godta `grenser or vilkaar`, slik
+    den gjorde før. Da passerer en irreversibel auto-handling uten et eneste
+    vilkår, og ferdigdefinisjonen lover et vern kontrollplanet ikke har.
+    """
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "auto"
+    h["reversering"] = {"type": "irreversibel"}
+    assert h.get("grenser")            # grensene står igjen — og er ikke nok
+    assert any("irreversibel" in f and "vilkår" in f for f in valider_policy(p))
+
+
+def test_irreversibel_alltid_stopp_uten_vilkaar_godtas(tjeneste):
+    """…men `alltid_stopp` trenger ikke vilkåret: handlingen utføres aldri
+    automatisk, så det finnes ingen avspilling å verne mot. Ellers ville
+    regelen tvunget fram et meningsløst vilkår på handlinger som per
+    definisjon alltid går til menneske."""
+    p = yaml.safe_load(yaml.safe_dump(tjeneste))
+    h = p["handlinger"][0]
+    del h["vilkaar"]
+    h["modus"] = "alltid_stopp"
+    h["reversering"] = {"type": "irreversibel"}
+    assert not [f for f in valider_policy(p) if "irreversibel" in f]
+
+
 # ---------- Autentisert kontekst (funn: uautentisert rolle) ---------------
 
 def test_uten_kontekst_stopp(tjeneste):
@@ -540,6 +573,11 @@ def test_alle_filkall_har_eksplisitt_utf8():
     # hele tatt — revisjonsloggen skriver ferdig UTF-8-kodede bytes dit med
     # vilje, for å styre skrivingen selv (se audit.skriv).
     raa_fd = re.compile(r"\bos\.(open|write|fdopen)\(")
+    # ZipFile.open gir en binær medlemsstrøm og har heller ingen
+    # encoding-parameter — samme klasse som os.open over. Konvensjonen i
+    # repoet er at zipfile-håndtaket heter `zf`, og carve-outen er bundet
+    # til nettopp det navnet så den ikke blir en generell .open-åpning.
+    zip_stroem = re.compile(r"\bzf\.open\(")
     rot = Path(__file__).resolve().parents[3]
     synder = []
     for fil in (rot / "platform").rglob("*.py"):
@@ -548,7 +586,7 @@ def test_alle_filkall_har_eksplisitt_utf8():
         linjer = fil.read_text(encoding="utf-8").splitlines()
         for nr, linje in enumerate(linjer, 1):
             if not tekstkall.search(linje) or binaer.search(linje) \
-                    or raa_fd.search(linje):
+                    or raa_fd.search(linje) or zip_stroem.search(linje):
                 continue
             # Kallet kan gå over flere linjer, og `encoding=` kan stå på en
             # senere. Se på hele setningen: samle linjer til parentesene går

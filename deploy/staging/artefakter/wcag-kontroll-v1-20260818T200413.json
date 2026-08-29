@@ -1,0 +1,29 @@
+{
+  "bestatt": true,
+  "krav_id": "wcag-kontroll-v1",
+  "maalt": {
+    "avvik_mot_fasit": 0,
+    "egress_lekkasjer": 0,
+    "egress_motormiljo_maalt": 1,
+    "evidensfrist_reapet": 1,
+    "evidensfrist_sak_opprettet": 1,
+    "feilinjisering_feilet_med_kvittering": 1,
+    "feilinjisering_promoterte_artefakter": 0,
+    "frekvens_avvist_over_grense": 1,
+    "frekvens_tillat": 4,
+    "kjoringer_krav": 10,
+    "kjoringer_med_maalt_signatur": 0,
+    "kjoringer_rent_innen_frist": 10,
+    "robots_5xx_krav": 1,
+    "robots_5xx_sider_kontrollert": 1,
+    "robots_private_forisporsler": 0
+  },
+  "oppsett": {
+    "image_digest": "af92b70542f18874ebab5807b1bdcca4f69a84b2cd6dd30066e7579ce1b88325",
+    "kilde": "deploy/staging/artefakter/evidens-wcag-runde-20260818.jsonl",
+    "kilde_sha256": "b2a11cf2396d0d91aba0fe7f6621d5fed8bbfb744a82d1a6556239f23f73e1e1",
+    "modul": "m_wcag_audit",
+    "release": "wcag-r1"
+  },
+  "ts": "2026-08-18T20:05:32.426295+00:00"
+}

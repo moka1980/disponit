@@ -126,7 +126,7 @@ def main() -> int:                                        # noqa: C901
 
     # ---------------------------------------------------------------- 2
     def livslop(ny_versjon: str, muter, merke: str, *, tenant=None,
-                aktorer=None):
+                aktorer=None, forvent_stopp=False):
         """Hele veien: utkast → validert → runde → to attestasjoner → aktivert."""
         print(f"\n== {merke}  fire-øyne-livsløp mot {ny_versjon} ==")
         TEN = tenant or TENANT
@@ -151,6 +151,14 @@ def main() -> int:                                        # noqa: C901
             forventet_utkastversjon=1, idempotency_key=idem,
             input_hash=f"{TEN}\x1f{uid}\x1fvalider\x1f1\x1f{idem}")
         rt.commit()
+        if forvent_stopp and v.get("utfall") != "validert":
+            # Kalleren KREVER at kjeden brytes (port 6). Valideringen sier nå
+            # fra om en umulig versjon som tekst — tidligere enn rundeåpningen
+            # og før noen signerer. Et stopp her er suksess, ikke en rød port.
+            port("kjeden stopper allerede ved valideringen", True,
+                 str(v.get("feil"))[:110])
+            rt.close()
+            return None
         port("utkastet validerer", v.get("utfall") == "validert",
              str(v.get("feil") or v.get("utfall")))
         if v.get("utfall") != "validert":
@@ -277,9 +285,11 @@ def main() -> int:                                        # noqa: C901
     # som er bedre enn å stoppe den til slutt. Porten krever derfor bare at den
     # STOPPER, ikke hvor.
     try:
-        livslop("2.0.0", lambda p: None, "6", tenant=legacy, aktorer=(lf, lg))
-        port("«2.0.0» aktiveres IKKE mot en aktiv «2»", False,
-             "kjeden gikk helt gjennom — monotonivakten er nede")
+        u6 = livslop("2.0.0", lambda p: None, "6", tenant=legacy,
+                     aktorer=(lf, lg), forvent_stopp=True)
+        port("«2.0.0» aktiveres IKKE mot en aktiv «2»", u6 is None,
+             "stoppet før aktivering" if u6 is None
+             else "kjeden gikk helt gjennom — monotonivakten er nede")
     except Exception as e:                                    # noqa: BLE001
         port("«2.0.0» aktiveres IKKE mot en aktiv «2»", True,
              f"{type(e).__name__}: {str(e)[:80]}")
@@ -320,6 +330,157 @@ def main() -> int:                                        # noqa: C901
              f"{type(e).__name__}: {str(e)[:110]}")
     finally:
         rt2.close()
+
+    print("\n== 8  angre: en aktivert, ALDRI brukt policy kan slettes ==")
+    # Eiers behov, målt to ganger i produksjon (tjenestebedrift1/2): aktivert
+    # ved feil, og eneste vei ut var håndskrevet SQL. `slett_ubrukt_policy`
+    # (032) er den styrte veien: den nekter hvis policyen har styrt én
+    # beslutning, bevarer utkast/attestasjoner, og frigjør versjonsnumrene.
+    rt8 = koble(DSN)
+    try:
+        sett_kontekst(rt8, malten, "rundtur", "r9")
+        # Slettingen er bundet til den policyen kalleren SÅ: versjon +
+        # innholdshash, nøyaktig som `/v1/policy/aktiv` serverer dem. Er en ny
+        # versjon aktivert i mellomtiden, avvises slettingen i stedet for å ta
+        # den nye med seg.
+        aktiv = rt8.execute(
+            "SELECT versjon, innholds_hash FROM policyer"
+            " WHERE tenant=%s AND policy_id=%s AND aktiv",
+            (malten, pid)).fetchone()
+        n_slettet = rt8.execute(
+            "SELECT slett_ubrukt_policy(%s,%s,%s,%s)",
+            (malten, pid, aktiv[0], aktiv[1])).fetchone()[0]
+        rt8.commit()
+        sett_kontekst(rt8, malten, "rundtur", "r10")
+        port("policyen slettes (aldri brukt)", n_slettet >= 1,
+             f"{n_slettet} versjonsrad(er)")
+        try:
+            pr.hent_aktiv(rt8, malten, pid)
+            port("tenanten står ærlig uten aktiv policy", False,
+                 "hent_aktiv fant fortsatt en policy")
+        except Exception as e:                                # noqa: BLE001
+            port("tenanten står ærlig uten aktiv policy",
+                 type(e).__name__ == "PolicyUkjent", type(e).__name__)
+        # Historien består: utkastet som ble attestert står som `aktivert`.
+        rad = rt8.execute(
+            "SELECT count(*) FROM policyutkast WHERE tenant=%s"
+            " AND policy_id=%s AND status='aktivert'", (malten, pid)).fetchone()
+        port("attestasjonshistorikken består", rad[0] >= 1,
+             f"{rad[0]} aktiverte utkast")
+    finally:
+        rt8.close()
+
+    print("\n== 9  gjenåpne: et validert utkast kan redigeres og gå ny runde ==")
+    # Eiers krav 17/8, ordrett: «man må kunne redigere samme policy selv etter
+    # validering … men da kan den igjen bli attestert og validert.» Porten går
+    # HELE veien: et utkast som ARVER den aktive versjonen (17/8-fellen som ga
+    # seks uforklarte 409), byttes til neste ledige ved opprettelsen, valideres,
+    # får en åpen runde — og gjenåpnes så: runden trekkes, innholdet redigeres,
+    # og den NYE valideringen + en helt ny fire-øyne-runde tar det til aktivert.
+    rt9 = koble(DSN)
+    try:
+        sett_kontekst(rt9, TENANT, "rundtur", "r11")
+        aktiv_v = rt9.execute(
+            "SELECT versjon FROM policyer WHERE tenant=%s AND policy_id=%s"
+            " AND aktiv", (TENANT, pid)).fetchone()[0]
+        innhold9 = copy.deepcopy(grunnpolicy)
+        innhold9["meta"] = {**innhold9["meta"], "versjon": aktiv_v}
+        idem = secrets.token_hex(8)
+        res = policyadmin.opprett_utkast(
+            rt9, tenant=TENANT, aktor=forfatter, request_id="r",
+            policy_id=pid, innhold=innhold9, idempotency_key=idem,
+            input_hash=f"{TENANT}\x1fny9\x1f{idem}")
+        uid9 = res["utkast_id"]
+        sett_kontekst(rt9, TENANT, "rundtur", "r12")
+        lagret_v = rt9.execute(
+            "SELECT innhold->'meta'->>'versjon' FROM policyutkast"
+            " WHERE tenant=%s AND utkast_id=%s", (TENANT, uid9)).fetchone()[0]
+        port("en arvet, opptatt versjon byttes med neste ledige ved"
+             " opprettelsen", lagret_v != aktiv_v, f"{aktiv_v} → {lagret_v}")
+
+        idem = secrets.token_hex(8)
+        v = policyadmin.valider_utkast(
+            rt9, tenant=TENANT, aktor=forfatter, request_id="r",
+            utkast_id=uid9, forventet_utkastversjon=1, idempotency_key=idem,
+            input_hash=f"{TENANT}\x1f{uid9}\x1fvalider\x1f1\x1f{idem}")
+        gammel_hash = v.get("innholds_hash")
+        idem = secrets.token_hex(8)
+        policyadmin.opprett_aktiveringsrunde(
+            rt9, tenant=TENANT, utkast_id=uid9, aktor=forfatter,
+            request_id="r", idempotency_key=idem,
+            input_hash=f"{TENANT}\x1f{uid9}\x1fapne9\x1f{idem}", naa=naa())
+
+        idem = secrets.token_hex(8)
+        g = policyadmin.gjenapne_utkast(
+            rt9, tenant=TENANT, aktor=forfatter, request_id="r",
+            utkast_id=uid9, forventet_utkastversjon=1, idempotency_key=idem,
+            input_hash=f"{TENANT}\x1f{uid9}\x1fgjenapne\x1f1\x1f{idem}",
+            naa=naa())
+        sett_kontekst(rt9, TENANT, "rundtur", "r13")
+        rstatus = rt9.execute(
+            "SELECT status FROM aktiveringsrunde WHERE tenant=%s AND"
+            " utkast_id=%s ORDER BY runde DESC LIMIT 1",
+            (TENANT, uid9)).fetchone()[0]
+        hasj = rt9.execute(
+            "SELECT innholds_hash FROM policyutkast WHERE tenant=%s"
+            " AND utkast_id=%s", (TENANT, uid9)).fetchone()[0]
+        port("gjenåpningen trekker runden og tiner utkastet",
+             g.get("status") == "utkast" and rstatus == "kansellert"
+             and hasj is None,
+             f"status={g.get('status')} runde={rstatus} hash={hasj!r}")
+
+        deler = lagret_v.split(".")
+        deler[-1] = str(int(deler[-1]) + 1)
+        redigert_v = ".".join(deler)
+        innhold9r = copy.deepcopy(grunnpolicy)
+        innhold9r["meta"] = {**innhold9r["meta"], "versjon": redigert_v,
+                             "status": "produksjon"}
+        idem = secrets.token_hex(8)
+        # Gjenåpningen BUMPET utkastversjonen (Codex P1) — redigeringen må
+        # bruke den returnerte, ikke den man husket fra før valideringen.
+        r = policyadmin.rediger_utkast(
+            rt9, tenant=TENANT, aktor=forfatter, request_id="r",
+            utkast_id=uid9, forventet_utkastversjon=g["utkastversjon"],
+            innhold=innhold9r,
+            idempotency_key=idem, input_hash=f"ih9-{idem}")
+        idem = secrets.token_hex(8)
+        v2 = policyadmin.valider_utkast(
+            rt9, tenant=TENANT, aktor=forfatter, request_id="r",
+            utkast_id=uid9, forventet_utkastversjon=r["utkastversjon"],
+            idempotency_key=idem, input_hash=f"ihv9-{idem}")
+        port("den nye valideringen fryser en NY hash",
+             v2.get("utfall") == "validert"
+             and v2.get("innholds_hash") != gammel_hash,
+             str(v2.get("feil") or v2.get("utfall")))
+
+        idem = secrets.token_hex(8)
+        runde9 = policyadmin.opprett_aktiveringsrunde(
+            rt9, tenant=TENANT, utkast_id=uid9, aktor=forfatter,
+            request_id="r", idempotency_key=idem,
+            input_hash=f"{TENANT}\x1f{uid9}\x1fapne9b\x1f{idem}", naa=naa())
+        dh9 = runde9["diff_hash"]
+        for aktor in (forfatter, godkjenner):
+            idem = secrets.token_hex(8)
+            a = policyadmin.attester_aktivering(
+                rt9, mac, tenant=TENANT, aktor=aktor, request_id="r",
+                utkast_id=uid9, forventet_diff_hash=dh9, idempotency_key=idem,
+                input_hash=f"{TENANT}\x1f{uid9}\x1f{aktor}\x1f{dh9}\x1f{idem}",
+                naa=naa())
+            rt9.commit()
+        port("det gjenåpnede utkastet går HELE veien til aktivert",
+             a.get("utfall") == "aktivert"
+             and a.get("versjon") == redigert_v,
+             f"utfall={a.get('utfall')} versjon={a.get('versjon')}")
+        sett_kontekst(rt9, TENANT, "rundtur", "r14")
+        pa, _ = pr.hent_aktiv(rt9, TENANT, pid)
+        port("beslutningsveien ser den REDIGERTE versjonen",
+             pa.get("meta", {}).get("versjon") == redigert_v,
+             f"aktiv={pa.get('meta', {}).get('versjon')}")
+    except Exception as e:                                    # noqa: BLE001
+        port("gjenåpne-livsløpet fullfører", False,
+             f"{type(e).__name__}: {str(e)[:110]}")
+    finally:
+        rt9.close()
 
     mig.close()
 

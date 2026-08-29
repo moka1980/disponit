@@ -1,0 +1,17 @@
+# 038 §5: hvert 5. minutt.
+#
+# Fristene er 30/90 minutter, så kadensen avgjør ikke HVA som lukkes —
+# bare hvor lenge et utløpt oppdrag står åpent før saken fødes. 5 minutter
+# holder ventetiden ubetydelig mot fristene selv; `SKIP LOCKED` i
+# funksjonen gjør en overlappende kjøring trygg.
+
+[Unit]
+Description=Disponit evidensfrist-reapertimer
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

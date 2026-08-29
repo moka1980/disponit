@@ -42,6 +42,40 @@ def test_ekstra_aad_binder_og_avviker():
         k.dekrypter(dek, ct, nonce, T, KID)
 
 
+def test_krypteringen_kaster_ikke_paa_et_ensomt_surrogat():
+    """Codex P2: `ensure_ascii=False` gjorde serialiseringen til stedet
+    avsenderen kunne kaste fra — midt i revisjonstransaksjonen.
+
+    `json.loads` godtar `"\\ud800"`, så et ensomt surrogat blir en helt
+    alminnelig `str` i hendelsen. `input_hash` ble gjort total
+    (`tekstbytes.utf8`), men verdien lever videre gjennom
+    `minimer_payload` og havner her: den strenge UTF-8-kodingen kastet
+    `UnicodeEncodeError`, `_skriv_unntak` rullet tilbake den ALT skrevne
+    loggposten, og svaret ble `logging_feilet`. Altså nøyaktig den
+    revisjonssporbypassen den forrige fiksen skulle lukke, ett steg
+    lenger ned.
+
+    Kontroll: sett `ensure_ascii=False` tilbake i `krypter`, så kaster
+    første `krypter` under.
+    """
+    dek = _dek()
+    payload = {"ressurs_id": "kunde\ud800.example", "grunn": "café"}
+    ct, nonce = k.krypter(dek, payload, T, KID)
+    # RUNDTUREN er hele poenget: escapen `\ud800` er den formen som gir
+    # kodeenheten uendret tilbake gjennom `json.loads`. `surrogatepass`
+    # ville gitt bytes `json.loads` selv nekter å lese — et ciphertext
+    # ingen kan åpne, altså den samme revisjonsraden tapt én dag senere.
+    assert k.dekrypter(dek, ct, nonce, T, KID) == payload
+
+    # Escapingen er INJEKTIV: en ekte streng `\ud800` (seks tegn) er ikke
+    # den samme verdien som kodeenheten, og blir det ikke av å skrives
+    # ned. Slo de sammen, kunne to ulike saker fått samme payload.
+    tekst = {"ressurs_id": "kunde\\ud800.example"}
+    ct2, nonce2 = k.krypter(dek, tekst, T, KID)
+    assert k.dekrypter(dek, ct2, nonce2, T, KID) == tekst
+    assert tekst != payload
+
+
 def test_intensjon_aad_deterministisk_og_policyhash_bundet():
     a = k.intensjon_aad(7, "h", 1, "hashA")
     assert a == k.intensjon_aad(7, "h", 1, "hashA")

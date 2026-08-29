@@ -77,6 +77,52 @@ def _samler():
     return sendt, (lambda til, emne, tekst: sendt.append((til, emne, tekst)))
 
 
+def _avslutt(c, rader):
+    """Sett klaimede rader TERMINALT, gjennom fullføringsveien.
+
+    Et klaim er ikke en opprydding (Codex P2 på #107). En rad som bare er
+    klaimet står `under_sending` med et forsøkstall under taket, og det er
+    nøyaktig tilstanden `varsel_rekoe` finnes for å redde: når leasen (30
+    min) er passert, løftes den tilbake til `koet`. Da er «ryddet» søppel
+    tilbake i den GLOBALE køen, og neste `kjor()` — i andre pytest-runde
+    mot samme base, eller i en lokal rerun timer senere — klaimer det
+    sammen med sine egne rader og bryter eksakte sendt-tellinger.
+
+    `sendt` er den ene terminale utgangen: `varsel_rekoe` ser bare
+    `feilet` og `under_sending`, så en `sendt`-rad kommer aldri tilbake.
+    `feilet` ville ikke duget — den rekøes etter backoff, som er den
+    samme feilen med en annen klokke.
+
+    Veien er `varsel_sett_epoststatus`, ikke en UPDATE mot tabellen:
+    ryddingen skal gå gjennom de samme portene som produksjonskoden, og
+    da er en avvist rydding et rødt tall og ikke en stille rest.
+    """
+    for vid, klaim in rader:
+        assert c.execute("SELECT varsel_sett_epoststatus(%s,%s,'sendt',NULL)",
+                         (vid, klaim)).fetchone()[0] is True, (
+            f"rydding av varsel {vid} ble avvist — raden blir stående "
+            "under_sending og rekøes når leasen løper ut")
+    c.commit()
+
+
+def _toem_koen(c):
+    """Tøm den globale køen gjennom klaimveien, og avslutt det som tas.
+
+    Køen er global (klaimet er SECURITY DEFINER og eies av en
+    BYPASSRLS-rolle), så alt som ligger igjen her er synlig for enhver
+    annen test på tvers av tenanter. Draining alene flytter bare søppelet
+    fra `koet` til `under_sending` — se `_avslutt` for hvorfor det ikke er
+    en opprydding.
+    """
+    while True:
+        rader = c.execute("SELECT id, klaim FROM varsel_klaim_epost(500)"
+                          ).fetchall()
+        c.commit()
+        if not rader:
+            return
+        _avslutt(c, rader)
+
+
 @pg
 def test_sender_bare_til_verifiserte_adresser():
     """En uverifisert e-post i profilen er en PÅSTAND fra en IdP, ikke et
@@ -4194,3 +4240,168 @@ def test_hver_unit_med_loadcredential_hydrerer_dem():
             "aldri — den avbryter på en miljøvariabel den HAR fått")
         maalt += 1
     assert maalt >= 3, f"porten målte bare {maalt} units — regexen råtnet"
+
+
+@pg
+def test_klaimet_tar_aldri_flere_enn_grensen_i_ett_kall():
+    """046 (issue #100, samme klasse som 041 §18): kandidatvalget er en
+    MATERIALIZED CTE — nøyaktig ÉN evaluering. Radtallet per kall MÅLES:
+    med åtte køede rader og grense tre skal kallet klaime nøyaktig tre,
+    og de fem andre skal stå urørt i `koet`.
+
+    Kaskadevilkåret som gjorde claim_neste_sak-varianten til «én claim
+    tømte hele køen» er til stede også her: klaimet endrer
+    `epost_status`, så en rescan av subspørringen ser klaimede rader
+    falle ut av filteret og fortsette forbi LIMIT-intensjonen. En
+    planformflip kan ikke fremprovoseres herfra — derfor er garantien
+    flyttet inn i SQL-en (MATERIALIZED), og denne testen er
+    regresjonsvernet på INTENSJONEN: grensen ER radtallet.
+
+    Merk hva den derfor IKKE er (Codex P2 på #107): radtallet alene
+    skiller ikke fiksen fra feilen — 031-formen returnerer også tre
+    under denne testens normale plan. Garantien selv måles i
+    `test_kandidatgrensen_er_materialisert_i_den_utrullede_funksjonen`
+    under.
+
+    I tillegg: hvert klaim har sin EGEN identitet (tokenet er ferskt per
+    rad), og et kall til tar de neste i FIFO-orden uten å røre de alt
+    klaimede."""
+    c = _conn()
+    klaimet: list = []
+    try:
+        # Køen er global (definer, på tvers av tenanter) og kan bære rester
+        # fra andre tester: tøm den gjennom KLAIMVEIEN selv, så målingen
+        # under starter fra kjent tilstand uten å røre tabellen direkte.
+        # `_toem_koen` avslutter det den tar — et klaim er ikke en rydding.
+        _toem_koen(c)
+        _kontekst(c)
+        bid = _bruker(c, "grense", "grense@example.com")
+        for i in range(8):
+            _ko(c, bid, f"grense-{i}")
+        c.commit()
+        _kontekst(c)
+        rader = c.execute("SELECT id, klaim FROM varsel_klaim_epost(3)"
+                          ).fetchall()
+        c.commit()
+        klaimet += rader
+        _kontekst(c)
+        assert len(rader) == 3, \
+            f"grense 3 klaimet {len(rader)} rader (041 §18-klassen)"
+        assert len({k for _, k in rader}) == 3, "klaimtokener delt mellom rader"
+        status = dict(c.execute(
+            "SELECT epost_status, count(*) FROM varsel WHERE tenant=%s"
+            " AND ressurs_id LIKE 'grense-%%' GROUP BY epost_status",
+            (TEN,)).fetchall())
+        c.rollback()
+        assert status == {"under_sending": 3, "koet": 5}, status
+        # Neste kall: de tre neste, aldri de alt klaimede.
+        _kontekst(c)
+        rader2 = c.execute("SELECT id, klaim FROM varsel_klaim_epost(3)"
+                           ).fetchall()
+        c.commit()
+        klaimet += rader2
+        assert len(rader2) == 3
+        assert not ({r[0] for r in rader2} & {r[0] for r in rader}), \
+            "et kall til klaimet en alt klaimet rad"
+    finally:
+        # Testen la åtte rader i en GLOBAL kø, synlige for enhver annen test
+        # på tvers av tenanter. CI kjører suiten to ganger mot SAMME base
+        # (`ci.yml`), så restene ville dukket opp inne i andre runde og brutt
+        # eksakte sendt-tellinger der. Ryddingen ligger i `finally`, slik at
+        # en feilet assertion ikke etterlater søppelet heller.
+        #
+        # TO KILDER, SAMME KRAV (Codex P2 på #107): de seks radene testen
+        # SELV klaimet står `under_sending` — de er ikke i køen, men de er
+        # rekø-bare, og leasen gjør dem til kø igjen om 30 minutter. De må
+        # avsluttes med sine EGNE tokener (`klaimet`); et klaim til får dem
+        # ikke, for klaimet tar bare `koet`. De to siste står fortsatt i
+        # `koet` og må tas gjennom klaimveien først. Begge veier ender
+        # terminalt, ellers er ryddingen bare utsatt.
+        try:
+            c.rollback()
+            _avslutt(c, klaimet)
+            _toem_koen(c)
+            # Målingen, ikke bare intensjonen: ingen av testens rader står
+            # igjen i en tilstand `varsel_rekoe` kan løfte tilbake til køen.
+            # MUTASJONEN SOM DREPER DENNE: la ryddingen bare klaime (drop
+            # `_avslutt`) — da står seks til åtte rader `under_sending`.
+            _kontekst(c)
+            rest = dict(c.execute(
+                "SELECT epost_status, count(*) FROM varsel WHERE tenant=%s"
+                " AND ressurs_id LIKE 'grense-%%'"
+                " AND epost_status IN ('koet','under_sending')"
+                " GROUP BY epost_status", (TEN,)).fetchall())
+            c.rollback()
+            assert rest == {}, (
+                f"ryddingen etterlot rekø-bare rader: {rest} — de kommer "
+                "tilbake i den globale køen når leasen løper ut")
+        finally:
+            c.close()
+
+
+@pg
+def test_kandidatgrensen_er_materialisert_i_den_utrullede_funksjonen():
+    """046: garantien, ikke bare intensjonen (Codex P2 på #107).
+
+    Rescan-feilen er LATENT. Den krever en planform ingen kan
+    fremprovosere fra en test, og 031-kroppen — `v.id IN (SELECT …
+    LIMIT … FOR UPDATE SKIP LOCKED)` — returnerer derfor nøyaktig tre
+    rader under testen over også. Et radtall er altså ikke et
+    regresjonsvern: fjern `MATERIALIZED`, og målingen blir stående grønn.
+
+    Det som faktisk endret seg er hvor grensen BOR. En LIMIT i en
+    subspørring begrenser per EVALUERING; flyttet inn i en CTE merket
+    MATERIALIZED er antall evalueringer nøyaktig én, uansett hvilken
+    planform policyflatene senere fremtvinger. Da er det den formen som
+    må måles: LIMIT-en og radlåsen INNE i det materialiserte
+    kandidatvalget, og UPDATE-en som joiner kandidatene inn — ikke en
+    subspørring planleggeren står fritt til å reskanne.
+
+    Måles på den UTRULLEDE kroppen (`pg_get_functiondef`), ikke på
+    migrasjonsfilen: filen kan ligge der uavspilt, og det er formen
+    basen kjører som holder køen.
+
+    MUTASJONEN SOM DREPER DENNE: stryk `MATERIALIZED` i 046, eller rull
+    kandidatvalget tilbake til 031-formen.
+    """
+    import re
+    c = _conn()
+    try:
+        kropp = c.execute(
+            "SELECT pg_get_functiondef('varsel_klaim_epost(int,int)'"
+            "::regprocedure)").fetchone()[0]
+        c.rollback()
+    finally:
+        c.close()
+
+    sql = " ".join(kropp.split()).lower()
+    start = re.search(r"with\s+kandidat\s+as\s+materialized\s*\(", sql)
+    assert start, ("kandidatvalget er ikke en MATERIALIZED CTE i den "
+                   f"utrullede funksjonen:\n{kropp}")
+
+    # Balansert telling, ikke «neste `)`»: CTE-kroppen bærer selv
+    # parenteser (`NOT EXISTS (…)`, `greatest(…)`, `least(…)`), og ingen
+    # strengliteral i kroppen inneholder en parentes.
+    aapen = start.end() - 1
+    dybde = 0
+    slutt = None
+    for j in range(aapen, len(sql)):
+        if sql[j] == "(":
+            dybde += 1
+        elif sql[j] == ")":
+            dybde -= 1
+            if dybde == 0:
+                slutt = j
+                break
+    assert slutt is not None, f"ubalanserte parenteser i kroppen:\n{kropp}"
+    cte, resten = sql[aapen + 1:slutt], sql[slutt + 1:]
+
+    assert "limit" in cte, \
+        "grensen ligger UTENFOR det materialiserte kandidatvalget"
+    assert re.search(r"for\s+update\s+of\s+k\s+skip\s+locked", cte), \
+        "radlåsen ligger UTENFOR det materialiserte kandidatvalget"
+    assert re.search(r"v\.id\s*=\s*kd\.id", resten), \
+        "UPDATE-en henter ikke kandidatene fra CTE-en"
+    assert not re.search(r"\bin\s*\(\s*select\b", resten), \
+        ("UPDATE-en velger fortsatt kandidater med en subspørring — "
+         "031-formen er tilbake")

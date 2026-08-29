@@ -112,7 +112,7 @@ test("Landing og nye adminflater: synlig tekst kommer fra locale, ikke hardkodin
                  neste: "M-2" }] });
   tekst += document.body.textContent;
   for (const k of [
-    "site.hero.tittel",
+    "site.home.tittel",
     "site.modul.m1.navn",
     "ui.kundeadmin.tittel",
     "ui.admin.tittel",

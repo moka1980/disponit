@@ -49,7 +49,12 @@ const STD = {
 };
 
 let SVAR;
+// Hele URL-en, ikke bare stien: køvalget lever i spørrestrengen, og en test
+// som bare ser stien kan ikke skille `?sakstype=drift` fra ingen kø i det
+// hele tatt.
+const URLER = [];
 globalThis.fetch = async (url) => {
+  URLER.push(url);
   const sti = url.split("?")[0];
   const oppf = SVAR[sti];
   if (!oppf) return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
@@ -166,6 +171,139 @@ test("Unntak: liste + detalj med begrunnelse og historikk", async () => {
   assert.ok(dlg.textContent.includes(t("hendelse.opprettet")));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// KØEN NÅS AV FLATEN NØKKELTALLENE PEKER PÅ (Codex P2).
+//
+// M-16-kortet teller lukkede unntak over ALLE sakstypene økten kan se, og
+// når utsnittet er avkuttet peker det hit med «se hele listen». Flaten sendte
+// aldri `sakstype` og fikk derfor alltid serverens `normal` — for en økt med
+// `security:read` kunne avkuttingen altså være forårsaket av rader knappen
+// ikke hadde noen vei til. De to testene holder de to sidene av det løftet.
+const KO_CTX = { scopes: ["exceptions:read", "security:read"] };
+
+function sisteUnntakskall() {
+  return [...URLER].reverse().find((u) => u.split("?")[0] === "/v1/unntak");
+}
+
+test("Unntak: uten `security:read` finnes ingen kø å velge mellom", async () => {
+  SVAR = STD;
+  URLER.length = 0;
+  const h = nyHoved();
+  visUnntak(h, ctx({ scopes: ["exceptions:read"] }));
+  await vent(() => h.querySelector("tbody button"));
+  // Én filterbar — statusfilteret. En velger med ett alternativ ville
+  // dessuten antydet at det finnes andre køer, som er nettopp det
+  // v3-delta pkt. 5 verner (`app.py:84`).
+  assert.equal(h.querySelectorAll(".filterbar").length, 1);
+  assert.ok(!h.textContent.includes(t("sakstype.sikkerhet")));
+  assert.ok(!h.textContent.includes(t("sakstype.drift")));
+  // Køen er likevel EKSPLISITT i kallet: flaten ber om den den viser.
+  assert.match(sisteUnntakskall(), /[?&]sakstype=normal(&|$)/);
+});
+
+test("Unntak: med `security:read` når flaten hver kø nøkkeltallene teller",
+  async () => {
+    SVAR = STD;
+    URLER.length = 0;
+    const h = nyHoved();
+    visUnntak(h, ctx(KO_CTX));
+    await vent(() => h.querySelector("tbody button"));
+    const barer = h.querySelectorAll(".filterbar");
+    assert.equal(barer.length, 2, "køvelgeren mangler");
+    const ko = barer[0];
+    assert.equal(ko.getAttribute("aria-label"), t("ui.unntak.sakstype"));
+    const knapper = [...ko.querySelectorAll("button")];
+    assert.deepEqual(knapper.map((b) => b.textContent.trim()),
+      [t("sakstype.normal"), t("sakstype.sikkerhet"), t("sakstype.drift")]);
+    // Det valgte er annonsert, ikke bare tegnet.
+    assert.deepEqual(knapper.map((b) => b.getAttribute("aria-pressed")),
+      ["true", "false", "false"]);
+    assert.match(sisteUnntakskall(), /[?&]sakstype=normal(&|$)/);
+
+    // Hver av de vernede køene er FAKTISK nåbar herfra — det er hele
+    // innholdet i løftet nøkkeltallknappen gir.
+    for (const [i, forventet] of [[1, "sikkerhet"], [2, "drift"]]) {
+      URLER.length = 0;
+      h.querySelectorAll(".filterbar")[0].querySelectorAll("button")[i]
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => sisteUnntakskall());
+      assert.match(sisteUnntakskall(),
+        new RegExp(`[?&]sakstype=${forventet}(&|$)`));
+      // Købytte er en ny liste: cursoren hørte til køen den ble delt ut i.
+      assert.ok(!sisteUnntakskall().includes("cursor="),
+        "købytte skal ikke bære med seg forrige køs cursor");
+      // Kallet går ut MENS flaten står i lastetilstand — velgeren er tegnet
+      // på nytt først når listen er der.
+      await vent(() => h.querySelector(".filterbar")
+        && h.querySelector("tbody button"));
+      const valgt = [...h.querySelectorAll(".filterbar")[0]
+        .querySelectorAll("button")].map((b) => b.getAttribute("aria-pressed"));
+      assert.equal(valgt[i], "true");
+      assert.equal(valgt.filter((v) => v === "true").length, 1);
+    }
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  });
+
+// «VIS MER» HØRER TIL UTVALGET SOM BA OM DEN (Codex P2).
+//
+// Cursoren er delt ut i én kø. Rekker eier å bytte kø mens sidelastingen er
+// ute, kom svaret tilbake med den forrige køens rader OG cursor, og `lastMer`
+// skrev begge inn i den nye køen: `normal`-rader tegnet under overskriften
+// `drift`, og et «Vis mer» som pekte videre inn i feil kø.
+test("Unntak: en «Vis mer» fra forrige kø skriver ikke inn i den nye",
+  async () => {
+    const ekte = globalThis.fetch;
+    let slippMer;
+    const merUte = new Promise((r) => { slippMer = r; });
+    globalThis.fetch = async (url) => {
+      URLER.push(url);
+      // Bare sidelastingen holdes igjen — den er kappløpets ene halvdel.
+      if (url.includes("cursor=c1")) {
+        await merUte;
+        return { ok: true, status: 200, json: async () => ({
+          saker: [{ id: 99, ts: "2026-08-09T08:00:00+00:00",
+            handling: "gammel_ko", kategori: "over_grense", prioritet: "hoy",
+            status: "ny", sakstype: "normal" }],
+          neste_cursor: "c2" }) };
+      }
+      const ko = (url.match(/[?&]sakstype=([a-z]+)/) || [])[1];
+      return { ok: true, status: 200, json: async () => ({
+        saker: [{ id: 1, ts: "2026-08-09T09:00:00+00:00", handling: ko,
+          kategori: "over_grense", prioritet: "hoy", status: "ny",
+          sakstype: ko }],
+        neste_cursor: ko === "normal" ? "c1" : null }) };
+    };
+    try {
+      URLER.length = 0;
+      const h = nyHoved();
+      visUnntak(h, ctx(KO_CTX));
+      await vent(() => h.querySelector("tbody button"));
+      const visMer = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(visMer, "«Vis mer» mangler — cursoren kom ikke fram");
+      visMer.dispatchEvent(new window.Event("click"));
+      await vent(() => URLER.some((u) => u.includes("cursor=c1")));
+
+      // Kø byttes MENS sidelastingen er ute, og den nye lista lander først.
+      h.querySelectorAll(".filterbar")[0].querySelectorAll("button")[2]
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => h.textContent.includes("drift"));
+
+      slippMer();
+      await vent(() => false, 10);   // gi det foreldede svaret full sjanse
+
+      assert.ok(!h.textContent.includes("gammel_ko"),
+        "rader fra forrige kø ble tegnet under den nye");
+      // Cursoren fulgte med i samme skriving: uten vakten står «Vis mer»
+      // igjen på `c2` — en peker inn i en kø flaten ikke lenger viser.
+      URLER.length = 0;
+      const merNaa = [...h.querySelectorAll(".cursornav button")]
+        .find((b) => b.textContent.trim() === t("ui.vis_mer"));
+      assert.ok(!merNaa, "«Vis mer» arvet cursoren fra den forrige køen");
+    } finally {
+      globalThis.fetch = ekte;
+    }
+  });
 
 test("Unntak: behandlingsknapper + godkjenn-bekreftelse + CSRF-POST (PR-012)", async () => {
   const kalt = [];
@@ -376,3 +514,551 @@ test("Feil (500) → Feiltilstand med Prøv igjen", async () => {
   await vent(() => h.querySelector(".tilstand.feil"));
   assert.ok(h.querySelector(".tilstand.feil button"));
 });
+
+// --- Dashbordet (§2.3 Sentrum): KPI + prioriterte varsler + siste aktivitet -
+
+test("Dashbord: begge listene rendres med lenke videre", async () => {
+  SVAR = { ...STD };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  await vent(() => h.querySelectorAll(".dash-blokk").length === 2
+    && h.querySelectorAll(".dash-rad").length >= 2);
+  const tekst = h.textContent;
+  assert.ok(tekst.includes(t("ui.dashbord.varsler")));
+  assert.ok(tekst.includes(t("ui.dashbord.aktivitet")));
+  // Radene kommer fra de EKTE feltnavnene: unntak-svaret heter `saker`,
+  // beslutninger heter `rader`. Første utgave leste `rader` begge steder og
+  // viste en evig tom varselliste — mocken her speiler serveren, så den
+  // fanger nettopp det.
+  assert.ok(tekst.includes("utbetaling"));
+  const knapper = [...h.querySelectorAll(".dash-blokk button")]
+    .map((b) => b.textContent);
+  assert.ok(knapper.includes(t("ui.dashbord.til_unntak")));
+  assert.ok(knapper.includes(t("ui.dashbord.til_beslutninger")));
+});
+
+test("Dashbord: en feilet blokk feller ikke de andre", async () => {
+  SVAR = { ...STD, "/v1/unntak": 500 };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  await vent(() => h.querySelector(".dash-blokk .tilstand.feil")
+    && h.textContent.includes("135"));
+  // KPI-ene og aktivitetslisten står; unntaksblokken har sin egen
+  // feiltilstand med «Prøv igjen» som bare gjelder den.
+  assert.ok(h.textContent.includes("135"), "KPI-kortene forsvant");
+  assert.ok(h.textContent.includes(t("ui.dashbord.til_beslutninger")),
+    "aktivitetslisten ble revet med av unntaksfeilen");
+  const feil = h.querySelectorAll(".dash-blokk .tilstand.feil");
+  assert.equal(feil.length, 1, "feilen skal være avgrenset til sin blokk");
+});
+
+test("Dashbord: åpne varsler avgrenses av SERVEREN, ikke av flaten",
+  async () => {
+    // Avgrensningen må ligge foran `LIMIT`. Filtrerte flaten selv, ville en
+    // side der de åtte ferskeste sakene er ferdigbehandlet blitt vist som
+    // «ingenting venter» — med en uløst sak rett bak sidegrensen. Derfor
+    // sjekker testen SPØRSMÅLET som stilles, ikke etterbehandlingen av svaret.
+    let spurt = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (url.startsWith("/v1/unntak?")) spurt = url;
+      return brukFetch(url, opts);
+    };
+    // Serveren svarer med en godkjenningsstatus flatens gamle tillatelses-
+    // liste ikke kjente: den saken ventet på et menneske og forsvant likevel.
+    SVAR = { ...STD, "/v1/unntak": { saker: [
+      { id: 3, ts: "2026-08-09T09:02:00+00:00", handling: "venter.sak",
+        kategori: "over_grense", prioritet: "hoy",
+        status: "venter_godkjenning" },
+    ], neste_cursor: null } };
+    const h = nyHoved();
+    try {
+      visOversikt(h, ctx());
+      await vent(() => h.textContent.includes("venter.sak"));
+      assert.ok(spurt && new URLSearchParams(spurt.split("?")[1])
+        .get("status") === "apen",
+      `dashbordet ba ikke om kun åpne saker: ${spurt}`);
+    } finally {
+      globalThis.fetch = brukFetch;
+    }
+  });
+
+test("Dashbord: tomme lister sier det, og siden er axe-ren", async () => {
+  SVAR = { ...STD,
+    "/v1/unntak": { saker: [], neste_cursor: null },
+    "/v1/beslutninger": { rader: [], neste_cursor: null } };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  await vent(() => h.textContent.includes(t("ui.dashbord.ingen_varsler")));
+  assert.ok(h.textContent.includes(t("ui.dashbord.ingen_aktivitet")));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+// --- Angre en feilopprettet policy (032) -----------------------------------
+
+test("Policy: slett-knappen spør først, poster så, og flaten viser sannheten",
+  async () => {
+    let postet = null;
+    let kropp = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (opts && opts.method === "POST") {
+        postet = url.split("?")[0];
+        kropp = JSON.parse(opts.body);
+        return { ok: true, status: 200,
+          json: async () => ({ slettet: 1 }) };
+      }
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        // Etter slettingen finnes ingen aktiv policy — 404 er sannheten.
+        if (postet) return { ok: false, status: 404,
+          json: async () => ({ feil: "ikke_funnet" }) };
+        return { ok: true, status: 200, json: async () => STD[sti] };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    // Et irreversibelt valg krever bekreftelse — og den navngir policyen.
+    await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .some((d) => d.textContent.includes(t("ui.policy.slett_tittel"))));
+    const dlg = [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
+    assert.ok(dlg.textContent.includes("p"), "dialogen navngir ikke policyen");
+    // ÉN aktiv policy: da er «tenanten står uten aktiv policy etterpå» sant.
+    assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst")));
+    assert.equal(postet, null, "slettet FØR eier bekreftet");
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => postet);
+    assert.equal(postet, "/v1/policy/p/slett");
+    // ...og forespørselen bærer identiteten flaten VISTE (Codex P1). Uten den
+    // slettet serveren alle versjoner av `p`, også en som ble aktivert mens
+    // dialogen sto åpen. Kontroll: send `{}`, så blir denne rød.
+    assert.equal(kropp.versjon, "0.2.0");
+    assert.equal(kropp.innholds_hash, "a".repeat(64));
+    // Flaten tegnes på nytt og viser at ingen policy er aktiv — sannheten,
+    // ikke en foreldet visning av det som nettopp ble slettet.
+    await vent(() => h.querySelector(".tilstand.tom"));
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: flere aktive → hver av dem kan slettes, ikke en blindvei",
+  async () => {
+    // Kontroll: la `hentAktiv` kaste videre på 5xx, så blir denne rød.
+    //
+    // Dette ER feilen funksjonen finnes for: to policyer ble aktivert ved en
+    // feil. `/v1/policy/aktiv` nekter da å velge (500 `intern_feil`), og uten
+    // en vei videre endte flaten i en generisk feiltilstand — slettehandlingen
+    // var utilgjengelig nøyaktig når den trengtes.
+    let postet = null;
+    let kropp = null;
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        postet = sti;
+        kropp = JSON.parse(opts.body);
+        return { ok: true, status: 200, json: async () => ({ slettet: 1 }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "tjenestebedrift1", versjon: "1.0.0",
+            innholds_hash: "a".repeat(64) },
+          { policy_id: "tjenestebedrift2", versjon: "1.0.0",
+            innholds_hash: "b".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.querySelectorAll(".policy-angre").length === 2);
+    assert.ok(!h.querySelector(".tilstand.feil"), "flaten endte i feiltilstand");
+    assert.ok(h.textContent.includes(t("ui.policy.flere_aktive")),
+      "tilstanden ble ikke forklart");
+    // Hver seksjon NAVNGIR sin policy — ellers er to like «Slett policy»-
+    // knapper ikke et valg noen kan ta.
+    const seksjoner = [...h.querySelectorAll(".policy-angre")];
+    assert.ok(seksjoner[0].textContent.includes("tjenestebedrift1"));
+    assert.ok(seksjoner[1].textContent.includes("tjenestebedrift2"));
+    // ...og den andre knappen sletter den ANDRE policyen.
+    [...seksjoner[1].querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes("tjenestebedrift2"))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes("tjenestebedrift2"));
+    // Bekreftelsen beskriver tilstanden slettingen faktisk etterlater:
+    // `tjenestebedrift1` blir stående og styrer beslutninger videre.
+    // Kontroll: bruk `slett_tekst` her også, så blir denne rød.
+    assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst_flere")),
+      "bekreftelsen beskrev ikke de øvrige aktive");
+    assert.ok(!dlg.textContent.includes(t("ui.policy.slett_tekst")),
+      "bekreftelsen lovet at tenanten blir stående uten aktiv policy");
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => postet);
+    assert.equal(postet, "/v1/policy/tjenestebedrift2/slett");
+    // Hver seksjon binder seg til SIN egen rad — ikke den andres, og ikke en
+    // identitet fra en liste den tilfeldigvis sto i.
+    assert.equal(kropp.innholds_hash, "b".repeat(64));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en versjon som er aktivert i mellomtiden avvises, ikke slettes",
+  async () => {
+    // Kontroll: la `angreSeksjon` behandle `policy_endret` som en generisk
+    // feil, så blir denne rød. Avvisningen er ikke støy — den sier at
+    // visningen er FORELDET, og at eier må se den nye versjonen før hun
+    // avgjør om den også skal bort. Flaten tegnes derfor ikke på nytt under
+    // henne; den ber om en ny lasting.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        return { ok: false, status: 409,
+          json: async () => ({ feil: "policy_endret" }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: true, status: 200, json: async () => STD[sti] };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.policy.slett_endret")));
+    assert.ok(h.textContent.includes(t("ui.policy.slett_endret")),
+      "avvisningen forklarte ikke at visningen er foreldet");
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_feilet")),
+      "en foreldet visning ble meldt som «slettingen feilet»");
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en policy en annen alt har slettet er UKJENT, ikke endret",
+  async () => {
+    // Naboen til testen over, og den 032 tidligere svarte feil på: «finnes
+    // ikke» ble målt ETTER identitetssammenligningen, så en policy en annen
+    // operatør alt hadde slettet kom ut som `policy_endret` — flaten sendte
+    // eier på leting etter en ny versjon som ikke finnes. Nå skilles de i
+    // databasen, og skillet må bæres helt ut hit.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (opts && opts.method === "POST") {
+        return { ok: false, status: 404,
+          json: async () => ({ feil: "policy_ukjent" }) };
+      }
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: true, status: 200, json: async () => STD[sti] };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    [...h.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    const dlg = await vent(() => [...document.querySelectorAll('[role="dialog"]')]
+      .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")))) &&
+      [...document.querySelectorAll('[role="dialog"]')]
+        .find((d) => d.textContent.includes(t("ui.policy.slett_tittel")));
+    [...dlg.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => h.textContent.includes(t("ui.policy.slett_ukjent")));
+    assert.ok(h.textContent.includes(t("ui.policy.slett_ukjent")));
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_endret")),
+      "en slettet policy ble meldt som en aktivert ny versjon");
+    assert.ok(!h.textContent.includes(t("ui.policy.slett_feilet")));
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en leser uten policy:write ser HVILKE som står aktive",
+  async () => {
+    // Kontroll: flytt identitetene tilbake inn i `angreSeksjon`, så blir
+    // denne rød. `leser`, `admin` og `sikkerhet` har `policy:read` uten
+    // `policy:write`. Uten dette fikk de varselet om at arbeidsområdet er i
+    // en feiltilstand — og ikke ett ord om hvilke policyer det gjaldt.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "tjenestebedrift1", versjon: "1.0.0",
+            innholds_hash: "a".repeat(64) },
+          { policy_id: "tjenestebedrift2", versjon: "2.0.0",
+            innholds_hash: "b".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read"] }));
+    await vent(() => h.textContent.includes("tjenestebedrift2"));
+    assert.ok(h.textContent.includes(t("ui.policy.flere_aktive")));
+    assert.ok(h.textContent.includes("tjenestebedrift1"));
+    // Versjonen er med: to rader som bare sier «tjenestebedrift1» og
+    // «tjenestebedrift2» sier ikke hvilke RADER som skal ryddes.
+    assert.ok(h.textContent.includes("2.0.0"), "versjonen mangler");
+    // ...men mutasjonen står ikke for dem.
+    assert.equal(h.querySelectorAll(".policy-angre").length, 0);
+    assert.ok(![...h.querySelectorAll("button")]
+      .some((b) => b.textContent.trim() === t("ui.policy.slett")),
+      "slett-knappen sto for en leser uten policy:write");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en 5xx reserven ikke forklarer blir stående som feil",
+  async () => {
+    // `intern_feil` sier «det er FLERE». Kommer reserven tilbake med én, er
+    // tilstanden en annen enn feilen beskrev — da står den ærlige
+    // feiltilstanden, i stedet for en liste som later som alt er i orden.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: true, status: 200, json: async () => ({ policyer: [
+          { policy_id: "p", versjon: "0.2.0",
+            innholds_hash: "a".repeat(64) }] }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.querySelector(".tilstand.feil"));
+    assert.ok(h.querySelector(".tilstand.feil"), "feilen ble skjult");
+    assert.ok(!h.querySelector(".policy-angre"));
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en ENSLIG korrupt aktiv policy kan ryddes", async () => {
+  // `policy_korrupt` sier «raden kan ikke TOLKES», og det er sant også når
+  // den er alene. `/v1/policy/aktive` bygger med vilje ingen DTO nettopp for
+  // at en slik rad skal kunne pekes på og slettes — med terskelen 2 var den
+  // enslige korrupte policyen den ENESTE som ikke kunne ryddes fra flaten.
+  let postet = null;
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const sti = url.split("?")[0];
+    if (opts && opts.method === "POST") {
+      postet = sti;
+      return { ok: true, status: 200, json: async () => ({ slettet: 1 }) };
+    }
+    if (sti === "/v1/policy/aktiv") {
+      return { ok: false, status: 500,
+        json: async () => ({ feil: "policy_korrupt" }) };
+    }
+    if (sti === "/v1/policy/aktive") {
+      return { ok: true, status: 200, json: async () => ({ policyer: [
+        { policy_id: "korruptbedrift", versjon: "0.2.0",
+          innholds_hash: "a".repeat(64) }] }) };
+    }
+    return brukFetch(url, opts);
+  };
+  const h = nyHoved();
+  visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+  await vent(() => h.querySelector(".policy-angre"));
+  assert.ok(!h.querySelector(".tilstand.feil"), "blindveien sto igjen");
+  // Banneret beskriver DENNE feiltilstanden, ikke «flere aktive»: det er én.
+  assert.ok(h.textContent.includes(t("ui.policy.korrupt_aktiv")),
+    "banneret forklarte ikke at policyen er ulesbar");
+  assert.ok(!h.textContent.includes(t("ui.policy.flere_aktive")));
+  assert.ok(h.textContent.includes("korruptbedrift"), "identiteten sto ikke");
+  [...h.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  const dlg = await vent(() =>
+    document.querySelector('[role="dialog"]')) &&
+    document.querySelector('[role="dialog"]');
+  // ... og bekreftelsen sier det sanne: etterpå står tenanten uten aktiv
+  // policy. «De øvrige blir stående» ville vært galt — det er ingen øvrige.
+  assert.ok(dlg.textContent.includes(t("ui.policy.slett_tekst")),
+    "bekreftelsen beskrev ikke tilstanden etter slettingen");
+  assert.ok(!dlg.textContent.includes(t("ui.policy.slett_tekst_flere")),
+    "bekreftelsen lovet øvrige aktive som ikke finnes");
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => postet);
+  assert.equal(postet, "/v1/policy/korruptbedrift/slett");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  globalThis.fetch = brukFetch;
+});
+
+test("Policy: en utløpt økt under reservekallet sender til innlogging",
+  async () => {
+    // Kontroll: la reserven fange alt og kaste den opprinnelige 5xx-en, så
+    // blir denne rød — og eier får en «prøv igjen»-knapp som aldri kan lykkes.
+    //
+    // 401 fra det andre kallet er ikke et utsagn om policyen, det er et utsagn
+    // om økten: den er ute, og da gjelder rammens globale håndtering også her.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: false, status: 401,
+          json: async () => ({ feil: "uautorisert" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    let ua = false;
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"],
+                       paaUautorisert: () => { ua = true; } }));
+    await vent(() => ua);
+    assert.ok(ua, "401 fra reserven ble svelget som en vanlig feil");
+    assert.ok(!h.querySelector(".tilstand.feil"));
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: en trukket tilgang under reservekallet gir ingen-tilgang",
+  async () => {
+    // Samme sak for 403: rollen er trukket mellom de to kallene. «Prøv igjen»
+    // ville vært en løgn om at det finnes noe å prøve.
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const sti = url.split("?")[0];
+      if (sti === "/v1/policy/aktiv") {
+        return { ok: false, status: 500,
+          json: async () => ({ feil: "intern_feil" }) };
+      }
+      if (sti === "/v1/policy/aktive") {
+        return { ok: false, status: 403,
+          json: async () => ({ feil: "ingen_tilgang" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    const h = nyHoved();
+    let ua = false;
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"],
+                       paaUautorisert: () => { ua = true; } }));
+    await vent(() => h.querySelector(".tilstand.ingen-tilgang"));
+    assert.ok(h.querySelector(".tilstand.ingen-tilgang"),
+      "403 fra reserven ble en generisk feiltilstand");
+    assert.ok(!ua, "403 skal IKKE utløse innlogging");
+    globalThis.fetch = brukFetch;
+  });
+
+test("Policy: «i bruk»-avvisningen forklares, den gjemmes ikke", async () => {
+  const brukFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.method === "POST") {
+      return { ok: false, status: 409,
+        json: async () => ({ feil: "policy_i_bruk" }) };
+    }
+    return brukFetch(url, opts);
+  };
+  SVAR = { ...STD };
+  const h = nyHoved();
+  visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+  await vent(() => h.textContent.includes(t("ui.policy.slett")));
+  [...h.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => [...document.querySelectorAll('[role="dialog"]')].length);
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].pop();
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.policy.slett_i_bruk")));
+  assert.ok(h.textContent.includes(t("ui.policy.slett_i_bruk")),
+    "avvisningen må FORKLARE skillet slett/avvikle — ikke bare feile");
+  globalThis.fetch = brukFetch;
+});
+
+test("Policy: en leser uten policy:write får ikke slett-seksjonen", async () => {
+  // Flaten nås med `policy:read`, og `leser`/`admin`/`sikkerhet` har nettopp
+  // det og ikke `policy:write`. «Vis vakten så den kan forstås» gjelder
+  // TILSTAND, ikke TILGANG: for dem finnes ingen tilstand som gjør knappen
+  // brukbar, så den ville bare invitert gjennom en irreversibel
+  // bekreftelsesdialog fram til serverens 403.
+  SVAR = { ...STD };
+  const h = nyHoved();
+  visPolicy(h, ctx({ scopes: ["policy:read"] }));
+  await vent(() => h.textContent.includes(t("ui.policy.roller")));
+  assert.ok(!h.querySelector(".policy-angre"), "slett-seksjonen ble vist");
+  assert.ok(![...h.querySelectorAll("button")]
+    .some((b) => b.textContent.trim() === t("ui.policy.slett")));
+  // Lesingen står igjen — det er BARE mutasjonen som forsvinner.
+  assert.ok(h.textContent.includes("utbetaling"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
+
+test("Policy: en retry av slettingen gjenbruker idempotensnøkkelen",
+  async () => {
+    // Serveren lagrer og replayer slettesvaret, men bare når nøkkelen er den
+    // SAMME. Roterer klienten den, er retryen en ny operasjon på en policy som
+    // alt er borte → `policy_ukjent`: en endelig feil på noe som lyktes.
+    const nokler = [];
+    const brukFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (opts && opts.method === "POST") {
+        nokler.push(opts.headers["Idempotency-Key"]);
+        // Første forsøk: svaret går tapt på veien tilbake.
+        if (nokler.length === 1) throw new TypeError("nettverk");
+        return { ok: true, status: 200,
+          json: async () => ({ slettet: 1, policy_id: "p" }) };
+      }
+      return brukFetch(url, opts);
+    };
+    SVAR = { ...STD };
+    const h = nyHoved();
+    visPolicy(h, ctx({ scopes: ["policy:read", "policy:write"] }));
+    await vent(() => h.textContent.includes(t("ui.policy.slett")));
+    const slett = async () => {
+      [...h.querySelectorAll("button")]
+        .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+        .dispatchEvent(new window.Event("click"));
+      await vent(() => [...document.querySelectorAll('[role="dialog"]')].length);
+      const dlg = [...document.querySelectorAll('[role="dialog"]')].pop();
+      [...dlg.querySelectorAll("button")]
+        .find((b) => b.textContent.trim() === t("ui.policy.slett"))
+        .dispatchEvent(new window.Event("click"));
+    };
+    await slett();
+    await vent(() => nokler.length === 1);
+    // Nettverksfeilen etterlater seksjonen — og dermed nøkkelen — på plass.
+    await vent(() => h.textContent.includes(t("ui.policy.slett_feilet")));
+    await slett();
+    await vent(() => nokler.length === 2);
+    assert.ok(nokler[0], "ingen Idempotency-Key ble sendt");
+    assert.equal(nokler[1], nokler[0],
+      "retryen roterte nøkkelen — serveren kan da ikke replaye");
+    globalThis.fetch = brukFetch;
+  });

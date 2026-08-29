@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from api.kjerne import Transaksjonsvakt
+from api.policyregister import hent_aktiv_bak_loggreferanse
 from db import kryptering
 from db.pg import koble, sett_kontekst
 from policy_validator.engine import les_policyref
@@ -62,8 +63,21 @@ KAPABILITET_S = 60
 #: Frister på oppdrag (v4-delta pkt. 2). To frister, ikke én: den første
 #: er siste tidspunkt et resultat kan endre status AUTOMATISK, den andre er
 #: siste tidspunkt en signert kvittering mottas som EVIDENS.
+#:
+#: Utførelsesfristen her er STANDARDEN, ikke fasiten (Codex P1): en type
+#: kan deklarere sin egen i `oppdragskontrakt.UTFORELSESFRIST_VALG`, og
+#: gjør den det, er det den som skrives på raden. Sto denne konstanten
+#: alene, fikk WCAG-kontrollen et døgn på en kontroll manifestet lover
+#: 30 eller 60 minutter — og eier-leasen (migrasjon 037), som strekkes
+#: til nettopp `utforelsesfrist`, arvet det samme feilaktige døgnet.
 UTFORELSESFRIST_S = 24 * 3600
 EVIDENSFRIST_S = 30 * 24 * 3600
+
+#: Hvor ofte domenekonflikter drenereres til M-37-saker (039, Codex P1).
+#: Sjeldnere enn hovedløkkens sekund: en konflikt venter uansett på et
+#: menneske med to par øyne, og et oppslag per sekund på en tabell som
+#: normalt har null kandidater er ren støy.
+KONFLIKTDRENERING_S = 60
 
 
 class Leasetap(RuntimeError):
@@ -272,6 +286,42 @@ def frigi_utlopte(conn: psycopg.Connection) -> int:
     return int(antall)
 
 
+def drener_domenekonflikter(conn: psycopg.Connection) -> dict:
+    """Vaktbikkja for domeneovertakelser (041): saken skal ALLEREDE finnes.
+
+    Før 041 LAGDE denne veien sakene (039, Codex P1) — saken krevde
+    tenantens DEK og runtime-DML. Nå lages den av `sikre_overtakelsessak()`
+    i samme transaksjon som selve overtakelsen, og 041 §7 avviser enhver ny
+    `avklaring_kreves` uten gjeldende sak ved commit. Det som står igjen her
+    er kontrollen av at det faktisk er sant på DENNE basen: en konflikt uten
+    sak er en rad fra før 041 — den kan ikke repareres herfra (port 37:
+    python-veien er stengt), men den skal heller aldri bli usynlig. Den
+    navngis i journalen HVER syklus til en operatør har ryddet den.
+
+    En UVENTET databasefeil (manglende grant, funksjon som ikke er utrullet)
+    kastes videre og feller prosessen — samme kontrakt som før: en feil som
+    rammer HVER rad skal bæres av systemd, ikke av en journalrad ingen
+    alarmerer på.
+    """
+    from api.domeneovertakelse import vokt_ventende_overtakelseskonflikter
+    try:
+        res = vokt_ventende_overtakelseskonflikter(conn)
+    except psycopg.OperationalError:
+        raise             # tapt forbindelse: hovedløkkens egen, kjente vei
+    except psycopg.Error as e:
+        print(json.dumps({"hendelse": "domenekonflikt_vakt_svikt",
+                          "feiltype": type(e).__name__}), flush=True)
+        raise
+    # En tom runde er normaltilstanden. `uten_sak` er ALDRI ingenting: det
+    # er en overtakelse der utfordreren står uløselig i avklaring — den
+    # skal stå i journalen til den er borte.
+    if res["uten_sak"]:
+        print(json.dumps({"hendelse": "domenekonflikt_uten_sak", **res}),
+              flush=True)
+    return res
+
+
+
 # ---------------------------------------------------------------------------
 # (b) Planlegg
 # ---------------------------------------------------------------------------
@@ -316,6 +366,12 @@ def _aktiv_policy(conn, sak: Sak) -> tuple[dict, str] | None:
     Snapshotet på saken styrer retry, ikke hvilke regler som gjelder nå —
     ellers ville en rettet policy ikke fått virkning på saker som allerede
     lå i kø, som er nettopp de sakene rettelsen ofte er til for.
+
+    Oppslaget går gjennom `policyregister.hent_aktiv_bak_loggreferanse`, som
+    er den ene definisjonen av «den aktive policyen en revisjonsreferanse
+    navngir» — se den for hvorfor denne veien ikke tar policylåsen mot
+    sletting (Codex P1): loggraden under ER referansen slettingen teller, og
+    `revisjonslogg` er append-only.
     """
     rad = conn.execute(
         "SELECT r.policy_id FROM revisjonslogg r"
@@ -324,19 +380,14 @@ def _aktiv_policy(conn, sak: Sak) -> tuple[dict, str] | None:
     # Kolonnen bærer en POLICYREFERANSE, ikke en policy-id. Uten
     # `les_policyref` traff oppslaget aldri noe, og arbeideren
     # klassifiserte HVER sak som `manuell` med `aktiv_policy_utilgjengelig`
-    # — altså behandlet den ingenting i det hele tatt.
-    ref = les_policyref(rad[0]) if rad else None
-    if ref is None:
-        return None
-    p = conn.execute(
-        "SELECT innhold, innholds_hash FROM policyer"
-        " WHERE tenant=%s AND policy_id=%s AND aktiv",
-        (sak.tenant, ref[0])).fetchone()
-    if p is None or not isinstance(p[0], dict):
+    # — altså behandlet den ingenting i det hele tatt. Tolkningen bor nå
+    # inne i oppslaget, sammen med selve lesingen.
+    p = hent_aktiv_bak_loggreferanse(conn, sak.tenant, rad[0] if rad else None)
+    if p is None:
         return None
     if valider_policy(p[0]):
         return None            # korrupt aktiv policy: ingen automatikk
-    return p[0], p[1]
+    return p
 
 
 def planlegg(conn: psycopg.Connection, sak: Sak, claim_id: str
@@ -713,15 +764,24 @@ def _opprett_oppdrag(conn, sak: Sak, plan, rid: str, loggpost_id: int, *,
     # eiermodulen plukket det, og verifikatoren fant en tom kø.
     oppdragshandling = plan.reparasjonsinput.get("handling") or plan.maalhandling
     naa = datetime.now(timezone.utc)
+    # TYPENS EGEN FRIST VINNER (Codex P1). Se `UTFORELSESFRIST_S`: den er
+    # standarden for typer som ikke sier noe selv, ikke en frist alle
+    # oppdrag skal ha. Fristen skrives på RADEN, og både eier-leasen
+    # (037), claimens kapabiliteter og reclaim-veien leser den derfra —
+    # så dette ene feltet er det som gjør en annonsert frist til en
+    # frist som faktisk gjelder.
+    frist_s = oppdragsskjema.utforelsesfrist_s(
+        plan.oppdragstype, plan.reparasjonsinput) or UTFORELSESFRIST_S
+    # 038 (port 7): direkte INSERT på oppdrag finnes ikke lenger — den
+    # herdede funksjonen er reparasjonsveiens ENESTE inngang, og det er
+    # DEN som setter `opprinnelse='m37_reparasjon'`. Verdien kommer aldri
+    # herfra.
     rad = conn.execute(
-        "INSERT INTO oppdrag (tenant, unntak_id, loggpost_id,"
-        " repair_operation_id, oppdragstype, handling, eiermodul,"
-        " payload_kryptert, key_id, nonce, utforelsesfrist, evidensfrist,"
-        " beslutning_loggpost_id, koblingsstatus)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        "SELECT opprett_reparasjonsoppdrag("
+        "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (sak.tenant, sak.id, loggpost_id, rid, plan.oppdragstype,
          oppdragshandling, _eiermodul_for(oppdragshandling), ct, key_id,
-         nonce, naa + timedelta(seconds=UTFORELSESFRIST_S),
+         nonce, naa + timedelta(seconds=frist_s),
          naa + timedelta(seconds=EVIDENSFRIST_S),
          beslutning_loggpost_id, kobling)).fetchone()
     return int(rad[0])
@@ -734,9 +794,24 @@ def _eiermodul_for(handling: str) -> str:
     på `eiermodul = modul_id`, så et ubundet oppdrag ville vært synlig for
     alle moduler. Kolonnen er NOT NULL nettopp for at «ubundet» ikke skal
     finnes som tilstand.
+
+    ER EIEREN DEKLARERT, ER DET DEN SOM GJELDER (Codex P1). PR-014c ga
+    `Oppdragstype` et `eiermodul`-felt med en EKTE modul-id
+    (`m_wcag_audit`), og det er den id-en kontrakten, deploymenten og
+    tokenet er registrert på. `eiermodul:<typenavn>` ville skrevet
+    `eiermodul:kontroll.wcag.nettsted` i raden, og siden claim krever
+    `oppdrag.eiermodul = auth.modul_id`, kunne controlleren aldri claimet
+    sitt eget oppdrag — det ville ligget til fristen uten at noen så det.
+
+    De eierløse legacy-typene beholder det SYNTETISKE navnet: for dem
+    finnes det ingen modulrad å peke på, og eksisterende rader
+    (`eiermodul:reinnsending`, `eiermodul:verifikasjon`) skal fortsatt
+    kunne claimes av de samme tokenene.
     """
     t = oppdragsskjema.type_for_handling(handling)
-    return f"eiermodul:{t.navn}" if t is not None else "eiermodul:ukjent"
+    if t is None:
+        return "eiermodul:ukjent"
+    return t.eiermodul or f"eiermodul:{t.navn}"
 
 
 # ---------------------------------------------------------------------------
@@ -837,6 +912,9 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
     klient = Beslutningsklient(basis_url)
     behandlet = 0
     runder = 0
+    # Første syklus drenerer alltid: en konflikt som oppstod mens arbeideren
+    # var nede skal ikke måtte vente et helt intervall på sin sak.
+    neste_drenering = 0.0
     try:
         while maks_runder is None or runder < maks_runder:
             runder += 1
@@ -845,6 +923,9 @@ def kjor(dsn: str, basis_url: str, *, intervall_s: float = 1.0,
                 if conn is None or conn.closed:
                     conn = koble(dsn)
                 frigi_utlopte(conn)
+                if time.monotonic() >= neste_drenering:
+                    neste_drenering = time.monotonic() + KONFLIKTDRENERING_S
+                    drener_domenekonflikter(conn)
                 res = behandle_en(conn, klient)
             except psycopg.OperationalError:
                 status, res = "db_utilgjengelig", None
