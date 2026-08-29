@@ -1761,6 +1761,33 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
         assert f"REVOKE ALL ON FUNCTION {fn} FROM {{rolle}};" in tekst, fn
 
 
+def test_migrer_baerer_revisjonshendelsens_rettigheter():
+    """Cursor P2 (runde 4 på #247): søskentesten over dekket 056, ikke 066.
+
+    Samme klasse som Codex P1 på #140, og som runde 3s eget funn i denne
+    PR-en: `migrer.py` er AUTORITATIV — den revoker alt og re-granter kun
+    det som står i blokkene, så 066s egen grant overlever ikke ett
+    `migrer.py`-kjør. Migrasjonens grant er dessuten betinget av at
+    runtime-rollen HETER `disponit`; på en installasjon med et annet
+    rollenavn er kjørerens blokk den ENESTE rettighetskilden.
+
+    Uten denne pinnen kunne linjene forsvinne stille fra
+    `M37_RETTIGHETER_API`, og utfallet ville vært `permission denied` på
+    både skriving og lesing av revisjonshendelsen ETTER migrering —
+    altså at avskruingsdøra er stengt for de som skal gjennom den, mens
+    hele testflaten fortsatt er grønn.
+
+    Målt på teksten med vilje: mutasjonen som dreper denne (slett de to
+    linjene i `M37_RETTIGHETER_API`) skal felles uten at DB-testene
+    trenger å kjøre.
+    """
+    tekst = (ROT / "deploy" / "staging" / "migrer.py").read_text(
+        encoding="utf-8")
+    for fn in ("skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)",
+               "les_revisjonshendelse(TEXT, UUID)"):
+        assert f"GRANT EXECUTE ON FUNCTION {fn} TO {{rolle}};" in tekst, fn
+
+
 @pg
 def test_frigivelsesoppdrag_faar_sak_med_revisjonslinje(migrator):
     """Codex P1 på #140 (runde 5): `sikre_sak_for_oppdrag` utleder
