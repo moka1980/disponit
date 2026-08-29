@@ -17,6 +17,10 @@ settI18nForTest(NB, "nb");
 
 const ROT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
+// EN-settet, for portene som må se forskjell på «riktig» og «hardkodet
+// norsk» — på `nb` er de to den samme strengen.
+const EN = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+
 let KALL;
 let SVAR;
 globalThis.fetch = async (url, opts = {}) => {
@@ -4699,6 +4703,53 @@ test("Rapport: hvert «Vis funn» navngir sin egen kandidat for øret",
   assert.ok(sammendrag.every(
     (sm) => sm.textContent === t("ui.rekruttering.evalueringer.vis_funn")),
     "kandidaten kom inn i den SYNLIGE teksten — muren er tilbake i raden");
+});
+
+test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i koden",
+  async () => {
+  // Cursor P2 · RUTINER §5. Navnet ble limt sammen i koden: `vis_funn`
+  // pluss et hardkodet `" — "` pluss `kandidat` pluss kortnavnet.
+  // Skilletegnet og ordstillingen sto dermed UTENFOR locale, og et språk
+  // som vil sette kandidaten først — eller skille med noe annet enn en
+  // tankestrek — kunne ikke uttrykke det uansett hvor godt oversatt hver
+  // enkelt brikke var.
+  //
+  // PORTEN KJØRER PÅ ENGELSK, for det er der en hardkodet norsk form
+  // faktisk kan sees: på `nb` er «riktig» og «hardkodet» den samme
+  // strengen, og porten ville vært grønn på begge.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bygg navnet i koden igjen
+  // (`${t("…vis_funn")} — ${t("…kandidat")} ${kortnavn(...)}`).
+  settI18nForTest(EN, "en");
+  try {
+    KALL = [];
+    SVAR = { ...enkelRapportSvar() };
+    const hoved = nyHoved();
+    visRekruttering(hoved, ctx());
+    assert.ok(await vent(() => hoved.textContent.includes("kandidat-01")),
+      "rapporten kom aldri");
+    const tabell = [...hoved.querySelectorAll("table")]
+      .find((tb) => tb.textContent.includes("kandidat-01"));
+    const rader = [...tabell.querySelectorAll("tbody tr")];
+    assert.equal(rader.length, 2, "rangeringen kom aldri");
+    // Malen deles på plassholderen — porten substituerer ikke selv, og
+    // måler derfor flatens fylling og ikke sin egen.
+    const [for_, etter] = t("ui.rekruttering.evalueringer.vis_funn_for")
+      .split("{kandidat}");
+    assert.ok(etter !== undefined, "malen har ikke lenger {kandidat}");
+    assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
+    for (const rad of rader) {
+      const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+      const sm = rad.querySelector("details > summary");
+      assert.equal(sm.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
+        "det tilgjengelige navnet følger ikke malen i locale");
+      // Den synlige teksten er fortsatt bare handlingen.
+      assert.equal(sm.textContent, t("ui.rekruttering.evalueringer.vis_funn"),
+        "kandidaten kom inn i den SYNLIGE teksten");
+    }
+  } finally {
+    settI18nForTest(NB, "nb");
+  }
 });
 
 // Samme fikstur, andre id-er: portene under måler FORKORTINGEN, ikke

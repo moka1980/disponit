@@ -1211,10 +1211,17 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         // bredde: en 64-tegns id uten brytepunkt løftet cellens minstebredde
         // og ga sidescroll på mobil. `.rekrut-detalj` bryter den — se
         // `base.css` for hvorfor det må være `anywhere` og ikke `break-word`.
+        // …OG NAVNET BYGGES I LOCALE, IKKE HER (Cursor P2, RUTINER §5).
+        // Skillet `" — "` og ordstillingen «handling, så kandidat» sto i
+        // koden, så et språk som vil si det motsatt veien — eller med et
+        // annet skilletegn — kunne ikke. Én mal eier hele setningen nå;
+        // koden leverer bare verdien. Malen er den forlatte
+        // `…evalueringer.detaljer` (den døde da «Detaljer» ble «Vis
+        // funn»), gjenbrukt under sitt rette navn — ingen ny nøkkel.
         const boks = el("details", { class: "rekrut-detalj" },
           el("summary", {
-            "aria-label": `${t("ui.rekruttering.evalueringer.vis_funn")} — `
-              + `${t("ui.rekruttering.kandidat")} ${kortnavn(rad.kandidat_id)}`,
+            "aria-label": flett(t("ui.rekruttering.evalueringer.vis_funn_for"),
+              { kandidat: kortnavn(rad.kandidat_id) }),
             text: t("ui.rekruttering.evalueringer.vis_funn") }));
         let bygget = false;
         boks.addEventListener("toggle", () => {
