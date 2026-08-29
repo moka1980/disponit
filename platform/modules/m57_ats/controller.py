@@ -412,6 +412,50 @@ class _Heartbeat:
                     self.tapt = str(r.status_code)
                 return
 
+    def sonder(self) -> str | None:
+        """ÉN synkron fornyelse, spurt av skriveveien når døren alt har
+        avvist et skriv (Cursor P1-1, runde 2 på feilattribusjonen).
+
+        PULSEN ER FOR SEN TIL Å SPØRRES ALENE. `_lopp` sover
+        `FORNY_INTERVALL_S` = 240 s mellom hvert kall, mens døren måler
+        leasen på veggklokken ved HVERT kandidatskriv. I drift dør derfor
+        leasen på døren først: neste `/v1/rekruttering/kandidatdokument|
+        artefakt` svarer 409 med en gang, sinken reiser, og `except
+        Kjoringsfeil` leser en `puls.tapt` som ennå er `None` fordi neste
+        puls er inntil fire minutter unna. Remappen fra runde 1 traff da
+        aldri der den skulle: kvitteringen sa `kjoring_avbrutt` om et
+        autoritetstap — nøyaktig feilattribusjonen den ble skrevet for å
+        lukke. (Runde 1s test skjulte det: stubbdøren VENTET på
+        `puls.tapt` før den svarte 409. Produksjonsdøren venter ikke.)
+
+        Sonden spør derfor kilden pulsen selv spør, i det øyeblikket
+        avvisningen er kjent, og ARVER `_lopp`s dom ordrett: 4xx på
+        `/v1/oppdrag/forny` er autoritetstap, alt annet er det ikke. Å
+        liste opp hvilke 4xx-koder som «egentlig» betyr tap ville vært en
+        andre kilde til sannhet om samme spørsmål, og den drifter fra
+        `_lopp` ved neste kode 063 legger til.
+
+        Alt annet enn 4xx svarer `None` og lar lagringsfeilen beholde sitt
+        eget ord: 2xx sier at leasen lever (ekte konflikt, 5xx, rate), og
+        et 5xx/taust svar fra forny sier ingenting om hvem som eier
+        oppdraget — den stumme veien er `_lopp`s, som feller leasen på
+        horisonten (`_utlopt`), ikke på ett enkelt tapt svar.
+
+        Ingen ny returkontrakt i `kjor_bunt`, ingen ny tilstand: sonden
+        skriver samme `tapt` som tråden, og `except`-grenen leser samme
+        felt som før."""
+        try:
+            r = self._klient.post("/v1/oppdrag/forny",
+                                  json=self._kropp, headers=self._hode)
+        except Exception:                           # noqa: BLE001
+            return None                             # transport: intet svar
+        if 400 <= r.status_code < 500:
+            try:
+                self.tapt = r.json().get("feil", str(r.status_code))
+            except ValueError:
+                self.tapt = str(r.status_code)
+        return self.tapt
+
 
 def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
             signer) -> dict:
@@ -614,7 +658,19 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                 # PR). `kandidatlagring_feilet` er den ENE koden som kan
                 # bæres av et lease-tap; enhver annen kode er en ekte
                 # kjøringsfeil og beholder sitt eget ord.
-                if e.kode == "kandidatlagring_feilet" and puls.tapt:
+                #
+                # OG PULSEN SPØRRES IKKE ALENE (Cursor P1-1). Runde 1
+                # antok at `puls.tapt` alt sto satt når døren avviste.
+                # Rekkefølgen er motsatt i drift: døren måler leasen ved
+                # HVERT skriv, tråden bare hvert `FORNY_INTERVALL_S` =
+                # 240 s — så avvisningen kommer først, og porten leste en
+                # `tapt` som ennå var `None`. `puls.sonder()` stiller det
+                # ene spørsmålet tråden ellers ville stilt minutter for
+                # sent; svarer plattformen 4xx, er autoriteten borte og
+                # `tapt` står satt til grenen under. Kortslutningen er
+                # med vilje: har tråden alt slått, spørres det ikke igjen.
+                if e.kode == "kandidatlagring_feilet" and (
+                        puls.tapt or puls.sonder()):
                     rk = kvitter({**kvittering_basis,
                                   "resultat": "feilet",
                                   "feilkode": "lease_tapt"})

@@ -438,6 +438,89 @@ def test_173_leasetap_midt_i_stroemmen_meldes_som_lease_tapt(monkeypatch):
         "en kjøring uten gyldig lease promoterte likevel"
 
 
+def test_173_doeren_avviser_foer_pulsen_slaar_og_utfallet_er_lease_tapt(
+        monkeypatch):
+    """#173 (Cursor P1-1): den EKTE rekkefølgen — døren avviser FØRST,
+    pulsen ville slått minutter senere.
+
+    Testen over lar stubbdøren vente på `puls.tapt` før den svarer 409,
+    og måler derfor bare grenen etter at tråden alt har slått. Drift er
+    motsatt: `_lopp` sover `FORNY_INTERVALL_S` = 240 s mellom hvert kall,
+    mens døren måler leasen på veggklokken ved HVERT skriv. Avvisningen
+    kommer altså først, og `except Kjoringsfeil` leser en `puls.tapt` som
+    ennå er `None` — remappen fra runde 1 traff aldri der den skulle, og
+    kvitteringen sa `kjoring_avbrutt` om et autoritetstap.
+
+    Her står `FORNY_INTERVALL_S` urørt på 240 s: tråden REKKER ikke å
+    pulse i løpet av testen, så `puls.tapt` er beviselig usatt når
+    utfallet avgjøres. At `/v1/oppdrag/forny` likevel er kalt, er selve
+    porten — det kallet kan bare komme fra den synkrone sonden.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `or puls.sonder()` fra
+    `except kjoring.Kjoringsfeil` — da blir `grunn`
+    `kjoring_avbrutt:kandidatlagring_feilet`."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    pulser: list = []
+    ekte = controller._Heartbeat
+
+    class _Fanget(ekte):                            # type: ignore[misc,valid-type]
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            pulser.append(self)
+
+    monkeypatch.setattr(controller, "_Heartbeat", _Fanget)
+
+    k = _Stubklient(forny=lambda: _Svar(409, {"feil": "lease_utlopt"}))
+    k.kandidatdatastatus = 409          # døren: `kandidatdata_avvist`
+    k.kandidatdata_ok_forst = 1         # ett skriv sto alt i lagrene
+    res = _kjor(k)
+
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    assert res["lease_tapt"] == "lease_utlopt", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "lease_tapt", k.kvitteringer
+    # Sonden er den ENESTE mulige kilden til dette kallet: med 240 s
+    # intervall og en kjøring på millisekunder pulset tråden aldri.
+    assert "/v1/oppdrag/forny" in k.stier, k.stier
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring uten gyldig lease promoterte likevel"
+
+
+def test_173_avvist_skriv_med_levende_lease_er_fortsatt_lagringsfeil(
+        monkeypatch):
+    """Baksiden av sonden: en 409 fra døren er IKKE i seg selv et
+    autoritetstap.
+
+    `kandidatdata_konflikt` (hashavvik, dobbeltskriv) mens leasen lever
+    er en ekte lagringsfeil. Svarer `/v1/oppdrag/forny` 2xx, eier vi
+    fortsatt oppdraget, og utfallet beholder sitt eget ord — ellers ville
+    sonden døpt om hver eneste dør-avvisning til `lease_tapt`, og drift
+    mistet konflikten.
+
+    MUTASJONEN SOM DREPER DENNE: la `sonder` melde tap på alt som ikke er
+    2xx, eller la den returnere en sannhetsverdi uavhengig av svaret."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient(forny=lambda: _Svar(200, {}))
+    k.kandidatdatastatus = 409          # `kandidatdata_konflikt`
+    k.kandidatdata_ok_forst = 1
+    res = _kjor(k)
+
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "lease_tapt" not in res, res
+    # Sonden ble faktisk spurt — den negative porten måler svaret dens,
+    # ikke at den uteble.
+    assert "/v1/oppdrag/forny" in k.stier, k.stier
+
+
 def test_173_sinkfeil_uten_leasetap_beholder_sitt_eget_ord(monkeypatch):
     """Baksiden av porten over: `puls.tapt`-grenen skal treffe SMALT.
 
