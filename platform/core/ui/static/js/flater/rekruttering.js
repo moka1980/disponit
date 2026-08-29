@@ -1747,12 +1747,21 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
       //
       // DEN FORBIGÅENDE NABOEN HAR SIN EGEN KODE (#215, eierdom (b)):
       // `inndata_opptatt` betyr at en annen bestilling holder bunten
-      // AKKURAT NÅ — ingen dom, ingen kvote, første forsøk kan fortsatt
-      // committe. Samme økonomi som `opptattNokkel`: nøkkelen består
+      // AKKURAT NÅ. Samme økonomi som `opptattNokkel`: nøkkelen består
       // (retry er SAMME operasjon), og teksten sier «prøv igjen om et
       // øyeblikk». Før #215 kollapset `KLIENTKODE` begge til
       // `inndata_ubrukelig`, og flaten kunne ikke velge nøkkeløkonomi
       // på koden alene.
+      //
+      // ... MEN «INGEN DOM, INGEN KVOTE» ER IKKE KODENS LØFTE (Codex
+      // P2). Koden bæres av TO grener i `utfor_bestilling`: den vanlige
+      // (låsen tas før beslutningen — da er begge deler sant) og
+      // gjenopprettingen, der et alt COMMITET `TILLAT` re-tar buntlåsen
+      // (`bestilling.py:617-626`) og svarer det samme når en annen
+      // holder den. Der ER dommen felt og kvoten trukket, og teksten
+      // ville sagt brukeren to usanne ting. Den sier derfor bare det
+      // BEGGE grenene garanterer: bunten er holdt akkurat nå, og retry
+      // med SAMME nøkkel er trygg.
       //
       // Koden alene er stedet her, uten `inndataRef`-vakten
       // `opptattNokkel` trenger: `idempotenskonflikt` har motsatt

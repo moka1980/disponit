@@ -3031,6 +3031,35 @@ test("Bestilling: den terminale teksten beskriver ikke den forbigående "
   assert.ok(/holding .* right now/.test(en[opptatt]), "en: bunt_opptatt");
 });
 
+test("Bestilling: den forbigående teksten lover ikke ubrukt kvote "
+  + "(Codex P2)", () => {
+  // `inndata_opptatt` bæres av TO grener i `utfor_bestilling`: den
+  // vanlige (buntlåsen tas FØR beslutningen — ingen dom, ingen kvote) og
+  // gjenopprettingen, der et alt committet `TILLAT` re-tar låsen
+  // (`bestilling.py:617-626`) og svarer den samme koden. På den andre er
+  // dommen felt og kvoten trukket, så «Ingenting er avgjort, og ingen
+  // kvote er brukt» var to usanne setninger. Teksten skal si bare det
+  // BEGGE grenene garanterer — holdt bunt, trygg retry med samme nøkkel.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg kvote-/dom-løftet tilbake i
+  // `bunt_opptatt` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  const forlatt = "ui.rekruttering.bestill.bunt_opptatt_forlatt";
+  for (const nokkel of [opptatt, forlatt]) {
+    assert.ok(!/ingen kvote/i.test(t(nokkel)), `nb: ${nokkel} lover kvote`);
+    assert.ok(!/no quota/i.test(en[nokkel]), `en: ${nokkel} lover kvote`);
+    assert.ok(!/ingenting er avgjort/i.test(t(nokkel)),
+      `nb: ${nokkel} lover at ingenting er avgjort`);
+    assert.ok(!/nothing has been decided/i.test(en[nokkel]),
+      `en: ${nokkel} lover at ingenting er avgjort`);
+  }
+  // …og det koden FAKTISK garanterer står fortsatt der (testen over
+  // eier holdt-bunt-klausulen; denne eier nøkkelløftet).
+  assert.ok(/SAMME operasjonen/.test(t(opptatt)), "nb: retry-løftet falt ut");
+  assert.ok(/SAME operation/.test(en[opptatt]), "en: retry-løftet falt ut");
+});
+
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),
