@@ -1913,8 +1913,9 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
     deterministiske (valg b) — samme kall to ganger gir samme UUID-er og
     ingen ny rad, og kandidat-UUID-en er den samme på tvers av de to
     rutene; (3) et avvikende re-skriv under samme nøkkel felles som
-    `kandidatdata_konflikt` — både på dokumentbytene og, på SAMME byte,
-    på parsetteksten; (4) feil claim-par og reapet anker er samme
+    `kandidatdata_konflikt` — på dokumentbytene, på parsetteksten under
+    SAMME byte, og i kandidatgrenen på både artefaktet og
+    avmaskeringskartet; (4) feil claim-par og reapet anker er samme
     `kandidatdata_avvist` — et oppslagsverk over claims skal ikke
     finnes.
 
@@ -2024,6 +2025,31 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
                          headers=hode)
             assert r4b.status_code == 409, r4b.text
             assert r4b.json()["feil"] == "kandidatdata_konflikt"
+
+            # (3c) KANDIDATGRENEN HAR SAMME LØFTE (Cursor P2-4).
+            # Konflikten var kun bevist på dokumentveien, så
+            # `kandidatdata_konflikt` for artefakt og avmaskering var to
+            # ubeviste armer i den grenen som faktisk bærer evalueringen.
+            # Endret `kildetekst` = endret artefakt:
+            r4c = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={**art, "artefakt": {
+                             **art["artefakt"],
+                             "kildetekst": f"[NAVN-1] ANNEN {FIXTUR}"}},
+                         headers=hode)
+            assert r4c.status_code == 409, r4c.text
+            assert r4c.json()["feil"] == "kandidatdata_konflikt"
+
+            # (3d) IDENTISK artefakt, ANNET kart. Den er den viktigste av
+            # de to: artefakt-INSERT-en er da et stille ja
+            # (`ON CONFLICT DO NOTHING` + likhetsmåling), så bare
+            # avmaskeringens egen måling står mellom to nøkler til samme
+            # blindede tekst — og feil nøkkel løser opp til feil person.
+            r4d = c.post("/v1/rekruttering/kandidatartefakt",
+                         json={**art, "avmaskering": {
+                             "[NAVN-1]": f"Ola {FIXTUR}"}},
+                         headers=hode)
+            assert r4d.status_code == 409, r4d.text
+            assert r4d.json()["feil"] == "kandidatdata_konflikt"
 
             # (4a) Feil claim-par: ETT svar.
             r5 = c.post("/v1/rekruttering/kandidatdokument",
