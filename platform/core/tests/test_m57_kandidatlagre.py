@@ -2092,3 +2092,70 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
         rt.close()
         if rp is not None:
             rp.close()
+
+
+@pg
+def test_reapmerket_krever_ogsaa_at_rapporten_er_makulert(migrator):
+    """Cursor P1 på #252: vakten målte de SEKS lagrene, ikke `artefakt`.
+
+    `slettet_ts`-armen finnes fordi et merke satt uten at payloaden er
+    tømt utelukker prosessen fra reaperen for alltid — den plukker bare
+    `slettet_ts IS NULL`. Etter #222 er den promoterte rapporten samme
+    slags kandidatpayload som lagrene (funn, intervjuspørsmål, hele den
+    blindede kildeteksten per kandidat), men den var ikke med i
+    målingen: med tomme lagre og en levende rapport slapp merket
+    gjennom, og rapporten ble stående for alltid.
+
+    Reaperen gjør det riktige av seg selv (den makulerer FØR den
+    merker), så dette er porten som gjør den rekkefølgen umulig å miste
+    — også for en fremtidig vei som bare merker.
+
+    MUTASJONEN SOM DREPER DENNE: fjern artefakt-EXISTS i vaktens
+    `slettet_ts`-gren (066). Alle port 18-testene er grønne under den:
+    de måler bare de seks lagrene."""
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt, frist=30)
+        # De SEKS lagrene er tomme — den gamle vakten hadde dermed
+        # ingenting å innvende, og det er nettopp hullet.
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        aid = _promotert_rapport(migrator, oid)
+        assert _artefaktrad(migrator, aid)[1] is False, \
+            "positiv kontroll: rapporten skal bære payload før merket"
+
+        # Merket, satt av den rollen som HAR rettigheten, uten at
+        # rapporten er makulert.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.execute(
+                "UPDATE rekrutteringsprosess SET slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.rollback()
+        # … og rapporten står fortsatt der, altså fortsatt synlig for
+        # reaperen — som er hele poenget med å nekte merket.
+        assert _artefaktrad(migrator, aid)[3] is False
+
+        # Etter LOVLIG makulering gjennom døren tillates merket, i samme
+        # rekkefølge reaperen alt bruker.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        assert migrator.execute(
+            "SELECT makuler_artefakter_for_prosess(%s,%s,now())",
+            (TENANT, oid)).fetchone()[0] == 1
+        migrator.execute(
+            "UPDATE rekrutteringsprosess SET slettet_ts=now()"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.commit()
+        assert _artefaktrad(migrator, aid) == \
+            ("promotert", True, True, True, True)
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()[0] is True
+        migrator.rollback()
+    finally:
+        rt.close()
