@@ -647,9 +647,18 @@ def test_rundetaket_telles_FOR_fiks_og_stopp_grenen():
         < steg3.index("PÅ RUNDE 1–3"), (
         "rundetaket står bak fiks-og-stopp-grenen — en leser som følger"
         " rekkefølgen når det aldri")
-    assert "PÅ RUNDE 1–3 (eller når bare P1 gjenstår)" in steg3, (
-        "fiks-grenen er ubetinget igjen — da gjelder den også på runde"
-        " fire, og taket er omgått")
+    # OG DEN MÅ VÆRE BETINGET AV FUNN, ikke bare av rundetall (Codex P1,
+    # runde 6). Da rekkefølgen ble snudd, falt det gamle
+    # «P1/P2-funn»-vilkåret bort: et RENT pass i runde 1–3 matchet
+    # fiks-grenen på rundetallet alene og ble sendt tilbake til Cursor i
+    # stedet for videre til Codex. Taket som skulle spare runder påførte
+    # dem.
+    assert "OG BARE HVIS PASSET HAR P1/P2-FUNN" in steg3, (
+        "fiks-grenen matcher på rundetall alene — et rent pass i runde"
+        " 1–3 går da i ring gjennom Cursor og CI til runde fire")
+    assert "ER PASSET RENT" in steg3 and "hopp rett til" in steg3, (
+        "det finnes ingen vei fra et rent pass til steg 4 — altså ingen"
+        " vei til Codex")
 
 
 def test_parkeringen_har_en_markor_cursor_ikke_kan_forfalske():

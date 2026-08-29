@@ -300,10 +300,21 @@ når det er parkert, og parkering krever tre ting samtidig:
 
 1. runde fire eller senere (rundetallet telles i PR-tråden),
 2. funnet er P2 eller P3,
-3. kommentaren nevner issue-nummeret parkeringen ligger i.
+3. kommentaren begynner med linjen `PARKERT (RUTINER §12.1)` og nevner
+   issue-nummeret parkeringen ligger i,
+4. kommentaren er skrevet av `moka1980`, `claude[bot]` eller
+   `github-actions[bot]`, OG issuet gjengir nettopp DET funnet.
 
-Mangler ett av de tre, er funnet ikke parkert, og PASS uteblir. En
+Mangler ett av de fire, er funnet ikke parkert, og PASS uteblir. En
 parkering uten issue er en glemsel med bedre ordforråd.
+
+Vilkår 3 og 4 kom av samme funn: passene postes av
+`github-actions[bot]`, altså en forfatter vilkår 4 tillater, så en
+funnliste fra Cursor som nevnte et issue-nummer oppfylte alt det andre —
+og Cursor kunne lest SIN EGEN rapport som beslutningen om å parkere.
+`PARKERT`-markøren skiller en beslutning fra en rapport, og en
+`## Cursor pre-Codex`-kommentar er aldri parkeringsbevis, uansett hva
+den inneholder.
 
 ### 12.2 Produktaksept før mekanismeaksept
 

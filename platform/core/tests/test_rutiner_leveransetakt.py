@@ -45,6 +45,17 @@ def test_rundetaket_er_naabart_gjennom_cursor_porten():
     assert "RUNDE FIRE" in prompt
     assert "P2 eller P3" in prompt
     assert "issue-nummeret" in prompt
+    # ... og RUTINER må liste ALLE FIRE vilkårene, ikke tre (Codex P2,
+    # runde 6). Sto markøren og forfatterkravet bare i prompten, ville
+    # dokumentet beskrevet en svakere regel enn den som håndheves — og
+    # neste leser «rettet» prompten mot dokumentet.
+    p = _paragraf("12.1")
+    assert "PARKERT (RUTINER §12.1)" in p, \
+        "§12.1 nevner ikke markøren som skiller beslutning fra rapport"
+    assert "github-actions[bot]" in p and "gjengir nettopp DET funnet" in p, \
+        "§12.1 nevner ikke forfatterkravet"
+    assert "Mangler ett av de fire" in p, \
+        "§12.1 teller fortsatt tre vilkår"
 
 
 def test_p1_kan_aldri_parkeres_verken_i_prosa_eller_prompt():

@@ -766,11 +766,22 @@ jobs:
                bedre, ikke funn som gjør det riktig — og et P1 fikses selv
                på runde ni.
 
-               PÅ RUNDE 1–3 (eller når bare P1 gjenstår): fiks etter
-               K1-reglene, ett funn per commit, push underveis; deretter
-               `@cursor review` for verifikasjon og stopp. K2/K5 og
-               PASS-ekvivalensregelen (en runde med kun test-negativer
+               PÅ RUNDE 1–3, OG BARE HVIS PASSET HAR P1/P2-FUNN: fiks
+               etter K1-reglene, ett funn per commit, push underveis;
+               deretter `@cursor review` for verifikasjon og stopp. K2/K5
+               og PASS-ekvivalensregelen (en runde med kun test-negativer
                teller som PASS) gjelder.
+
+               FUNN-VILKÅRET ER IKKE PYNT (Codex P1, runde 6). Da jeg
+               snudde rekkefølgen i forrige runde, falt det gamle
+               «P1/P2-funn:»-vilkåret bort, og grenen matchet på
+               RUNDETALLET alene. Et RENT pass i runde 1–3 ble da sendt
+               tilbake til `@cursor review` i stedet for videre til steg
+               4 — sløyfa gikk i ring gjennom Cursor og CI til runde
+               fire, og taket som skulle spare runder påførte dem.
+
+               ER PASSET RENT (eller pass-ekvivalent): hopp rett til
+               steg 4. Det er den eneste veien til Codex.
             4. PASS (eller pass-ekvivalent): verifiser FØRST at
                pass-kommentarens egen SHA-linje (`SHA: ...`) er identisk
                med `gh pr view <nr> --json headRefOid -q .headRefOid` —
