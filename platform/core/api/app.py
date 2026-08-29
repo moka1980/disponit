@@ -2448,8 +2448,38 @@ _KANDIDAT_MIME = {
     ".html": "text/html", ".htm": "text/html"}
 
 
-def _har_nullbyte(rot) -> bool:
-    """Bærer noen streng i strukturen en nullbyte — nøkler medregnet?
+def _har_ulagringsbart_tegn(rot) -> bool:
+    """Bærer noen streng i strukturen et tegn raden ikke kan ta imot —
+    nøkler medregnet? To klasser, ÉN gjennomgang.
+
+    LØSREVNE SURROGATER (Codex P2, #173). `json.loads` gjør escapen
+    `\\ud800` til et ekte lone surrogate i Python-strengen, og en slik
+    streng er IKKE en gyldig Unicode-scalar-sekvens: `str.encode("utf-8")`
+    reiser `UnicodeEncodeError`. Den er verken `psycopg.Error` eller noe
+    porten under fanger, så den falt ut som en UKODET 500 — på hvert
+    eneste retryforsøk, siden samme kropp gir samme unntak — og felte
+    evalueringen uten å si hva som var galt. Manifestpredikatene slipper
+    verdien gjennom fordi et søskeninnslag matcher, og `avmaskering`
+    beholder hver deklarert verdi, så veien hit er helt vanlig.
+
+    Den treffer BEGGE grenene: artefaktveien på `r.encode("utf-8")` i
+    størrelsesporten, dokumentveien på `uuid.uuid5`, som encoder navnet
+    sitt. Derfor måles den her, i det ene predikatet begge grenene
+    allerede spør, og FØR noe forsøkes kodet.
+
+    Nullbyten er den andre klassen, og den var her først:
+
+    MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
+    `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
+    finnes nullbyten ALDRI: `json.dumps` skriver den som de seks tegnene
+    `\\u0000`, uansett `ensure_ascii`. Predikatet var dermed dødt, og en
+    nullbyte i en nestet verdi (manifestkontrakten tillater f.eks. en
+    ikke-matchende alternativverdi for et personfelt, som når
+    `avmaskering` uten å bli sett) nådde `jsonb`, som avviste den. Rå
+    `psycopg.Error` → handlerens catch-all → `db_utilgjengelig`, altså
+    en falsk infrastrukturalarm som modulen retryer mot en frisk base
+    før den feller evalueringen. Nøyaktig utfallet den opprinnelige
+    fiksen fantes for å hindre.
 
     MÅLT PÅ VERDIENE, IKKE PÅ JSON-TEKSTEN (Codex P2). Porten sto som
     `"\\x00" in raa`, altså på den kanoniske JSON-strengen — og der
@@ -2477,6 +2507,15 @@ def _har_nullbyte(rot) -> bool:
         verdi = stakk.pop()
         if isinstance(verdi, str):
             if "\x00" in verdi:
+                return True
+            # Surrogatet måles ved å FORSØKE kodingen, ikke ved å lete
+            # etter kodepunkter i U+D800–U+DFFF for hånd: `encode` ER
+            # regelen nedstrøms, og et eget intervallsøk ville vært en
+            # andre sannhet om samme spørsmål (§9 K4 — ekte koder, ikke
+            # en etterligning av den).
+            try:
+                verdi.encode("utf-8")
+            except UnicodeEncodeError:
                 return True
         elif isinstance(verdi, dict):
             stakk.extend(verdi.keys())
@@ -2715,12 +2754,23 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # hva som faktisk er galt: kroppen bærer et tegn lageret ikke
             # har. Målt på `tekst` OG `navn`, for begge går i
             # TEXT-kolonner (og `navn` også i uuid5 og i loggens detalj).
+            #
+            # OG SAMME PORT FOR LØSREVNE SURROGATER (Codex P2, #173).
+            # Funnet ble meldt på artefaktveien, men dokumentveien har
+            # nøyaktig samme defekt én gren unna: `uuid.uuid5` encoder
+            # navnet sitt til UTF-8, og `tekst` encodes både til
+            # størrelsesmålingen og til sha256. Et `\ud800` fra
+            # `json.loads` reiser `UnicodeEncodeError` alle tre stedene —
+            # ukodet 500, ikke `request_feilformet`. Å lukke bare den ene
+            # grenen ville vært å fikse symptomet: predikatet er derfor
+            # det samme her, og det står FØR første koding.
             if not isinstance(navn, str) or not navn \
                     or len(navn) > _KANDIDAT_NAVN_MAKS \
                     or endelse not in _KANDIDAT_MIME \
                     or not isinstance(b64, str) \
                     or not isinstance(tekst, str) \
-                    or "\x00" in navn or "\x00" in tekst:
+                    or _har_ulagringsbart_tegn(navn) \
+                    or _har_ulagringsbart_tegn(tekst):
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)
@@ -2849,14 +2899,23 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # Denne porten målte `"\x00" in raa_*`, og der finnes den
             # aldri: `json.dumps` skriver nullbyten som de seks tegnene
             # `\u0000`. Predikatet var dødt fra første linje. Se
-            # `_har_nullbyte` for hvorfor escapen ikke er noe bedre å
-            # lete etter. STØRRELSEN måles fortsatt på de kanoniske
-            # strengene — de ER det som INSERTes.
-            if sum(len(r.encode("utf-8"))
-                   for r in (raa_a, raa_m, raa_s)) \
-                    > _KANDIDAT_ARTEFAKT_MAKS \
-                    or any(_har_nullbyte(v)
-                           for v in (artefakt, avmaskering, sporsmal or [])):
+            # `_har_ulagringsbart_tegn` for hvorfor escapen ikke er noe
+            # bedre å lete etter. STØRRELSEN måles fortsatt på de
+            # kanoniske strengene — de ER det som INSERTes.
+            #
+            # TEGNPORTEN STÅR FØRST, OG DET ER IKKE KOSMETIKK (Codex P2,
+            # #173). `or` evaluerer venstre side først, så med
+            # størrelsessummen foran var det `r.encode("utf-8")` som møtte
+            # et løsrevet surrogat — og `UnicodeEncodeError` derfra er
+            # verken `psycopg.Error` eller noe denne porten fanger. Den
+            # kom ut som en UKODET 500, på hvert eneste retryforsøk, i
+            # stedet for det `request_feilformet` linjene her finnes for.
+            # Tegnene måles derfor FØR noe forsøkes kodet.
+            if any(_har_ulagringsbart_tegn(v)
+                   for v in (artefakt, avmaskering, sporsmal or [])) \
+                    or sum(len(r.encode("utf-8"))
+                           for r in (raa_a, raa_m, raa_s)) \
+                    > _KANDIDAT_ARTEFAKT_MAKS:
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)

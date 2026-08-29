@@ -2487,6 +2487,69 @@ def test_173_nullbyte_er_feilformet_ikke_doed_base(migrator, miljo):
         rt.close()
 
 
+def test_173_losrevet_surrogat_er_feilformet_ikke_ukodet_500():
+    """#173 (Codex P2): `\\ud800` skal kodes som request-feil, ikke 500.
+
+    `json.loads` gjør escapen `\\ud800` til et ekte lone surrogate i
+    Python-strengen, og en slik streng er ikke en gyldig
+    Unicode-scalar-sekvens: `str.encode("utf-8")` reiser
+    `UnicodeEncodeError`. Det unntaket er verken `psycopg.Error` eller
+    noe portene i `_kandidatdata` fanger, så det falt ut som en UKODET
+    500 — og siden samme kropp gir samme unntak, på hvert eneste
+    retryforsøk, helt til evalueringen ble felt uten at noe sa hva som
+    var galt.
+
+    Veien inn er helt vanlig: manifestpredikatene slipper verdien
+    gjennom når et søskeninnslag matcher, og `avmaskering` beholder
+    hver deklarert verdi.
+
+    Predikatet måles direkte her, ikke over HTTP. Det er porten begge
+    grenene spør, og det er den ENE avgjørelsen funnet handler om —
+    HTTP-runden rundt den er alt dekket av
+    `test_173_nullbyte_er_feilformet_ikke_doed_base`, som går gjennom
+    nøyaktig samme `if`. Denne trenger derfor ingen database.
+
+    BEGGE GRENENE, ikke bare den meldte: funnet ble skrevet på
+    artefaktveien (`r.encode` i størrelsesporten), men dokumentveien
+    har samme defekt én gren unna — `uuid.uuid5` encoder navnet sitt.
+    Derfor står predikatet foran første koding begge steder.
+
+    MUTASJONEN SOM DREPER DENNE: fjern surrogatarmen i
+    `_har_ulagringsbart_tegn`, eller flytt tegnporten tilbake BAK
+    størrelsessummen i artefaktgrenen (`or` evaluerer venstre side
+    først, så `r.encode` møter surrogatet igjen).
+    """
+    import json as _json
+
+    from api.app import _har_ulagringsbart_tegn
+
+    # Slik verdien FAKTISK kommer inn: som en escape på wire, gjennom
+    # `json.loads`. Ingen håndlaget `"\ud800"`-literal i testen.
+    kropp = _json.loads('{"artefakt": {"kildetekst": "Kari\\ud800"},'
+                        ' "avmaskering": {"[NAVN-1]": "Kari"}}')
+    surrogat = kropp["artefakt"]["kildetekst"]
+    with pytest.raises(UnicodeEncodeError):
+        surrogat.encode("utf-8")
+
+    assert _har_ulagringsbart_tegn(kropp["artefakt"]) is True
+    # Også i et avmaskeringskarts VERDI …
+    assert _har_ulagringsbart_tegn({"[NAVN-1]": surrogat}) is True
+    # … og i en NØKKEL, som `json.dumps(sort_keys=True)` også encoder.
+    assert _har_ulagringsbart_tegn({surrogat: "Kari"}) is True
+    # … og nestet i intervjuspørsmålslisten.
+    assert _har_ulagringsbart_tegn([{"sporsmal": [surrogat]}]) is True
+
+    # Nullbyten er fortsatt fanget — armen ble utvidet, ikke byttet.
+    assert _har_ulagringsbart_tegn({"a": ["x\x00y"]}) is True
+
+    # Og en helt vanlig kropp slipper gjennom: porten feller tegnet,
+    # ikke forespørselen.
+    assert _har_ulagringsbart_tegn(kropp["avmaskering"]) is False
+    assert _har_ulagringsbart_tegn(
+        {"funn": [], "oppfylt": {"drift": True},
+         "kildetekst": "Kari Nordmann, æøå, 漢字, \U0001f600"}) is False
+
+
 @pg
 def test_173_budsjettet_dekker_alle_tre_payloadene(migrator, miljo,
                                                    monkeypatch):
