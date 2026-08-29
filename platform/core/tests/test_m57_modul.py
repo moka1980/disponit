@@ -1970,6 +1970,54 @@ def test_m57_har_EN_modulidentitet_i_kontrakt_migrasjon_og_artefakt():
     assert manifest["id"] == MODULROT.name
 
 
+def test_spolen_bevarer_uttrekkerens_linjeskiftbytes(tmp_path):
+    """Codex P2 (#173): spolen oversatte `\\r\\n` og enslig `\\r` til `\\n`.
+
+    `Path.write_text`/`read_text` gjør universell linjeskiftoversettelse
+    når `newline` ikke settes. Spolen er ikke en logg — den er kilden til
+    de EKSAKTE strengsammenligningene nedstrøms, og `lagre_dokument` har
+    alt persistert uttrekkerens ORIGINALE tekst. Oversettelsen ga derfor
+    to ulike sannheter om samme dokument.
+
+    Testen måler begge følgene i én kjøring:
+
+    1. En DEKLARERT verdi med internt `\\r\\n` — en flerlinjes adresse —
+       traff den uttrukne teksten før spolingen og ikke etterpå. Da er
+       deklarasjonen vakuøs, og `blinding.evalueringsinput` feller et
+       fullstendig gyldig manifest som `ugyldig_maskeringsform`. At
+       kjøringen fullfører er derfor selve porten.
+    2. Bytene modellen ser: teksten bærer et `\\r\\n` UTENFOR de
+       maskerte verdiene, og det skal stå igjen uendret.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `newline=""` fra lesningen i
+    `_les_spole` (punkt 1 og 2 faller begge), eller fra skrivingen i
+    `kjor_bunt` (faller på plattformer der `os.linesep != "\\n"`).
+    """
+    from modules.m57_ats import kjoring
+
+    adresse = "Gate 1\r\nOslo"
+    # `\r\n` både INNE i en deklarert verdi (punkt 1) og utenfor alle
+    # deklarerte verdier (punkt 2) — de to måles hver for seg.
+    tekst = f"Kandidat k1, {adresse}.\r\nKandidat k1 kan drift."
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>irrelevant</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"], "adresse": [adresse]}
+
+    modell = _Modell()
+    res = kjoring.kjor_bunt(arkiv, modell, vekter={"drift": 3},
+                            kandidatfelter_for=felter,
+                            tekst_for=lambda m, d: tekst,
+                            biasmaalinger=_MAALINGER, antall_soknader=1)
+
+    assert [k["kandidat_id"] for k in res["rangering"]] == ["k1"]
+    assert modell.sett, "modellen ble aldri kalt"
+    assert "\r\n" in modell.sett[0], (
+        "spolen oversatte linjeskiftene — modellen fikk ikke uttrekkerens"
+        f" egne bytes: {modell.sett[0]!r}")
+    # Og adressen ER faktisk maskert: uten dette kunne punkt 2 vært
+    # grønt fordi blindingen aldri traff i det hele tatt.
+    assert adresse not in modell.sett[0], modell.sett[0]
+
+
 def test_deklarert_antall_bindes_til_buntens_kandidater(tmp_path):
     """Codex P1 på #210: `antall_soknader` er bestillingens signerte tall
     og ble aldri lest i kjøringen — deklarer 1, lever 2, og policyens
@@ -2180,6 +2228,56 @@ def test_tekstuttrekket_er_containerens_aldri_en_utf8_dekoding(tmp_path):
     assert e.value.kode == "tekstuttrekk_feilet"
 
 
+def test_nullbyten_fra_uttrekket_naar_aldri_lagrene(tmp_path):
+    """#173 (Codex P2): en nullbyte i uttrekket felte HELE evalueringen.
+
+    PostgreSQL kan ikke lagre en nullbyte i `TEXT` eller `jsonb` i det
+    hele tatt. Et uttrekk fra html eller pdf kan lovlig bære en — den
+    passerer arkivgaten og uttrekket — og den felte først på INSERT, som
+    en rå `psycopg.Error` API-et oversetter til `db_utilgjengelig`.
+    `lever` leser 5xx som DRIFT, brenner hele retrykjeden mot en frisk
+    base, og feller til slutt kjøringen som `kandidatlagring_feilet`,
+    med en falsk infrastrukturalarm på veien. Én søknad med ett usynlig
+    tegn tok altså ned buntens 4 999 andre.
+
+    Rensingen står ved uttrekksgrensen, som er det ENE stedet fremmed
+    uttrekkerkode kommer inn: både modellen, dokumentlageret og
+    `kildetekst` i artefaktet ser da SAMME tekst. Testen måler begge
+    veiene ut — modellen og dokumentsinken — for en rensing på bare den
+    ene ville gitt to sannheter om samme søknad.
+
+    Byten fjernes, den avvises ikke: den er ikke innhold. Ingen leser
+    kan se den, uttrekket produserer den som kodingsartefakt, og
+    «evidensen» den endrer er en byte som per konstruksjon ikke kunne
+    vært lagret. Plattformdøren avviser den fortsatt
+    (`request_feilformet`) — modulen er ikke lagrenes eneste vern.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `.replace(chr(0), "")` fra
+    `_tekst`."""
+    from modules.m57_ats import kjoring
+
+    arkiv = _bunt(tmp_path, [("k1/soknad.html", b"<p>drift hos k1</p>")])
+    felter = lambda m: {"navn": ["Kandidat k1"]}
+    lagret = []
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        arkiv, modell, vekter={"drift": 3}, kandidatfelter_for=felter,
+        tekst_for=lambda m, d: "drift\x00tekst for Kandidat k1\x00",
+        biasmaalinger=_MAALINGER, antall_soknader=1,
+        lagre_dokument=lambda kid, navn, data, tekst: lagret.append(tekst))
+
+    # Kjøringen fullfører — den falt ikke på et usynlig tegn.
+    assert set(ut["artefakter"]) == {"k1"}
+    # Dokumentsinken fikk tekst basen faktisk kan holde …
+    assert lagret and all("\x00" not in t for t in lagret), lagret
+    assert "drifttekst" in lagret[0], lagret
+    # … modellen så nøyaktig det samme (blindet) …
+    assert modell.sett == ["drifttekst for [NAVN-1]"], modell.sett
+    # … og `kildetekst` i artefaktet, som går i jsonb, er like ren.
+    assert "\x00" not in ut["artefakter"]["k1"]["kildetekst"]
+
+
 def test_uttrekkerens_egen_kode_overlever_ut_av_kjoringen(tmp_path):
     """Cursor P2, runde 6: uttrekkerens SP-3-kode ble spist av `_tekst`.
 
@@ -2235,6 +2333,147 @@ def test_uttrekkerens_egen_kode_overlever_ut_av_kjoringen(tmp_path):
     with pytest.raises(kjoring.Kjoringsfeil) as e:
         kjor(_bunt(uleselig, [("k1/soknad.html", b"<p>drift \xff\xfe</p>")]))
     assert e.value.kode == "uttrekk_uleselig", e.value.kode
+
+
+def test_173_uttrekkstaket_er_sinkens_tak(tmp_path):
+    """Codex P2 (#173): uttrekket var UBUNDET, sinken var bundet.
+
+    `api.app._KANDIDAT_DOK_MAKS` avviser en parsettekst over 25 MiB som
+    `request_feilformet`, og controlleren melder den 4xx-en som
+    `kandidatlagring_feilet` for HELE bunten. Men `_pdf` returnerte hele
+    `pdftotext`-stdout uansett størrelse, og en PDF innenfor arkivets
+    `MAKS_ENKELTFIL` kan lovlig pakke ut til langt mer tekst. Arkivgaten
+    sa ja, uttrekket sa ja, og sinken felte bunten på noe ingen av dem
+    hadde sagt fra om.
+
+    Grensen hører hjemme i uttrekket: der er den et KODET utfall om ETT
+    dokument, mens den ved sinken er en lagringsfeil om hele
+    evalueringen. Å heve sinkens tak i stedet ville sluppet ubundet
+    tekst inn i `TEXT`-kolonnen og fjernet §4-budsjettet i stedet for å
+    flytte det.
+
+    To ting måles, og begge er nødvendige:
+
+    1. Tallene er LIKE. modules/ og api/ importerer ikke hverandre, så
+       konstanten er speilet — og et speil ingen måler driver. Hever
+       noen det ene taket alene, er funnet tilbake.
+    2. Uttrekkeren HÅNDHEVER sitt eget tak, med en kodet
+       `Uttrekksfeil` som `kjor_bunt` bærer urørt videre. Kommandoen er
+       en ekte prosess som skriver mer enn taket på stdout — ikke en
+       stub som later som.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `MAKS_TEKST`-porten i
+    `tekst_for`, eller sett taket til noe annet enn sinkens.
+    """
+    import shutil
+    import types
+
+    from api.app import _KANDIDAT_DOK_MAKS
+    from modules.m57_ats import uttrekk
+
+    assert uttrekk.MAKS_TEKST == _KANDIDAT_DOK_MAKS, (
+        f"uttrekket bruker {uttrekk.MAKS_TEKST}, sinken"
+        f" {_KANDIDAT_DOK_MAKS} — speilet har drevet, og differansen er"
+        " nøyaktig den bunten felles på")
+
+    # En EKTE pdf-kommando som skriver mer enn taket ut. Taket senkes
+    # kunstig i stedet for å presse 25 MiB gjennom CI — samme form som
+    # `test_173_budsjettet_dekker_alle_tre_payloadene` bruker for
+    # budsjettet, og den måler nøyaktig leddet funnet gjelder: at
+    # uttrekket SELV stopper på sitt eget tall.
+    python = shutil.which("python3") or shutil.which("python")
+    assert python, "ingen python-tolk å bygge en ekte uttrekkskommando av"
+    skript = tmp_path / "falsk_pdftotext.py"
+    skript.write_text(
+        "import sys\n"
+        "sys.stdin.buffer.read()\n"
+        "sys.stdout.buffer.write(b'T' * 5000)\n",
+        encoding="utf-8")
+    u = uttrekk.Uttrekker(f"{python} {skript}")
+    medlem = types.SimpleNamespace(navn="k1/cv.pdf")
+
+    # Under taket: teksten kommer ut som den er.
+    u_stor = uttrekk.MAKS_TEKST
+    try:
+        uttrekk.MAKS_TEKST = 5000
+        assert len(u.tekst_for(medlem, b"%PDF-1.4")) == 5000
+        # Over taket, med ETT tegn: porten måler grensen, ikke en sone.
+        uttrekk.MAKS_TEKST = 4999
+        with pytest.raises(uttrekk.Uttrekksfeil) as e:
+            u.tekst_for(medlem, b"%PDF-1.4")
+    finally:
+        uttrekk.MAKS_TEKST = u_stor
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+
+
+def test_173_pdf_stdout_felles_mens_den_skrives_ikke_etterpa(tmp_path):
+    """Codex P1 (#173): taket sto BAK døren det skulle vokte.
+
+    Forrige runde ga `tekst_for` et tak, men `_pdf` hentet fortsatt
+    stdout med `capture_output=True` — altså materialiserte HELE
+    utdataen i minnet FØR porten fikk se den. En PDF innenfor arkivets
+    `MAKS_ENKELTFIL` (25 MiB) kan pakke ut til langt mer tekst enn
+    unitens `MemoryMax=1G`, og da blir arbeideren OOM-drept før den
+    rekker å returnere det kodede `uttrekk_uleselig`-utfallet. Porten
+    var ikke feil, den sto bare for sent: en grense som først måles
+    etter at minnet er brukt opp, måles aldri.
+
+    Målingen skiller de to formene på detaljen, ikke på klokken:
+    kommandoen her skriver forbi taket og SOVER så lenge — lenger enn
+    fristen. Felles den mens den skriver, er utfallet «tekst for stor»
+    med én gang; buffres den til slutt, kan utfallet bare bli
+    `TimeoutExpired`, og da har prosessen holdt hele overskytelsen i
+    minnet i mellomtiden. Klokken måles i tillegg, som en billig
+    forsikring om at det faktisk var den tidlige veien.
+
+    MUTASJONEN SOM DREPER DENNE: sett `_pdf` tilbake til
+    `subprocess.run(..., capture_output=True)`, eller fjern
+    størrelsesmålingen i `_kjor_bundet`s ventelokke.
+    """
+    import shutil
+    import time
+    import types
+
+    from modules.m57_ats import uttrekk
+
+    python = shutil.which("python3") or shutil.which("python")
+    assert python, "ingen python-tolk å bygge en ekte uttrekkskommando av"
+    # Skriver 4 MiB i biter — med flush, for stdout er en FIL her og
+    # buffres ellers til prosessen avslutter — og sover deretter langt
+    # forbi fristen uten å avslutte.
+    skript = tmp_path / "pdftotext_som_spyr.py"
+    skript.write_text(
+        "import sys, time\n"
+        "sys.stdin.buffer.read()\n"
+        "for _ in range(16):\n"
+        "    sys.stdout.buffer.write(b'T' * (256 * 1024))\n"
+        "    sys.stdout.buffer.flush()\n"
+        "time.sleep(120)\n",
+        encoding="utf-8")
+
+    frist_s = 30.0
+    u = uttrekk.Uttrekker(f"{python} {skript}", frist_s=frist_s)
+    medlem = types.SimpleNamespace(navn="k1/cv.pdf")
+
+    u_stor = uttrekk.MAKS_TEKST
+    start = time.monotonic()
+    try:
+        # Taket senkes kunstig i stedet for å presse 25 MiB gjennom CI
+        # — samme form som `test_173_uttrekkstaket_er_sinkens_tak`.
+        uttrekk.MAKS_TEKST = 1024 * 1024
+        with pytest.raises(uttrekk.Uttrekksfeil) as e:
+            u.tekst_for(medlem, b"%PDF-1.4")
+    finally:
+        uttrekk.MAKS_TEKST = u_stor
+    brukt = time.monotonic() - start
+
+    assert e.value.kode == "uttrekk_uleselig", e.value.kode
+    assert "tekst for stor" in str(e.value), (
+        "utfallet kom ikke fra størrelsesgrensen — stdout ble buffret"
+        f" ferdig først: {e.value}")
+    assert brukt < frist_s / 2, (
+        f"uttrekket brukte {brukt:.1f}s av en frist på {frist_s:.0f}s —"
+        " kommandoen ble ikke felt idet den passerte taket")
 
 
 def test_tomt_tekstuttrekk_er_kodet_feil_ikke_en_tom_vurdering(tmp_path):

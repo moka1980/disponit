@@ -715,3 +715,183 @@ def test_ankerlukkingen_hoerer_til_statusskiftet():
     assert posisjon > terminal > kapabilitet, \
         "lukkingen skal stå etter det faktiske statusskiftet, aldri ved" \
         " kapabilitetsbruken"
+
+
+@pg
+def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
+        migrator, miljo, monkeypatch):
+    """#223: TOCTOU-beviset med TO FORBINDELSER — ikke en kildemåling.
+
+    `test_ankersjekken_staar_etter_dekrypteringen` beviser de
+    deterministiske halvdelene (re-sjekken virker begge veier, og den
+    STÅR etter dekrypteringen i kilden). Dette er selve vinduet:
+    hovedspørringen godkjenner mens ankeret LEVER, dekrypteringen står
+    instrumentert i pause, lukking + reap COMMITTER i vinduet på egne
+    forbindelser — og re-sjekken feller 200-en som allerede var
+    «fortjent» da beslutningen ble tatt. Payloaden forlater aldri
+    prosessen etter en reap som var committet før svaret.
+
+    Pausepunktet er DEKRYPTERINGEN — en søm som ikke er porten under
+    test: å pause i `_anker_lever` selv ville målt instrumentet.
+    Ciphertexten overlever reapen her (#222s makulering er raden, ikke
+    minnet — hovedspørringen har alt lest bytene), så dekrypteringen
+    LYKKES og re-sjekken er det eneste som står mellom payloaden og 200.
+
+    Avvist alternativ (dokumentert i `_anker_lever`): FOR SHARE fra
+    leseveien — krever UPDATE-rett på ankeret for en READ-rute og
+    reverserer rettighetsvedtaket i migrer.py.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_anker_lever`-kallet i
+    `rekrutteringsrapport_detalj`. Kildemålingen rødner også — men bare
+    denne beviser at vinduet er LUKKET, ikke bare at sjekken står der."""
+    import threading
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+    from .test_m57_kandidatlagre import _claimet, _reaperkobling
+    from .test_m57_utsending import _rt as _rekrutt_rt
+
+    rt = _rekrutt_rt()
+    try:
+        # Riggen er `test_reapet_prosess_stenger_rapporten`s egen:
+        # claimet oppdrag + direkte promotert artefakt + anker gjennom
+        # den herdede veien. Det er koblingen prosess→oppdrag leseveien
+        # dømmer på, ikke payloaden.
+        oid, _ = _claimet(migrator)
+        _sett_kontekst(migrator, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator,
+                                                              TENANT)
+        rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
+        ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
+        kh = migrator.execute(
+            "SELECT kontrakt_hash FROM modulkontrakt"
+            " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+        rel = migrator.execute(
+            "SELECT release_id FROM moduldeployment"
+            " WHERE modul_id='m57_ats' AND livslop='claiming'"
+            " LIMIT 1").fetchone()[0]
+        epoch = migrator.execute(
+            "SELECT module_epoch FROM modulhode"
+            " WHERE modul_id='m57_ats'").fetchone()[0]
+        migrator.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,'rekruttering.evaluering.rapport','m57_ats',"
+            "%s,1,%s,%s,'promotert',10,'h',%s,%s,%s,%s, now())",
+            (TENANT, oid, rel, kh, epoch, ct, nonce, key_id,
+             "jti-" + secrets.token_hex(8)))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        pid = rt.execute(
+            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+            (TENANT, oid, 30)).fetchone()[0]
+        rt.commit()
+
+        # SØMMEN: dekrypteringen pauses ÉN gang, med tidsgrense begge
+        # veier så en feilende rigg aldri henger suiten — utløper
+        # ventingen, FELLER riggen på sin egen premiss i stedet for å
+        # slippe kallet videre.
+        inne = threading.Event()
+        slipp = threading.Event()
+        brukt = threading.Event()
+        forgjeves = threading.Event()
+        ekte = kryptering.dekrypter
+
+        def _pause(*a, **kw):
+            if not brukt.is_set():
+                brukt.set()
+                inne.set()
+                # Tidsgrensen SKAL ikke fortsette gjennom koden under
+                # test (Codex P2): drar lukking + reap forbi 20 s på en
+                # lastet CI-base, er vinduet aldri åpnet, og et kall som
+                # går videre kjører `_anker_lever` FØR reapen committet.
+                # 200 er da KORREKT produktoppførsel — riggen ville meldt
+                # en regresjon som ikke finnes, altså gjort treg base om
+                # til rødt. Avbryt forespørselen i stedet.
+                if not slipp.wait(20):
+                    forgjeves.set()
+                    raise AssertionError(
+                        "sømmen ventet 20 s uten at vinduet ble åpnet")
+            return ekte(*a, **kw)
+
+        monkeypatch.setattr(kryptering, "dekrypter", _pause)
+
+        utfall: list = []
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            cookie, _csrf = _adminsesjon()
+            ck = {sesjonmodul.C_SESJON: cookie}
+
+            def _hent():
+                try:
+                    utfall.append(c.get(
+                        f"/v1/rekruttering/rapport/{oid}", cookies=ck))
+                except Exception as e:      # noqa: BLE001 — til asserten
+                    utfall.append(e)
+
+            # `daemon=True`: overlever tråden alt under, skal den aldri
+            # kunne holde pytest-prosessen åpen etter at suiten er ferdig.
+            traad = threading.Thread(target=_hent, daemon=True)
+            traad.start()
+            try:
+                assert inne.wait(20), \
+                    "forespørselen nådde aldri dekrypteringssømmen — " \
+                    "hovedspørringen godkjente ikke det levende ankeret"
+                # VINDUET: lukking forbi fristen + reap COMMITTER mens
+                # dekrypteringen står i pause — beslutningen «server
+                # rapporten» er alt tatt på det gamle snapshotet.
+                _sett_kontekst(rt, TENANT)
+                rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                           " now() - interval '31 days')", (TENANT, pid))
+                rt.commit()
+                rp, _timer = _reaperkobling()
+                try:
+                    reapet = rp.execute(
+                        "SELECT * FROM reap_kandidatdata(50)").fetchall()
+                    rp.commit()
+                finally:
+                    rp.close()
+                assert (TENANT, pid) in [(r[0], r[1]) for r in reapet], \
+                    "reapen committet ikke i vinduet — riggen målte intet"
+            finally:
+                slipp.set()
+                traad.join(30)
+            # Lever tråden fortsatt, står `c.get()` fast et ANNET sted enn
+            # sømmen (f.eks. en deadlock i den samtidigheten riggen
+            # diagnostiserer) — `join` bare returnerte. Da navngir denne
+            # asserten feilen i stedet for å la den være taus.
+            #
+            # DELVIS GRENSE, og det sies her (Codex P2, K1-utsatt til
+            # #257): asserten river IKKE ned en forespørsel som står
+            # fast. Ruten er en synkron `def` (`app.py:853`), så
+            # Starlette kjører den via `run_in_threadpool` →
+            # `anyio.to_thread.run_sync`, som ikke forlater
+            # arbeidertråden ved kansellering. `TestClient`-utgangen
+            # kansellerer ASGI-oppgaven, men venter på arbeideren; og
+            # `daemon=True` over gjelder bare kallertråden, ikke den
+            # arbeideren. En ekte grense må ligge UTENFOR det som kan
+            # blokkere — probet i en separat terminerbar prosess, som er
+            # egen maskin og derfor egen PR (#257).
+            assert not traad.is_alive(), (
+                "forespørselstråden lever etter `slipp` + 30 s join — "
+                "kallet står fast utenfor dekrypteringssømmen")
+        # Diagnosen leses av EGEN flagg, ikke av svaret: heves
+        # AssertionError inne i ruten, kan appen rendre den som 500, og
+        # 404-asserten under ville da meldt «re-sjekken lukket ikke
+        # vinduet» om noe som bare var en treg base.
+        assert not forgjeves.is_set(), (
+            "riggen målte aldri vinduet: lukking + reap ble ikke "
+            "committet innen sømmens 20 s. Dette er en treg base, "
+            "IKKE en regresjon i re-sjekken")
+        assert utfall and not isinstance(utfall[0], Exception), utfall
+        assert utfall[0].status_code == 404, (
+            "payloaden forlot prosessen ETTER en committet reap — "
+            f"re-sjekken lukket ikke vinduet: {utfall[0].status_code}")
+        assert utfall[0].json()["feil"] == "ikke_funnet", \
+            "reapet og aldri-funnet skal være samme svar (058-doktrinen)"
+    finally:
+        rt.close()
