@@ -418,6 +418,181 @@ def test_listen_avkorter_aldri_stille(migrator, miljo):
 
 
 @pg
+def test_221_cursoren_er_serverens_og_folges_uten_hull(migrator, miljo):
+    """#221: pagineringen er en SIGNERT, TENANTBUNDET keyset-cursor —
+    husformen fra `GET /v1/unntak`. Side 2 begynner nøyaktig der side 1
+    sluttet (ingen rad hoppes over, ingen gjentas), siste side bærer
+    `flere: False` og ingen cursor, og en manipulert cursor er 400
+    `cursor_ugyldig` — aldri en annen tenants fortsettelse.
+
+    De negative armene MÅLER de to bindingene påstanden hviler på
+    (Cursor P2): en manipulert cursor (signaturen), og en ekte,
+    korrekt signert cursor som tilhører en ANNEN tenant (tenantleddet)
+    — husformen fra `test_api.py::test_cursor_ugyldig` og
+    `test_pr015_endepunkt.py`. Uten den siste armen kunne
+    tenantsjekken i `cursor.les_v2` falle ut og suiten forbli grønn.
+
+    MUTASJONEN SOM DREPER DENNE: la keyset-leddet stå, men fjern
+    signaturkontrollen i `cursormodul.les_v2` — den manipulerte
+    cursoren slipper da gjennom som et par tall; eller fjern
+    `t`-sjekken samme sted — da følger denne tenanten en fremmed
+    fortsettelse."""
+    from datetime import datetime, timezone
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import cursor as cursormodul
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+
+    _sikre_m57_claimbar(migrator)
+    _sett_kontekst(migrator, TENANT)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    ct, nonce = kryptering.krypter(dek, {"x": 1}, TENANT, key_id)
+
+    def _seed(antall):
+        _sett_kontekst(migrator, TENANT)
+        nye = []
+        for _ in range(antall):
+            logg = migrator.execute(
+                "INSERT INTO revisjonslogg (tenant, aktor, kilde,"
+                " input_hash, policy_id, beslutning, begrunnelse,"
+                " idempotency_key)"
+                " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y',"
+                "'TILLAT','[]',%s) RETURNING id",
+                (TENANT, secrets.token_hex(8))).fetchone()[0]
+            nye.append(migrator.execute(
+                "INSERT INTO oppdrag (opprinnelse, tenant,"
+                " beslutning_loggpost_id, oppdragstype, handling,"
+                " eiermodul, payload_kryptert, key_id, nonce,"
+                " utforelsesfrist, evidensfrist, koblingsstatus, status)"
+                " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+                "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+                " now()+interval '4 hour', now()+interval '1 day',"
+                "'KOBLET','kansellert') RETURNING id",
+                (TENANT, logg, ct, key_id, nonce)).fetchone()[0])
+        migrator.commit()
+        return nye
+
+    seedet = set(_seed(101))
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        cookie, _csrf = _adminsesjon()
+        ck = {sesjonmodul.C_SESJON: cookie}
+        # VANDRINGEN ER ORDENSUAVHENGIG: DB-suiten deler base, så
+        # historikken kan bære andre testers evalueringer — invariantene
+        # måles på KJEDEN, aldri på et antatt antall sider.
+        sett_ids: set = set()
+        forrige_min = None
+        cursor = None
+        sider = 0
+        while True:
+            sti = "/v1/rekruttering/evalueringer" + (
+                f"?cursor={cursor}" if cursor else "")
+            r = c.get(sti, cookies=ck)
+            assert r.status_code == 200, r.text
+            side = r.json()
+            # Ordenen måles på KEYSETTETS eget par (opprettet, id) —
+            # id alene er ikke nøkkelen, og en delt base kan bære rader
+            # med samme tidsstempel (CodeRabbit).
+            nokler = [(e["opprettet"], e["oppdrag_id"])
+                      for e in side["evalueringer"]]
+            ids = [n2[1] for n2 in nokler]
+            assert nokler == sorted(nokler, reverse=True), \
+                "siden er ikke i keyset-rekkefølge"
+            assert not set(ids) & sett_ids, "sidene overlapper"
+            if forrige_min is not None and nokler:
+                assert forrige_min > max(nokler), \
+                    "keyset-fortsettelsen hoppet i historikken"
+            sett_ids.update(ids)
+            if nokler:
+                forrige_min = min(nokler)
+            sider += 1
+            assert sider < 50, "cursorkjeden terminerte aldri"
+            if side["flere"]:
+                assert side["neste_cursor"], \
+                    "avkorting uten cursor er en melding uten fortsettelse"
+                assert len(side["evalueringer"]) == 100, \
+                    "en avkortet side skal være et fullt vindu"
+                cursor = side["neste_cursor"]
+                continue
+            assert side["neste_cursor"] is None, \
+                "siste side skal ikke love en fortsettelse"
+            break
+        assert sider >= 2, "101 seedede rader ga ikke to sider"
+        # Kjeden skal bære HVER seedet rad — «minst 101» kunne vært 101
+        # av noen andres (CodeRabbit): en tapt rad midt i vandringen er
+        # nøyaktig hullet keyset-formen finnes for å utelukke.
+        assert seedet <= sett_ids, \
+            f"kjeden mistet seedede rader: {sorted(seedet - sett_ids)[:5]}"
+
+        # En manipulert cursor er sin egen kodede avvisning.
+        r3 = c.get("/v1/rekruttering/evalueringer?cursor=AAAA.bbbb",
+                   cookies=ck)
+        assert r3.status_code == 400, r3.text
+        assert r3.json()["feil"] == "cursor_ugyldig"
+
+        # … og en ekte, korrekt SIGNERT cursor som tilhører en annen
+        # tenant er den armen docstringen lover: signaturen er gyldig,
+        # så bare tenantbindingen kan avvise den (Cursor P2).
+        fremmed = cursormodul.lag_v2(
+            a.tjeneste.cursorpepper, tenant=ANNEN_TENANT,
+            endepunkt="rekruttering_evalueringer", retning="desc",
+            filtre={}, ts=datetime.now(timezone.utc), rad_id=1)
+        r4 = c.get(f"/v1/rekruttering/evalueringer?cursor={fremmed}",
+                   cookies=ck)
+        assert r4.status_code == 400, r4.text
+        assert r4.json()["feil"] == "cursor_ugyldig"
+
+        # Og endepunktbindingen: en egen, gyldig cursor fra et ANNET
+        # endepunkt hos SAMME tenant peker inn i en annen spørring.
+        naboen = cursormodul.lag_v2(
+            a.tjeneste.cursorpepper, tenant=TENANT,
+            endepunkt="beslutninger", retning="desc",
+            filtre={}, ts=datetime.now(timezone.utc), rad_id=1)
+        r5 = c.get(f"/v1/rekruttering/evalueringer?cursor={naboen}",
+                   cookies=ck)
+        assert r5.status_code == 400, r5.text
+        assert r5.json()["feil"] == "cursor_ugyldig"
+
+
+@pg
+def test_221_keyset_ordenen_har_en_indeks_a_lese_den_ut_av(migrator):
+    """#221 (Codex P2): sorteringen ble eksplisitt `(opprettet, id)`, og
+    DEN ordenen hadde ingen indeks — `oppdrag_tenant_id_unik` betjente
+    bare den gamle `ORDER BY o.id DESC`. Uten en matchende indeks må
+    PostgreSQL samle og sortere hele tenantens oppdragshistorikk før
+    `LIMIT 101` kan kappe, på hver eneste side. En cursor som sorterer alt
+    på nytt for hver side er en OFFSET med ekstra steg.
+
+    Målingen er PREFIKSET, ikke navnet: `tenant` er likhetsleddet, så
+    `(opprettet, id)` må komme rett etter for at både keyset-leddet og
+    `ORDER BY` skal kunne leses ut av indeksen.
+
+    MUTASJONEN SOM DREPER DENNE: slett migrasjon 066, eller bytt
+    kolonnerekkefølgen i den (f.eks. `(tenant, id, opprettet)`)."""
+    kolonner = migrator.execute(
+        # `pg_get_indexdef(oid, kolonne_nr, pretty)` gir ÉN kolonne av
+        # gangen — altså rekkefølgen, ikke bare medlemskapet. Finnes ikke
+        # indeksen, gir spørringen null rader og listen blir tom.
+        "SELECT pg_get_indexdef(c.oid, g.i, true)"
+        "  FROM pg_class c"
+        "  JOIN pg_index i ON i.indexrelid = c.oid"
+        "  JOIN pg_class tbl ON tbl.oid = i.indrelid"
+        "  JOIN pg_namespace n ON n.oid = tbl.relnamespace,"
+        "       generate_series(1, 3) AS g(i)"
+        " WHERE n.nspname = 'public' AND tbl.relname = 'oppdrag'"
+        "   AND c.relname = 'oppdrag_tenant_keyset'"
+        " ORDER BY g.i").fetchall()
+    # Kun kolonnenavnet måles: om `pg_get_indexdef` skriver «opprettet» og
+    # «opprettet DESC» er en formateringsdetalj, mens PREFIKSET er det
+    # funnet handler om — en btree leses uansett begge veier.
+    navn = [str(r[0]).split()[0] for r in kolonner]
+    assert navn == ["tenant", "opprettet", "id"], (
+        "evalueringslistens keyset-orden har ingen indeks som starter på"
+        f" (tenant, opprettet, id) — fant {navn}")
+
+
+@pg
 def test_reapet_prosess_stenger_rapporten(migrator, miljo):
     """SLETTEGRENSEN (Codex P1): det promoterte artefaktet er immutabelt
     og bærer funn, sitater og blindet kildetekst — men når prosessen er
@@ -715,3 +890,183 @@ def test_ankerlukkingen_hoerer_til_statusskiftet():
     assert posisjon > terminal > kapabilitet, \
         "lukkingen skal stå etter det faktiske statusskiftet, aldri ved" \
         " kapabilitetsbruken"
+
+
+@pg
+def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
+        migrator, miljo, monkeypatch):
+    """#223: TOCTOU-beviset med TO FORBINDELSER — ikke en kildemåling.
+
+    `test_ankersjekken_staar_etter_dekrypteringen` beviser de
+    deterministiske halvdelene (re-sjekken virker begge veier, og den
+    STÅR etter dekrypteringen i kilden). Dette er selve vinduet:
+    hovedspørringen godkjenner mens ankeret LEVER, dekrypteringen står
+    instrumentert i pause, lukking + reap COMMITTER i vinduet på egne
+    forbindelser — og re-sjekken feller 200-en som allerede var
+    «fortjent» da beslutningen ble tatt. Payloaden forlater aldri
+    prosessen etter en reap som var committet før svaret.
+
+    Pausepunktet er DEKRYPTERINGEN — en søm som ikke er porten under
+    test: å pause i `_anker_lever` selv ville målt instrumentet.
+    Ciphertexten overlever reapen her (#222s makulering er raden, ikke
+    minnet — hovedspørringen har alt lest bytene), så dekrypteringen
+    LYKKES og re-sjekken er det eneste som står mellom payloaden og 200.
+
+    Avvist alternativ (dokumentert i `_anker_lever`): FOR SHARE fra
+    leseveien — krever UPDATE-rett på ankeret for en READ-rute og
+    reverserer rettighetsvedtaket i migrer.py.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_anker_lever`-kallet i
+    `rekrutteringsrapport_detalj`. Kildemålingen rødner også — men bare
+    denne beviser at vinduet er LUKKET, ikke bare at sjekken står der."""
+    import threading
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+    from .test_m57_kandidatlagre import _claimet, _reaperkobling
+    from .test_m57_utsending import _rt as _rekrutt_rt
+
+    rt = _rekrutt_rt()
+    try:
+        # Riggen er `test_reapet_prosess_stenger_rapporten`s egen:
+        # claimet oppdrag + direkte promotert artefakt + anker gjennom
+        # den herdede veien. Det er koblingen prosess→oppdrag leseveien
+        # dømmer på, ikke payloaden.
+        oid, _ = _claimet(migrator)
+        _sett_kontekst(migrator, TENANT)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator,
+                                                              TENANT)
+        rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
+        ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
+        kh = migrator.execute(
+            "SELECT kontrakt_hash FROM modulkontrakt"
+            " WHERE modul_id='m57_ats' AND kontraktversjon=1").fetchone()[0]
+        rel = migrator.execute(
+            "SELECT release_id FROM moduldeployment"
+            " WHERE modul_id='m57_ats' AND livslop='claiming'"
+            " LIMIT 1").fetchone()[0]
+        epoch = migrator.execute(
+            "SELECT module_epoch FROM modulhode"
+            " WHERE modul_id='m57_ats'").fetchone()[0]
+        migrator.execute(
+            "INSERT INTO artefakt (tenant, oppdrag_id, artefakttype,"
+            " modul_id, release_id, kontraktversjon, kontrakt_hash,"
+            " module_epoch, tilstand, storrelse_bytes, klartekst_sha256,"
+            " ciphertext, nonce, dek_ref, kapabilitet_jti, promotert_ts)"
+            " VALUES (%s,%s,'rekruttering.evaluering.rapport','m57_ats',"
+            "%s,1,%s,%s,'promotert',10,'h',%s,%s,%s,%s, now())",
+            (TENANT, oid, rel, kh, epoch, ct, nonce, key_id,
+             "jti-" + secrets.token_hex(8)))
+        migrator.commit()
+        _sett_kontekst(rt, TENANT)
+        pid = rt.execute(
+            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+            (TENANT, oid, 30)).fetchone()[0]
+        rt.commit()
+
+        # SØMMEN: dekrypteringen pauses ÉN gang, med tidsgrense begge
+        # veier så en feilende rigg aldri henger suiten — utløper
+        # ventingen, FELLER riggen på sin egen premiss i stedet for å
+        # slippe kallet videre.
+        inne = threading.Event()
+        slipp = threading.Event()
+        brukt = threading.Event()
+        forgjeves = threading.Event()
+        ekte = kryptering.dekrypter
+
+        def _pause(*a, **kw):
+            if not brukt.is_set():
+                brukt.set()
+                inne.set()
+                # Tidsgrensen SKAL ikke fortsette gjennom koden under
+                # test (Codex P2): drar lukking + reap forbi 20 s på en
+                # lastet CI-base, er vinduet aldri åpnet, og et kall som
+                # går videre kjører `_anker_lever` FØR reapen committet.
+                # 200 er da KORREKT produktoppførsel — riggen ville meldt
+                # en regresjon som ikke finnes, altså gjort treg base om
+                # til rødt. Avbryt forespørselen i stedet.
+                if not slipp.wait(20):
+                    forgjeves.set()
+                    raise AssertionError(
+                        "sømmen ventet 20 s uten at vinduet ble åpnet")
+            return ekte(*a, **kw)
+
+        monkeypatch.setattr(kryptering, "dekrypter", _pause)
+
+        utfall: list = []
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            cookie, _csrf = _adminsesjon()
+            ck = {sesjonmodul.C_SESJON: cookie}
+
+            def _hent():
+                try:
+                    utfall.append(c.get(
+                        f"/v1/rekruttering/rapport/{oid}", cookies=ck))
+                except Exception as e:      # noqa: BLE001 — til asserten
+                    utfall.append(e)
+
+            # `daemon=True`: overlever tråden alt under, skal den aldri
+            # kunne holde pytest-prosessen åpen etter at suiten er ferdig.
+            traad = threading.Thread(target=_hent, daemon=True)
+            traad.start()
+            try:
+                assert inne.wait(20), \
+                    "forespørselen nådde aldri dekrypteringssømmen — " \
+                    "hovedspørringen godkjente ikke det levende ankeret"
+                # VINDUET: lukking forbi fristen + reap COMMITTER mens
+                # dekrypteringen står i pause — beslutningen «server
+                # rapporten» er alt tatt på det gamle snapshotet.
+                _sett_kontekst(rt, TENANT)
+                rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                           " now() - interval '31 days')", (TENANT, pid))
+                rt.commit()
+                rp, _timer = _reaperkobling()
+                try:
+                    reapet = rp.execute(
+                        "SELECT * FROM reap_kandidatdata(50)").fetchall()
+                    rp.commit()
+                finally:
+                    rp.close()
+                assert (TENANT, pid) in [(r[0], r[1]) for r in reapet], \
+                    "reapen committet ikke i vinduet — riggen målte intet"
+            finally:
+                slipp.set()
+                traad.join(30)
+            # Lever tråden fortsatt, står `c.get()` fast et ANNET sted enn
+            # sømmen (f.eks. en deadlock i den samtidigheten riggen
+            # diagnostiserer) — `join` bare returnerte. Da navngir denne
+            # asserten feilen i stedet for å la den være taus.
+            #
+            # DELVIS GRENSE, og det sies her (Codex P2, K1-utsatt til
+            # #257): asserten river IKKE ned en forespørsel som står
+            # fast. Ruten er en synkron `def` (`app.py:853`), så
+            # Starlette kjører den via `run_in_threadpool` →
+            # `anyio.to_thread.run_sync`, som ikke forlater
+            # arbeidertråden ved kansellering. `TestClient`-utgangen
+            # kansellerer ASGI-oppgaven, men venter på arbeideren; og
+            # `daemon=True` over gjelder bare kallertråden, ikke den
+            # arbeideren. En ekte grense må ligge UTENFOR det som kan
+            # blokkere — probet i en separat terminerbar prosess, som er
+            # egen maskin og derfor egen PR (#257).
+            assert not traad.is_alive(), (
+                "forespørselstråden lever etter `slipp` + 30 s join — "
+                "kallet står fast utenfor dekrypteringssømmen")
+        # Diagnosen leses av EGEN flagg, ikke av svaret: heves
+        # AssertionError inne i ruten, kan appen rendre den som 500, og
+        # 404-asserten under ville da meldt «re-sjekken lukket ikke
+        # vinduet» om noe som bare var en treg base.
+        assert not forgjeves.is_set(), (
+            "riggen målte aldri vinduet: lukking + reap ble ikke "
+            "committet innen sømmens 20 s. Dette er en treg base, "
+            "IKKE en regresjon i re-sjekken")
+        assert utfall and not isinstance(utfall[0], Exception), utfall
+        assert utfall[0].status_code == 404, (
+            "payloaden forlot prosessen ETTER en committet reap — "
+            f"re-sjekken lukket ikke vinduet: {utfall[0].status_code}")
+        assert utfall[0].json()["feil"] == "ikke_funnet", \
+            "reapet og aldri-funnet skal være samme svar (058-doktrinen)"
+    finally:
+        rt.close()
