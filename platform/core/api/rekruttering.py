@@ -475,6 +475,9 @@ def prosesser_endepunkt(tjeneste, request):
                 "  JOIN oppdrag o ON o.tenant = p.tenant"
                 "                AND o.id = p.oppdrag_id"
                 " WHERE p.tenant=%s AND p.slettet_ts IS NULL"
+                # 069: bestilt tidligsletting er kundens egen grense —
+                # samme dom som merket og fristen, fra bestillingsøyeblikket.
+                "   AND p.slett_bestilt_ts IS NULL"
                 "   AND now() < coalesce(p.lukket_ts, p.opprettet)"
                 "               + p.slettefrist_dogn * interval '1 day'"
                 "   AND (o.status IN ('opprettet','plukket')"
@@ -642,6 +645,10 @@ def signer_endepunkt(tjeneste, request):
             # dømmes NØYAKTIG som før (`NULL IS NOT NULL` var false, mens
             # `now() >= NULL` er NULL) — porten utvides, den flyttes ikke.
             "       coalesce(p.slettet_ts IS NOT NULL"
+            # 069: … og den BESTILTE tidligslettingen — vinduet mellom
+            # kundens bestilling og reaperens sveip skal ikke stå åpent
+            # foran den irreversible signeringen, akkurat som fristens.
+            "                OR p.slett_bestilt_ts IS NOT NULL"
             "                OR now() >= coalesce(p.lukket_ts, p.opprettet)"
             "                    + p.slettefrist_dogn * interval '1 day',"
             "                false) AS reapet"

@@ -92,6 +92,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_rekrutteringsprosess(text,bigint,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reap_kandidatdata(integer)',                        'disponit_m37_claimer'),
+    -- 069: tidligslettingsdoeren gaar gjennom samme
+    -- krev_tenantkontekst-port og lukker via lukk_rekrutteringsprosess
+    -- — samme vindu, samme eier som 057-funksjonene over.
+    ('FUNCTION', 'bestill_tidligsletting(text,uuid)',                 'disponit_m37_claimer'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

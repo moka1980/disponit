@@ -3511,6 +3511,20 @@ def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
                 " WHERE tenant=%s AND prosess_id=%s",
                 (TENANT, pid)).fetchone()[0]
             migrator.rollback()
+            # Bestillingen ER slettingen sett fra kunden (069-utvidelsen av
+            # grenseformelen): listen dømmer «slettet» og indeksen mister
+            # prosessen I SAMME ØYEBLIKK — ikke først ved reaperens batch.
+            r5 = c.get("/v1/rekruttering/evalueringer",
+                       cookies=ck, headers=hode)
+            assert r5.status_code == 200, r5.text
+            mine = [e for e in r5.json()["evalueringer"]
+                    if e["oppdrag_id"] == oid]
+            assert mine and mine[0]["slettet"] is True, mine
+            r6 = c.get("/v1/rekruttering/prosesser",
+                       cookies=ck, headers=hode)
+            assert r6.status_code == 200, r6.text
+            assert all(p["prosess_id"] != str(pid)
+                       for p in r6.json()["prosesser"]), r6.text
             # Ukjent oppdrag: intet anker å slette.
             r4 = c.post("/v1/rekruttering/evaluering/99999999/slett",
                         cookies=ck, headers=hode)
