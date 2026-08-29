@@ -2304,6 +2304,124 @@ def test_173_leaseleddet_maaler_veggklokken_ikke_transaksjonsstarten():
 
 
 @pg
+def test_173_budsjettet_dekker_alle_tre_payloadene(migrator, miljo,
+                                                   monkeypatch):
+    """#173 (Codex P2): kandidatbudsjettet gjelder alle TRE lagrene.
+
+    Døren målte bare `artefakt` mot `_KANDIDAT_ARTEFAKT_MAKS`.
+    `avmaskering` og `intervjusporsmal` er like fullt PERSISTERTE
+    payloads — hver sin JSONB-rad, hver sin hashing, hver sin
+    likhetssammenligning ved retry — og gikk inn uten noe dekodet tak.
+    Det eneste som bandt dem var wire-taket
+    `MAKS_KANDIDATARTEFAKT_KROPP`, som per konstruksjon er ~6×
+    budsjettet (JSON-eskapefaktoren): en autentisert claimant kunne
+    lagre ~301 MiB kart under et uttalt 50 MiB-budsjett.
+
+    Taket senkes kunstig i stedet for å sende 50 MiB gjennom CI — det
+    er formen Cursor-passet selv foreslo for denne klassen, og den
+    måler nøyaktig leddet funnet gjelder: HVILKE payloads som telles
+    med.
+
+    SUMMEN måles, ikke tre tak: budsjettet er KANDIDATENS, og tre
+    uavhengige tak à 50 MiB ville vært 150 MiB under samme navn. Siste
+    arm beviser det — tre payloads som hver for seg er innenfor (260,
+    235, 224 byte mot taket 600), men som til sammen er over.
+
+    MUTASJONEN SOM DREPER DENNE: mål bare `raa_a` igjen, eller bytt
+    summen mot tre separate sammenligninger."""
+    from starlette.testclient import TestClient
+    from api import app as appmod
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    # Bare dørens egen måling flyttes. Middlewarens rutetak er utledet
+    # ved import og står urørt på 301 MiB — det er nettopp avstanden
+    # mellom de to funnet handler om.
+    monkeypatch.setattr(appmod, "_KANDIDAT_ARTEFAKT_MAKS", 600)
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            liten = {"funn": [], "oppfylt": {}, "kildetekst": "x"}
+
+            def _post(kid, **felt):
+                return c.post("/v1/rekruttering/kandidatartefakt",
+                              json={**trippel, "kandidat_id": kid,
+                                    "artefakt": liten, "avmaskering": {},
+                                    **felt}, headers=hode)
+
+            # DEN POSITIVE ARMEN FØRST — uten den ville en dør som
+            # avviser ALT vært like grønn under et kunstig lavt tak.
+            assert _post("k-ok").status_code == 200
+
+            # `avmaskering` alene over taket (1434 byte).
+            r = _post("k-kart",
+                      avmaskering={f"[NAVN-{i}]": "n" * 20
+                                   for i in range(40)})
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # `intervjusporsmal` alene over taket (1764 byte).
+            r = _post("k-sp", intervjusporsmal=["s" * 40 for _ in range(40)])
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # SUMMEN: tre payloads som HVER FOR SEG er innenfor 600
+            # byte, men som til sammen er 719. Tre separate tak ville
+            # sluppet nettopp denne gjennom.
+            r = _post("k-sum",
+                      artefakt={"funn": [], "oppfylt": {},
+                                "kildetekst": "a" * 220},
+                      avmaskering={"[NAVN-1]": "b" * 220},
+                      intervjusporsmal=["c" * 220])
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Bare den lovlige kandidaten står i lagrene — avvisningene
+            # rullet tilbake, de skrev ikke halve rader.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_avmaskering"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_intervjusporsmal"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 3).fetchone()
+            migrator.rollback()
+            assert rader == (1, 1, 1), rader
+    finally:
+        rt.close()
+
+
+@pg
 def test_173_doren_binder_deploymenten_ikke_bare_modulen(migrator, miljo):
     """#173 (Codex P1): claim-trippelet er ikke nok — deploymenten måles.
 

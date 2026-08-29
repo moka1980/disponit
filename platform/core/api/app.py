@@ -2661,16 +2661,39 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                 return _feilsvar("request_feilformet", rid)
             # Kanonisk JSON så payload-likheten er byte-veldefinert på
             # tvers av retries — samme dict, samme streng.
+            #
+            # ALLE TRE MÅLES, OG SAMLET (Codex P2). Linjen under målte
+            # bare `artefakt`. `avmaskering` og `intervjusporsmal` er
+            # like fullt PERSISTERTE payloads — hver sin JSONB-rad, hver
+            # sin hashing og hver sin likhetssammenligning ved retry — og
+            # de gikk inn uten noe dekodet tak i det hele tatt. Det
+            # eneste som bandt dem var wire-taket
+            # `MAKS_KANDIDATARTEFAKT_KROPP`, som per konstruksjon er ~6×
+            # budsjettet (JSON-eskapefaktoren): en autentisert claimant
+            # kunne dermed lagre ~301 MiB kart eller spørsmålsliste under
+            # et uttalt 50 MiB-budsjett, med hashing, lagring og
+            # retry-sammenligning på hele mengden.
+            #
+            # SUMMEN, ikke tre separate tak: budsjettet er KANDIDATENS,
+            # og tre uavhengige tak à 50 MiB ville vært 150 MiB under
+            # samme navn. Det er også nøyaktig forholdet wire-taket alt
+            # er utledet av, så de to tallene fortsetter å bety det samme.
             raa_a = json.dumps(artefakt, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_m = json.dumps(avmaskering, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            raa_s = json.dumps(sporsmal or [], ensure_ascii=False,
                                sort_keys=True, separators=(",", ":"))
             # DØREN MÅLER, IKKE TRANSPORTEN (samme form som dokumentveien
             # over): kroppstaket er wire-formen med verste-falls
-            # JSON-ekspansjon, mens budsjettet artefaktet faktisk skal
+            # JSON-ekspansjon, mens budsjettet payloadene faktisk skal
             # holde seg innenfor er den KANONISKE størrelsen. Uten denne
             # linjen var 256 KiB-fallet det eneste som bandt en JSONB-rad
             # i det hele tatt, og å heve taket ville fjernet grensen i
             # stedet for å flytte den.
-            if len(raa_a.encode("utf-8")) > _KANDIDAT_ARTEFAKT_MAKS:
+            if sum(len(r.encode("utf-8"))
+                   for r in (raa_a, raa_m, raa_s)) \
+                    > _KANDIDAT_ARTEFAKT_MAKS:
                 conn.rollback()
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant)
                 return _feilsvar("request_feilformet", rid)
@@ -2691,9 +2714,9 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                     return _konflikt("evalueringsartefakt")
             # Samme transaksjon som artefaktet: kartet og teksten det
             # løser opp er ETT skriv, ikke to som kan divergere. Samme
-            # idempotens- og konfliktform som lagrene over.
-            raa_m = json.dumps(avmaskering, ensure_ascii=False,
-                               sort_keys=True, separators=(",", ":"))
+            # idempotens- og konfliktform som lagrene over. (`raa_m` er
+            # kanonisert sammen med de to andre over — budsjettet er
+            # kandidatens, og alle tre måles før noe INSERTes.)
             satt = conn.execute(
                 "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
                 " kandidat_id, felter, innhold_sha256)"
@@ -2723,9 +2746,9 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             # finnes for. Feltet får derfor ÉN kanonisk form: fravær og
             # tom liste er samme påstand, `[]`, og den skrives — 057s
             # CHECK krever `sporsmal IS NOT NULL`, ikke ikke-tom. Da
-            # måles armen som de to over, med samme idempotens.
-            raa_s = json.dumps(sporsmal or [], ensure_ascii=False,
-                               sort_keys=True, separators=(",", ":"))
+            # måles armen som de to over, med samme idempotens. (`raa_s`
+            # kanoniseres sammen med de to andre over, av samme grunn:
+            # budsjettet er kandidatens og måles før noe INSERTes.)
             satt = conn.execute(
                 "INSERT INTO kandidat_intervjusporsmal (tenant,"
                 " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
