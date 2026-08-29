@@ -478,6 +478,63 @@ END $$;
 RESET ROLE;
 
 -- ------------------------------------------------------------
+-- 6b. DET ALT FEILEDE OPPDRAGETS ANKER LUKKES ÉN GANG (Cursor P2 på
+-- #252 — samme forhold til §5 som §6 har til §4).
+--
+-- §5 lukker ankeret i SAMME transaksjon som frist-feilingen, men bare
+-- for oppdragene den selv feiler: utvalget der er
+-- `status IN ('opprettet','plukket')`. Et oppdrag som ALT står `feilet`
+-- er terminalt (005s statemaskin), så ingen senere kjøring ser det
+-- igjen. Ankeret blir stående åpent for alltid, og §4 måler da fristen
+-- fra `coalesce(lukket_ts, opprettet)` — altså fra FØDSELEN. Det er
+-- nøyaktig det hullet #222s andre halvdel finnes for, og uten dette
+-- steget lukkes det bare for feilinger som ennå ikke har skjedd.
+--
+-- Retningen er kundens tap: kandidatdataene reapes inntil hele
+-- kjøretiden FOR TIDLIG i forhold til fristen målt fra avslutningen.
+--
+-- TIDSPUNKTET ER OPPDRAGETS EGET, ikke `now()`. `status_ts` settes av
+-- 005s kolonnelås i samme setning som statusskiftet, altså da
+-- oppdraget faktisk ble avsluttet. `now()` ville flyttet hver
+-- historisk avslutning frem til oppgraderingen og dermed FORLENGET
+-- fristen — den ene retningen både §5 og vakten forbyr.
+--
+-- Formen er dørens, som §6: samme `krev_tenantkontekst`, samme radvakt,
+-- ingen speilet UPDATE (#181-formen). Idempotent per konstruksjon —
+-- `lukket_ts IS NULL` står i utvalget, og en gjenkjøring passerer
+-- dørens materialitetsvakt uansett, fordi tidspunktet er det samme
+-- frosne `status_ts`.
+SET LOCAL ROLE disponit_m37_claimer;
+DO $$
+DECLARE r RECORD; v_kontekst TEXT; v_antall INT := 0;
+BEGIN
+    v_kontekst := current_setting('disponit.tenant', true);
+    -- Utvalget er type-agnostisk av samme grunn som §5s oppslag: bare
+    -- M-57-oppdrag HAR et anker, så JOIN-en ER filteret. Kryss-tenant
+    -- lesning er claimerens egne eksplisitte policyer (`m57_reaper` på
+    -- ankeret, `m37_dispatcher` på oppdraget), aldri BYPASSRLS;
+    -- skrivingen skjer tenantbundet per rad, gjennom døren.
+    FOR r IN
+        SELECT p.tenant AS t, p.prosess_id AS pid,
+               o.status_ts AS avsluttet
+          FROM public.rekrutteringsprosess p
+          JOIN public.oppdrag o
+            ON o.tenant = p.tenant AND o.id = p.oppdrag_id
+         WHERE p.lukket_ts IS NULL
+           AND o.status = 'feilet'
+         ORDER BY p.tenant, p.prosess_id
+    LOOP
+        PERFORM set_config('disponit.tenant', r.t, true);
+        PERFORM public.lukk_rekrutteringsprosess(r.t, r.pid, r.avsluttet);
+        v_antall := v_antall + 1;
+    END LOOP;
+    PERFORM set_config('disponit.tenant', coalesce(v_kontekst, ''), true);
+    RAISE NOTICE '067: engangs-ankerlukking av oppdrag som alt sto'
+        ' feilet — % prosess(er) lukket', v_antall;
+END $$;
+RESET ROLE;
+
+-- ------------------------------------------------------------
 -- 7. VAKTEN MÅLER OGSÅ RAPPORTEN (Cursor P1 på #252, 057-kroppen
 -- diff-endret). `slettet_ts`-armen krevde at de seks kandidatlagrene
 -- var tømt før merket kunne settes — nettopp fordi et merke satt uten

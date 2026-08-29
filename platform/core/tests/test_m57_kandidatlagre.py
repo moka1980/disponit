@@ -2871,6 +2871,138 @@ def test_222_fristfeiling_lukker_ankeret(migrator):
         rt.close()
         if rp is not None:
             rp.close()
+
+
+def _engangssteg_067(overskrift: str) -> str:
+    """Ett navngitt engangssteg fra 067, ORDRETT — ikke gjenskapt.
+
+    Backfillen finnes bare som en `DO`-blokk i migrasjonen; en test som
+    skrev løkken sin egen vei ville målt kopien, ikke steget. Snittet er
+    forankret i BEGGE ender (overskriften og blokkens egen `RESET ROLE;`),
+    samme grep som `test_057_navngir_aldri_runtime_rollen` bruker på sitt
+    unntak: et løst anker ville slukt naboseksjoner og gjort målingen
+    stum."""
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sql = (rot / "platform" / "core" / "db" / "migrations"
+           / "067_makulering_ved_reap.sql").read_text(encoding="utf-8")
+    hode = sql.index(overskrift)
+    start = sql.index("SET LOCAL ROLE disponit_m37_claimer;", hode)
+    slutt = sql.index("RESET ROLE;", start) + len("RESET ROLE;")
+    return sql[start:slutt]
+
+
+@pg
+def test_222_backfillen_lukker_ankeret_paa_alt_feilet_oppdrag(migrator):
+    """Cursor P2 på #252: §5 lukker ankeret bare for oppdragene den selv
+    feiler (`status IN ('opprettet','plukket')`). Et oppdrag som ALT sto
+    `feilet` da 067 kom, er terminalt — ingen senere kjøring ser det
+    igjen, ankeret blir stående åpent for alltid, og reaperen måler da
+    fristen fra prosessens FØDSEL i stedet for fra avslutningen.
+
+    Det er nøyaktig hullet #222s andre halvdel lukker, og uten §6b lukkes
+    det bare for feilinger som ennå ikke har skjedd: den bebodde basen
+    bærer det videre, og kandidatdataene reapes inntil hele kjøretiden
+    for tidlig i forhold til fristen kunden kjøpte.
+
+    Formen som måles er migrasjonens egen blokk, kjørt mot den ene
+    tilstanden den finnes for. Positiv kontroll FØRST: uten steget er
+    reaperens eget predikat alt sant på en prosess som ble avsluttet for
+    en time siden.
+
+    MUTASJONEN SOM DREPER DENNE: fjern §6b fra 067 — alle andre
+    #222-tester er grønne, for de måler frist-feilinger som skjer ETTER
+    migrasjonen."""
+    from db import kryptering
+    rp = None
+    try:
+        _sett_kontekst(migrator, TENANT)
+        logg = migrator.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            "'[]',%s) RETURNING id",
+            (TENANT, secrets.token_hex(8))).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(
+            migrator, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"m57": True}, TENANT, key_id)
+        oid = migrator.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+            " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
+            " RETURNING id",
+            (TENANT, logg, ct, key_id, nonce)).fetchone()[0]
+        migrator.execute("UPDATE oppdrag SET status='plukket'"
+                         " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        # Ankeret fødes MENS oppdraget er claimet (vaktens fødselsport),
+        # men med en FØDSEL som ligger forbi slettefristen — det er den
+        # datoen reaperen faller tilbake på når lukkingen mangler.
+        pid = uuid.uuid4()
+        migrator.execute(
+            "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+            " oppdrag_id, slettefrist_dogn, opprettet)"
+            " VALUES (%s,%s,%s,30, now() - interval '31 days')",
+            (TENANT, pid, oid))
+        # …og så feiler oppdraget slik den GAMLE `reap_evidensfrister`
+        # gjorde det: status flyttes, ankeret røres aldri. `status_ts`
+        # backdateres etterpå (kolonnelåsen setter den bare når statusen
+        # skifter), så avslutningen er et FROSSET tidspunkt og ikke
+        # oppgraderingens `now()`.
+        migrator.execute("UPDATE oppdrag SET status='feilet'"
+                         " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        migrator.execute(
+            "UPDATE oppdrag SET status_ts = now() - interval '1 hour'"
+            " WHERE tenant=%s AND id=%s", (TENANT, oid))
+        migrator.commit()
+
+        _sett_kontekst(migrator, TENANT)
+        aapent, forfalt = migrator.execute(
+            "SELECT p.lukket_ts IS NULL,"
+            " now() > coalesce(p.lukket_ts, p.opprettet)"
+            "         + p.slettefrist_dogn * interval '1 day'"
+            " FROM rekrutteringsprosess p"
+            " WHERE p.tenant=%s AND p.prosess_id=%s",
+            (TENANT, pid)).fetchone()
+        migrator.rollback()
+        assert aapent and forfalt, (
+            "positiv kontroll: ankeret skal stå ÅPENT og reaperens eget"
+            f" predikat skal alt være sant før steget: {(aapent, forfalt)}")
+
+        migrator.execute(_engangssteg_067("-- 6b."))
+        migrator.commit()
+
+        _sett_kontekst(migrator, TENANT)
+        lukket_er_avslutningen, forfalt_etter = migrator.execute(
+            "SELECT p.lukket_ts = o.status_ts,"
+            " now() > coalesce(p.lukket_ts, p.opprettet)"
+            "         + p.slettefrist_dogn * interval '1 day'"
+            " FROM rekrutteringsprosess p JOIN oppdrag o"
+            "   ON o.tenant = p.tenant AND o.id = p.oppdrag_id"
+            " WHERE p.tenant=%s AND p.prosess_id=%s",
+            (TENANT, pid)).fetchone()
+        migrator.rollback()
+        assert lukket_er_avslutningen, (
+            "ankeret skal lukkes ved oppdragets EGET avslutningstidspunkt"
+            " — `now()` ville flyttet hver historisk avslutning frem til"
+            " oppgraderingen og forlenget fristen")
+        assert not forfalt_etter, \
+            "fristen skal nå løpe fra avslutningen, ikke fra fødselen"
+
+        # …og reaperen selv er enig: prosessen plukkes ikke lenger.
+        rp, _timerrolle = _reaperkobling()
+        reapet = rp.execute("SELECT * FROM reap_kandidatdata(50)").fetchall()
+        rp.commit()
+        assert (TENANT, pid) not in [(r[0], r[1]) for r in reapet], \
+            "prosessen ble reapet for tidlig — ankeret er ikke lukket"
+    finally:
+        if rp is not None:
+            rp.close()
+
+
 def test_173_doren_binder_deploymenten_ikke_bare_modulen(migrator, miljo):
     """#173 (Codex P1): claim-trippelet er ikke nok — deploymenten måles.
 
