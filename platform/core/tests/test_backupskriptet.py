@@ -87,10 +87,26 @@ def test_finaliseringen_er_fsynket_i_par_rekkefolge():
     innhold = _pos('sync "$ARKIV_DELVIS" "$DELVIS"')
     mv_arkiv = _pos('mv "$ARKIV_DELVIS" "$ARKIV"')
     mv_dump = _pos('mv "$DELVIS" "$FIL"')
+    # Begge formene teller: den bare `sync "$KATALOG"` mellom `mv`-ene, og
+    # den PORTEDE `if ! sync "$KATALOG"; then` etter den siste (runde 9).
     katalogsyncer = [m.start() for m in
-                     re.finditer(r'^sync "\$KATALOG"$', SKRIPT, re.M)]
+                     re.finditer(r'sync "\$KATALOG"', SKRIPT)]
     assert innhold < mv_arkiv < mv_dump, \
         "innholdet fsynkes ikke før navnene settes"
+    # DEN SISTE SYNC-EN MÅ VÆRE EN PORT (Codex P1, runde 9). `PAR_KLAR`
+    # ble satt uansett hva den returnerte, og trapen spør DISKEN — så et
+    # par som aldri passerte holdbarhetskravet ble stående med endelige
+    # navn mens tjenesten meldte feil.
+    assert 'if ! sync "$KATALOG"; then' in SKRIPT, (
+        "den siste katalog-syncen er ikke portet — et par kan publiseres"
+        " uten at holdbarheten er bekreftet")
+    feilarm = SKRIPT[SKRIPT.index('if ! sync "$KATALOG"; then'):]
+    feilarm = feilarm[:feilarm.index("PAR_KLAR=1")]
+    assert 'rm -f "$FIL" "$ARKIV"' in feilarm, (
+        "feilarmen rydder ikke — trapen ser da to endelige navn og lar"
+        " paret stå")
+    assert "exit 1" in feilarm, "feilen forplanter seg ikke"
+
     assert any(mv_arkiv < p < mv_dump for p in katalogsyncer), (
         "ingen katalog-fsync MELLOM de to `mv`-ene — da kan dumpens navn"
         " overleve et strømbrudd uten arkivets, som er hele løgnen"
@@ -119,8 +135,22 @@ def test_det_nyeste_utlopte_paret_lever_til_det_nye_star():
     vi tilbake i «alle slettes før dumpen»), eller flytt den avsluttende
     `slett_par "$SPART"` opp foran finaliseringen.
     """
-    assert 'SPART=$(printf' in SKRIPT, \
-        "ingen sparer det nyeste utløpte paret"
+    # BARE KOMPLETTE PAR KAN SPARES (Codex P2, runde 9). Er den nyeste
+    # utløpte dumpen uten arkiv, er den ikke et gjenopprettingspunkt — å
+    # spare den og slette et eldre KOMPLETT par etterlater noe som per
+    # definisjon ikke kan gjenopprettes.
+    assert '.inndata.tar.age" ]; then' in SKRIPT, (
+        "utvelgelsen sjekker ikke at kandidaten har begge halvdelene")
+    # ... og utvelgelsen må ikke dø på SIGPIPE: `sort | head -1` gir 141
+    # under `pipefail`, og retensjonen ville låst seg permanent.
+    # KOMMANDOEN, ikke ordet: begrunnelsen over NEVNER `sort | head -1`,
+    # og en tekstsøk over hele skriptet leste sin egen forklaring som et
+    # treff. Vi ser bare på linjer som faktisk kjører noe.
+    kjorende = [l for l in SKRIPT.splitlines()
+                if not l.lstrip().startswith("#")]
+    assert not [l for l in kjorende if "| head -1" in l], (
+        "`head -1` lukker røret og gir `sort` SIGPIPE — med pipefail dør"
+        " kjøringen, og hver senere kjøring møter samme liste")
     assert '[ "$gammel" != "$SPART" ] || continue' in SKRIPT, \
         "sveipen sletter også den som skal spares"
     # Den spartes fall må komme ETTER at begge navnene er satt.
@@ -152,16 +182,23 @@ def test_en_paagaaende_opplasting_dreper_ikke_backupen():
     """
     tar_linje = next(l for l in SKRIPT.splitlines()
                      if l.lstrip().startswith("tar --create"))
-    assert "--exclude='*.bin.tmp'" in tar_linje, (
+    assert "--exclude='./*/*.bin.tmp'" in tar_linje, (
         f"arkivet leser opplastingens midlertidige filer: {tar_linje}")
     # MØNSTERET MÅ VÆRE SMALT (Codex P2, runde 8). `tar --exclude`
     # matcher mot HELE medlemsstien, og `_stikomponent` tillater en
     # tenant-ID som `customer.tmp` — `*.tmp` ville tatt hele den kundens
     # katalog med alle ferdige bunter, og `comm`-porten avbrutt backupen
     # hver natt for den installasjonen.
-    assert "--exclude='*.tmp'" not in tar_linje, (
-        "det brede mønsteret er tilbake — en tenant som heter"
-        f" `noe.tmp` mister hele arkivet sitt: {tar_linje}")
+    # ANKRET, IKKE BARE SMALT (Codex P2, runde 9). `--exclude` er uankret
+    # etter enhver `/`, så et rent suffiksmønster matcher KATALOGNAVN like
+    # godt som filnavn — `*.tmp` tok en tenant som het `noe.tmp`,
+    # `*.bin.tmp` tok en som het `noe.bin.tmp`. `_stikomponent` tillater
+    # begge. `./*/` sier at det må være en fil på løvnivå under en
+    # tenantkatalog.
+    for uankret in ("--exclude='*.tmp'", "--exclude='*.bin.tmp'"):
+        assert uankret not in tar_linje, (
+            f"uankret mønster {uankret} — en tenant med det navnet mister"
+            f" hele arkivet sitt: {tar_linje}")
     # ... og den skal ikke ekskludere ferdige bunter.
     assert "--exclude='*.bin'" not in tar_linje, (
         "ekskluderingen dekker buntfilene — da arkiverer backupen"

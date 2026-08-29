@@ -231,7 +231,26 @@ UTLOPTE=$(find "$KATALOG" -name 'disponit-*.dump.age' -mtime +"$DAGER") || {
 # altså leksikografisk lik tidsrekkefølgen. Vi trenger ingen `stat`.
 SPART=""
 if [ -n "$UTLOPTE" ]; then
-  SPART=$(printf '%s\n' "$UTLOPTE" | sed '/^$/d' | sort -r | head -1)
+  # `sort | head -1` GIR SIGPIPE (Codex P2): `head` lukker røret etter
+  # første linje, `sort` dør på signal 141, og med `pipefail` + `set -e`
+  # avbrytes hele kjøringen. Med nok utløpte par ville retensjonen da
+  # låst seg permanent — hver kjøring møter den samme listen og dør på
+  # samme sted. `sort -r | sed -n 1p` leser strømmen ferdig.
+  #
+  # OG BARE KOMPLETTE PAR KAN SPARES (Codex P2). Er den nyeste utløpte
+  # dumpen uten arkiv, er den ikke et gjenopprettingspunkt — å spare den
+  # og slette et eldre KOMPLETT par ville etterlatt oss med noe som per
+  # definisjon ikke kan gjenopprettes. Vi filtrerer derfor på at begge
+  # halvdelene finnes, og sparer den nyeste som gjør det.
+  SPART=""
+  while IFS= read -r kandidat; do
+    [ -n "$kandidat" ] || continue
+    st=$(basename "$kandidat"); st=${st#disponit-}; st=${st%.dump.age}
+    if [ -f "$KATALOG/disponit-$st.inndata.tar.age" ]; then
+      SPART="$kandidat"
+      break
+    fi
+  done <<< "$(printf '%s\n' "$UTLOPTE" | sed '/^$/d' | sort -r)"
 fi
 slett_par() {
   local sti="$1" stempel
@@ -373,7 +392,15 @@ rm -f "$RAA"
 # midlertidige fila er per konstruksjon ikke en bunt ennå, så den har
 # ingenting i arkivet å gjøre.
 #
-# MØNSTERET ER `*.bin.tmp`, IKKE `*.tmp` (Codex P2, runde 8). `tar`s
+# MØNSTERET ER ANKRET TIL FILNIVÅET (Codex P2, runde 8 og 9). To runder
+# på samme mønster, og begge gangene var feilen den samme: `--exclude` er
+# UANKRET etter enhver `/`, så det matcher katalognavn like godt som
+# filnavn. `*.tmp` tok en tenant som het `noe.tmp`; `*.bin.tmp` tok en som
+# het `noe.bin.tmp`. `_stikomponent` tillater begge.
+#
+# `./*/*.bin.tmp` sier hva vi faktisk mener: en fil på LØVNIVÅ under en
+# tenantkatalog. En katalog kan ikke matche det mønsteret, uansett hva
+# kunden heter. `tar`s
 # `--exclude` matcher mot HELE medlemsstien, og `_stikomponent` tillater
 # en tenant-ID som `customer.tmp` — med det brede mønsteret ville hele
 # den kundens katalog og hver ferdige `.bin` under den falt ut, og
@@ -383,7 +410,7 @@ rm -f "$RAA"
 # og omdøpt før raden ble committet (rekkefølgen er utledet lenger oppe), så
 # ekskluderingen kan ikke skjule noe porten trenger — og skulle den likevel
 # mangle, feller innholdsporten under det høyt.
-tar --create --directory="$LAGER" --verbose --exclude='*.bin.tmp' \
+tar --create --directory="$LAGER" --verbose --exclude='./*/*.bin.tmp' \
     --file=- . 2>"$LISTE" \
   | age -R "$MOTTAKER" > "$ARKIV_DELVIS"
 chmod 600 "$ARKIV_DELVIS"
@@ -501,7 +528,22 @@ sync "$ARKIV_DELVIS" "$DELVIS"
 mv "$ARKIV_DELVIS" "$ARKIV"
 sync "$KATALOG"
 mv "$DELVIS" "$FIL"
-sync "$KATALOG"
+# DEN SISTE SYNC-EN ER EN PORT, IKKE EN FORMALITET (Codex P1, runde 9).
+# `PAR_KLAR` ble satt uansett hva den returnerte — og feilet den på en
+# I/O- eller filsystemfeil, avsluttet `set -e` gjennom EXIT-trapen mens
+# `PAR_KLAR` fortsatt var tom. Men trapen spør DISKEN, og der sto begge
+# de endelige navnene: paret ble bevart. Tjenesten meldte feil, mens
+# retensjonen og operatøren så et ferdig par som aldri passerte
+# holdbarhetskravet — og et krasj etterpå kunne blottlagt dumpen uten
+# arkivet, nøyaktig løgnen `sync`-en finnes for å hindre.
+#
+# Feiler den, rydder vi selv FØR trapen rekker å se to navn, og lar så
+# feilen forplante seg.
+if ! sync "$KATALOG"; then
+  echo "AVBRUTT: siste katalog-sync feilet — paret publiseres ikke" >&2
+  rm -f "$FIL" "$ARKIV"
+  exit 1
+fi
 PAR_KLAR=1
 
 # DEN SPARTE TAS NÅ. Det nye paret står med sine endelige navn og er
