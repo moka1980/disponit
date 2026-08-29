@@ -2936,6 +2936,28 @@ test("Bestilling: 409 «bunten er opptatt» beholder nøkkelen (#215)",
       + "operasjon i stedet for den samme");
   });
 
+test("Bestilling: den terminale teksten beskriver ikke den forbigående "
+  + "naboen (#215)", () => {
+  // Cursor P2: kodene ble delt i #215, men `bunt_ubrukelig` bar fortsatt
+  // kollaps-teksten «enten holder en annen bestilling den akkurat nå,
+  // eller …». Da lyver den terminale armen om årsaksklassen og blander
+  // «vent, samme nøkkel» med «velg ny fil» — nøyaktig skillet koden
+  // alene nå skal bære. Den forbigående teksten eier den klausulen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg den forbigående klausulen tilbake
+  // i `bunt_ubrukelig` i nb.json eller en.json.
+  const en = JSON.parse(readFileSync(join(ROT, "locales", "en.json"), "utf-8"));
+  const ubrukelig = "ui.rekruttering.bestill.bunt_ubrukelig";
+  const opptatt = "ui.rekruttering.bestill.bunt_opptatt";
+  assert.ok(!/holder .* akkurat nå/.test(t(ubrukelig)),
+    "nb: den terminale teksten beskriver fortsatt den forbigående naboen");
+  assert.ok(!/holding .* right now/.test(en[ubrukelig]),
+    "en: den terminale teksten beskriver fortsatt den forbigående naboen");
+  // …og klausulen står der den hører hjemme.
+  assert.ok(/holder .* akkurat nå/.test(t(opptatt)), "nb: bunt_opptatt");
+  assert.ok(/holding .* right now/.test(en[opptatt]), "en: bunt_opptatt");
+});
+
 test("Bestilling: endret kropp etter usikkert svar gir NY nøkkel (P1-2)", async () => {
   KALL = [];
   const basis = { "/v1/rekruttering/prosesser": prosess(),
