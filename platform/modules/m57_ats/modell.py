@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 
 from .evaluering import FUNN_KATEGORIER
+from .rapportskjema import FUNN_MAKS, SITAT_MAKS
 
 
 class Modellfeil(Exception):
@@ -103,12 +104,23 @@ class Ollamamodell:
                     or not isinstance(sitat, str) or not sitat:
                 self.droppede_funn += 1
                 continue
+            # SITATLENGDEN HØRER TIL SAMME PORT (Codex P2, #173). Et
+            # «sitat» som er hele dokumentet er ikke evidens for ett
+            # funn, og hundre av dem sprenger skriveveiens
+            # per-kandidat-budsjett — som da feller HELE evalueringen på
+            # `request_feilformet`. Kontraktens `SITAT_MAKS` er det som
+            # gjør det samlede sitatvolumet til et TALL døren kan regne
+            # med; her er den håndhevet, samme sted og samme måte som
+            # taket på antall funn.
+            if len(sitat) > SITAT_MAKS:
+                self.droppede_funn += 1
+                continue
             start = tekst.find(sitat)
             if start < 0:
                 # Et «sitat» som ikke finnes ordrett er ingen evidens.
                 self.droppede_funn += 1
                 continue
-            if len(funn) >= 100:
+            if len(funn) >= FUNN_MAKS:
                 # Rapportskjemaets tak håndheves ved GRENSEN: en modell
                 # som fosser funn skal ikke felle skjemavalideringen av
                 # en ellers gyldig evaluering.

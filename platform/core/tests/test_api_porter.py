@@ -233,6 +233,134 @@ def test_chunked_kropp_over_grensen_avvises(server, policy, token):
     assert b"413" in svar.split(b"\r\n")[0], svar[:200]
 
 
+def test_kroppen_bufres_i_en_kopi_ikke_tre():
+    """Codex P1 (#173): middlewaren holdt TRE samtidige kopier av kroppen.
+
+    `bytes(kropp)` ble kalt to ganger — én til `scope["state"]["kropp"]`,
+    én i replay — mens bytearray-en `kropp` lå i replay-CLOSUREN og
+    dermed holdt sitt eget buffer levende gjennom HELE `await self.app`.
+    På `/v1/rekruttering/kandidatartefakt` er taket ~301 MiB, og
+    middlewaren kjører FØR enhver autentisering: en forespørsel med
+    ugyldig token kostet like mye minne som en gyldig.
+
+    Ingen server, ingen database — dette er middlewaren drevet direkte
+    som ren ASGI, fordi det som måles er objektidentitet og closure-
+    innhold, ikke en statuskode. En HTTP-test kan ikke se forskjell på
+    én og tre kopier; begge svarer 200.
+
+    MUTASJONENE SOM DREPER DENNE: gjør `bytes(kropp)` om igjen i replay
+    (identiteten ryker), eller fjern `kropp.clear()` og la replay lukke
+    over `kropp` i stedet for `data` (bytearray-en dukker opp i
+    closuren igjen).
+    """
+    import asyncio
+
+    from api.app import KroppsgrenseMiddleware
+
+    sett = {}
+
+    async def indre(scope, receive, send):
+        sett["receive"] = receive
+        melding = await receive()
+        sett["replay"] = melding["body"]
+        sett["state"] = scope["state"]["kropp"]
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    data = b"z" * 4096
+    innkommende = [{"type": "http.request", "body": data,
+                    "more_body": False}]
+
+    async def receive():
+        return innkommende.pop(0)
+
+    async def send(_melding):
+        pass
+
+    scope = {"type": "http", "method": "POST", "path": "/v1/beslutning",
+             "headers": [(b"content-length", str(len(data)).encode())]}
+    asyncio.run(KroppsgrenseMiddleware(indre, maks=1 << 20)(
+        scope, receive, send))
+
+    assert sett["state"] == data
+    # ÉN kropp, delt av begge leserne — ikke to like kopier.
+    assert sett["state"] is sett["replay"], "kroppen ble kopiert to ganger"
+    # Og bytearray-bufferet skal være sluppet før handleren i det hele
+    # tatt kalles: ingenting replay lukker over kan være en bytearray.
+    celler = []
+    for celle in (sett["receive"].__closure__ or ()):
+        try:
+            celler.append(celle.cell_contents)
+        except ValueError:                      # tom celle
+            continue
+    assert not any(isinstance(c, bytearray) for c in celler), \
+        "bytearray-bufferet lever fortsatt gjennom `await self.app`"
+
+
+def test_ratebotta_tar_tidspunktet_under_laasen(monkeypatch):
+    """Codex P2 (#173): `naa` ble samplet FØR `with self._laas`.
+
+    Da finnes det ingen sammenheng mellom rekkefølgen tidspunktene får og
+    rekkefølgen trådene faktisk skriver i — en tråd som blir deschedulert
+    mellom de to linjene vekker opp og appender et GAMMELT tidspunkt bak
+    nyere innslag.
+
+    Køen tåler ikke inversjonen, fordi begge endepunktene den leses fra
+    antar sortert innhold: `popleft`-løkken stopper på det første
+    innslaget som ikke er utløpt (et gammelt tidspunkt bak et nyere blir
+    aldri forlatt — bøtta avviser lovlig trafikk for alltid), og
+    nøkkelfeiingen måler `v[-1]` som «nyeste» (en inversjon der kan
+    slette en bøtte som fortsatt har levende treff).
+
+    MÅLT PÅ ÅRSAKEN, IKKE PÅ SYMPTOMET: selve inversjonen er en race, og
+    en test som prøver å FREMPROVOSERE den er enten flaky eller en
+    schedulersimulator. Invarianten som utelukker den er derimot skarp og
+    deterministisk — tidspunktet skal tas mens låsen holdes — og det er
+    nøyaktig det som måles her.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `naa`-samplingen ut av `with
+    self._laas` igjen; `locked()` er da `False` i det klokken leses.
+    """
+    import time as _time
+
+    from api.app import Rategrense
+
+    r = Rategrense(per_minutt=10)
+    holdt = []
+    ekte = _time.monotonic
+
+    def maalt():
+        holdt.append(r._laas.locked())
+        return ekte()
+
+    monkeypatch.setattr(_time, "monotonic", maalt)
+    try:
+        assert r.slipp_gjennom("en-nokkel") is True
+    finally:
+        monkeypatch.undo()
+
+    assert holdt, "klokken ble aldri lest — testen måler ingenting"
+    assert all(holdt), \
+        "tidspunktet ble samplet UTENFOR låsen: %r" % (holdt,)
+
+    # Og invarianten selve funnet handler om, under ekte samtidighet:
+    # køen skal være sortert. Etter fiksen kan den ikke være noe annet.
+    r2 = Rategrense(per_minutt=100_000)
+
+    def kjor():
+        for _ in range(300):
+            r2.slipp_gjennom("felles")
+
+    traader = [threading.Thread(target=kjor) for _ in range(8)]
+    for t in traader:
+        t.start()
+    for t in traader:
+        t.join()
+    tider = list(r2._treff["felles"])
+    assert tider == sorted(tider), "køen kom ut av tidsrekkefølge"
+
+
 @pg
 def test_lyvende_content_length_avvises(server, policy, token, migrator):
     """Content-Length er en PÅSTAND. Her sier den 10 og det kommer 300 KiB.
