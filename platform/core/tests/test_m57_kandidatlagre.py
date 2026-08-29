@@ -1954,10 +1954,21 @@ def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
         # statusfeltene) — riggen er claim-tilstanden, ikke claim-veien:
         # det som måles her er DØRENS binding til den.
         _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
         migrator.execute(
             "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
-            " owner_lease_utloper=now()+interval '10 minutes'"
-            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
         migrator.commit()
 
         a = lag_app(DSN)
@@ -2185,10 +2196,21 @@ def test_173_doed_lease_stenger_doren_midt_i_stroemmen(migrator, miljo):
         oid, pid = _prosess(migrator, rt)
         rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
         _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
         migrator.execute(
             "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
-            " owner_lease_utloper=now()+interval '10 minutes'"
-            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
         migrator.commit()
 
         a = lag_app(DSN)
@@ -2241,6 +2263,131 @@ def test_173_doed_lease_stenger_doren_midt_i_stroemmen(migrator, miljo):
                 (TENANT, pid) * 2).fetchone()
             migrator.rollback()
             assert rader == (1, 0), rader
+    finally:
+        rt.close()
+
+
+@pg
+def test_173_doren_binder_deploymenten_ikke_bare_modulen(migrator, miljo):
+    """#173 (Codex P1): claim-trippelet er ikke nok — deploymenten måles.
+
+    `o.eiermodul` er DELT av hver levende deployment av modulen: staging
+    og produksjon, gammel release og ny, svarer alle `m57_ats`. Et
+    claim-trippel som lekker eller replayes til en annen deployment av
+    samme modul kunne derfor skrive persondata inn i en prosess den
+    aldri claimet — og siden lagrene er append-only, ville den LOVLIGE
+    utføreren etterpå møtt `kandidatdata_konflikt` på sin egen kandidat
+    og felt hele evalueringen.
+
+    Riggen er den lovlige claim-tilstanden med ÉN forskjell: stempelet
+    peker på en annen release enn tokenets. Alt annet — claim-par,
+    generasjon, lease, anker — er gyldig, så leddet som avviser står
+    alene. Formen er `hent_inndata_for_oppdrag` sin (060:102–103), og
+    dette er samme funn som #202 lukket på leseveien.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `claim_release_id IS NOT DISTINCT FROM %s` fra dørens radoppslag.
+    """
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        rt.commit()                     # jf. fødselsvaktens `FOR SHARE`
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel + "-en-annen", gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22, "owner_generation": 1}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**trippel, "kandidat_id": "k1",
+                              "dokumentnavn": "k1/cv.pdf",
+                              "dokument_b64": base64.b64encode(
+                                  b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                              "tekst": f"CV-tekst {FIXTUR}"},
+                        headers=hode)
+            assert r1.status_code == 409, r1.text
+            assert r1.json()["feil"] == "kandidatdata_avvist"
+            # Artefaktveien står i samme dør.
+            r2 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r2.status_code == 409, r2.text
+            assert r2.json()["feil"] == "kandidatdata_avvist"
+
+            # MILJØLEDDET MÅLES ALENE (samme lærdom som #202 runde 10:
+            # en regresjon som droppet det ene leddet ville ellers vært
+            # grønn på det andre). Riktig release, feil miljø.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute(
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
+                " WHERE tenant=%s AND id=%s",
+                (rel, gjeldende_miljo() + "-annet", TENANT, oid))
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r3.status_code == 409, r3.text
+            assert r3.json()["feil"] == "kandidatdata_avvist"
+
+            # OG DEN RIKTIGE DEPLOYMENTEN SLIPPER GJENNOM — uten denne
+            # armen ville en dør som avviser ALT vært like grønn.
+            _sett_kontekst(migrator, TENANT)
+            migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+            migrator.execute(
+                "UPDATE oppdrag SET claim_release_id=%s, claim_miljo=%s"
+                " WHERE tenant=%s AND id=%s",
+                (rel, gjeldende_miljo(), TENANT, oid))
+            migrator.execute("RESET ROLE")
+            migrator.commit()
+            r4 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json={**trippel, "kandidat_id": "k1",
+                              "artefakt": {"funn": [], "oppfylt": {},
+                                           "kildetekst": "x"},
+                              "avmaskering": {}}, headers=hode)
+            assert r4.status_code == 200, r4.text
+
+            # Lagrene bærer nøyaktig det ENE lovlige skrivet.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 2).fetchone()
+            migrator.rollback()
+            assert rader == (0, 1), rader
     finally:
         rt.close()
 
@@ -2299,10 +2446,21 @@ def test_173_claimtyveri_i_skrivevinduet_feller_doren(migrator, miljo):
         # nøyaktig låsen tyven under skal eie.
         rt.commit()
         _sett_kontekst(migrator, TENANT)
+        # DEPLOYMENTEN STEMPLES OGSÅ (Codex P1). Claim-porten skriver
+        # `claim_release_id`/`claim_miljo` med den deploymenten den
+        # verifiserte (049:294), og døren binder nå mot dem; en rigg som
+        # lot dem stå NULL ville målt en tilstand claim-døren aldri
+        # produserer. Kolonnene er claim-vaktens (049:98) og kan KUN
+        # settes av `disponit_m37_claimer` — samme form som `_pluk` i
+        # resolvertestene.
+        migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
         migrator.execute(
             "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
-            " owner_lease_utloper=now()+interval '10 minutes'"
-            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+            " owner_lease_utloper=now()+interval '10 minutes',"
+            " claim_release_id=%s, claim_miljo=%s"
+            " WHERE tenant=%s AND id=%s",
+            ("c" * 22, rel, gjeldende_miljo(), TENANT, oid))
+        migrator.execute("RESET ROLE")
         migrator.commit()
 
         utfall: list = []

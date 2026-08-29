@@ -2447,6 +2447,33 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
 
         modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
             else auth.rolle
+        # DEPLOYMENTEN, IKKE BARE MODULEN (Codex P1). Bindingen målte
+        # `o.eiermodul`, og `modul_id` er DELT av hver levende deployment
+        # av modulen: staging og produksjon, gammel release og ny, svarer
+        # alle det samme på det spørsmålet. Et claim-trippel som lekker
+        # eller replayes til en annen deployment av samme modul kunne
+        # derfor skrive persondata inn i en annen deployments prosess —
+        # og siden lagrene er append-only, ville den LOVLIGE utføreren
+        # etterpå møtt `kandidatdata_konflikt` på sin egen kandidat og
+        # felt hele evalueringen. Claim-paret er en hemmelighet, men det
+        # er ikke deploymentens identitet, og døren skal måle begge.
+        #
+        # Formen er `hent_inndata_for_oppdrag` sin (060:102–103):
+        # `claim_release_id`/`claim_miljo` er sporet claim-porten selv
+        # STEMPLET (049 §0) fra TOKENET — aldri noe kalleren oppgir — så
+        # det finnes ingen vei til å påstå seg til en annen deployment.
+        #
+        # `IS NOT DISTINCT FROM`, ikke `=`: et legacy-api-token claimer
+        # deploymentløst, og da står begge kolonnene NULL (`app.py:2025`,
+        # samme grunn kvitteringskapabiliteten blir deploymentløs og bare
+        # kan innløses av en like deploymentløs credential). Med `=`
+        # hadde NULL-siden svart UKJENT, og den lovlige legacy-veien inn
+        # i lagrene ville stengt seg selv; med denne formen matcher
+        # deploymentløs KUN deploymentløs, og en deployment KUN seg selv.
+        claim_release = auth.release_id \
+            if isinstance(auth, ModulAutentisert) else None
+        claim_miljo = auth.miljo if isinstance(auth, ModulAutentisert) \
+            else None
         sett_kontekst(conn, tenant, auth.aktor, rid)
         # LÅST LESNING (Cursor P2-3). Uten radlåsen var autorisasjonen et
         # SNAPSHOT: under READ COMMITTED kunne en ny claimer committe et
@@ -2482,9 +2509,12 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
             "   AND o.owner_generation=%s"
             "   AND o.owner_lease_utloper IS NOT NULL"
             "   AND o.owner_lease_utloper > now()"
+            "   AND o.claim_release_id IS NOT DISTINCT FROM %s"
+            "   AND o.claim_miljo IS NOT DISTINCT FROM %s"
             "   AND p.slettet_ts IS NULL"
             " FOR SHARE OF o",
-            (tenant, opp_id, modul, claim_id, generasjon)).fetchone()
+            (tenant, opp_id, modul, claim_id, generasjon,
+             claim_release, claim_miljo)).fetchone()
         if rad is None:
             conn.rollback()
             tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
