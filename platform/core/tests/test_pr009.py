@@ -3,6 +3,7 @@
 Klarsignalets syv Codex-porter for kodelaget. Driftslaget (units, opp.sh,
 helsetimer) måles på staging — det som KAN måles i suiten, måles her.
 """
+import fnmatch
 import importlib.util
 import io
 import secrets
@@ -1681,7 +1682,7 @@ def test_backupen_dumper_som_postgres_ikke_migrator():
     skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
     assert "pg_dump" in skript
     assert "MIGRATOR_URL" not in skript.split("pg_dump", 1)[1].split("\n")[0] \
-        and skript.count("sudo -u postgres pg_dump") == 2, \
+        and skript.count("sudo -u postgres pg_dump") == 1, \
         "backupen dumper ikke som postgres — kapabilitetstabellene blir utelatt"
 
 
@@ -1730,6 +1731,450 @@ def test_backupen_far_backupnavnet_forst_etter_verifiseringen():
         "arbeidsfila ryddes ikke ved avbrudd"
 
 
+def test_backupen_arkiverer_inndatalageret_etter_dumpen():
+    """#191 (Codex P1 fra #190): en restore ga rader uten filer.
+
+    `backup-db.sh` dumpet og restore-verifiserte bare basen. Etter et havari
+    inneholdt den gjenopprettede basen tilsynelatende gyldige `lastet`/
+    `bundet` rader hvis `lager_sti`-filer ALLE var borte — hver eneste
+    opplastede bunt tapt, mens verifiseringen meldte suksess.
+
+    REKKEFØLGEN ER PORTEN, og den er utledet av en invariant som alt står:
+    `inndata.py` fsync-er ciphertexten FØR raden committes, og ingen kodevei
+    unlinker filen til en committet rad. Derfor gjelder «rad i dumpen ⟹ fil
+    på disk før dumpen», og arkivet må tas ETTER dumpen. Snus rekkefølgen,
+    er funnet tilbake med et nytt vindu: en fil skrevet etter arkivet, hvis
+    rad rekker inn i dumpen.
+
+    MUTASJONEN SOM DREPER DENNE: flytt `tar` opp foran `pg_dump` (arkiv før
+    dump), eller la `mv "$DELVIS" "$FIL"` skje før lager_sti-porten — da får
+    dumpen backupnavnet sitt uten at noen har målt at buntene finnes.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_dump = indeks('age -R "$MOTTAKER"')
+    i_tar = indeks("tar --create")
+    i_port = indeks("rad(er) i dumpen peker")
+    i_mv_dump = indeks('mv "$DELVIS" "$FIL"')
+    i_mv_arkiv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+
+    assert i_tar > i_dump > 0, \
+        "arkivet tas FØR dumpen — en fil skrevet etterpå, hvis rad rekker " \
+        "inn i dumpen, gir nøyaktig den raden uten fil som #191 handler om"
+    assert i_port > i_tar, \
+        "lager_sti-porten måler før arkivet finnes"
+    assert i_mv_dump > i_port and i_mv_arkiv > i_port, \
+        "backupnavnene settes før lager_sti-porten har svart"
+    assert 'rm -f "$DELVIS" "$ARKIV_DELVIS"' in skript, \
+        "arbeidsfilene ryddes ikke ved avbrudd — en avkortet halvdel kan " \
+        "bli liggende"
+    # ENVEIS, med vilje: arkivet får inneholde mer (orphans, og rader
+    # committet etter dumpen). Dumpen er autoriteten på hva som MÅ finnes.
+    assert 'comm -23 "$LISTE.krav" "$LISTE.sett"' in skript, \
+        "porten er ikke enveis — den krever likhet, og da feller den " \
+        "backupen på en foreldreløs fil som ikke er noen feil"
+
+
+def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
+    """Cursor P2: porten beviste konsistens for et annet tidspunkt.
+
+    Skriptet kjørte `pg_dump` TO ganger. Den lagrede filen kom fra pass 1;
+    engangsbasen `$VERIF` — og dermed `lager_sti`-porten som leser den — ble
+    bygget fra pass 2. To passeringer er to snapshots, og mellom dem rekker
+    en `forkastet`-rydding (058/059 forbereder nettopp den) å unlinke en fil:
+
+      1. Pass 1 fanger rad R som `lastet`, med `lager_sti`.
+      2. Reaper setter R → `forkastet` og sletter filen.
+      3. Pass 2 har ikke R i `lastet`/`bundet` → kravmengden er tom for R.
+      4. `comm -23` passerer, og backupen meldes grønn.
+      5. Den LAGREDE dumpen (pass 1) har fortsatt R som `lastet`, uten fil i
+         arkivet — nøyaktig #191, gjennom porten som skulle fange det.
+
+    Porten lukkes bare av at det er ÉN passering: samme byte-sekvens
+    krypteres til backupen og gjenopprettes til engangsbasen, så alt porten
+    måler i `$VERIF` gjelder også fila som havner i katalogen.
+
+    MUTASJONEN SOM DREPER DENNE: gi verifiseringen sin egen `pg_dump` igjen,
+    eller la `$VERIF` restores fra noe annet enn mellomfila som mates til
+    `age`.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    # Hele KOMMANDOEN, ikke tekstlinjen: en omdirigering som er skjøvet ned
+    # på en fortsettelseslinje hører til samme passering, og en port som
+    # ikke ser den ville felt riktig skript på ren formattering.
+    linjer = []
+    for rå in skript.splitlines():
+        rå = rå.strip()
+        if not rå or rå.startswith("#"):
+            continue
+        if linjer and linjer[-1].endswith("\\"):
+            linjer[-1] = linjer[-1][:-1].rstrip() + " " + rå
+        else:
+            linjer.append(rå)
+
+    dumpelinjer = [ln for ln in linjer if "pg_dump" in ln]
+    assert len(dumpelinjer) == 1, \
+        f"{len(dumpelinjer)} pg_dump-passeringer — to snapshots betyr at " \
+        "lager_sti-porten måler et annet tidspunkt enn det som arkiveres"
+    (dumpen,) = dumpelinjer
+    assert dumpen == 'sudo -u postgres pg_dump --format=custom' \
+                     ' --dbname=disponit > "$RAA"', \
+        "dumpen går ikke til mellomfila — da har forbrukerne hver sin strøm"
+
+    krypteringen = [ln for ln in linjer
+                    if 'age -R "$MOTTAKER"' in ln and '"$DELVIS"' in ln]
+    gjenopprettingen = [ln for ln in linjer if "pg_restore" in ln]
+    assert krypteringen == ['age -R "$MOTTAKER" < "$RAA" > "$DELVIS"'], \
+        "backupfila krypteres ikke fra mellomfila — den lagrede dumpen er " \
+        "da et annet snapshot enn det som verifiseres"
+    assert len(gjenopprettingen) == 1 and '"$RAA"' in gjenopprettingen[0], \
+        "engangsbasen gjenopprettes ikke fra den SAMME mellomfila — porten " \
+        "måler et snapshot som aldri ble lagret"
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    # Klarteksten er ikke en backup og skal ikke overleve kjøringen: ryddet
+    # av trapen, av feiesvingen for drepte kjøringer, og eksplisitt så snart
+    # begge forbrukerne er ferdige — før den lange `tar`-passeringen.
+    # Etter eiers dom 28/8 bor mellomfila på tmpfs, i sin egen katalog:
+    # trapen rydder KATALOGEN, ikke en fil i backupkatalogen. Kravet er
+    # uendret — ingen ukryptert dump overlever kjøringen — men stedet den
+    # kunne overlevd er et annet.
+    trapkropp = skript.split("opprydd()", 1)[1].split("}", 1)[0]
+    assert 'rm -rf "$RAA_KAT"' in trapkropp, \
+        "trapen rydder ikke tmpfs-katalogen — en ukryptert dump blir" \
+        " liggende i minnet til neste omstart"
+    # Feiesvingen fulgte mellomfila til tmpfs (eiers dom 28/8). En drept
+    # kjøring etterlater nå en katalog i /dev/shm, ikke en fil i
+    # backupkatalogen — kravet er det samme, stedet er nytt.
+    #
+    # Målt på KODELINJER, ikke på fila: prosaen over feien siterer den
+    # forkastede globben `rm -rf /dev/shm/disponit-backup.*` for å forklare
+    # hvorfor den er borte, så en port som leser hele teksten står grønn
+    # også om selve `find`-linjen forsvinner (Cursor P2 på `db2eeda`).
+    feien = [ln for ln in linjer if ln.startswith("find /dev/shm")]
+    assert len(feien) == 1 and "-user root" in feien[0] \
+        and "-name 'disponit-backup.*' -exec rm -rf {} +" in feien[0], \
+        "en mellomfil fra en drept kjøring ryddes aldri opp"
+    i_rm = indeks('rm -f "$RAA"')
+    i_tar = indeks("tar --create")
+    assert 0 <= i_rm < i_tar, \
+        "klarteksten ligger igjen gjennom arkiveringen — den lengste delen " \
+        "av kjøringen, og den trapen ikke dekker ved SIGKILL"
+    # Endelsen må stå utenfor BEGGE globbene: matchet den backupnavnet, ville
+    # en ukryptert dump sett ut som dagens backup; matchet den retention,
+    # ville den blitt slettet som et par den ikke er halvparten av.
+    assert not fnmatch.fnmatch("disponit-20260828T000000.dump.raa",
+                               "disponit-*.dump.age"), \
+        "mellomfila matcher backup-globben og kan forveksles med en backup"
+
+
+def test_backupen_par_finaliseres_atomisk_eller_ryddes():
+    """Cursor P1: finaliseringen er to `mv`, og mellom dem lå #191 igjen.
+
+    Alle portene har svart, og paret får navnene sine med `mv "$DELVIS"
+    "$FIL"` og `mv "$ARKIV_DELVIS" "$ARKIV"`. Dør prosessen MELLOM dem —
+    SIGTERM fra opp.sh steg 5, OOM, strømbrudd — står den ene halvdelen med
+    sitt ENDELIGE navn mens `opprydd` sletter den andres arbeidsnavn og lar
+    den endelige stå. Resultatet er et halvt par i backupkatalogen: nøyaktig
+    gjenopprettingshullet #191 lukker, bare flyttet ett steg ned i skriptet.
+
+    PORTEN ER TODELT, fordi vinduet har to utganger:
+
+    1. `PAR_KLAR` er tomt til BEGGE navnene er satt, og `opprydd` tar da også
+       `$FIL`/`$ARKIV` — trapen etterlater aldri en halv enhet.
+    2. ARKIVET FINALISERES FØRST. Et SIGKILL rekker ingen trap, og da avgjør
+       rekkefølgen hva som blir liggende: dumpen er det retention, globben og
+       operatøren leter etter, så en dump uten arkiv LYVER om at dagen er
+       dekket. Et arkiv uten dump er en rest ingen forveksler med en backup.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `PAR_KLAR`-grenen fra `opprydd` (da
+    etterlater trapen `$FIL` alene), eller sett `PAR_KLAR=1` før den siste
+    `mv` (da rydder trapen ikke vinduet den finnes for), eller snu de to
+    `mv`-ene tilbake.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_init = indeks('PAR_KLAR=""')
+    i_trap = indeks("trap opprydd EXIT")
+    i_mv_arkiv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+    i_mv_dump = indeks('mv "$DELVIS" "$FIL"')
+    i_klar = indeks("PAR_KLAR=1")
+
+    assert 0 <= i_init < i_trap, \
+        "PAR_KLAR er ikke tom FØR trapen installeres — en tidlig exit ville " \
+        "lest en variabel som ikke finnes, og med `set -u` dør trapen selv"
+    # Cursor P2 på 2d3886b: flagget alene lot trapen slette et KOMPLETT
+    # par i mikrovinduet mellom siste `mv` og `PAR_KLAR=1`. Kravet står —
+    # et halvt par skal bort — men avgjørelsen leses nå av disken, som er
+    # sannheten flagget bare forsøkte å gjengi.
+    assert ('if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }'
+            in skript), \
+        "opprydd avgjør par-tilstanden på flagget alene — da står enten " \
+        "et halvt par igjen, eller et komplett blir slettet i vinduet"
+    assert 0 <= i_mv_arkiv < i_mv_dump, \
+        "dumpen finaliseres først — et SIGKILL i vinduet etterlater da en " \
+        "dump uten arkiv, som ser ut som dagens backup og ikke er det"
+    assert i_klar > i_mv_dump > 0, \
+        "PAR_KLAR settes før begge navnene er på plass — da er vinduet " \
+        "udekket nettopp der det finnes"
+
+
+def test_backupen_sletter_dumpen_og_arkivet_som_ett_par():
+    """Paret er gjenopprettingsenheten — også når det dør.
+
+    DEK-ene som dekrypterer buntene i et arkiv ligger i dumpen med SAMME
+    stempel, KEK-wrappet slik de sto den natten. Utløper de to hver for seg,
+    står man igjen med en dump hvis bunter ingen arkiv lenger har: #191
+    gjenoppstått etter 30 dager i stedet for med én gang.
+
+    MUTASJONEN SOM DREPER DENNE: erstatt `slett_par` med det gamle
+    `find -name 'disponit-*.dump.age' -delete`. Arkivene blir da liggende
+    som foreldreløse til de treffer sin egen glob — eller for alltid, om
+    globben aldri nevner dem.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert 'rm -f "$KATALOG/disponit-$stempel.dump.age" \\\n' \
+           '        "$KATALOG/disponit-$stempel.inndata.tar.age"' \
+           in skript, \
+        "retention sletter ikke dumpen og arkivet under samme stempel"
+    assert "-print -delete" not in skript, \
+        "retention sletter fortsatt per fil — arkivet blir foreldreløst"
+    # Feiesvingen for avbrutte kjøringer må ta BEGGE arbeidsnavnene, ellers
+    # samler katalogen halve par som ingenting rører.
+    assert "disponit-*.inndata.tar.age.delvis" in skript, \
+        "en avbrutt arkivskriving blir liggende for alltid"
+
+
+def test_backupen_stopper_for_disken_gar_full():
+    """Bunter er inntil 64 MiB, og /var deles med basen.
+
+    Går disken full MIDT i en kjøring, er ikke backupen det eneste som
+    stopper — Postgres skriver til den samme disken. Porten er derfor
+    fail-closed og måler FØR dumpen starter, ikke etter.
+
+    Og en manglende lagerrot er en provisjoneringsfeil som skal SI det: en
+    backup som stille hopper over lageret fordi katalogen ikke fantes, er
+    nøyaktig #191 med et vennligere ansikt.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_disk = indeks("LEDIG_KIB")
+    i_rot = indeks('[ -d "$LAGER" ]')
+    i_dump = indeks('age -R "$MOTTAKER"')
+    i_dumpmaal = indeks("pg_database_size")
+    assert 0 <= i_rot < i_dump, "lagerroten sjekkes ikke før dumpen starter"
+    assert 0 <= i_disk < i_dump, "diskporten måler etter at dumpen er skrevet"
+
+    # Cursor P2: kravet må dekke BEGGE halvdelene av fotavtrykket. Målte
+    # porten bare lageret, kunne en base som har vokst raskere enn lageret
+    # passere og dø midt i `pg_dump` — porten uten sin egen hensikt.
+    assert 0 <= i_dumpmaal < i_dump, \
+        "dumpens fotavtrykk måles ikke før dumpen starter — diskporten " \
+        "regner bare lageret, og basen kan ha vokst forbi marginen"
+    # Dumpen ligger på disken TO ganger samtidig — mellomfila og den
+    # krypterte — så den telles to ganger. Ett dumpledd her ville vært den
+    # samme underestimeringen som funnet over, bare med halvdelen skriptet
+    # selv la til da de to `pg_dump`-passeringene ble slått sammen til én.
+    # ÉN dumpkopi etter eiers dom 28/8: mellomfila ligger på tmpfs og
+    # koster null i backupkatalogen. Codex (P2) ville ha
+    # `max(2×dump, dump+lager)`, skriptets egen prosa ville ha `2×dump` —
+    # dommen fjernet striden i stedet for å velge side, og leddene ble
+    # færre, ikke flere.
+    assert "KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))" in skript, \
+        "kravet summerer ikke lager + dump + margin"
+    assert "2 * DUMP_KIB" not in skript, \
+        "porten teller fortsatt to dumpkopier i katalogen — mellomfila" \
+        " ligger på tmpfs og er ikke der"
+
+
+def test_klarteksten_ligger_i_minne_ikke_i_backupkatalogen():
+    """#229, eiers dom 28/8: Codex og Cursor sto mot hverandre her.
+
+    Cursor krevde ÉN `pg_dump` — to kjøringer betyr at porten måler et
+    annet snapshot enn det som lagres. Codex krevde at klartekst aldri
+    persisteres: katalogens trusselmodell er at diskaksess gir null, og
+    privatnøkkelen ligger bevisst ikke på verten, så gjenopprettbare
+    klartekstblokker i backupkatalogen er inkonsekvent.
+
+    Motsetningen var ekte bare så lenge «én snapshot» ble antatt å kreve
+    «fil på disk». tmpfs oppfyller begge kravene samtidig, og det er
+    derfor dommen ikke er et kompromiss mellom dem.
+
+    `mktemp -d` og ikke et konstruert søskennavn: katalogen reserveres av
+    kjernen, og 0700 settes før fila finnes.
+
+    MUTASJONEN SOM DREPER DENNE: legg `$RAA` tilbake i `$KATALOG` (Codex'
+    P1 gjenoppstår), eller bytt `mktemp -d` mot et gjettbart navn.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert "RAA_KAT=$(mktemp -d -p /dev/shm" in skript, \
+        "mellomfila ligger ikke på tmpfs — klarteksten persisteres"
+    assert 'chmod 700 "$RAA_KAT"' in skript, \
+        "katalogen for klarteksten er ikke 0700"
+    assert '$KATALOG/disponit-$STEMPEL.dump.raa' not in skript, \
+        "klarteksten skrives til backupkatalogen igjen"
+    assert skript.count("sudo -u postgres pg_dump") == 1, \
+        "to dumper igjen — porten måler da et annet snapshot enn det " \
+        "som lagres (Cursor P2 på 12c7476)"
+    assert "-name 'disponit-backup.*' -exec rm -rf {} +" in skript, \
+        "en SIGKILL-et kjøring etterlater klartekst på tmpfs for alltid"
+
+
+def test_feien_av_tmpfs_rester_treffer_bare_vare_egne():
+    """Cursor P2 på `4a6dccf`: feien var en root-`rm -rf` uten eier.
+
+    `rm -rf /dev/shm/disponit-backup.*` kjørte som root og traff enhver
+    match uansett eier. `/dev/shm` er verdensskrivbar, og DEPLOY.md
+    dokumenterer at Cloud Server S er DELT med et annet produkt — så en
+    lokal bruker kunne lagt igjen `disponit-backup.x` og fått root til
+    å slette den for seg. Sticky bit hindrer at andre sletter VÅRE
+    kataloger; det hindrer ikke at vi sletter deres.
+
+    `-user root` er avgrensningen som holder, nettopp fordi `/dev/shm`
+    er sticky: en uprivilegert bruker får ikke lagt igjen en root-eid
+    oppføring der, og våre egne rester er root-eide.
+
+    `-type d` er den andre halvdelen (Cursor P2 på `db2eeda`): våre
+    rester er kataloger fra `mktemp -d`, så en root-eid FIL med samme
+    navn er ikke vår — og en `rm -rf` som ikke trenger å treffe den,
+    skal ikke kunne det.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til den uavgrensede globben,
+    eller fjern `-user root` eller `-type d` fra `find`-en.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    # KODELINJER, ikke kommentarer: prosaen over feien SITERER den gamle
+    # globben for å forklare hvorfor den er borte. En port som leser hele
+    # fila ville felt sin egen begrunnelse.
+    kode = "\n".join(ln for ln in skript.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "rm -rf /dev/shm/disponit-backup.*" not in kode, \
+        "uavgrenset root-rm mot verdensskrivbar /dev/shm på en delt vert"
+    assert "find /dev/shm -mindepth 1 -maxdepth 1 -user root" in kode, \
+        "feien avgrenser ikke til root-eide rester i /dev/shm selv"
+    assert "-user root -type d" in kode, \
+        "feien kan rm -rf-e en root-eid FIL — våre rester er kataloger"
+
+
+def test_runbooken_leter_etter_klarteksten_i_shm_ikke_i_katalogen():
+    """Cursor P2 på `4a6dccf`: dommen flyttet fila, runbooken ble stående.
+
+    DEPLOY.md sa fortsatt «en `disponit-<stempel>.dump.raa` i katalogen»
+    og sendte operatøren til `/var/backups/disponit`. Etter tmpfs-dommen
+    ligger klarteksten aldri der — så etter et `SIGKILL`/OOM ser
+    operatøren en ren katalog, konkluderer at ingenting ble etterlatt,
+    og den gjenopprettbare klarteksten blir liggende i `/dev/shm` til
+    neste omstart. Runbooken ledet altså vekk fra det ene stedet den
+    fantes.
+
+    Porten er tekstuell fordi runbooken er det: en leseinstruks kan bare
+    drifte fra koden i én retning, og det er den retningen dette måler.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `.raa`-avsnittet tilbake til
+    backupkatalogen, eller fjern `/dev/shm`-stien fra det.
+    """
+    deploy = (ROT / "docs/DEPLOY.md").read_text(encoding="utf-8")
+    assert "/dev/shm/disponit-backup" in deploy, \
+        "runbooken navngir ikke tmpfs-stien der klarteksten faktisk " \
+        "kan bli liggende etter et SIGKILL"
+    # Avsnittet som nevner mellomfila skal ikke samtidig sende
+    # operatøren til backupkatalogen etter den.
+    avsnitt = [a for a in deploy.split("\n\n") if "dump.raa" in a]
+    assert avsnitt, "runbooken nevner ikke mellomfila i det hele tatt"
+    for a in avsnitt:
+        assert "/dev/shm" in a, \
+            "et avsnitt om `.raa` uten tmpfs-stien — operatøren ledes " \
+            "til å lete i backupkatalogen etter en fil som ikke er der"
+
+
+def test_opprydding_sletter_aldri_et_komplett_par():
+    """Cursor P2 på `2d3886b`: vernet begynte å ødelegge det det vernet.
+
+    `PAR_KLAR=1` settes ETTER den siste `mv`. Lander SIGTERM i det
+    mikrovinduet, ville trapen slettet et komplett, verifisert par —
+    altså miste natten helt, for å hindre en halv enhet.
+
+    Flagget er derfor ikke sannheten; disken er. Finnes BEGGE de
+    endelige navnene, er paret ferdig uansett hva flagget rakk å bli.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til `[ -n "$PAR_KLAR" ] ||
+    rm -f "$FIL" "$ARKIV"` — da forsvinner en ferdig backup i vinduet.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    assert ('if [ -z "$PAR_KLAR" ] && ! { [ -f "$FIL" ] && [ -f "$ARKIV" ]; }'
+            in skript), \
+        "oppryddingen spør bare flagget — et komplett par kan slettes i " \
+        "vinduet mellom siste mv og PAR_KLAR=1"
+
+
+def test_retention_og_holdbarhet_feiler_hoyt():
+    """To stille feilveier, begge fra Codex' inline-runde på `2d3886b`.
+
+    `find`-statusen propagerer ikke ut av `< <(...)`: prosess-
+    substitusjonen er en egen prosess. Feiler søket, leser løkka null
+    linjer, `SLETTET` blir 0, og kjøringen melder «slettet 0 utløpte
+    par» som om retention hadde gjort jobben — mens utløpte backuper
+    hoper seg opp bak en grønn logglinje.
+
+    Og `mv` innenfor ett filsystem flytter navnet, ikke bytene: uten en
+    `sync` foran kan katalogposten være på disk mens innholdet ikke er.
+    Det er en backup med endelig navn og et hull i seg — nøyaktig den
+    løgnen arbeidsnavnene finnes for å hindre.
+
+    MUTASJONEN SOM DREPER DENNE: tilbake til `done < <(find ...)`, eller
+    fjern `sync` foran den første `mv`.
+    """
+    skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
+    linjer = [ln.strip() for ln in skript.splitlines()
+              if ln.strip() and not ln.lstrip().startswith("#")]
+    assert "done < <(find" not in skript, \
+        "retention leser fra en prosess-substitusjon — find-statusen " \
+        "forsvinner, og et feilet søk ser ut som «ingenting å slette»"
+    assert 'UTLOPTE=$(find "$KATALOG"' in skript, \
+        "retention-søket materialiseres ikke med synlig status"
+
+    def indeks(bit):
+        for i, ln in enumerate(linjer):
+            if bit in ln:
+                return i
+        return -1
+
+    i_sync = indeks("sync")
+    i_mv = indeks('mv "$ARKIV_DELVIS" "$ARKIV"')
+    assert 0 <= i_sync < i_mv, \
+        "ingen sync før navnene settes — en backup kan få endelig navn " \
+        "med et hull i seg"
+
+
 def test_inndatalageret_er_api_unitens_egen_state_katalog():
     """#162 (Codex P1, andre runde på samme linje): første forsøk la lageret
     under /var/lib/disponit med `ReadWritePaths`. Den katalogen er
@@ -1741,8 +2186,15 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     og tar foreldrekatalogen fra ryddeuniten på en fersk vert.
 
     Porten måler det som faktisk lukker funnet — at API-lageret er
-    api-unitens EGEN state-katalog — og binder de tre stedene stien står, så
-    de ikke kan gli fra hverandre."""
+    api-unitens EGEN state-katalog — og binder de FIRE stedene stien står, så
+    de ikke kan gli fra hverandre.
+
+    Det fjerde stedet er `backup-db.sh` (Cursor P2, #191): skriptet sourcer
+    `staging.env` og hardkodet så sin egen `LAGER`. Satte noen
+    `DISPONIT_INNDATA_ROT` i miljøfila, leste API-et én rot og backupen en
+    annen — arkivet ble tatt av feil katalog mens `lager_sti`-porten fortsatt
+    passerte, fordi den måler radene mot nettopp det arkivet den fikk. Alle
+    lys grønne, og #191 tilbake i stillhet."""
     def les(sti):
         """Direktivene, ikke kommentarene: nettopp DENNE fiksen forklarer den
         forkastede formen i prosa, og en `not in`-assert over rå tekst ville
@@ -1755,6 +2207,7 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     opp = les("deploy/staging/opp.sh")
     modul = les("platform/core/api/inndata.py")
     rydding = les("deploy/staging/disponit-artefaktrydding.service")
+    skript = les("deploy/staging/backup-db.sh")
 
     navn = None
     for linje in unit.splitlines():
@@ -1777,9 +2230,31 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
     assert ryddekatalog and not rot.startswith(ryddekatalog + "/"), \
         f"{rot} ligger under {ryddekatalog}, som en annen unit eier"
 
-    # De to andre stedene stien står, sier det samme.
+    # De tre andre stedene stien står, sier det samme.
     assert f'"{rot}"' in modul, f"api/inndata.py peker ikke på {rot}"
     assert f"install -d -m 700 -o disponit-api -g disponit-api {rot}" in opp, \
         f"opp.sh oppretter ikke {rot} med api-brukerens eierskap"
-    assert "/var/lib/disponit/inndata" not in opp + modul, \
+    assert "/var/lib/disponit/inndata" not in opp + modul + skript, \
         "den gamle stien står igjen et sted og vil gli fra unit-en"
+
+    # Backupen navngir den SAMME stien, som en konstant.
+    assert f"LAGER={rot}\n" in skript, \
+        f"backup-db.sh peker ikke på {rot} — arkivet ville blitt tatt av " \
+        "feil katalog mens lager_sti-porten fortsatt passerte, fordi den " \
+        "måler radene mot nettopp det arkivet den fikk"
+
+    # ROTEN ER IKKE EN KNAPP (#191, K2 mellom to Cursor-runder som pekte
+    # motsatt vei). `DISPONIT_INNDATA_ROT` var lest to steder med denne
+    # stien som default — men den KAN ikke ta noen annen verdi: uniten
+    # kjører `ProtectSystem=strict`, der `StateDirectory` er eneste
+    # skrivbare sti, så en annen rot gir `EROFS` på hver opplasting. Å
+    # gjøre knappen ekte krever `ReadWritePaths`-formen #162 forkastet.
+    #
+    # En halvbindt knapp er verre enn ingen: den lar API-et og backupen
+    # gli fra hverandre den dagen noen setter variabelen i troen på at den
+    # virker. Porten forbyr derfor at den kommer tilbake — i BEGGE filer,
+    # for én av dem alene er nettopp glidningen.
+    assert "DISPONIT_INNDATA_ROT" not in modul + skript, \
+        "roten er blitt en knapp igjen — men den kan bare stå i én " \
+        "stilling (ProtectSystem=strict), så det den kjøper er at API og " \
+        "backup kan lese hver sin katalog uten at noe sier fra"
