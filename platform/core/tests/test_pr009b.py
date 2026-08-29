@@ -351,7 +351,14 @@ def test_nginx_kandidatrutene_faar_frist_med_margin():
         blokk = re.search(r"location = %s \{(.*?)\n    \}" % re.escape(rute),
                           https, re.S)
         assert blokk, f"ingen egen nginx-location for {rute}"
-        m = re.search(r"proxy_read_timeout\s+(\d+)s;", blokk.group(1))
+        # Kommentarene strippes FØR matchen (Codex P2): et deaktivert
+        # `# proxy_read_timeout 180s;` er nøyaktig den mutasjonen porten
+        # finnes for — nginx faller da tilbake på defaulten på 60 s —
+        # men en rå regex på malteksten leser den som et satt direktiv
+        # og lar regresjonen passere grønt. Samme helper som
+        # `$scheme`-porten over bruker.
+        m = re.search(r"proxy_read_timeout\s+(\d+)s;",
+                      _uten_kommentarer(blokk.group(1)))
         assert m, (
             f"{rute} arver nginx' default proxy_read_timeout (60 s) —"
             " samme tall som appens eget behandlingsbudsjett, altså null"
