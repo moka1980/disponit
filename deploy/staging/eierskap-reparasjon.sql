@@ -79,7 +79,7 @@ INSERT INTO _design VALUES
     -- samme grunn som 057-doerene over — de gaar gjennom
     -- krev_tenantkontekst-porten og maa derfor lages i porteierens
     -- SET ROLE-vindu. Tabellen selv eies av migrator og staar ikke her.
-    ('FUNCTION', 'skriv_revisjonshendelse(text,text,text,text)',      'disponit_m37_claimer'),
+    ('FUNCTION', 'skriv_revisjonshendelse(text,text,text,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'les_revisjonshendelse(text,uuid)',                  'disponit_m37_claimer'),
     -- 043 (Gate 14b): oppløsningsveien — kansellering med fencing.
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text,text)',        'disponit_m37_claimer'),

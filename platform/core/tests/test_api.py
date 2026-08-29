@@ -190,10 +190,13 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # må ut før begge.
                  "inndata_artefakt",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
-                 # 066: revisjonshendelsen peker ikke på noe (tenanten er
-                 # en TEXT-kolonne, ikke en FK), så plassen er fri — den
-                 # står ved siden av `revisjonslogg` fordi den hører til
-                 # samme familie, ikke fordi rekkefølgen krever det.
+                 # 066: revisjonshendelsen peker BARE ut av tenanten —
+                 # `bruker_id` har FK til den GLOBALE `brukeridentitet`
+                 # (056-formen for `signatar`), og den tabellen ryddes
+                 # ikke herfra. Tenanten er en TEXT-kolonne, ikke en FK.
+                 # Plassen er derfor fri: den står ved siden av
+                 # `revisjonslogg` fordi den hører til samme familie,
+                 # ikke fordi rekkefølgen krever det.
                  "revisjonslogg", "revisjonshendelse",
                  "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.

@@ -74,6 +74,23 @@ CREATE TABLE revisjonshendelse (
     begrunnelse TEXT NOT NULL
         CHECK (length(regexp_replace(begrunnelse, '^\s+|\s+$', '', 'g'))
                BETWEEN 10 AND 2000),
+    -- PRINSIPALEN BAK AKTØREN (Cursor P1, runde 5 på #247). `aktor` er en
+    -- ETIKETT — den er fri tekst, og fri tekst beviser ingenting: runtime
+    -- har EXECUTE på skriveveien, så en direkte kaller kunne plantet
+    -- `m57.blinding_avskrudd` i tenantens navn med en oppdiktet aktør, og
+    -- oppslaget ville godkjent raden som base-evidens. Da hadde vi flyttet
+    -- selvattesten ett lag ned i stedet for å fjerne den — nøyaktig den
+    -- klassen hele tabellen finnes for.
+    --
+    -- 019-FORMEN ORDRETT: etiketten beholdes (den er det mennesket leser i
+    -- sporet), og prinsipalen ved siden av den er den basen faktisk kan
+    -- binde. `bruker_id` navngir et AKTIVT `brukermedlemskap` i tenanten —
+    -- den ene autorisasjonsinngangen runtime ikke kan skrive (010:
+    -- OIDC-forvaltet, kun SELECT). Kolonnen er NOT NULL fordi tabellen er
+    -- ny: det finnes ingen historiske rader å være bakoverkompatibel med,
+    -- og en rad uten prinsipal kunne ikke reautoriseres senere.
+    bruker_id TEXT NOT NULL
+        REFERENCES brukeridentitet (bruker_id),
     ts TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant, hendelse_id)
 );
@@ -127,15 +144,41 @@ SET LOCAL ROLE disponit_m37_claimer;
 -- Skriveveien. SECURITY DEFINER med tenanten bundet til KONTEKSTEN, aldri
 -- til parameteret alene (038-formen): en kaller som oppgir en annen tenant
 -- enn sin egen blir avvist, ikke betjent.
+--
+-- ... OG AKTØREN ER BUNDET SOM TENANTEN (Cursor P1, runde 5). Tenantporten
+-- alene svarer på «hvilken kunde», ikke på «hvem». `p_bruker_id` er
+-- prinsipalen bak etiketten, og den LÅSES mot et aktivt medlemskap før
+-- raden skrives — 043/056-doktrinen ordrett: den ene autorisasjons-
+-- inngangen runtime ikke selv kan skrive. Låsen lånes av `laas_godkjenner`
+-- (013) og ikke tatt med en egen `FOR UPDATE`, av den harde grunnen 019 og
+-- 056 alt skrev ned: enhver radlåsklausul krever UPDATE-privilegium, og
+-- `disponit_m37_claimer` skal ALDRI kunne skrive `brukermedlemskap`. Uten
+-- låsen kunne en tilbakekalling committet mellom oppslaget og INSERT-en,
+-- og en append-only rad ville for alltid navngitt en tilbakekalt bruker som
+-- den som autoriserte avskruingen.
+--
+-- ÆRLIG OM GRENSEN, som 056 §7b: en kompromittert runtime kan lese
+-- medlemskapstabellen og UTGI SEG FOR et aktivt medlem. Den resten er ikke
+-- lukkbar herfra (den forutsetter at basen kan verifisere konvolutten).
+-- Det denne porten fjerner er den frie oppdiktingen: aktøren må være noen
+-- som faktisk finnes, er aktiv, og hører til DENNE tenanten.
 CREATE OR REPLACE FUNCTION skriv_revisjonshendelse(
-    p_tenant TEXT, p_handling TEXT, p_aktor TEXT, p_begrunnelse TEXT)
+    p_tenant TEXT, p_handling TEXT, p_aktor TEXT, p_begrunnelse TEXT,
+    p_bruker_id TEXT)
 RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
 DECLARE v_id UUID;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'skriv_revisjonshendelse');
-    INSERT INTO public.revisjonshendelse (tenant, handling, aktor, begrunnelse)
-    VALUES (p_tenant, p_handling, p_aktor, p_begrunnelse)
+    PERFORM 1 FROM public.laas_godkjenner(p_tenant, p_bruker_id);
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'skriv_revisjonshendelse: % mangler aktivt'
+            ' medlemskap i %', coalesce(p_bruker_id, '<null>'), p_tenant
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    INSERT INTO public.revisjonshendelse
+        (tenant, handling, aktor, begrunnelse, bruker_id)
+    VALUES (p_tenant, p_handling, p_aktor, p_begrunnelse, p_bruker_id)
     RETURNING hendelse_id INTO v_id;
     RETURN v_id;
 END $$;
@@ -158,7 +201,7 @@ BEGIN
          WHERE r.tenant = p_tenant AND r.hendelse_id = p_hendelse_id;
 END $$;
 
-REVOKE ALL ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
+REVOKE ALL ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION les_revisjonshendelse(TEXT, UUID) FROM PUBLIC;
 -- `disponit` er LOKAL-/TESTNAVNET på runtime-rollen, ikke rollen (Codex P1).
@@ -173,8 +216,8 @@ REVOKE ALL ON FUNCTION les_revisjonshendelse(TEXT, UUID) FROM PUBLIC;
 -- står den tre ganger, av nøyaktig samme funn).
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'disponit') THEN
-    GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT)
-      TO disponit;
+    GRANT EXECUTE ON FUNCTION
+      skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT) TO disponit;
     GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO disponit;
   END IF;
 END $$;

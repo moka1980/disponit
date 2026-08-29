@@ -370,7 +370,7 @@ GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO 
 -- API-et innloggede mennesker skriver hendelsen gjennom, og modulporten
 -- leser den gjennom. Migrasjonens egen grant er betinget av at rollen HETER
 -- `disponit`; denne er den autoritative for den konfigurerte rollen.
-GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION skriv_revisjonshendelse(TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION les_revisjonshendelse(TEXT, UUID) TO {rolle};
 """
 
