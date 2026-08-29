@@ -2926,6 +2926,38 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                     (tenant, prosess_id, kid_uuid)).fetchone()
                 if staar is not None:
                     return _konflikt("intervjusporsmal")
+        # OG LEASEN MÅLES PÅ NYTT VED SKRIVEGRENSEN (Codex P2). Leddet
+        # over var den ENESTE tidsmålingen, og den står før
+        # base64-dekodingen, hashingen og INSERT-ene av inntil 25–50 MiB.
+        # Radlåsen serialiserer TILSTANDSENDRINGER — en claim-tyv og
+        # `forny_oppdragslease` tar begge `FOR UPDATE` og venter på oss —
+        # men den stopper ikke VEGGKLOKKEN. Verre: mens vi holder `FOR
+        # SHARE` kan heartbeaten ikke ta sin egen lås, så leasen kan
+        # ikke engang fornyes underveis. En forespørsel med lite tid
+        # igjen kunne derfor passere porten over, bruke sekundene sine på
+        # å skrive, og committe persondata på en fullmakt som var utløpt
+        # da raden landet.
+        #
+        # Målingen gjentas derfor der skrivingen faktisk blir varig, i
+        # SAMME transaksjon og med samme `clock_timestamp()`. Claimet
+        # måles med — ikke fordi det kan ha endret seg under låsen, men
+        # fordi en port som fanger utfallet skal stå på egne ben om en
+        # framtidig skriver glemmer `FOR UPDATE`. Retningen er
+        # fail-closed: en lease som døde i skrivevinduet ruller tilbake
+        # og svarer som en avvist claim, aldri et stille ja.
+        levende = conn.execute(
+            "SELECT 1 FROM oppdrag"
+            " WHERE tenant=%s AND id=%s AND status='plukket'"
+            "   AND owner_claim_id=%s AND owner_generation=%s"
+            "   AND owner_lease_utloper IS NOT NULL"
+            "   AND owner_lease_utloper > clock_timestamp()",
+            (tenant, opp_id, claim_id, generasjon)).fetchone()
+        if levende is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj="lease_utlopt_under_skriving")
+            return _feilsvar("kandidatdata_avvist", rid)
         conn.commit()
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     except psycopg.Error as e:

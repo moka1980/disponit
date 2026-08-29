@@ -2322,6 +2322,44 @@ def test_173_leaseleddet_maaler_veggklokken_ikke_transaksjonsstarten():
         "now() i dørens SQL er transaksjonsstart — poengløs fencing"
 
 
+def test_173_leasen_maales_ogsaa_ved_skrivegrensen():
+    """#173 (Codex P2): ÉN tidsmåling er én for få på skriveveien.
+
+    Leddet over står FØR base64-dekodingen, hashingen og INSERT-ene av
+    inntil 25–50 MiB. Radlåsen (`FOR SHARE OF o`) serialiserer
+    tilstandsendringer — claim-tyven og `forny_oppdragslease` tar begge
+    `FOR UPDATE` og venter på oss — men den stopper ikke veggklokken. Og
+    så lenge VI holder delelåsen, kan heartbeaten ikke ta sin egen: leasen
+    kan ikke engang fornyes mens skrivingen pågår. En forespørsel med lite
+    tid igjen passerte derfor porten, brukte sekundene sine på å skrive,
+    og committet persondata på en fullmakt som var utløpt da raden landet.
+
+    Målt på KILDEN, ikke på et kappløp (K1), av nøyaktig samme grunn som
+    porten over: den behavioural formen krever at veggklokken flyttes
+    MELLOM to punkter i én transaksjon i døren, og dørens SQL er ikke en
+    kallbar funksjon. To målinger med `clock_timestamp()`, én før og én
+    ved skrivegrensen, er det porten håndhever.
+
+    MUTASJONEN SOM DREPER DENNE: fjern re-målingen foran `conn.commit()`.
+    """
+    import inspect
+
+    from api import app as appmod
+
+    kilde = inspect.getsource(appmod._kandidatdata)
+    assert kilde.count("owner_lease_utloper > clock_timestamp()") >= 2, \
+        "leasen skal måles både i porten og ved skrivegrensen"
+    # Re-målingen står FORAN committen, ikke etter — ellers er den en
+    # observasjon av noe som alt er varig.
+    foran = kilde.index("owner_lease_utloper > clock_timestamp()",
+                        kilde.index("owner_lease_utloper >"
+                                    " clock_timestamp()") + 1)
+    assert foran < kilde.index("conn.commit()"), \
+        "re-målingen skal stå foran conn.commit()"
+    assert "lease_utlopt_under_skriving" in kilde, \
+        "utfallet skal være skillbart i driftsloggen"
+
+
 @pg
 def test_173_nullbyte_er_feilformet_ikke_doed_base(migrator, miljo):
     """#173 (Codex P2): NUL skal kodes som request-feil, ikke som drift.
