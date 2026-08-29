@@ -10,6 +10,7 @@ PROMOTERT med rangeringen inni.
 import io
 import json
 import secrets
+import time
 import zipfile
 
 import pytest
@@ -348,6 +349,115 @@ def test_173_delvis_stroem_feller_kjoringen_uten_promotering(monkeypatch):
         "en kjøring med delvis lagret kandidatdata promoterte likevel"
     assert k.kvitteringer and \
         k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
+
+
+class _LeasetapMidtIStroemmen(_Stubklient):
+    """Døren slik plattformen faktisk oppfører seg når leasen er tapt.
+
+    Det FØRSTE skrivet lander — det er den delvise commiten som gjør
+    dette til et tap MIDT i strømmen og ikke før den. Fra og med det
+    andre venter døren til pulsen HAR registrert tapet, og svarer så
+    409 `kandidatdata_avvist`.
+
+    Ventingen er det som gjør porten deterministisk: `_Heartbeat` lever
+    i en egen tråd, og `except Kjoringsfeil` leser `puls.tapt` INNE i
+    `with`-blokka — altså før `__exit__` joiner tråden. Uten den ville
+    testen målt kappløpet mellom tråden og strømmen i stedet for
+    feilattribusjonen den finnes for. 409 er 4xx, så `lever` retryer
+    den ikke: nøyaktig ett avvist skriv feller kjøringen."""
+
+    def __init__(self, pulser, **kw):
+        super().__init__(**kw)
+        self._pulser = pulser
+
+    def _kandidatdatasvar(self):
+        n = len(self.kandidatdokumenter) + len(self.kandidatartefakter)
+        if n <= 1:
+            return 200
+        frist = time.monotonic() + 10
+        while not (self._pulser and self._pulser[0].tapt) \
+                and time.monotonic() < frist:
+            time.sleep(0.001)
+        assert self._pulser and self._pulser[0].tapt, \
+            "pulsen registrerte aldri lease-tapet"
+        return 409
+
+
+def test_173_leasetap_midt_i_stroemmen_meldes_som_lease_tapt(monkeypatch):
+    """#173 (Cursor P2-1/P2-2): et lease-tap midtveis heter `lease_tapt`
+    på kvitteringen, ikke `kandidatlagring_feilet`.
+
+    Før strømmingen traff et tap midtveis LEVERINGSPORTEN etter
+    `with _Heartbeat` — den som navngir at det var AUTORITETEN som falt
+    bort. Nå er skriveveien den faktiske aborten: døren feller neste
+    kandidatskriv med 409, sinken reiser, og `kjor_bunt` pakker enhver
+    sinkfeil som `kandidatlagring_feilet`. `except Kjoringsfeil`
+    returnerte da FØR porten under rakk å lese `puls.tapt`, som alt sto
+    satt — drift leste en lagringsfeil, og kvitteringen sa
+    `kjoring_avbrutt` om et oppdrag plattformen hadde gitt til noen
+    andre.
+
+    `test_173_doed_lease_stenger_doren_midt_i_stroemmen` måler at DØREN
+    avviser; ingen port målte hvilket ORD utfallet fikk. Uten denne kan
+    en regresjon passere CI med døren fortsatt lukket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `puls.tapt`-grenen i
+    `except kjoring.Kjoringsfeil` — da blir `grunn`
+    `kjoring_avbrutt:kandidatlagring_feilet` og feilkoden
+    `kjoring_avbrutt`."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "FORNY_INTERVALL_S", 0.01)
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    # Instansen fanges fordi BÅDE døren og porten må snakke om SAMME
+    # puls: det er `puls.tapt` fiksen leser, så det er `puls.tapt`
+    # testen må synkronisere mot.
+    pulser: list = []
+    ekte = controller._Heartbeat
+
+    class _Fanget(ekte):                            # type: ignore[misc,valid-type]
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            pulser.append(self)
+
+    monkeypatch.setattr(controller, "_Heartbeat", _Fanget)
+
+    k = _LeasetapMidtIStroemmen(
+        pulser, forny=lambda: _Svar(409, {"feil": "lease_utlopt"}))
+    res = _kjor(k)
+
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "lease_tapt", res
+    assert res["lease_tapt"] == "lease_utlopt", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "lease_tapt", k.kvitteringer
+    # MIDT i strømmen: ett skriv sto alt i lagrene da fullmakten døde.
+    assert len(k.kandidatdokumenter) == 1, k.kandidatdokumenter
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring uten gyldig lease promoterte likevel"
+
+
+def test_173_sinkfeil_uten_leasetap_beholder_sitt_eget_ord(monkeypatch):
+    """Baksiden av porten over: `puls.tapt`-grenen skal treffe SMALT.
+
+    En ekte lagringsfeil mens leasen lever er fortsatt
+    `kjoring_avbrutt:kandidatlagring_feilet` — ellers ville fiksen
+    døpt om hver eneste 5xx fra kandidatlagrene til et autoritetstap,
+    og drift ville mistet lagringsfeilen helt.
+
+    MUTASJONEN SOM DREPER DENNE: la `puls.tapt`-grenen slå på koden
+    alene, uten å spørre pulsen."""
+    from modules.m57_ats import controller
+
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    res = _kjor(k)
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt", k.kvitteringer
+    assert "lease_tapt" not in res, res
 
 
 def test_avvist_kvittering_er_ikke_utfort(monkeypatch):
