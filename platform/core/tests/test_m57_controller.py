@@ -149,6 +149,11 @@ class _Stubklient:
         #: fersk kapabilitet. Med standardintervallet (240 s) rekker
         #: pulsen aldri å slå i en test — den må skrus ned med vilje.
         self.forny = forny
+        #: #173: skriveveien inn i kandidatlagrene. Alt fanges for
+        #: assertions; `kandidatdatastatus` lar en test felle sinken.
+        self.kandidatdokumenter = []
+        self.kandidatartefakter = []
+        self.kandidatdatastatus = 200
         self.kvitteringer = []
         self.stier = []
 
@@ -177,6 +182,12 @@ class _Stubklient:
             return _Svar(200, content=_buntbytes())
         if sti == "/v1/oppdrag/forny":
             return self.forny() if self.forny else _Svar(200, {})
+        if sti == "/v1/rekruttering/kandidatdokument":
+            self.kandidatdokumenter.append(json)
+            return _Svar(self.kandidatdatastatus, {})
+        if sti == "/v1/rekruttering/kandidatartefakt":
+            self.kandidatartefakter.append(json)
+            return _Svar(self.kandidatdatastatus, {})
         if sti == "/v1/artefakt":
             if self.opplastingsstatus != 200:
                 return _Svar(self.opplastingsstatus, {})
@@ -193,6 +204,62 @@ def _kjor(klient, modell=None):
     from modules.m57_ats import controller
     return controller.kjor_en(klient, "tk", modell or _Modell(),
                               _Uttrekker(), _MAALINGER, lambda k: k)
+
+
+def test_173_kandidatdata_stroemmes_underveis(monkeypatch):
+    """#173 (eiers valg b + i): hvert medlem går til dokumentveien I DET
+    det er lest, og hver kandidat til artefaktveien i det den er
+    evaluert — aldri en sluttbatch. Kallene bærer claim-trippelen
+    (fullmakten er claimets) og manifestets kandidat-ID; UUID-ene er
+    dørens og finnes ikke i kroppen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern sink-kallene i `kjor_bunt`, eller
+    slutt å sende sinkene fra `kjor_en`."""
+    import base64 as b64mod
+
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    assert k.kandidatdokumenter, "ingen dokumenter strømmet til lageret"
+    assert k.kandidatartefakter, "ingen artefakter strømmet til lageret"
+    for kall in k.kandidatdokumenter + k.kandidatartefakter:
+        assert kall["tenant"] == TENANT
+        assert kall["oppdrag_id"] == 1
+        assert kall["owner_claim_id"] == "o" * 22
+        assert kall["owner_generation"] == 0
+        assert kall["kandidat_id"], kall
+    dok = k.kandidatdokumenter[0]
+    assert b64mod.b64decode(dok["dokument_b64"]), \
+        "dokumentveien skal bære de rå bytene"
+    assert isinstance(dok["tekst"], str) and dok["tekst"].strip(), \
+        "dokumentveien skal bære parsetteksten"
+    art = k.kandidatartefakter[0]["artefakt"]
+    assert set(art) == {"funn", "oppfylt", "kildetekst"}, \
+        "artefaktveien skal bære evalueringens tre deler, intet mer"
+    # Rapporten er fortsatt komplett (v1-skjemaet, til #168s v2).
+    assert "/v1/artefakt" in k.stier
+
+
+def test_173_sinkfeil_er_kodet_avbrudd(monkeypatch):
+    """En feilet kandidatlagring er et KODET utfall — kjøringen stopper
+    før flere medlemmer pakkes ut, ingenting lastes opp, og
+    kvitteringen sier `kjoring_avbrutt` (SP-3, aldri en rå exception).
+
+    MUTASJONEN SOM DREPER DENNE: la sinken svelge ikke-2xx i
+    `kjor_en`s `lagre_dokument`."""
+    from modules.m57_ats import controller
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+    k = _Stubklient()
+    k.kandidatdatastatus = 500
+    res = _kjor(k)
+    assert res["utfall"] == "avbrutt", res
+    assert res["grunn"] == "kjoring_avbrutt:kandidatlagring_feilet", res
+    assert "/v1/artefakt" not in k.stier, \
+        "en kjøring som ikke fikk lagret kandidatdata leverte likevel"
+    assert k.kvitteringer and \
+        k.kvitteringer[0]["feilkode"] == "kjoring_avbrutt"
 
 
 def test_avvist_kvittering_er_ikke_utfort(monkeypatch):

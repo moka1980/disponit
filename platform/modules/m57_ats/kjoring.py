@@ -9,8 +9,10 @@ delresultater holdes aldri varme.
 """
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import blinding
 from . import modell as modellklient
@@ -138,7 +140,8 @@ def _felter(kandidatfelter_for, medlem, fremdrift):
 
 def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
               antall_soknader, kandidatfelter_for=None,
-              blinding_av=False, auditrad=None):
+              blinding_av=False, auditrad=None,
+              lagre_dokument=None, lagre_kandidat=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
 
@@ -159,31 +162,33 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     uttrekket, er det et kodet utfall som alt annet
     (`tekstuttrekk_feilet`), ikke en rå bibliotekfeil.
 
-    KJENT BEGRENSNING — MINNET ER IKKE BUNDET (Codex G6/P1, utsatt til
-    #173). `biter` holder hvert utpakkede dokument til hele arkivet er
-    lest, og returverdien bærer `kildetekst` for HVER kandidat:
-    topppunktet er Θ(hele buntens tekst), uansett hvor små porsjoner
-    arkivgaten leser i. En bunt som passerte hver eneste arkivgrense kan
-    derfor fortsatt OOM-drepe arbeideren. Det lar seg ikke lukke smått:
-    å binde minnet krever at RETURKONTRAKTEN over endres — artefaktene
-    strømmes til kandidatlagrene (057) underveis, og retur blir
-    referanser + rangering, med SP-3-atomisiteten flyttet fra minnet til
-    promoteringsvakten som alt står i 056. Det er ny maskin, og K1 sier
-    egen PR. Eierens K2-dom (23/8) er valg 1, og den bærer HARD SPERRE:
-    ingen kjøring mot reelle bunter i full størrelse før #173 er landet.
+    STRØMMINGEN (#173, eiers valg b + i): `lagre_dokument(kandidat_id,
+    medlemsnavn, data, tekst)` kalles per medlem UNDER lesingen, og
+    `lagre_kandidat(kandidat_id, resultat)` rett etter hver evaluering —
+    kandidatlagrene (057) fylles underveis, aldri i en sluttbatch.
+    SP-3 står: ingenting er PROMOTERT før hele kjøringen lyktes —
+    atomisiteten bor i promoteringsvakten (056), ikke i minnet. En
+    sink-feil er et kodet utfall (`kandidatlagring_feilet`), aldri en
+    rå exception. Sinkene er valgfrie for testbarhet; produksjonveien
+    (controlleren) gir alltid begge.
 
-    KJENT BEGRENSNING — INTET INTERNT TAK, VERKEN PÅ TID ELLER AUTORITET
-    (utsatt til #173, samme klasse og samme sperre). Løkka under tar
-    verken en `frist_s` eller et avbruddssignal: den evaluerer hver
-    kandidat til bunten er tom. Kjøringens varighet bindes derfor ved
-    LEVERING — kalleren måler vinduet FØR bunten hentes og avviser et
-    dødfødt claim, og leveringsportene (`lease_tapt` før opplasting,
-    kvitteringens statusskifte etter) stopper et resultat som ble
-    ferdig for sent eller uten lease. Begge takene vil ha DET SAMME
-    signalet tredd inn her, og et avbrudd midt i løkka er en ny
-    returkontrakt på denne funksjonen — ny maskin, ikke en fiks (K1) —
-    i nøyaktig den løkka #173 skriver om. Se KONTRAKT.md,
-    `dom-klasse: kjoring-avbrudd-og-frist`.
+    UTTREKKSSIDEN AV MINNET ER BUNDET: tekstene spoles til disk i
+    arbeiderens egen tempkatalog og leses tilbake én kandidat om gangen
+    (to pass — porten for hele bunten først, så evalueringen).
+    Toppunktet på tekstsiden er den STØRSTE kandidaten, ikke bunten.
+    RETURENS `artefakter` bærer fortsatt hver kandidats resultat
+    (rapport-v1-skjemaet er registrert og immutabelt til #168s v2), så
+    full minnebinding lander først med v2 — målt og meldt i #173.
+
+    KJENT BEGRENSNING — INTET INTERNT TAK, VERKEN PÅ TID ELLER
+    AUTORITET. Løkka under tar verken en `frist_s` eller et
+    avbruddssignal: den evaluerer hver kandidat til bunten er tom.
+    Kjøringens varighet bindes ved LEVERING — kalleren måler vinduet
+    FØR bunten hentes, og leveringsportene (`lease_tapt` før
+    opplasting, kvitteringens statusskifte etter) stopper et resultat
+    som ble ferdig for sent eller uten lease. Avbruddssignalet er sin
+    egen returkontraktsendring og ble IKKE smuglet inn i #173s
+    strømming; se KONTRAKT.md, `dom-klasse: kjoring-avbrudd-og-frist`.
 
     `sti` MÅ VÆRE INSTANSBUNDET NÅR DEN ER DELBAR — det er kallerens
     ansvar (Codex P1, eierdom K2-kjennelse runde 7 på #217, valg B i
@@ -233,8 +238,14 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
     # RÅNAVNET FØLGER MED SOM SKILLETEGN (Codex P2). Biten bærer BEGGE
     # navnene — det normaliserte og medlemmets eget — fordi det
     # normaliserte alene ikke er en entydig nøkkel: se sorteringen under.
-    biter: dict[str, list[tuple[str, str, str, object]]] = {}
+    # SPOLEN (#173): teksten skrives til disk i det den er trukket ut,
+    # og biten bærer STIEN — ikke innholdet. Katalogen er arbeiderens
+    # egen (samme tillitssone som bunten selv, som alt ligger utpakket
+    # der) og dør med kjøringen.
+    biter: dict[str, list[tuple[str, str, Path, object]]] = {}
     lest = 0
+    spole = tempfile.TemporaryDirectory(prefix="m57-spole-")
+    spolerot = Path(spole.name)
     try:
         # LAGRINGSHÅNDTEREREN HØRER TIL LESINGEN, IKKE HELE KJØRINGEN
         # (Codex P2). Denne indre `try`-en dekker BARE arkivgaten. Sto
@@ -343,10 +354,27 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
                 kandidat_id = kart.get(medlem.navn)
                 if kandidat_id is None:
                     raise Kjoringsfeil("medlem_uadressert", fremdrift)
+                tekst = _tekst(tekst_for, medlem, data, fremdrift)
+                felter = _felter(kandidatfelter_for, medlem, fremdrift)
+                # STRØMMEN UT (#173): dokumentet og teksten går til
+                # lageret i det de er målt — feiler lagringen, feiler
+                # kjøringen kodet, før flere medlemmer pakkes ut.
+                if lagre_dokument is not None:
+                    # ÉN kode for enhver sinkfeil (CodeRabbit): sinken
+                    # er fremmed kode, og en pass-through-arm for dens
+                    # egne Kjoringsfeil var en dør ingen bruker — alt
+                    # den kunne gjort var å forkle en lagringsfeil som
+                    # noe annet.
+                    try:
+                        lagre_dokument(kandidat_id, medlem.navn, data,
+                                       tekst)
+                    except Exception as feil:   # noqa: BLE001 — kodet
+                        raise Kjoringsfeil("kandidatlagring_feilet",
+                                           fremdrift) from feil
+                spolesti = spolerot / f"{lest}.txt"
+                spolesti.write_text(tekst, encoding="utf-8")
                 biter.setdefault(kandidat_id, []).append(
-                    (navn, medlem.navn,
-                     _tekst(tekst_for, medlem, data, fremdrift),
-                     _felter(kandidatfelter_for, medlem, fremdrift)))
+                    (navn, medlem.navn, spolesti, felter))
         except OSError as feil:
             # LAGRINGEN ER IKKE MODELLEN (Codex P2). `les_porsjonsvis`
             # slipper MED VILJE en `OSError` MED errno gjennom som seg selv:
@@ -431,7 +459,6 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # `blind` er en ren funksjon av `(tekst, kandidatfelter)`, så de
         # to kallene er per konstruksjon samme verdi; prisen er
         # regex-arbeid som uansett forsvinner i modellkallet ved siden av.
-        klargjort: dict[str, tuple[str, dict]] = {}
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
@@ -450,7 +477,8 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             # annen person. Rånavnet er medlemmets egen, entydige nøkkel
             # (buntgaten avviser duplikater av den), så det avgjør likheten.
             medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
-            tekst = "\n\n".join(bit[2] for bit in medlemmer)
+            tekst = "\n\n".join(bit[2].read_text(encoding="utf-8")
+                                 for bit in medlemmer)
             kandidatfelter: dict = {}
             for *_, nye in medlemmer:
                 _flett_felter(kandidatfelter, nye)
@@ -468,15 +496,31 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             blinding.evalueringsinput(
                 tekst, kandidatfelter,
                 blinding_av=blinding_av, auditrad=auditrad)
-            klargjort[kandidat_id] = (tekst, kandidatfelter)
-        # `klargjort` er fylt i `sorted`-rekkefølge, og dict beholder
-        # innsettingsrekkefølgen: evalueringen går fortsatt i samme,
-        # deterministiske orden som før.
-        for kandidat_id, (tekst, kandidatfelter) in klargjort.items():
+        # ANDRE PASS leser spolen på nytt, én kandidat om gangen — ikke
+        # en `klargjort`-dict med hele buntens tekst (#173): portpasset
+        # over har alt garantert at ALLE kandidater blindes gyldig før
+        # den første når modellen, og spolen gir samme byte begge
+        # ganger. Evalueringen går i samme deterministiske orden.
+        for kandidat_id in sorted(biter):
+            medlemmer = sorted(biter[kandidat_id], key=lambda bit: bit[:2])
+            tekst = "\n\n".join(bit[2].read_text(encoding="utf-8")
+                                 for bit in medlemmer)
+            kandidatfelter = {}
+            for *_, nye in medlemmer:
+                _flett_felter(kandidatfelter, nye)
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
                 blinding_av=blinding_av, auditrad=auditrad)
+            # STRØMMEN UT, KANDIDATSIDEN (#173): artefaktet går til
+            # lageret i det det er evaluert — samme kodede utfall som
+            # dokumentsiden.
+            if lagre_kandidat is not None:
+                try:
+                    lagre_kandidat(kandidat_id, resultat)
+                except Exception as feil:       # noqa: BLE001 — kodet
+                    raise Kjoringsfeil("kandidatlagring_feilet",
+                                       fremdrift) from feil
             artefakter[kandidat_id] = resultat
             oppfylt[kandidat_id] = resultat["oppfylt"]
         # RANGERINGEN ER EN DEL AV KJØRINGEN (Codex P1). Sto den utenfor
@@ -514,5 +558,7 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         raise Kjoringsfeil(feil.kode, fremdrift) from feil
     except Exception as feil:   # modellen er fremmed kode — også dens
         raise Kjoringsfeil("modellfeil", fremdrift) from feil
+    finally:
+        spole.cleanup()
     return {"rangering": rangering,
             "artefakter": artefakter, "fremdrift": fremdrift}

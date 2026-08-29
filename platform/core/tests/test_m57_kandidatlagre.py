@@ -1901,3 +1901,144 @@ def test_kandidatlagrene_er_tenantisolert(migrator):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_173_skriveveien_er_claimbundet_og_idempotent(migrator, miljo):
+    """#173 (eiers valg b + i): skriveveien inn i kandidatlagrene.
+
+    Måler hele kontrakten i én kjede: (1) et gyldig claim-par skriver
+    originaldokument + parsettekst i samme kall (FK-kjeden — valg i) og
+    evalueringsartefakt i sitt; (2) identitetene er DØRENS og
+    deterministiske (valg b) — samme kall to ganger gir samme UUID-er og
+    ingen ny rad, og kandidat-UUID-en er den samme på tvers av de to
+    rutene; (3) et avvikende re-skriv under samme nøkkel felles som
+    `kandidatdata_konflikt`; (4) feil claim-par og reapet anker er samme
+    `kandidatdata_avvist` — et oppslagsverk over claims skal ikke
+    finnes.
+
+    MUTASJONEN SOM DREPER DENNE: fjern claim-leddet i dørens
+    radoppslag, eller bytt ON CONFLICT-likhetsmålingen med et stille ja.
+    """
+    import base64
+
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from .test_api import DSN as API_DSN, dekker  # noqa: F401
+    from .test_bestilling_rekruttering import _sikre_m57_claimbar
+    from .test_modul_onboarding_http import _onboard_token
+    from miljo import gjeldende_miljo
+
+    _sikre_m57_claimbar(migrator)
+    rel = migrator.execute(
+        "SELECT release_id FROM moduldeployment"
+        " WHERE modul_id='m57_ats' AND miljo=%s AND livslop='claiming'"
+        " LIMIT 1", (gjeldende_miljo(),)).fetchone()[0]
+    migrator.commit()
+
+    rt = _rt()
+    try:
+        oid, pid = _prosess(migrator, rt)
+        # Claim-paret settes på raden (kolonnelåsen tillater owner- og
+        # statusfeltene) — riggen er claim-tilstanden, ikke claim-veien:
+        # det som måles her er DØRENS binding til den.
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE oppdrag SET owner_claim_id=%s, owner_generation=1,"
+            " owner_lease_utloper=now()+interval '10 minutes'"
+            " WHERE tenant=%s AND id=%s", ("c" * 22, TENANT, oid))
+        migrator.commit()
+
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            mtk, _ = _onboard_token(c, migrator, "m57_ats", rel)
+            hode = {"authorization": f"Bearer {mtk}"}
+            trippel = {"tenant": TENANT, "oppdrag_id": oid,
+                       "owner_claim_id": "c" * 22,
+                       "owner_generation": 1}
+            dok = {**trippel, "kandidat_id": "k1",
+                   "dokumentnavn": "k1/cv.pdf",
+                   "dokument_b64": base64.b64encode(
+                       b"%PDF-1.7 " + FIXTUR.encode()).decode(),
+                   "tekst": f"CV-tekst {FIXTUR}"}
+            r1 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r1.status_code == 200, r1.text
+            kid_uuid = r1.json()["kandidat_id"]
+            did = r1.json()["dokument_id"]
+            # Idempotent: samme byte, samme dør, samme identiteter.
+            r2 = c.post("/v1/rekruttering/kandidatdokument",
+                        json=dok, headers=hode)
+            assert r2.status_code == 200, r2.text
+            assert r2.json()["kandidat_id"] == kid_uuid
+            assert r2.json()["dokument_id"] == did
+
+            art = {**trippel, "kandidat_id": "k1",
+                   "artefakt": {"funn": [], "oppfylt": {"krav": True},
+                                "kildetekst": f"[NAVN-1] {FIXTUR}"},
+                   "intervjusporsmal": None}
+            r3 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art, headers=hode)
+            assert r3.status_code == 200, r3.text
+            assert r3.json()["kandidat_id"] == kid_uuid, \
+                "kandidat-UUID-en skal være dørens ENE utledning (valg b)"
+
+            # (3) Avvikende re-skriv: to sannheter committes aldri.
+            r4 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "dokument_b64": base64.b64encode(
+                            b"%PDF-1.7 noe-annet").decode()},
+                        headers=hode)
+            assert r4.status_code == 409, r4.text
+            assert r4.json()["feil"] == "kandidatdata_konflikt"
+
+            # (4a) Feil claim-par: ETT svar.
+            r5 = c.post("/v1/rekruttering/kandidatdokument",
+                        json={**dok, "owner_claim_id": "x" * 22},
+                        headers=hode)
+            assert r5.status_code == 409, r5.text
+            assert r5.json()["feil"] == "kandidatdata_avvist"
+
+            # Radene: nøyaktig én per lager, payload intakt, FK-kjeden hel.
+            _sett_kontekst(migrator, TENANT)
+            rader = migrator.execute(
+                "SELECT (SELECT count(*) FROM kandidat_originaldokument"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_parsettekst"
+                "         WHERE tenant=%s AND prosess_id=%s),"
+                " (SELECT count(*) FROM kandidat_evalueringsartefakt"
+                "         WHERE tenant=%s AND prosess_id=%s)",
+                (TENANT, pid) * 3).fetchone()
+            assert rader == (1, 1, 1), rader
+            tekst = migrator.execute(
+                "SELECT tekst FROM kandidat_parsettekst"
+                " WHERE tenant=%s AND prosess_id=%s",
+                (TENANT, pid)).fetchone()[0]
+            migrator.rollback()
+            assert FIXTUR in tekst
+
+            # (4b) Reapet anker: samme avvisning — døren skriver aldri
+            # inn i en prosess forbi kundens frist.
+            _sett_kontekst(rt, TENANT)
+            rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                       " now() - interval '31 days')", (TENANT, pid))
+            rt.commit()
+            rp, _timer = _reaperkobling()
+            try:
+                rp.execute("SELECT * FROM reap_kandidatdata(50)")
+                rp.commit()
+            finally:
+                rp.close()
+            r6 = c.post("/v1/rekruttering/kandidatartefakt",
+                        json=art, headers=hode)
+            assert r6.status_code == 409, r6.text
+            assert r6.json()["feil"] == "kandidatdata_avvist"
+    finally:
+        rt.close()
+
+
+# Dekningsporten: begge kodene bevises av kjedetesten over.
+from .test_api import dekker as _dekker173  # noqa: E402
+
+test_173_skriveveien_er_claimbundet_og_idempotent = _dekker173(
+    "kandidatdata_avvist", "kandidatdata_konflikt")(
+    test_173_skriveveien_er_claimbundet_og_idempotent)

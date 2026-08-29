@@ -255,19 +255,20 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   falskt `utfort`; prisen er persondata og modellkall brukt utenfor
   det annonserte vinduet.
 
-  KJENT BEGRENSNING, OG DEN ER UTSATT TIL
-  [#173](https://github.com/moka1980/disponit/issues/173) (eierdom,
-  K2-kjennelse på #218, valg 1). Både det løpende fristtaket og et
-  lease-avbrudd midt i evalueringen vil ha DET SAMME: et budsjett- og
-  avbruddssignal tredd inn i `kjor_bunt`s per-kandidat-løkke, og et
-  avbrudd der er en ny returkontrakt på funksjonen — ny maskin, som
-  K1 sender til egen PR. Løkka er nøyaktig den #173 skriver om
-  (artefaktene strømmes til kandidatlagrene, retur blir referanser +
-  rangering), så avbruddssemantikk skrevet nå ville blitt skrevet to
-  ganger. Samme klasse som minnegrensen `kjor_bunt` alt bærer: 23/8-
-  dommen legger HARD SPERRE mot kjøring på reelle bunter i full
-  størrelse før #173 er landet, og det er den sperren som holder
-  varigheten nede i mellomtiden.
+  KJENT BEGRENSNING (eierdom, K2-kjennelse på #218, valg 1): både det
+  løpende fristtaket og et lease-avbrudd midt i evalueringen vil ha
+  DET SAMME — et budsjett- og avbruddssignal tredd inn i `kjor_bunt`s
+  per-kandidat-løkke, og et avbrudd der er en ny returkontrakt på
+  funksjonen — ny maskin, egen PR (K1). #173s PR-1 landet STRØMMINGEN
+  (kandidatlagrene fylles underveis gjennom den claim-bundne
+  skriveveien, og uttrekkstekstene spoles til disk — toppunktet på
+  tekstsiden er største kandidat, ikke bunten), men returens
+  `artefakter` bærer fortsatt hver kandidats resultat, fordi
+  rapport-v1-skjemaet er registrert og immutabelt til
+  [#168](https://github.com/moka1980/disponit/issues/168)s v2.
+  23/8-dommens HARDE SPERRE mot kjøring på reelle bunter i full
+  størrelse STÅR derfor til v2 binder returen — og det er den sperren
+  som holder varigheten nede i mellomtiden.
 
   `dom-klasse: kjoring-avbrudd-og-frist · felt i #218 · https://github.com/moka1980/disponit/pull/218#issuecomment-5431892763`
 * **Lease-horisonten er serverens** — men først fra den FØRSTE

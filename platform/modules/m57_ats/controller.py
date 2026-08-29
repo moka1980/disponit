@@ -10,6 +10,7 @@ Alt som kan hindre en gyldig leveranse måles FØR arbeidet starter
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import tempfile
 import threading
@@ -508,13 +509,47 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
         # manifest- og innholdslesing kan per konstruksjon ikke nå den.
         fd = os.open(filsti, os.O_RDONLY)
         sti = f"/proc/self/fd/{fd}"
+        # SINKENE (#173): kandidatlagrene fylles UNDERVEIS gjennom den
+        # claim-bundne skriveveien — fullmakten er claimets, som
+        # fornyelsen og kvitteringen. Et ikke-2xx-svar er en feil sinket
+        # reiser rått; `kjor_bunt` oversetter den til det kodede
+        # utfallet (`kandidatlagring_feilet`), aldri en rå exception ut.
+        claim_trippel = {"tenant": claim["tenant"],
+                         "oppdrag_id": claim["oppdrag_id"],
+                         "owner_claim_id": claim["owner_claim_id"],
+                         "owner_generation": claim["owner_generation"]}
+
+        def lagre_dokument(kandidat_id, medlemsnavn, data, tekst):
+            r = lever("/v1/rekruttering/kandidatdokument", {
+                **claim_trippel, "kandidat_id": kandidat_id,
+                "dokumentnavn": medlemsnavn,
+                "dokument_b64": base64.b64encode(data).decode("ascii"),
+                "tekst": tekst}, claim.get("utforelsesfrist"))
+            if not 200 <= r.status_code < 300:
+                raise RuntimeError(
+                    f"kandidatdokument {medlemsnavn}: {r.status_code}")
+
+        def lagre_kandidat(kandidat_id, resultat):
+            r = lever("/v1/rekruttering/kandidatartefakt", {
+                **claim_trippel, "kandidat_id": kandidat_id,
+                "artefakt": {"funn": resultat["funn"],
+                             "oppfylt": resultat["oppfylt"],
+                             "kildetekst": resultat["kildetekst"]},
+                "intervjusporsmal": resultat.get("intervjusporsmal") or
+                None}, claim.get("utforelsesfrist"))
+            if not 200 <= r.status_code < 300:
+                raise RuntimeError(
+                    f"kandidatartefakt {kandidat_id}: {r.status_code}")
+
         with _Heartbeat(klient, hode, claim) as puls:
             try:
                 resultat = kjoring.kjor_bunt(
                     sti, modell, vekter=vekter,
                     tekst_for=uttrekker.tekst_for,
                     biasmaalinger=biasmaalinger,
-                    antall_soknader=payload["antall_soknader"])
+                    antall_soknader=payload["antall_soknader"],
+                    lagre_dokument=lagre_dokument,
+                    lagre_kandidat=lagre_kandidat)
                 rapport = rapportskjema.bygg(
                     resultat, profil=profil,
                     antall_soknader=payload["antall_soknader"])

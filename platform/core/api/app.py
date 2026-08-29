@@ -13,12 +13,14 @@ port — dette er.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import ipaddress
 import json
 import os
 import queue
+import re
 import secrets
 import sys
 import threading
@@ -54,6 +56,13 @@ MAKS_KROPP = 256 * 1024          # v2 Del 3.4
 # egentlige porten og sjekkes i handleren FØR lagring.
 MAKS_ARTEFAKT_KROPP = 6 * 1024 * 1024 + 64 * 1024
 STORE_KROPP_RUTER = frozenset({"/v1/artefakt"})
+#: #173: dokumentveien inn i kandidatlagrene bærer ETT dokument som
+#: base64 (§4-taket 25 MiB → ~33,4 MiB koding) pluss parsetteksten av
+#: samme dokument (aldri større enn kilden) og claim-konvolutten.
+#: Taket er transportens; dørens egen `_KANDIDAT_DOK_MAKS` måler de
+#: DEKODEDE bytene mot §4-tallet etterpå.
+MAKS_KANDIDATDOK_KROPP = 60 * 1024 * 1024
+KANDIDATDOK_RUTE = "/v1/rekruttering/kandidatdokument"
 #: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
 #: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
 #: dette taket i minnet: v1 krypterer bunten i én operasjon (bevisst
@@ -391,6 +400,8 @@ class KroppsgrenseMiddleware:
             return await self._stroem(scope, receive, send, rid, headere)
         # PR-014b §7: opplastingsruten tåler en større kropp (1 MiB-artefakt).
         maks = (MAKS_ARTEFAKT_KROPP if scope.get("path") in STORE_KROPP_RUTER
+                else MAKS_KANDIDATDOK_KROPP
+                if scope.get("path") == KANDIDATDOK_RUTE
                 else self.maks)
         oppgitt = headere.get("content-length")
         chunked = "chunked" in headere.get("transfer-encoding", "").lower()
@@ -828,6 +839,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def oppdrag_forny(request: Request) -> Response:
         return _oppdrag_forny(tjeneste, request)
 
+    def kandidatdokument(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "dokument")
+
+    def kandidatartefakt(request: Request) -> Response:
+        return _kandidatdata(tjeneste, request, "kandidat")
+
     def artefakt_upload(request: Request) -> Response:
         return _artefakt_upload(tjeneste, request)
 
@@ -1095,6 +1112,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/oppdrag/kvittering", oppdrag_kvittering, methods=["POST"]),
         Route("/v1/oppdrag/forny", oppdrag_forny, methods=["POST"]),
+        # #173: skriveveien inn i kandidatlagrene — claim-bundet, som
+        # forny/kvittering.
+        Route("/v1/rekruttering/kandidatdokument", kandidatdokument,
+              methods=["POST"]),
+        Route("/v1/rekruttering/kandidatartefakt", kandidatartefakt,
+              methods=["POST"]),
         Route("/v1/artefakt", artefakt_upload, methods=["POST"]),
         # PR-008: rent lesende kundeflate. Merk rekkefølgen: den statiske
         # `/v1/policy/aktiv` registreres FØR mønsterruter kunne ha slukt
@@ -1557,6 +1580,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 063 (#165): fornyelsen autentiseres som claim/kvittering —
     # modultoken + claimets egen identitet i kroppen.
     ("POST", "/v1/oppdrag/forny"):           ORDRESCOPE + "<prefiks>",
+    # #173: skriveveien inn i kandidatlagrene — samme autentisering som
+    # forny/kvittering: modultoken + claimets identitet i kroppen.
+    ("POST", "/v1/rekruttering/kandidatdokument"):
+        ORDRESCOPE + "<prefiks>",
+    ("POST", "/v1/rekruttering/kandidatartefakt"):
+        ORDRESCOPE + "<prefiks>",
     ("POST", "/v1/artefakt"):                "artifacts:upload",
     ("GET",  "/v1/oversikt"):                "decisions:read",
     ("GET",  "/v1/nokkeltall"):              "decisions:read",
@@ -2233,6 +2262,262 @@ def _resultathash(kvittering: dict) -> str:
     return hashlib.sha256(json.dumps(
         kjerne_felt, sort_keys=True, ensure_ascii=False,
         separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+#: Dør-eid navnerom for kandidatlagrenes deterministiske identiteter
+#: (#173, eiers valg b): plattformen utleder UUID-ene av (tenant,
+#: prosess, manifest-id[, dokumentnavn]) — én kilde, modulen ser dem
+#: aldri. #157 kan løfte utledningen til en ankertabell uten at flaten
+#: endres. Separatoren er husets (`\x1f`, jf. buntlåsen).
+_KANDIDAT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "disponit:m57:kandidatlager")
+#: Manifestets kandidat-ID-form — KONTRAKT (kontrakt/KONTRAKT.md, #216
+#: valg A). Speilet av modulens `parsing.KANDIDAT_ID_KANON`; kilden er
+#: kontrakten, og api/ importerer aldri modulkode.
+_KANDIDAT_ID_KANON = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: §4-tallet, pinnet her som i arkivgaten: 25 MiB per dokument.
+_KANDIDAT_DOK_MAKS = 25 * 1024 * 1024
+#: De tre lovede innholdstypene — endelse -> MIME. Alt annet er alt
+#: felt av arkivgaten; her er det en feilformet forespørsel.
+_KANDIDAT_MIME = {
+    ".pdf": "application/pdf",
+    ".docx": ("application/vnd.openxmlformats-officedocument"
+              ".wordprocessingml.document"),
+    ".html": "text/html", ".htm": "text/html"}
+
+
+def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
+    """Skriveveien inn i kandidatlagrene (#173, eiers valg b + i).
+
+    057 designet denne døren («Runtime skriver lagrene gjennom
+    API-veien») — dette er den. Autentiseringen er kvitteringens og
+    fornyelsens form: modultokenet svarer på hvilken deployment dette
+    er, og FULLMAKTEN ER CLAIMETS — kroppen bærer (tenant, oppdrag_id,
+    owner_claim_id, owner_generation), og raden må matche et aktivt
+    claimet `rekruttering.evaluering`-oppdrag hos denne modulen med
+    levende lease OG levende retensjonsanker. Tenant er kallerens
+    påstand bare som RLS-nøkkel: claim-paret er hemmeligheten som
+    binder, og et feil tenantvalg finner ingen rad.
+
+    `form="dokument"`: originaldokument + parsettekst i SAMME
+    transaksjon (FK-kjeden er kontrakten — eiers valg i). `form=
+    "kandidat"`: evalueringsartefakt + ev. intervjuspørsmål.
+
+    IDEMPOTENT PÅ PAYLOAD-LIKHET: lagrene er append-only, og en retry
+    etter tapt lease skriver de samme bytene — det er et stille ja. Et
+    AVVIKENDE re-skriv under samme nøkkel er to sannheter om samme
+    dokument og felles som `kandidatdata_konflikt`. Alle
+    autorisasjonsutfall er ETT svar (`kandidatdata_avvist`, 058-formen).
+    Lagervaktene (057) står bak døren og måler det samme for enhver
+    rolle — denne døren kan aldri være lagrenes eneste vern.
+    """
+    rid = _rid(request)
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift")
+        return _feilsvar("db_utilgjengelig", rid)
+    try:
+        auth = preauth(tjeneste, conn, request.headers.get("authorization"),
+                       rid)
+        if auth is None or auth.kapabilitet is not None:
+            tjeneste.logg.hendelse("token_ugyldig", rid)
+            return _feilsvar("token_ugyldig", rid)
+        if not isinstance(auth, ModulAutentisert) and not _modulscope(auth):
+            tjeneste.logg.hendelse("scope_mangler", rid, auth.tenant,
+                                   scope=ORDRESCOPE + "<prefiks>")
+            return _feilsvar("scope_mangler", rid)
+        # Samme ratebudsjett som claim/forny/upload: en skrivesløyfe er
+        # billig for kalleren og skal ikke være gratis her.
+        if not tjeneste.rate.slipp_gjennom(auth.token_id):
+            tjeneste.logg.hendelse("rate_grense", rid, auth.tenant)
+            return _feilsvar("rate_grense", rid)
+        if isinstance(auth, ModulAutentisert):
+            revalidering = _modultoken_revalidert(tjeneste, conn, auth, rid)
+            if revalidering is not None:
+                return revalidering
+
+        raa = request.scope.get("state", {}).get("kropp", b"")
+        try:
+            kropp = json.loads(raa.decode("utf-8"))
+        except Exception:
+            kropp = None
+        if not isinstance(kropp, dict):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+        tenant = kropp.get("tenant")
+        opp_id = kropp.get("oppdrag_id")
+        claim_id = kropp.get("owner_claim_id")
+        generasjon = kropp.get("owner_generation")
+        kid = kropp.get("kandidat_id")
+        if not isinstance(tenant, str) or not tenant \
+                or not isinstance(opp_id, int) or isinstance(opp_id, bool) \
+                or not isinstance(claim_id, str) or not claim_id \
+                or not isinstance(generasjon, int) \
+                or isinstance(generasjon, bool) \
+                or not isinstance(kid, str) \
+                or not _KANDIDAT_ID_KANON.fullmatch(kid):
+            tjeneste.logg.hendelse("request_feilformet", rid)
+            return _feilsvar("request_feilformet", rid)
+
+        modul = auth.modul_id if isinstance(auth, ModulAutentisert) \
+            else auth.rolle
+        sett_kontekst(conn, tenant, auth.aktor, rid)
+        rad = conn.execute(
+            "SELECT p.prosess_id FROM oppdrag o"
+            "  JOIN rekrutteringsprosess p"
+            "    ON p.tenant = o.tenant AND p.oppdrag_id = o.id"
+            " WHERE o.tenant=%s AND o.id=%s AND o.eiermodul=%s"
+            "   AND o.oppdragstype='rekruttering.evaluering'"
+            "   AND o.status='plukket' AND o.owner_claim_id=%s"
+            "   AND o.owner_generation=%s"
+            "   AND o.owner_lease_utloper IS NOT NULL"
+            "   AND o.owner_lease_utloper > now()"
+            "   AND p.slettet_ts IS NULL",
+            (tenant, opp_id, modul, claim_id, generasjon)).fetchone()
+        if rad is None:
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id)
+            return _feilsvar("kandidatdata_avvist", rid)
+        prosess_id = rad[0]
+        kid_uuid = uuid.uuid5(
+            _KANDIDAT_NS, f"{tenant}\x1f{prosess_id}\x1f{kid}")
+
+        def _konflikt(detalj):
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_konflikt", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj=detalj)
+            return _feilsvar("kandidatdata_konflikt", rid)
+
+        svar = {"kandidat_id": str(kid_uuid), "request_id": rid}
+        if form == "dokument":
+            navn = kropp.get("dokumentnavn")
+            b64 = kropp.get("dokument_b64")
+            tekst = kropp.get("tekst")
+            endelse = ("." + navn.rsplit(".", 1)[-1].lower()
+                       if isinstance(navn, str) and "." in navn else "")
+            if not isinstance(navn, str) or not navn \
+                    or len(navn) > 512 \
+                    or endelse not in _KANDIDAT_MIME \
+                    or not isinstance(b64, str) \
+                    or not isinstance(tekst, str):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            try:
+                data = base64.b64decode(b64, validate=True)
+            except Exception:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Teksten måles for seg (CodeRabbit, korrigert form): den
+            # kan LOVLIG være større enn dokumentbytene — en docx er
+            # komprimert, teksten er utpakket — så «tekst ≤ dokument» er
+            # feil grense. Taket er §4-tallets egen klasse: én fils
+            # budsjett, målt i UTF-8-byte.
+            if not data or len(data) > _KANDIDAT_DOK_MAKS \
+                    or len(tekst.encode("utf-8")) > _KANDIDAT_DOK_MAKS:
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            dok_uuid = uuid.uuid5(
+                _KANDIDAT_NS,
+                f"{tenant}\x1f{prosess_id}\x1f{kid}\x1f{navn}")
+            sha = hashlib.sha256(data).hexdigest()
+            satt = conn.execute(
+                "INSERT INTO kandidat_originaldokument (tenant,"
+                " prosess_id, kandidat_id, dokument_id, filnavn,"
+                " innholdstype, dokument, storrelse_bytes,"
+                " innhold_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                " ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, navn,
+                 _KANDIDAT_MIME[endelse], data, len(data),
+                 sha)).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT dokument = %s AND filnavn = %s"
+                    " FROM kandidat_originaldokument"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (data, navn, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("originaldokument")
+            satt = conn.execute(
+                "INSERT INTO kandidat_parsettekst (tenant, prosess_id,"
+                " kandidat_id, dokument_id, tekst, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, dok_uuid, tekst,
+                 hashlib.sha256(tekst.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT tekst = %s FROM kandidat_parsettekst"
+                    " WHERE tenant=%s AND prosess_id=%s"
+                    "   AND kandidat_id=%s AND dokument_id=%s",
+                    (tekst, tenant, prosess_id, kid_uuid,
+                     dok_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("parsettekst")
+            svar["dokument_id"] = str(dok_uuid)
+        else:
+            artefakt = kropp.get("artefakt")
+            sporsmal = kropp.get("intervjusporsmal")
+            if not isinstance(artefakt, dict) or not artefakt \
+                    or (sporsmal is not None
+                        and not isinstance(sporsmal, list)):
+                conn.rollback()
+                tjeneste.logg.hendelse("request_feilformet", rid, tenant)
+                return _feilsvar("request_feilformet", rid)
+            # Kanonisk JSON så payload-likheten er byte-veldefinert på
+            # tvers av retries — samme dict, samme streng.
+            raa_a = json.dumps(artefakt, ensure_ascii=False,
+                               sort_keys=True, separators=(",", ":"))
+            satt = conn.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+                " VALUES (%s,%s,%s,%s::jsonb,%s) ON CONFLICT DO NOTHING",
+                (tenant, prosess_id, kid_uuid, raa_a,
+                 hashlib.sha256(raa_a.encode("utf-8")).hexdigest()
+                 )).rowcount
+            if not satt:
+                likt = conn.execute(
+                    "SELECT artefakt = %s::jsonb"
+                    " FROM kandidat_evalueringsartefakt"
+                    " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s",
+                    (raa_a, tenant, prosess_id, kid_uuid)).fetchone()
+                if likt is None or not likt[0]:
+                    return _konflikt("evalueringsartefakt")
+            if sporsmal:
+                raa_s = json.dumps(sporsmal, ensure_ascii=False,
+                                   sort_keys=True, separators=(",", ":"))
+                satt = conn.execute(
+                    "INSERT INTO kandidat_intervjusporsmal (tenant,"
+                    " prosess_id, kandidat_id, sporsmal, innhold_sha256)"
+                    " VALUES (%s,%s,%s,%s::jsonb,%s)"
+                    " ON CONFLICT DO NOTHING",
+                    (tenant, prosess_id, kid_uuid, raa_s,
+                     hashlib.sha256(raa_s.encode("utf-8")).hexdigest()
+                     )).rowcount
+                if not satt:
+                    likt = conn.execute(
+                        "SELECT sporsmal = %s::jsonb"
+                        " FROM kandidat_intervjusporsmal"
+                        " WHERE tenant=%s AND prosess_id=%s"
+                        "   AND kandidat_id=%s",
+                        (raa_s, tenant, prosess_id, kid_uuid)).fetchone()
+                    if likt is None or not likt[0]:
+                        return _konflikt("intervjusporsmal")
+        conn.commit()
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    except psycopg.Error as e:
+        conn.rollback()
+        tjeneste.logg.hendelse("db_utilgjengelig", rid, art="drift",
+                               feiltype=type(e).__name__)
+        return _feilsvar("db_utilgjengelig", rid)
+    finally:
+        tjeneste.pool.gi_tilbake(conn)
 
 
 def _oppdrag_forny(tjeneste: Tjeneste, request: Request) -> Response:
