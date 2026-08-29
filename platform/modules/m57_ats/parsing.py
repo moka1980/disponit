@@ -381,11 +381,15 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     lyver da bare om sin egen nevner. `compress_size <= 0` på noe som
     leverte byte er et uendelig forhold, ikke «ukomprimert».
 
-    ETT BUDSJETT, ÉN GANG (runde 9). Tidligere la strømmen containerens
-    målte byte OG docx-gatens katalogsum til totalen, så et docx-lag
-    betalte to ganger. Nå betaler hvert lag for det NIVÅET faktisk
-    leverte: containeren for sine egne byte, og hvert indre medlem for
-    sine. Ingen dobbelttelling, ingen nullstilling.
+    ETT BUDSJETT, ÉN GANG (runde 9, presisert av Cursor-runde 2).
+    Tidligere la strømmen containerens målte byte OG docx-gatens
+    katalogsum til totalen, så et docx-lag betalte to ganger. Formen
+    overlevde inn i denne gaten: containerens `lest` ble lagt til, og
+    så betalte hvert indre medlem for de SAMME bytene en gang til.
+    Nå betaler BLADENE, og bare de: et docx-medlem legger ikke sin egen
+    blob til totalen, fordi medlemmene inni den gjør det. PDF og HTML
+    er blader og betaler for seg selv. Ingen dobbelttelling, ingen
+    nullstilling.
     """
     fullt = f"{kontekst}/{navn}" if kontekst else navn
     _sjekk_navn(navn, kontekst=fullt if kontekst else None)
@@ -416,6 +420,21 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     if endelse == ".docx" and dybde:
         raise Buntfeil("nostet_arkiv", fullt)
 
+    # CONTAINEREN BETALER IKKE FOR BARNA SINE. Et DOCX-medlem måles ett
+    # nivå ned, byte for byte, og de bytene ER containerens innhold. Ble
+    # begge lagt til, betalte hvert docx-lag omtrent DOBBELT mot
+    # klarsignalets «utpakket totalstørrelse | 2 GB» — for `ZIP_STORED`
+    # eller nesten ukomprimerbart innhold er containeren ≈ summen av de
+    # indre bytene — og ærlige bunter under taket ble avvist. Zip-bomben
+    # felles av den INDRE målingen, som er den som måler den faktiske
+    # ekspansjonen. Dybdevakten over gjør betingelsen eksakt: en `.docx`
+    # som kommer HIT har alltid dybde 0, og da følger indre måling
+    # alltid i `_mal_docx`. Containerens egne byte er likevel BUNDET —
+    # av `MAKS_ENKELTFIL` og av forholdet mot dens `komprimert`, begge
+    # under — og den ytre katalogporten holder buntens leste totalsum
+    # under taket uansett.
+    betaler = endelse != ".docx"
+
     biter: list[bytes] = []
     lest = 0
     with aapne() as f:
@@ -429,16 +448,17 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
             lest += len(bit)
             if lest > MAKS_ENKELTFIL:
                 raise Buntfeil("enkeltfil_for_stor", fullt)
-            if budsjett.byte + lest > MAKS_TOTAL_UTPAKKET:
+            if betaler and budsjett.byte + lest > MAKS_TOTAL_UTPAKKET:
                 raise Buntfeil("total_for_stor", fullt)
             biter.append(bit)
     if lest > 0 and komprimert is not None and (
             komprimert <= 0
             or lest / komprimert > MAKS_KOMPRIMERINGSFORHOLD):
         raise Buntfeil("komprimeringsforhold", fullt)
-    budsjett.byte += lest
-    if budsjett.byte > MAKS_TOTAL_UTPAKKET:
-        raise Buntfeil("total_for_stor", fullt)
+    if betaler:
+        budsjett.byte += lest
+        if budsjett.byte > MAKS_TOTAL_UTPAKKET:
+            raise Buntfeil("total_for_stor", fullt)
     data = b"".join(biter)
 
     # KLASSIFISERINGEN LESER BYTENE (runde 7). `_ser_ut_som_html` avviser
