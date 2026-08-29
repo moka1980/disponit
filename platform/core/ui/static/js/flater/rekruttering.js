@@ -165,7 +165,8 @@ export function visRekruttering(hoved, ctx) {
     // oppfriskningens generasjon og `tegn` den for tiden monterte
     // seksjonens tegner — begge hører til listen, ikke til instansen
     // som tilfeldigvis viser den.
-    evalueringer: { liste: undefined, flere: false, nr: 0, tegn: null },
+    evalueringer: { liste: undefined, flere: false, cursor: null,
+                    nr: 0, tegn: null },
     // Rapporthentingen deler prosessbytte-risikoen med listen (Codex
     // P2): generasjon og tegner hører til ØKTEN, og hver mount melder
     // seg som tegner — et svar som lander etter et bytte tegner i den
@@ -213,7 +214,8 @@ export function visRekruttering(hoved, ctx) {
       ]);
       return { ...pros, profiler: (prof && prof.profiler) || [],
                evalueringer: evals ? (evals.evalueringer || []) : null,
-               evalueringerFlere: !!(evals && evals.flere) };
+               evalueringerFlere: !!(evals && evals.flere),
+               evalueringerCursor: (evals && evals.neste_cursor) || null };
     },
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
@@ -222,6 +224,7 @@ export function visRekruttering(hoved, ctx) {
       // skal ikke lande oppå den ferske listen: generasjonen bumpes.
       okt.evalueringer.liste = undefined;
       okt.evalueringer.flere = false;
+      okt.evalueringer.cursor = null;
       okt.evalueringer.nr += 1;
       // ... og rapport-cachen følger listen: en fersk lasting er
       // sannheten for begge (auto-lastingen får kjøre på nytt).
@@ -1189,20 +1192,39 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     }
   };
 
-  const tegnListe = (evalueringer, flere) => {
+  const tegnListe = (evalueringer, flere, cursor) => {
     const tittel = el("h2", { id: "evaluering-tittel",
       text: t("ui.rekruttering.evalueringer.tittel") });
+    // LEVENDE STATUS UTEN SIDE-RELOAD (#221): listen hentes ved mount og
+    // etter bestilling — en evaluering som blir ferdig mens brukeren
+    // ser på, krever ellers en omlasting av hele ruta. Knappen bruker
+    // øktens egen oppfriskning (samme vei som post-bestilling), så det
+    // finnes ÉN henting og én tegner. Ingen polling: en timer som
+    // re-fetcher bak brukerens rygg eier ikke feilhåndteringen sin —
+    // eksplisitt oppdatering er ærlig og testbar.
+    // Oppslaget er LAZY: `okt.evaluering` settes først ETTER den første
+    // tegningen (samme mount, synkront) — knappen finnes fra første
+    // render, og klikket treffer alltid den sist monterte oppfriskeren.
+    const oppdaterKnapp = okt ? (() => {
+      const k = el("button", { type: "button", class: "eval-oppdater",
+        text: t("ui.rekruttering.evalueringer.oppdater") });
+      k.addEventListener("click",
+        () => okt.evaluering && okt.evaluering.oppdater());
+      return k;
+    })() : null;
     // `null` er FEIL-tilstanden fra hentingen — en utilgjengelig
     // historikk er ikke en tom historikk.
     if (evalueringer === null) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
     if (!evalueringer.length) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
+        ...(oppdaterKnapp ? [oppdaterKnapp] : []),
         utfall, rapportRot);
       return;
     }
@@ -1253,12 +1275,46 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         el("th", { scope: "col",
           text: t("ui.rekruttering.evalueringer.vis") }))),
       el("tbody", {}, ...rader));
-    sett(rot, tittel, utfall,
+    // PAGINERINGEN (#221): cursoren er serverens fortsettelse — flaten
+    // regner aldri ut «neste side» selv. Klikket APPENDER: brukeren
+    // mister ikke radene hen alt ser på. Generasjonen vokter mot både
+    // oppfriskning og prosessbytte midt i flukten — bare den siste
+    // hentingen får skrive økten.
+    const eval2 = okt ? okt.evalueringer : null;
+    const lastFlere = (flere && cursor && eval2) ? (() => {
+      const k = el("button", { type: "button", class: "eval-last-flere",
+        text: t("ui.rekruttering.evalueringer.last_flere") });
+      k.addEventListener("click", async () => {
+        k.disabled = true;
+        const min = eval2.nr;
+        let svar;
+        try {
+          svar = await hentEvalueringer(cursor);
+        } catch (e) {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          k.disabled = false;
+          return;
+        }
+        if (min !== eval2.nr) return;
+        const basis = eval2.liste !== undefined
+          ? eval2.liste : (evalueringer || []);
+        eval2.liste = basis.concat((svar && svar.evalueringer) || []);
+        eval2.flere = !!(svar && svar.flere);
+        eval2.cursor = (svar && svar.neste_cursor) || null;
+        eval2.tegn(eval2.liste, eval2.flere, eval2.cursor);
+      });
+      return k;
+    })() : null;
+    sett(rot, tittel,
+      ...(oppdaterKnapp ? [oppdaterKnapp] : []),
+      utfall,
       el("div", { class: "tablewrap" }, liste),
-      // Et fullt vindu KAN bety flere — aldri stille avkorting. Selve
-      // pagineringen bor i #221; her sies det bare fra.
-      ...(flere ? [el("p",
-        { text: t("ui.rekruttering.evalueringer.flere") })] : []),
+      // Et fullt vindu KAN bety flere — aldri stille avkorting: uten en
+      // cursor å følge (eldre server, eller ingen økt å appende i) står
+      // meldingen; med den står knappen.
+      ...(lastFlere ? [lastFlere]
+        : flere ? [el("p",
+          { text: t("ui.rekruttering.evalueringer.flere") })] : []),
       rapportRot);
   };
 
@@ -1268,10 +1324,12 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // listen den beskriver, uansett kilde.
   const eval_ = okt ? okt.evalueringer : null;
   if (eval_ && eval_.liste !== undefined) {
-    tegnListe(eval_.liste, !!eval_.flere);
+    tegnListe(eval_.liste, !!eval_.flere, eval_.cursor);
   } else {
+    if (eval_) eval_.cursor = (data && data.evalueringerCursor) || null;
     tegnListe(data ? data.evalueringer : [],
-      !!(data && data.evalueringerFlere));
+      !!(data && data.evalueringerFlere),
+      (data && data.evalueringerCursor) || null);
   }
   // NULL KLIKK TIL PRODUKTET (eiers UX-prinsipp 27/8): finnes en ferdig
   // rapport, rendres den ferskeste med en gang — uten fokus-tyveri.
@@ -1328,9 +1386,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // får tegne — og et tregt eldre svar skal heller ikke skrive seg
       // inn i økten.
       if (min !== eval_.nr) return;
+      // Oppfriskningen er FØRSTE side på nytt — cursoren følger den:
+      // en beholdt fortsettelse fra en eldre liste ville pekt midt inn
+      // i en historikk som nettopp fikk nye rader øverst.
       eval_.liste = (svar && svar.evalueringer) || [];
       eval_.flere = !!(svar && svar.flere);
-      eval_.tegn(eval_.liste, eval_.flere);
+      eval_.cursor = (svar && svar.neste_cursor) || null;
+      eval_.tegn(eval_.liste, eval_.flere, eval_.cursor);
     } };
   }
   return rot;

@@ -1394,7 +1394,7 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   assert.match(tekst,
     new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
   // Kun den ferdige raden har en Vis-knapp.
-  const knapper = [...seksjon.querySelectorAll("button")]
+  const knapper = [...seksjon.querySelectorAll("tbody button")]
     .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"));
   assert.equal(knapper.length, 1);
   knapper[0].click();
@@ -1474,11 +1474,11 @@ test("Evalueringer: feilet rapporthenting melder i alert, ikke stille", async ()
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const knappFor = (id) => [...seksjon.querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes(String(id)));
+  const knappFor = (id) => [...seksjon.querySelectorAll("tbody button")]
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
   knappFor(96).click();
   assert.ok(await vent(() => seksjon.textContent.includes("Driftskonsulent")),
     "rapporten rendret aldri");
@@ -1512,10 +1512,10 @@ test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
     === t("ui.rekruttering.evalueringer.rapportfeil")),
     "urendrbar rapport ga ingen feilmelding — seksjonen ble stille tom");
@@ -1524,6 +1524,84 @@ test("Evalueringer: 200 med urendrbar rapport lander i alert, ikke tom seksjon",
     "rapporttabellen ble stående halvbygget ved siden av feilmeldingen");
   assert.doesNotMatch(seksjon.textContent,
     new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
+});
+
+test("Evalueringer: «Last flere» følger serverens cursor og appender (#221)", async () => {
+  KALL = [];
+  // Side 1 bærer `neste_cursor`; klikket henter side 2 MED cursoren og
+  // APPENDER — brukeren mister ikke radene hen ser på. Side 2 uten
+  // cursor: knappen forsvinner, ingen «flere»-melding står igjen.
+  // Objektform: URL-nøkkelen (med spørrestreng) vinner over sti-nøkkelen
+  // — riggens egen vei for kall der cursoren velger svaret.
+  SVAR = {
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": {
+      evalueringer: [{ oppdrag_id: 200, status: "utfort",
+        opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false }],
+      flere: true, neste_cursor: "c-side2.mac" },
+    "/v1/rekruttering/evalueringer?cursor=c-side2.mac": {
+      evalueringer: [{ oppdrag_id: 100, status: "utfort",
+        opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: false }],
+      flere: false, neste_cursor: null },
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  const flereKnapp = () => [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.last_flere"));
+  assert.ok(flereKnapp(), "cursoren ga ingen «Last flere»-knapp");
+  // Cursoren erstatter den passive meldingen — aldri begge.
+  assert.doesNotMatch(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.flere").slice(0, 25)));
+  flereKnapp().click();
+  assert.ok(await vent(() => seksjon.textContent.includes("100")),
+    "side 2 ble aldri appendet");
+  assert.ok(seksjon.textContent.includes("200"),
+    "appenderingen mistet raden brukeren alt så på");
+  assert.ok(KALL.some((k) =>
+    k.url === "/v1/rekruttering/evalueringer?cursor=c-side2.mac"),
+  "klikket fulgte ikke serverens cursor");
+  assert.ok(await vent(() => !flereKnapp()),
+    "knappen ble stående uten fortsettelse å følge");
+});
+
+test("Evalueringer: «Oppdater» henter listen på nytt uten side-reload"
+  + " (#221)", async () => {
+  KALL = [];
+  let status = "plukket";
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer") {
+      return { evalueringer: [{ oppdrag_id: 300, status,
+        opprettet: "2026-08-27T03:00:00+00:00",
+        rapport_klar: status === "utfort" }], flere: false };
+    }
+    return ({ "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler() })[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel] table")));
+  const seksjon = hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.match(seksjon.textContent,
+    new RegExp(t("ui.rekruttering.evalueringer.venter")),
+    "positiv kontroll: oppdraget står som underveis");
+  // Evalueringen blir ferdig hos serveren; ingen omlasting av ruta.
+  status = "utfort";
+  const oppdater = [...seksjon.querySelectorAll("button")]
+    .find((b) => b.textContent
+      === t("ui.rekruttering.evalueringer.oppdater"));
+  assert.ok(oppdater, "flaten mangler oppdateringsknappen");
+  oppdater.click();
+  assert.ok(await vent(() => seksjon.textContent.includes(
+    t("ui.rekruttering.evalueringer.klar"))),
+  "statusen forble «under arbeid» til en side-reload");
 });
 
 test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes", async () => {
@@ -1556,10 +1634,10 @@ test("Evalueringer: det siste klikket vinner — et tregt eldre svar forkastes",
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  const [knapp96, knapp97] = seksjon.querySelectorAll("button");
+  const [knapp96, knapp97] = seksjon.querySelectorAll("tbody button");
   knapp96.click();
   knapp97.click();
   assert.ok(await vent(() => seksjon.textContent.includes("Sikkerhetsleder")),
@@ -1734,7 +1812,7 @@ test("Evalueringer: produktet først og null klikk — ferskeste klare "
   const hentingerFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length;
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button").click();
+    "section[aria-labelledby=evaluering-tittel] tbody button").click();
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/96").length, hentingerFoer,
@@ -1961,10 +2039,10 @@ test("Evalueringer: klikk under pågående auto-lasting deler løftet — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   const seksjon = hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   slipp({ oppdrag_id: 96, rapport: {
     rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
     profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
@@ -2010,7 +2088,7 @@ test("Evalueringer: auto-feil er stille — alert hører til klikket", async () 
       t("ui.rekruttering.evalueringer.rapportfeil"))),
     "auto-feilen malte en usolicited alert");
   // ... og KLIKKET får feilmeldingen som før (positiv kontroll).
-  seksjon.querySelector("button").click();
+  seksjon.querySelector("tbody button").click();
   assert.ok(await vent(() => [...seksjon.querySelectorAll('[role="alert"]')]
     .some((a) => a.textContent
       === t("ui.rekruttering.evalueringer.rapportfeil"))),
@@ -2209,7 +2287,7 @@ test("Evalueringer: en hengende KLIKK-henting overlever byttet — "
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
   const aFoer = KALL.filter(
     (k) => k.sti === "/v1/rekruttering/rapport/97").length;
   const velger = hoved.querySelector("#rekrut-prosessvelger");
@@ -2306,11 +2384,11 @@ test("Evalueringer: A→B→A gjenbruker As løfte — aldri to nedlastinger "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   const knappFor = (id) => [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes(String(id)));
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes(String(id)));
   // Auto tok alt 97 (A). Brukeren: B (96), så A (97) igjen — mens
   // BEGGE henger.
   knappFor(96).click();
@@ -2385,12 +2463,12 @@ test("Evalueringer: et sent auto-svar kan aldri restarte auto-stien — "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll(
-    "section[aria-labelledby=evaluering-tittel] button").length === 2));
+    "section[aria-labelledby=evaluering-tittel] tbody button").length === 2));
   const seksjon = () => hoved.querySelector(
     "section[aria-labelledby=evaluering-tittel]");
   // Brukeren velger B (96) mens auto-A (97) henger.
   [...seksjon().querySelectorAll("button")]
-    .find((b) => b.closest("tr").textContent.includes("96")).click();
+    .find((b) => b.closest("tr") && b.closest("tr").textContent.includes("96")).click();
   assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
     "B rendret aldri");
   // A fullfører SENT — og skal hverken tegne eller røre tilstanden.
@@ -2483,9 +2561,9 @@ test("Evalueringer: en rapport som lander etter et prosessbytte tegner "
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button")));
+    "section[aria-labelledby=evaluering-tittel] tbody button")));
   hoved.querySelector(
-    "section[aria-labelledby=evaluering-tittel] button").click();
+    "section[aria-labelledby=evaluering-tittel] tbody button").click();
   const velger = hoved.querySelector("#rekrut-prosessvelger");
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
@@ -2597,7 +2675,7 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
   assert.ok(seksjon, "profilseksjonen mangler — lesing skal stå åpen");
   assert.match(seksjon.textContent, /Driftskonsulent/);
-  const tekster = [...seksjon.querySelectorAll("button")].map((b) => b.textContent);
+  const tekster = [...seksjon.querySelectorAll("tbody button")].map((b) => b.textContent);
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.ny")),
     "Ny-knappen finnes uten skrive-scope");
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.rediger")),

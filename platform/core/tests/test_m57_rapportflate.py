@@ -418,6 +418,110 @@ def test_listen_avkorter_aldri_stille(migrator, miljo):
 
 
 @pg
+def test_221_cursoren_er_serverens_og_folges_uten_hull(migrator, miljo):
+    """#221: pagineringen er en SIGNERT, TENANTBUNDET keyset-cursor —
+    husformen fra `GET /v1/unntak`. Side 2 begynner nøyaktig der side 1
+    sluttet (ingen rad hoppes over, ingen gjentas), siste side bærer
+    `flere: False` og ingen cursor, og en manipulert cursor er 400
+    `cursor_ugyldig` — aldri en annen tenants fortsettelse.
+
+    MUTASJONEN SOM DREPER DENNE: la keyset-leddet stå, men fjern
+    signaturkontrollen i `cursormodul.les` — den manipulerte cursoren
+    slipper da gjennom som et par tall."""
+    from starlette.testclient import TestClient
+    from api.app import lag_app
+    from api import sesjon as sesjonmodul
+    from db import kryptering
+
+    _sikre_m57_claimbar(migrator)
+    _sett_kontekst(migrator, TENANT)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(migrator, TENANT)
+    ct, nonce = kryptering.krypter(dek, {"x": 1}, TENANT, key_id)
+
+    def _seed(antall):
+        _sett_kontekst(migrator, TENANT)
+        nye = []
+        for _ in range(antall):
+            logg = migrator.execute(
+                "INSERT INTO revisjonslogg (tenant, aktor, kilde,"
+                " input_hash, policy_id, beslutning, begrunnelse,"
+                " idempotency_key)"
+                " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y',"
+                "'TILLAT','[]',%s) RETURNING id",
+                (TENANT, secrets.token_hex(8))).fetchone()[0]
+            nye.append(migrator.execute(
+                "INSERT INTO oppdrag (opprinnelse, tenant,"
+                " beslutning_loggpost_id, oppdragstype, handling,"
+                " eiermodul, payload_kryptert, key_id, nonce,"
+                " utforelsesfrist, evidensfrist, koblingsstatus, status)"
+                " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+                "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+                " now()+interval '4 hour', now()+interval '1 day',"
+                "'KOBLET','kansellert') RETURNING id",
+                (TENANT, logg, ct, key_id, nonce)).fetchone()[0])
+        migrator.commit()
+        return nye
+
+    seedet = set(_seed(101))
+    a = lag_app(DSN)
+    with TestClient(a) as c:
+        cookie, _csrf = _adminsesjon()
+        ck = {sesjonmodul.C_SESJON: cookie}
+        # VANDRINGEN ER ORDENSUAVHENGIG: DB-suiten deler base, så
+        # historikken kan bære andre testers evalueringer — invariantene
+        # måles på KJEDEN, aldri på et antatt antall sider.
+        sett_ids: set = set()
+        forrige_min = None
+        cursor = None
+        sider = 0
+        while True:
+            sti = "/v1/rekruttering/evalueringer" + (
+                f"?cursor={cursor}" if cursor else "")
+            r = c.get(sti, cookies=ck)
+            assert r.status_code == 200, r.text
+            side = r.json()
+            # Ordenen måles på KEYSETTETS eget par (opprettet, id) —
+            # id alene er ikke nøkkelen, og en delt base kan bære rader
+            # med samme tidsstempel (CodeRabbit).
+            nokler = [(e["opprettet"], e["oppdrag_id"])
+                      for e in side["evalueringer"]]
+            ids = [n2[1] for n2 in nokler]
+            assert nokler == sorted(nokler, reverse=True), \
+                "siden er ikke i keyset-rekkefølge"
+            assert not set(ids) & sett_ids, "sidene overlapper"
+            if forrige_min is not None and nokler:
+                assert forrige_min > max(nokler), \
+                    "keyset-fortsettelsen hoppet i historikken"
+            sett_ids.update(ids)
+            if nokler:
+                forrige_min = min(nokler)
+            sider += 1
+            assert sider < 50, "cursorkjeden terminerte aldri"
+            if side["flere"]:
+                assert side["neste_cursor"], \
+                    "avkorting uten cursor er en melding uten fortsettelse"
+                assert len(side["evalueringer"]) == 100, \
+                    "en avkortet side skal være et fullt vindu"
+                cursor = side["neste_cursor"]
+                continue
+            assert side["neste_cursor"] is None, \
+                "siste side skal ikke love en fortsettelse"
+            break
+        assert sider >= 2, "101 seedede rader ga ikke to sider"
+        # Kjeden skal bære HVER seedet rad — «minst 101» kunne vært 101
+        # av noen andres (CodeRabbit): en tapt rad midt i vandringen er
+        # nøyaktig hullet keyset-formen finnes for å utelukke.
+        assert seedet <= sett_ids, \
+            f"kjeden mistet seedede rader: {sorted(seedet - sett_ids)[:5]}"
+
+        # En manipulert cursor er sin egen kodede avvisning.
+        r3 = c.get("/v1/rekruttering/evalueringer?cursor=AAAA.bbbb",
+                   cookies=ck)
+        assert r3.status_code == 400, r3.text
+        assert r3.json()["feil"] == "cursor_ugyldig"
+
+
+@pg
 def test_reapet_prosess_stenger_rapporten(migrator, miljo):
     """SLETTEGRENSEN (Codex P1): det promoterte artefaktet er immutabelt
     og bærer funn, sitater og blindet kildetekst — men når prosessen er
