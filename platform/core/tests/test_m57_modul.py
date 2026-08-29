@@ -640,6 +640,28 @@ def test_155_hver_oppforing_betaler_en_gang(tmp_path):
     assert len(list(parsing.les_porsjonsvis(arkiv))) == antall
 
 
+def test_155_docx_i_docx_felles_av_dybdevakten(tmp_path):
+    """Cursor P2: dybdevakten var det ENESTE som lukket docx-klassen, og
+    ingen test bandt den.
+
+    `.docx` er unntatt fra BEGGE de andre armene — endelsen står ikke i
+    `ARKIVENDELSER`, og formporten leser `endelse != ".docx" and
+    er_arkiv`. En docx inni en docx er derfor den ene nøstingen hverken
+    navnet eller bytene feller; bare `if dybde` gjør det. Den forrige
+    `word/indre.zip`-dekningen treffer endelsesarmen FØR lesing og sier
+    ingenting om denne klassen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if dybde` i `_mal_medlem` —
+    da rekurserer gaten videre ned i den indre docx-en i stedet for å
+    avvise den."""
+    arkiv = _bunt(tmp_path, [("cv.docx", _docx([
+        ("word/nested.docx", _docx())]))])   # ekte OPC-pakke, ikke bare PK
+    with pytest.raises(parsing.Buntfeil) as e:
+        list(parsing.les_porsjonsvis(arkiv))
+    assert e.value.kode == "nostet_arkiv"
+    assert e.value.args[0].endswith("cv.docx/word/nested.docx")
+
+
 def test_port21_komprimeringsforhold(tmp_path):
     # 4 MB nuller pakker ~1000:1 — langt over 100:1-taket.
     arkiv = _bunt(tmp_path, [("cv.pdf", b"%PDF" + b"\0" * (4 << 20))])

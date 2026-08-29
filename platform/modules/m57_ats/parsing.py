@@ -446,10 +446,12 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     if endelse != ".docx" and er_arkiv:
         raise Buntfeil("nostet_arkiv", fullt)
     if endelse == ".docx":
-        # REKURSJONEN HAR ÉN LUKKET KLASSE, og dybden følger av den:
-        # en docx kan ikke inneholde en docx, for `_mal_medlem` feller
-        # ethvert nøstet arkiv på nivå 1. Tallet er ikke hellig — klassen
-        # er lukket, og det er klassen som binder dybden.
+        # DYBDEVAKTEN ER DET SOM BINDER REKURSJONEN — ikke de to portene
+        # over. Ethvert ANNET nøstet arkiv felles der: på endelsen
+        # (`ARKIVENDELSER`) eller på formen (`endelse != ".docx"` og
+        # `er_arkiv`). DOCX er unntatt fra begge, og en docx i en docx
+        # er derfor den ene formen INGEN av dem ser. Tallet er ikke
+        # hellig; vakten er, og uten den er klassen ikke lukket.
         if dybde:
             raise Buntfeil("nostet_arkiv", fullt)
         _mal_docx(data, budsjett=budsjett, kontekst=fullt)
