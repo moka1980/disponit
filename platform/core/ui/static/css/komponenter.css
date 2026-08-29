@@ -1151,3 +1151,36 @@ html[data-visning="landing"] .skall-hoved {
 .trafikklys-anbefalt{color:var(--auto)}
 .trafikklys-vurderes{color:var(--guard)}
 .trafikklys-innstilt_avslag{color:var(--danger)}
+
+/* --- Rekruttering: mobilflate (sak 251 + mobil-redesignet 29/8) ------------- */
+/* Radoverskriften i rapporten skal kunne brytes: den globale
+   `th { white-space: nowrap }` slo `overflow-wrap: anywhere` (sak 251, P2) —
+   et beskrivende kandidatnavn på 64 tegn tvang hele tabellen ut i
+   sidescroll på nettopp mobillayouten bruddet finnes for. */
+th.rekrut-kandidat { white-space: normal; }
+
+/* Funnene ligger i sin egen fullbredderad, aldri i en smal kolonne:
+   detaljcellen spenner alle kolonnene, og innholdet leser som tekstblokk. */
+.rekrut-detaljrad > td { border-bottom: 1px solid var(--line); }
+.rekrut-detaljrad + tr > th,
+.rekrut-detaljrad + tr > td { border-top: 0; }
+
+/* Vekter i evalueringsrapporten — samme form som prosess-dypdykkets. */
+.rekrut-rapportvekter { border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-3);
+  display: grid; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.rekrut-rapportvekter legend { color: var(--muted); font-size: .88rem;
+  padding: 0 var(--sp-1); }
+.rekrut-rapportvekter .rekrut-vekt { display: flex; align-items: center;
+  gap: var(--sp-3); min-height: var(--touch-min); }
+.rekrut-rapportvekter .rekrut-vekt label { width: 7rem; }
+.rekrut-rapportvekter .rekrut-vekt input[type=range] { flex-grow: 1;
+  min-height: var(--touch-min); accent-color: var(--info); }
+
+/* Fanene bærer flaten på mobil: panelene får luft, og fanelinja tåler
+   smale skjermer uten å knekke ut av viewporten. */
+@media (max-width: 720px) {
+  .faner-liste { position: sticky; top: 0; background: var(--paper);
+    z-index: var(--z-innhold); }
+  .fane { min-height: var(--touch-min); }
+}

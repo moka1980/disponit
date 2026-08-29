@@ -630,10 +630,22 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
 // FINNES flere paneler, og piltaster gjør ingenting.
 //
 // `trinn`: [{ nokkel, tittel, bygg: () => Node }]
+// `styring: false` dropper forrige/neste-knappene: de hører til SKJEMAER
+// som fylles ut i rekkefølge (§2.1s trinn), ikke til dashbordfaner der
+// panelene er likestilte visninger — der er de to ekstra handlingsvalg
+// på et skjermbilde spesifikasjonen alt begrenser til tre.
 // Returnerer { rot, gaaTil, aktiv }.
 let _fanerTeller = 0;
 
-export function Faner({ trinn, start, paaBytte } = {}) {
+// `behold: true` bygger hvert panel ÉN gang og beholder innholdet når
+// fanen forlates (bare `hidden` veksles). For dashbordfaner der panelene
+// holder LEVENDE seksjoner — skjemaer midt i utfylling, åpne detaljer,
+// async-svar som lander mens en annen fane er valgt — er riving per
+// bytte nettopp remount-klassen rekrutteringsflaten alt har betalt for.
+// Standard (false) er som før: `bygg()` per valg, for paneler som leser
+// tilstand som endrer seg mellom tegninger (policyadmin/wcag-formen).
+export function Faner({ trinn, start, paaBytte, styring = true,
+                        behold = false } = {}) {
   let aktiv = start && trinn.some((s) => s.nokkel === start) ? start : trinn[0].nokkel;
   // ID-ene var utledet av `nokkel` alene, så to fanesett med samme trinnavn
   // fikk samme ID-er (Codex P2). Det er ikke et teoretisk sammentreff: i
@@ -664,6 +676,11 @@ export function Faner({ trinn, start, paaBytte } = {}) {
   function tegnPanel() {
     for (const s of trinn) {
       const p = paneler.get(s.nokkel);
+      if (behold) {
+        if (!p.childNodes.length) sett(p, s.bygg());
+        p.hidden = s.nokkel !== aktiv;
+        continue;
+      }
       if (s.nokkel === aktiv) { p.hidden = false; sett(p, s.bygg()); }
       else { p.hidden = true; sett(p); }
     }
@@ -720,9 +737,9 @@ export function Faner({ trinn, start, paaBytte } = {}) {
   forrige.addEventListener("click", () => steg(-1));
   neste.addEventListener("click", () => steg(1));
 
-  const styring = el("div", { class: "faner-styring" }, forrige, neste);
+  const styringRot = el("div", { class: "faner-styring" }, forrige, neste);
   const rot = el("div", { class: "faner" }, liste, [...paneler.values()],
-    styring);
+    ...(styring ? [styringRot] : []));
 
   function oppdaterStyring() {
     const i = trinn.findIndex((s) => s.nokkel === aktiv);
