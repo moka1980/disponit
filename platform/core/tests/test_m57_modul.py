@@ -1420,15 +1420,156 @@ def test_port16_blindingen_maales_pa_faktisk_input():
             biasmaalinger=_MAALINGER, blinding_av=True)
     assert e.value.kode == "avskrudd_uten_auditrad"
     assert not modell2.sett
-    # … og MED auditrad er avskruingen en auditert handling som gir
-    # råteksten (den auditerte veien skal virke, ellers er porten bare
-    # en av-knapp for hele funksjonen).
+    # … EN FABRIKKERT ID HJELPER IKKE (#159). Porten var selvattestert:
+    # tre sanne verdier i en dict var beviset. Nå slås hendelsen OPP, og
+    # et oppslag som ikke finner noe er ikke en godkjenning.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        evaluering.evaluer_kandidat(
+            modell2, tekst, felter, {"drift": 3},
+            biasmaalinger=_MAALINGER, blinding_av=True,
+            avskruing_hendelse_id="00000000-0000-0000-0000-000000000000",
+            hendelseoppslag=lambda _id: None)
+    assert e.value.kode == "avskrudd_uten_auditrad"
+    assert not modell2.sett
+    # … og MED en oppslått hendelse er avskruingen en auditert handling
+    # som gir råteksten (den auditerte veien skal virke, ellers er porten
+    # bare en av-knapp for hele funksjonen).
     ut2 = evaluering.evaluer_kandidat(
         modell2, tekst, felter, {"drift": 3},
         biasmaalinger=_MAALINGER, blinding_av=True,
-        auditrad={"aktor": "eier@kunde", "ts": "2026-08-23T00:00:00Z",
-                  "begrunnelse": "intern rekruttering"})
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000001",
+        hendelseoppslag=lambda _id: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-23T00:00:00+00:00"})
     assert modell2.sett[-1] == tekst and ut2["avmaskering"] == {}
+    # Artefakten bærer sporet, og BARE når blindingen faktisk var av.
+    assert ut2["avskruing"]["aktor"] == "eier@kunde", (
+        "den avskrudde evalueringen kan ikke leses tilbake til"
+        f" revisjonsraden: {ut2.get('avskruing')}")
+    assert "avskruing" not in ut, (
+        "en BLINDET evaluering bærer et avskruingsfelt — da sier feltet"
+        " ingenting om unntaket det skal dokumentere")
+
+
+def test_avskruingen_slaas_OPP_den_paastaas_ikke(tmp_path):
+    """#159, eiers valg A: «auditert» er en egenskap ved basen.
+
+    Porten var SELVATTESTERT. Den som ba om å skru av blindingen leverte
+    selv beviset på at handlingen var auditert, og beviset var en dict
+    med tre sanne verdier — `{"aktor": "x", "ts": "x", "begrunnelse":
+    "x"}` passerte. Codex målte det to ganger (#153 runde 2 og 9), og et
+    repo-vidt søk fant hverken produsent eller persisteringsvei for den
+    dicten. En sann påstand om en revisjonshendelse er ikke en
+    revisjonshendelse.
+
+    Fem veier måles her, og hver av dem var åpen før:
+
+    1. ingen hendelses-ID
+    2. en ID uten oppslagsfunksjon — påstanden alene
+    3. en ID som ikke finnes (oppslaget gir `None`)
+    4. en hendelse med FEIL handling — ellers hadde vi byttet en fri
+       dict mot en fri UUID
+    5. et oppslag som KASTER — en base som er nede skal ikke bli en åpen
+       dør (SP-3: umålt utfall er avvist utfall)
+
+    Den sjette er den positive: en ekte hendelse med riktig handling gir
+    råteksten. Uten den ville porten vært en av-knapp for funksjonen.
+
+    MUTASJONEN SOM DREPER DENNE: la `krev_avskruingshendelse` returnere
+    uten å slå opp, eller fjern handlingssjekken, eller la `except`-armen
+    svelge feilen.
+    """
+    ekte = {"handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-29T00:00:00+00:00"}
+
+    def _kaster(_id):
+        raise RuntimeError("forbindelsen er nede")
+
+    for merkelapp, kwargs in (
+        ("ingen id", {}),
+        ("id uten oppslag", {"avskruing_hendelse_id": "abc"}),
+        ("id som ikke finnes", {"avskruing_hendelse_id": "abc",
+                                "hendelseoppslag": lambda _i: None}),
+
+        ("hendelse uten aktør", {"avskruing_hendelse_id": "abc",
+                                 "hendelseoppslag": lambda _i: {
+                                     "handling":
+                                         blinding.AVSKRUINGSHANDLING}}),
+    ):
+        with pytest.raises(blinding.Blindingsfeil) as e:
+            blinding.evalueringsinput("Kari Nordmann", {"navn": ["Kari"]},
+                                      blinding_av=True, **kwargs)
+        # KODEN, ikke meldingen: `Blindingsfeil` legger detaljen i
+        # `args[0]` når den finnes, så en sammenligning på `args` ville
+        # målt formuleringen. `kode` er kontrakten.
+        assert e.value.kode == "avskrudd_uten_auditrad", \
+            f"{merkelapp} ga feil kode: {e.value.kode}"
+
+    # OPPSLAGSFEIL HAR SIN EGEN KODE (Codex P2, runde 3). «Forbindelsen
+    # er nede» og «raden finnes ikke» er begge fail-closed, men driften
+    # må kunne skille dem: den ene skal retryes, den andre eskaleres.
+    # Detaljen var ikke nok — `kjor_bunt` bygger `Kjoringsfeil` av
+    # `feil.kode`, og controlleren returnerer bare den, så skillet
+    # forsvant to lag opp.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id="abc", hendelseoppslag=_kaster)
+    assert e.value.kode == "avskrudd_oppslag_feilet", (
+        "en oppslagsfeil er ikke til å skille fra en manglende rad —"
+        f" driften kan ikke klassifisere den: {e.value.kode}")
+    assert "RuntimeError" in str(e.value), \
+        "feiltypen følger ikke med for den som leser loggen"
+
+    # FEIL HANDLING har sin EGEN kode: en revisjonshendelse om noe helt
+    # annet er ikke en manglende hendelse, og driften skal kunne skille
+    # dem.
+    with pytest.raises(blinding.Blindingsfeil) as e:
+        blinding.evalueringsinput(
+            "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+            avskruing_hendelse_id="abc",
+            hendelseoppslag=lambda _i: {**ekte, "handling": "m01.noe_annet"})
+    assert e.value.kode == "avskrudd_feil_handling", (
+        "en hvilken som helst revisjonshendelse autoriserte avskruingen —"
+        f" da er en fri UUID like god som den frie dicten var: {e.value.kode}")
+
+    # DEN POSITIVE VEIEN. Uten den måler testen bare at døra er stengt,
+    # ikke at den er en dør.
+    tekst, avmaskering, spor = blinding.evalueringsinput(
+        "Kari Nordmann", {"navn": ["Kari"]}, blinding_av=True,
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000003",
+        hendelseoppslag=lambda _i: ekte)
+    assert tekst == "Kari Nordmann" and avmaskering == {}
+    # ... OG SPORET FØLGER MED (Codex P1, runde 3). Uten det bar en
+    # avskrudd evaluering ingenting som knyttet NETTOPP DEN utleveringen
+    # til revisjonsraden — én hendelses-ID kunne autorisert et ubegrenset
+    # antall bunter, og ingen kunne lest seg fra artefaktet tilbake til
+    # hvem som bestemte det.
+    assert spor is not None, "avskruingen etterlot ikke noe spor"
+    assert spor["hendelse_id"] == "7f1c1f7e-0000-4000-8000-000000000003"
+    assert spor["aktor"] == "eier@kunde"
+    assert spor["handling"] == blinding.AVSKRUINGSHANDLING
+
+
+def test_avskruingshandlingen_finnes_i_066():
+    """Modulens streng og migrasjonens CHECK må være den samme.
+
+    Drifter de to, slår oppslaget aldri til — og porten blir en dør som
+    ikke kan åpnes i det hele tatt. Det ville sett ut som sikkerhet og
+    vært en stille regresjon: den auditerte veien §6 lover, borte.
+
+    MUTASJONEN SOM DREPER DENNE: endre `AVSKRUINGSHANDLING` uten å endre
+    CHECK-en, eller omvendt.
+    """
+    sql = (ROT / "platform" / "core" / "db" / "migrations"
+           / "068_revisjonshendelse.sql").read_text(encoding="utf-8")
+    assert f"'{blinding.AVSKRUINGSHANDLING}'" in sql, (
+        f"{blinding.AVSKRUINGSHANDLING!r} står ikke i 066s CHECK — en"
+        " avskruing kan da aldri autoriseres")
+    # ... og settet må være LUKKET, ellers beviser treffet over ingenting.
+    assert "handling TEXT NOT NULL CHECK (handling IN (" in sql, (
+        "handlingen er ikke et lukket sett — en kaller kunne skrevet en"
+        " hendelse som SER ut som beviset porten leter etter")
 
 
 def test_port16_blinding_uten_felter_feiler_lukket():
@@ -3046,10 +3187,216 @@ def test_manglende_felter_felles_for_stroemmen(tmp_path, monkeypatch):
         arkiv, modell, vekter={"drift": 3},
         tekst_for=lambda m, d: d.decode("utf-8"),
         biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
-        auditrad={"aktor": "drift", "ts": "2026-08-26T20:00:00Z",
-                  "begrunnelse": "manuell kontroll"})
+        avskruing_hendelse_id="7f1c1f7e-0000-4000-8000-000000000002",
+        hendelseoppslag=lambda _id: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "drift", "ts": "2026-08-26T20:00:00+00:00"})
     assert set(ut["artefakter"]) == {"k1", "k2"}
     assert strommet, "strømmen skulle gått når porten ikke gjelder"
+
+
+def test_revisjonshendelsen_slaas_opp_en_gang_per_bunt(tmp_path):
+    """Codex P2 (runde 2 på #247): én autorisasjon, ett oppslag.
+
+    `krev_avskruingshendelse` går i BASEN, og porten står på to
+    kallesteder per kandidat — foran strømmen og inne i
+    `evaluer_kandidat`. Uten memoiseringen ble én uforanderlig
+    revisjonshendelse til 2 × N spørringer: 10 000 på den støttede
+    buntgrensen (5 000 kandidater).
+
+    Prisen er ikke det verste. REKKEFØLGEN er: en forbigående
+    oppslagsfeil i ANDRE løkke feller kjøringen først etter at tidligere
+    kandidater alt har nådd modellen — samme halvveis-eksponering som de
+    to testene rundt denne finnes for å hindre.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `if blinding_av`-blokken i
+    `kjor_bunt` som slår opp hendelsen én gang. Kjøringen blir fortsatt
+    grønn og artefaktene de samme — bare telleren skiller.
+    """
+    import json as _json
+
+    from modules.m57_ats import blinding, kjoring
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+
+    hid = "7f1c1f7e-0000-4000-8000-000000000002"
+    oppslag: list[str] = []
+
+    def _teller(hendelse_id):
+        oppslag.append(hendelse_id)
+        return {"handling": blinding.AVSKRUINGSHANDLING,
+                "aktor": "drift", "ts": "2026-08-26T20:00:00+00:00"}
+
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        arkiv, modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid, hendelseoppslag=_teller)
+
+    assert set(ut["artefakter"]) == {"k1", "k2"}, \
+        "riggen kjørte ikke gjennom — da måler ikke telleren noe"
+    assert oppslag == [hid], (
+        "revisjonshendelsen ble slått opp"
+        f" {len(oppslag)} ganger for to kandidater — én bunt er én"
+        " autorisasjon, og oppslaget går i basen")
+
+
+def test_avskruing_uten_hendelse_felles_for_forste_modellkall(tmp_path):
+    """Cursor P2 (runde 3 på #247): negativen manglet på BUNTNIVÅ.
+
+    Memoiseringsblokken er det eneste som stopper halvveis-eksponering
+    ved avskruing, men alle negativene sto på `evaluer_kandidat` /
+    `evalueringsinput` — altså på porten alene, aldri på utfallet
+    `kjor_bunt` faktisk leverer. To ting var dermed umålt, og begge er
+    kontrakten mot arbeideren:
+
+    1. at `Blindingsfeil` blir et RENT `Kjoringsfeil`-utfall her, ikke
+       en rå modulexception som arbeideren melder som ukjent feil, og
+    2. at koden overlever oversettelsen — `kjor_bunt` bygger
+       `Kjoringsfeil(feil.kode, fremdrift)`, og det er den koden
+       controlleren melder som `kjoring_avbrutt:<kode>`.
+
+    Punkt 2 er nettopp Codex' P2 (runde 3): «ingen rad» og «oppslaget
+    virket ikke» må komme ut som to utfall hos driften — den ene skal
+    eskaleres, den andre prøves om igjen. Skillet er verdiløst hvis det
+    dør i oversettelsen, og det er BARE her det kan måles.
+
+    Bunten har to kandidater, så `modell.sett == []` også sier at ingen
+    tidligere kandidat rakk modellen før porten felte kjøringen.
+
+    MUTASJONEN SOM DREPER DENNE: gi de to avvisningene samme kode igjen,
+    eller la `except blinding.Blindingsfeil`-armen i `kjor_bunt` falle
+    ned i catch-all-en (`modellfeil`).
+    """
+    import json as _json
+
+    from modules.m57_ats import kjoring
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+
+    def _arkiv(katalog: str):
+        mappe = tmp_path / katalog
+        mappe.mkdir()
+        return _bunt(mappe,
+                     [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                      ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                     manifest=manifest)
+
+    hid = "7f1c1f7e-0000-4000-8000-000000000004"
+
+    def _kaster(_hendelse_id):
+        raise RuntimeError("forbindelsen er nede")
+
+    for katalog, oppslag, ventet in (
+        ("ingen_rad", lambda _i: None, "avskrudd_uten_auditrad"),
+        ("basen_nede", _kaster, "avskrudd_oppslag_feilet"),
+    ):
+        modell = _Modell()
+        with pytest.raises(kjoring.Kjoringsfeil) as e:
+            kjoring.kjor_bunt(
+                _arkiv(katalog), modell, vekter={"drift": 3},
+                tekst_for=lambda m, d: d.decode("utf-8"),
+                biasmaalinger=_MAALINGER, antall_soknader=2,
+                blinding_av=True, avskruing_hendelse_id=hid,
+                hendelseoppslag=oppslag)
+        assert e.value.kode == ventet, (
+            f"{katalog} kom ut av kjøringen som {e.value.kode} —"
+            " driften kan ikke klassifisere utfallet")
+        assert modell.sett == [], (
+            "en kandidat nådde modellen ublindet før porten felte"
+            f" kjøringen ({katalog})")
+
+    # KONTROLLEN: samme rigg med en ekte hendelse går gjennom. Uten den
+    # kunne begge negativene bestått på en bunt som var ugyldig av en
+    # helt annen grunn.
+    modell = _Modell()
+    ut = kjoring.kjor_bunt(
+        _arkiv("ekte"), modell, vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid,
+        hendelseoppslag=lambda _i: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "drift", "ts": "2026-08-29T00:00:00+00:00"})
+    assert set(ut["artefakter"]) == {"k1", "k2"}
+    assert len(modell.sett) == 2, "riggen var ugyldig av en annen grunn"
+
+
+def test_avskruingssporet_naar_leveransen_ikke_bare_artefaktet(tmp_path):
+    """Cursor P2 (runde 4 på #247): sporet døde på leveransegrensen.
+
+    Runde 3 lot avskruingen etterlate et spor på per-kandidat-artefaktet
+    — men `rapportskjema.bygg` plukker EKSPLISITT `funn`,
+    `intervjusporsmal` og `kildetekst`, og controlleren sender bare
+    rapporten til `/v1/artefakt`. Sporet nådde altså aldri det som blir
+    lagret: den promoterte rapporten bar ingenting som pekte tilbake på
+    `revisjonshendelse`-raden, og vi sto igjen med nøyaktig hullformen
+    runde 3 skulle lukke — «en revisjonshendelse ingen artefakt peker
+    på, er en logg uten lesere».
+
+    Målt på den SERIALISERTE rapporten, ikke på dicten i minnet: det er
+    JSON-formen plattformen tar imot, og et felt som ikke overlever
+    serialiseringen har ikke krysset grensen.
+
+    Kontrasten til slutt er halve porten: en BLINDET bunt har intet
+    unntak å dokumentere, og et felt som alltid er der sier ingenting om
+    unntaket det finnes for.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `avskruing`-blokken fra
+    `rapportskjema.bygg` (eller la den bære sporet ufiltrert — `ts`
+    kommer som `datetime` fra basen og felles av skjemaet).
+    """
+    import json as _json
+
+    import jsonschema
+
+    from modules.m57_ats import blinding, kjoring, rapportskjema
+
+    manifest = _json.dumps({"soknader": [
+        {"kandidat_id": "k1", "filer": ["k1/cv.html"]},
+        {"kandidat_id": "k2", "filer": ["k2/cv.html"]}]})
+    arkiv = _bunt(tmp_path,
+                  [("k1/cv.html", b"<p>Kari Testdal kan drift</p>"),
+                   ("k2/cv.html", b"<p>Ola Testdal kan drift</p>")],
+                  manifest=manifest)
+    profil = {"profil_id": "p-159", "versjon": 1, "navn": "Driftsingenior"}
+    hid = "7f1c1f7e-0000-4000-8000-000000000004"
+
+    ut = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2, blinding_av=True,
+        avskruing_hendelse_id=hid,
+        hendelseoppslag=lambda _i: {
+            "handling": blinding.AVSKRUINGSHANDLING,
+            "aktor": "eier@kunde", "ts": "2026-08-29T00:00:00+00:00"})
+    rapport = rapportskjema.bygg(ut, profil=profil, antall_soknader=2)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(rapport)
+    sendt = _json.loads(_json.dumps(rapport))
+    assert sendt.get("avskruing") == {"hendelse_id": hid,
+                                      "aktor": "eier@kunde"}, (
+        "rapporten som FAKTISK sendes bar ingen peker tilbake til"
+        f" revisjonsraden: {sendt.get('avskruing')}")
+
+    blindet = kjoring.kjor_bunt(
+        arkiv, _Modell(), vekter={"drift": 3},
+        kandidatfelter_for=lambda m: {"navn": ["Testdal"]},
+        tekst_for=lambda m, d: d.decode("utf-8"),
+        biasmaalinger=_MAALINGER, antall_soknader=2)
+    ren = rapportskjema.bygg(blindet, profil=profil, antall_soknader=2)
+    jsonschema.Draft202012Validator(rapportskjema.SKJEMA).validate(ren)
+    assert "avskruing" not in ren, (
+        "en BLINDET bunt promoterte et avskruingsfelt — da dokumenterer"
+        " feltet ingenting")
 
 
 def test_vakuos_deklarasjon_felles_for_forste_modellkall(tmp_path):

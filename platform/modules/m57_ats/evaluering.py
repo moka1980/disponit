@@ -323,7 +323,8 @@ def evaluer_kandidat(modell, soknadstekst: str,
                      vekter: dict[str, int], *,
                      biasmaalinger: dict[str, Biasmaaling],
                      blinding_av: bool = False,
-                     auditrad: dict | None = None) -> dict:
+                     avskruing_hendelse_id=None,
+                     hendelseoppslag=None) -> dict:
     """Én kandidat gjennom hele kontrakten: biasmåling for modellens
     digest (port 17), blindet input (port 16), skjemavaliderte funn
     (port 15). Modellen får ALDRI se råteksten når blinding står på —
@@ -334,9 +335,11 @@ def evaluer_kandidat(modell, soknadstekst: str,
     samme koordinatsystem.
     """
     krev_biasmaaling(modell.image_digest, biasmaalinger)
-    tekst, avmaskering = blinding.evalueringsinput(
+    tekst, avmaskering, avskruingsspor = blinding.evalueringsinput(
         soknadstekst, kandidatfelter,
-        blinding_av=blinding_av, auditrad=auditrad)
+        blinding_av=blinding_av,
+        avskruing_hendelse_id=avskruing_hendelse_id,
+        hendelseoppslag=hendelseoppslag)
     blinding.krev_blindet(tekst, avmaskering)
     svar = _krev_helt_svar(modell.vurder(tekst, vekter), vekter)
     # Porten BYGGER funnene: artefakten bærer det kanoniske funnet
@@ -352,8 +355,21 @@ def evaluer_kandidat(modell, soknadstekst: str,
     # Tom med vilje (#225): rapportskjemaet beholder feltet, så den
     # promoterte formen er uendret — men evalueringen bruker aldri
     # modelltid på spørsmål. De genereres ved innkalling (shortlist).
-    return {"funn": funn_kanonisk,
-            "oppfylt": dict(svar["oppfylt"]),
-            "intervjusporsmal": [],
-            "avmaskering": avmaskering,
-            "kildetekst": tekst}
+    # AVSKRUINGEN ETTERLATER ET SPOR I ARTEFAKTEN (Codex P1, runde 3 på
+    # #247). Uten det bar en avskrudd evaluering bare råteksten og et tomt
+    # avmaskeringskart — ingenting knyttet NETTOPP DEN utleveringen til
+    # revisjonsraden. Én hendelses-ID kunne autorisert et ubegrenset
+    # antall senere bunter, og ingen kunne lest seg fra et artefakt
+    # tilbake til hvem som bestemte det.
+    #
+    # Feltet finnes bare når blindingen FAKTISK var av: en `null` på hver
+    # blindet evaluering ville vært støy, og et felt som alltid er der
+    # sier ingenting om det unntaket det er ment å dokumentere.
+    artefakt = {"funn": funn_kanonisk,
+                "oppfylt": dict(svar["oppfylt"]),
+                "intervjusporsmal": [],
+                "avmaskering": avmaskering,
+                "kildetekst": tekst}
+    if avskruingsspor is not None:
+        artefakt["avskruing"] = avskruingsspor
+    return artefakt

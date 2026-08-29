@@ -209,7 +209,8 @@ def _les_spole(sti):
 
 def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
               antall_soknader, kandidatfelter_for=None,
-              blinding_av=False, auditrad=None,
+              blinding_av=False, avskruing_hendelse_id=None,
+              hendelseoppslag=None,
               lagre_dokument=None, lagre_kandidat=None):
     """-> {"rangering": [...], "artefakter": {kandidat_id: ...},
     "fremdrift": {...}} — eller Kjoringsfeil, aldri noe imellom.
@@ -552,6 +553,30 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
         # `blind` er en ren funksjon av `(tekst, kandidatfelter)`, så de
         # to kallene er per konstruksjon samme verdi; prisen er
         # regex-arbeid som uansett forsvinner i modellkallet ved siden av.
+        #
+        # ... MEN OPPSLAGET ER IKKE REGEXARBEID (Codex P2, runde 2 på
+        # #247). `krev_avskruingshendelse` slår opp i BASEN, og med to
+        # kallesteder per kandidat ble én uforanderlig autorisasjon til
+        # 2 × 5 000 spørringer på den støttede buntgrensen. Verre enn
+        # prisen er REKKEFØLGEN: en forbigående oppslagsfeil i andre
+        # løkke feller kjøringen først etter at tidligere kandidater alt
+        # har nådd modellen — nøyaktig den halvveis-eksponeringen
+        # topassformen over finnes for å hindre.
+        #
+        # Hendelsen slås derfor opp ÉN gang for bunten, her, før første
+        # kandidat: en oppslagsfeil er avgjort før noen tekst er sendt.
+        # Predikatet er uendret og står fortsatt på begge kallestedene
+        # («ETT predikat, to kallesteder») — det er kilden som er
+        # memoisert, ikke porten. Et annet id enn buntens gir `None`, som
+        # porten avviser som «ingen rad»: cachen er fail-closed, ikke en
+        # snarvei forbi oppslaget.
+        if blinding_av:
+            hendelsen = blinding.krev_avskruingshendelse(
+                avskruing_hendelse_id, hendelseoppslag)
+
+            def hendelseoppslag(hendelse_id, _hendelse=hendelsen):
+                return (_hendelse
+                        if hendelse_id == avskruing_hendelse_id else None)
         for kandidat_id in sorted(biter):
             # Sortert på medlemsnavn: samme bunt gir samme tekst OG samme
             # feltrekkefølge, uansett hvilken rekkefølge arkivet leverte
@@ -587,7 +612,9 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
                 raise Kjoringsfeil("tekstuttrekk_feilet", fremdrift)
             blinding.evalueringsinput(
                 tekst, kandidatfelter,
-                blinding_av=blinding_av, auditrad=auditrad)
+                blinding_av=blinding_av,
+                avskruing_hendelse_id=avskruing_hendelse_id,
+                hendelseoppslag=hendelseoppslag)
         # ANDRE PASS leser spolen på nytt, én kandidat om gangen — ikke
         # en `klargjort`-dict med hele buntens tekst (#173): portpasset
         # over har alt garantert at ALLE kandidater blindes gyldig før
@@ -602,7 +629,9 @@ def kjor_bunt(sti, modell, *, vekter, tekst_for, biasmaalinger,
             resultat = evaluering.evaluer_kandidat(
                 modell, tekst, kandidatfelter, vekter,
                 biasmaalinger=biasmaalinger,
-                blinding_av=blinding_av, auditrad=auditrad)
+                blinding_av=blinding_av,
+                avskruing_hendelse_id=avskruing_hendelse_id,
+                hendelseoppslag=hendelseoppslag)
             # STRØMMEN UT, KANDIDATSIDEN (#173): artefaktet går til
             # lageret i det det er evaluert — samme kodede utfall som
             # dokumentsiden.

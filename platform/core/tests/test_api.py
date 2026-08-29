@@ -71,6 +71,13 @@ APPEND_ONLY_TRIGGERE = (
     ("unntak", "unntak_ingen_delete"),
     ("unntak", "unntak_historikkforing"),
     ("revisjonslogg", "revisjonslogg_ingen_endring"),
+    # 068: revisjonshendelsen er append-only på samme form (rad OG
+    # statement), og nekter dermed DELETE. Bare RADtriggeren skrus av —
+    # `revisjonshendelse_ingen_truncate` fyrer på TRUNCATE, som
+    # oppryddingen aldri gjør, og en sperre som ikke er i veien skal
+    # heller ikke avvæpnes. Uten linja her velter `_rydd` på
+    # `avvis_endring` i det første testen committer en hendelse.
+    ("revisjonshendelse", "revisjonshendelse_append_only"),
     ("tenant_nokler", "tenant_nokler_ingen_delete"),
     # PR-006: outbox-tabellene er append+status som `unntak`, og de har
     # samme DELETE-sperre. Uten dem her feiler oppryddingen — noe som i seg
@@ -183,7 +190,15 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # må ut før begge.
                  "inndata_artefakt",
                  "oppdrag", "reparasjonsoperasjoner", "unntak",
-                 "revisjonslogg", "attestasjon_jti", "idempotens",
+                 # 068: revisjonshendelsen peker BARE ut av tenanten —
+                 # `bruker_id` har FK til den GLOBALE `brukeridentitet`
+                 # (056-formen for `signatar`), og den tabellen ryddes
+                 # ikke herfra. Tenanten er en TEXT-kolonne, ikke en FK.
+                 # Plassen er derfor fri: den står ved siden av
+                 # `revisjonslogg` fordi den hører til samme familie,
+                 # ikke fordi rekkefølgen krever det.
+                 "revisjonslogg", "revisjonshendelse",
+                 "attestasjon_jti", "idempotens",
                  # `policy_hode` FØR `policyer`: pekeren har FK dit.
                  "policy_hode", "policyer", "tenant_nokler",
                  "frekvens_hendelser",
