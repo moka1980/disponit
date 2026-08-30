@@ -1325,7 +1325,6 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       // kandidat-NN» på rad, uten noen kobling til linjen de gjaldt.
       // Leseren måtte telle seg fram. Nå er hver kandidats detaljer i
       // kandidatens egen rad, og muren finnes ikke.
-      const detaljFor = new Map();
       // KANDIDATEN ER LESBAR I RAPPORTEN OGSÅ (Cursor P2). Kortnavnet
       // ble innført i prosesstabellen, men rangeringstabellen her sto
       // igjen med rå `kandidat_id` i radoverskriften — og det er DENNE
@@ -1364,7 +1363,6 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       const vekter = { ...profilVekter };
       const radPar = rapport.rangering.map((rad) => {
         const boks = detaljboks(rad);
-        detaljFor.set(rad.kandidat_id, boks);
         const oppfylt = {};
         for (const [k, v] of Object.entries(rad.nedbrytning)) {
           oppfylt[k] = v > 0;
