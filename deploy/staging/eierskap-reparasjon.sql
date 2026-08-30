@@ -95,6 +95,8 @@ INSERT INTO _design VALUES
     -- 076 (#163): markøren som armerer samlet-porten — claimer-eid
     -- definer av samme grunn som lagervaktene.
     ('FUNCTION', 'm57_marker_beroert_prosess()', 'disponit_m37_claimer'),
+    -- 078 (#156): pseudonymfunksjonen — nøkkelen forlater aldri basen.
+    ('FUNCTION', 'm57_pseudonym(text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reap_kandidatdata(integer)',                        'disponit_m37_claimer'),
     -- 069: tidligslettingsdoeren gaar gjennom samme

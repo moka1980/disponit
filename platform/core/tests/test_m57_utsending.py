@@ -188,8 +188,16 @@ def _signer(m, liste, bid, *, nokkel=None):
     m.commit()
 
 
+def _psn(mottaker: str) -> str:
+    """Riggens pseudonymform (#156/078): formporten på kolonnen krever
+    `^psn-[0-9a-f]{64}$` — riggen trenger bare FORMEN, aldri nøkkelen."""
+    import hashlib as _h
+    return "psn-" + _h.sha256(mottaker.encode()).hexdigest()
+
+
 def _frigi(m, liste, *, mottaker="m1"):
     _sett_kontekst(m, TENANT)
+    mottaker = _psn(mottaker)
     fid = m.execute(
         "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
         " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
@@ -513,8 +521,8 @@ def test_frigivelse_uten_signatur_er_ikke_representerbar(migrator):
         migrator.execute(
             "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
             " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
-            " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'm1')",
-            (TENANT, liste[0], liste[2], liste[1]))
+            " VALUES (%s, gen_random_uuid(), %s, %s, %s, %s)",
+            (TENANT, liste[0], liste[2], liste[1], _psn("m1")))
     migrator.rollback()
 
 
@@ -3188,3 +3196,59 @@ def test_avskruing_krever_hendelse_fra_basen_ikke_mock(migrator):
     finally:
         rt.rollback()
         rt.close()
+
+
+@pg
+def test_156_pseudonymnokkelen_baerer_frigivelsen(migrator):
+    """#156 (eiers valg 23/8, migrasjon 078): evidensen er AT en mottaker
+    fikk én utsendelse — aldri adressen.
+
+    * Direkte DML med klartekst felles av formporten (CHECK).
+    * Døren pseudonymiserer: to frigivelser for samme mottaker, ULIKT
+      skrevet (versaler/blanktegn), gir samme nøkkel og ÉN rad.
+    * Klarteksten finnes ikke i raden; nøkkelen kan aldri roteres.
+
+    MUTASJONEN SOM DREPER DENNE: fjern CHECK-en, eller normaliseringen i
+    m57_pseudonym."""
+    oid, _ = _grunnlag(migrator)
+    bid = _signatar(migrator)
+    liste = _liste(migrator, oid)
+    _signer(migrator, liste, bid)
+    _sett_kontekst(migrator, TENANT)
+    # Klartekst via direkte DML: formporten feller.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        migrator.execute(
+            "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
+            " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
+            " VALUES (%s, gen_random_uuid(), %s, %s, %s,"
+            " 'kari@eksempel.no')",
+            (TENANT, liste[0], liste[2], liste[1]))
+    migrator.rollback()
+    # Døren: normalisert idempotens over skrivemåter (kjøres som
+    # claimeren — dørens egen eier; runtime-veien måles i http-suitene).
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET LOCAL ROLE disponit_m37_claimer")
+    fid1 = migrator.execute(
+        "SELECT frigi_utsendelse(%s,%s,%s)",
+        (TENANT, liste[0], "Kari@Eksempel.no ")).fetchone()[0]
+    fid2 = migrator.execute(
+        "SELECT frigi_utsendelse(%s,%s,%s)",
+        (TENANT, liste[0], "kari@eksempel.no")).fetchone()[0]
+    assert fid1 == fid2, "to skrivemåter av samme mottaker er ÉN frigivelse"
+    migrator.execute("RESET ROLE")
+    rad = migrator.execute(
+        "SELECT mottaker_ref FROM utsendingsfrigivelse"
+        " WHERE tenant=%s AND frigivelse_id=%s",
+        (TENANT, fid1)).fetchone()[0]
+    migrator.commit()
+    import re as _re
+    assert _re.fullmatch(r"psn-[0-9a-f]{64}", rad), rad
+    assert "kari" not in rad and "eksempel" not in rad, \
+        "klarteksten skal aldri stå i frigivelsesraden"
+    # Nøkkelen er determinismen: rotasjon (mutasjon) er forbudt.
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "UPDATE tenant_pseudonymnokkel SET nokkel=%s WHERE tenant=%s",
+            (b"x" * 32, TENANT))
+    migrator.rollback()
