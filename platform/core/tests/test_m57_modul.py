@@ -5665,6 +5665,27 @@ def test_v2_rapporten_er_beslutningssporet_uten_payload(tmp_path):
         pass
     else:
         raise AssertionError("SKJEMA_V2 tok imot et kandidater-felt")
+    # A1 (arkitekt 30/8): «tokener uten nøkkel» bevises på DOKUMENTET —
+    # fixture-strengen står i payloaden (kildetekst/funn), og v2 skal ha
+    # NULL treff. Formforbudet over stopper feltnavnene; dette stopper
+    # INNHOLDET, uansett hvilket felt som skulle båret det. (Reap-siden
+    # av samme port — rapporten består etter reaping, fortsatt med null
+    # treff — hører til registrerings-PR-en, der v2 blir et artefakt.)
+    assert "Testdal" not in sendt, (
+        "kandidatpayload (navnet fra dokumentene) lekket inn i"
+        " beslutningssporet")
+    # A2: nedbrytningen er LUKKET — heltall, aldri fritekst. Et «kjent
+    # felt» kan ikke bære payload.
+    med_tekst = _json.loads(_json.dumps(rapport))
+    med_tekst["rangering"][0]["nedbrytning"] = {"drift": "sitat: ..."}
+    try:
+        jsonschema.Draft202012Validator(
+            rapportskjema.SKJEMA_V2).validate(med_tekst)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise AssertionError(
+            "nedbrytningen tok imot fritekst — lekkasjekanalen A2 er åpen")
     # Digestformen er biasmålingens egen — en løs streng er ingen modell.
     try:
         jsonschema.Draft202012Validator(rapportskjema.SKJEMA_V2).validate(
