@@ -198,3 +198,107 @@ def bygg(resultat: dict, *, profil: dict, antall_soknader: int) -> dict:
         rapport["avskruing"] = {"hendelse_id": spor["hendelse_id"],
                                 "aktor": spor["aktor"]}
     return rapport
+
+
+#: -------------------------------------------------------------------
+#: V2 — BESLUTNINGSSPORET (#168, eiers A-dom): rapporten bærer aldri
+#: kandidatpayload. Funnene, sitatene, intervjuspørsmålene og den
+#: blindede kildeteksten er 057-lagrenes payload under kundens frist;
+#: det promoterte artefaktet er varig evidens, og de to skal ikke være
+#: samme dokument. Etter reapen holder beslutningssporet tokener uten
+#: nøkkel — blindet fritekst holder innhold uten navn, og bare det
+#: første slutter å være en personopplysning (eiers korreksjon i #168:
+#: maskert fritekst identifiserer indirekte i et lite arbeidsmarked).
+#:
+#: UTKAST TIL ARKITEKTREVIEW — v2 ER IKKE REGISTRERT. Registreringen
+#: krever en release M-57 ikke har (registrer-m57-ats.py), og
+#: artefakttypens navneform er prefikslukket, så identitetsvalget
+#: (samme type med `versjon: 2` mot registreringstuppelens immutabilitet,
+#: eller nytt navn med nytt lese-API-par) er arkitektens — se #168.
+#: Leseflaten må samtidig hente funnene fra lagrene (#183-nabolaget);
+#: den flyttingen er egen PR og hører ikke her.
+#:
+#: MODELLDIGESTEN er ny og PÅKREVD: `sha256:<64 hex>` — samme form som
+#: biasmålingens binding (`krev_biasmaaling`), slik at rapporten selv
+#: sier hvilken modell som rangerte. DIGEST ER IKKE BIASBEVIS (arkitekt
+#: A3, 30/8): feltet beviser hvilken modellversjon som kjørte, aldri at
+#: den er MÅLT — den bindingen bor i akseptporten (port 17 /
+#: krev_biasmaaling: imagebytte uten ny måling blokkerer der), og en
+#: leser skal aldri slutte fra rapporten til bias. Ærlighetsfeltene
+#: står igjen: `antall_soknader`, `fremdrift` (hva som faktisk ble
+#: lest) og `avskruing` (blinding var av, med raden som autoriserte
+#: det).
+#:
+#: VERSJONEN ER IDENTITET, IKKE BARE INNHOLD (arkitekt A4, SP-12):
+#: lesere MÅ dispatche på `versjon`, og en v1-rapport skal aldri kunne
+#: leses SOM v2 — promoterte v1-rapporter finnes og består. Hvordan
+#: versjonen bæres i ARTEFAKTETS identitet (registreringstuppelen mot
+#: den prefikslukkede navneformen) er arkitektens dom i #168 og hører
+#: til registrerings-PR-en.
+VERSJON_V2 = 2
+
+SKJEMA_V2 = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": f"disponit:rekruttering.evaluering.rapport:v{VERSJON_V2}",
+    "type": "object", "additionalProperties": False,
+    "required": ["rapporttype", "versjon", "profil", "antall_soknader",
+                 "rangering", "modelldigest", "fremdrift"],
+    "properties": {
+        "rapporttype": {"const": "rekruttering.evaluering.rapport"},
+        "versjon": {"const": VERSJON_V2},
+        "profil": SKJEMA["properties"]["profil"],
+        "antall_soknader": SKJEMA["properties"]["antall_soknader"],
+        # Rangeringen er HELE leveransen i v2: referanse, poeng og
+        # nedbrytning per krav — aldri innholdet bak dem. EGEN form, ikke
+        # v1s delte (arkitekt A2, 30/8): et lukket skjema avviser ukjente
+        # felt, men stopper ikke payload i et KJENT — nedbrytningen er
+        # derfor LUKKEDE nøkler (kravnavnets lengdetak) med heltall som
+        # verdier. Ingen fritekst, ingen sitatkanal.
+        "rangering": {
+            "type": "array", "minItems": 1, "maxItems": 5000,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["kandidat_id", "poeng", "nedbrytning"],
+                "properties": {
+                    "kandidat_id": {"type": "string", "minLength": 1,
+                                    "maxLength": 64},
+                    "poeng": {"type": "integer", "minimum": 0},
+                    "nedbrytning": {
+                        "type": "object",
+                        "propertyNames": {"maxLength": 64},
+                        "additionalProperties": {"type": "integer",
+                                                 "minimum": 0},
+                    },
+                },
+            },
+        },
+        "modelldigest": {"type": "string",
+                         "pattern": "^sha256:[0-9a-f]{64}$"},
+        "fremdrift": SKJEMA["properties"]["fremdrift"],
+        "avskruing": SKJEMA["properties"]["avskruing"],
+    },
+}
+
+
+def bygg_v2(resultat: dict, *, profil: dict, antall_soknader: int,
+            modelldigest: str) -> dict:
+    """`kjor_bunt`-utfallet → beslutningssporet (#168 A). Payloaden
+    plukkes ALDRI: ingen linje her leser `artefakter` for annet enn
+    avskruingssporet, så et nytt payloadfelt i utfallet kan ikke lekke
+    inn ved et uhell."""
+    rapport = {"rapporttype": "rekruttering.evaluering.rapport",
+               "versjon": VERSJON_V2,
+               "profil": {"profil_id": profil["profil_id"],
+                          "versjon": profil["versjon"],
+                          "navn": profil["navn"]},
+               "antall_soknader": antall_soknader,
+               "rangering": resultat["rangering"],
+               "modelldigest": modelldigest,
+               "fremdrift": resultat["fremdrift"]}
+    # Samme avskruingsspor som v1 — unntaket skal synes i evidensen.
+    spor = next((r["avskruing"] for r in resultat["artefakter"].values()
+                 if "avskruing" in r), None)
+    if spor is not None:
+        rapport["avskruing"] = {"hendelse_id": spor["hendelse_id"],
+                                "aktor": spor["aktor"]}
+    return rapport
