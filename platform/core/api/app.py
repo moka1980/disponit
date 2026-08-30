@@ -1121,6 +1121,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rekruttering_prosesser(request: Request) -> Response:
         return rekruttering_http.prosesser_endepunkt(tjeneste, request)
 
+    def rekruttering_kandidatkort(request: Request) -> Response:
+        return rekruttering_http.kandidatkort_endepunkt(tjeneste, request)
+
     def rekruttering_signer(request: Request) -> Response:
         return rekruttering_http.signer_endepunkt(tjeneste, request)
 
@@ -1308,6 +1311,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/rapport/{id:int}", rapport_detalj, methods=["GET"]),
         Route("/v1/rekruttering/rapport/{id:int}",
               rekrutteringsrapport_detalj, methods=["GET"]),
+        Route("/v1/rekruttering/kandidatkort/{oppdrag_id:int}/{kandidat_id}",
+              rekruttering_kandidatkort, methods=["GET"]),
         Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
               methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
@@ -1798,6 +1803,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # beslutning tenanten selv bestilte — samme scope som WCAG-rapporten.
     ("GET",  "/v1/rekruttering/rapport/{id:int}"): "decisions:read",
     ("GET",  "/v1/rekruttering/evalueringer"): "decisions:read",
+    # Kandidatkortet (eiers bestilling 30/8): avmaskeringen leses av den
+    # samme leseren som alt ser blindede funn — men hver lesing SPORES.
+    ("GET",  "/v1/rekruttering/kandidatkort/{oppdrag_id:int}/{kandidat_id}"):
+        "decisions:read",
     ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —
     # samme scope som signeringen og inndata-reservasjonen.

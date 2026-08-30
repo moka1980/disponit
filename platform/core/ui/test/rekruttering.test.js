@@ -6782,3 +6782,66 @@ test("Rapporten: vektendring flytter kandidatene og sjiktfargene følger (eiers 
   assert.ok(css.includes("rekrut-sjikt-topp"), "topp-sjiktet mangler CSS");
   assert.ok(css.includes("rekrut-sjikt-neste"), "6–10-sjiktet mangler CSS");
 });
+
+test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", async () => {
+  KALL = [];
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 2,
+      profil: { profil_id: "p-1", versjon: 1, navn: "Driftskonsulent",
+        krav: [{ kravnavn: "drift", vekt: 3 }] },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 3,
+        nedbrytning: { drift: 3 } }],
+      kandidater: { "kandidat-01": { funn: [] } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+    "/v1/rekruttering/kandidatkort/96/kandidat-01": {
+      kandidat_id: "kandidat-01",
+      felter: { "[NAVN-1]": "Kari Nordmann",
+                "[KONTAKT-1]": "kari@eksempel.no" },
+      dokumenter: ["cv.pdf"] },
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon() && [...seksjon()
+    .querySelectorAll(".rekrut-kortliste button")]
+    .some((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))));
+  [...seksjon().querySelectorAll(".rekrut-kortliste button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
+    .click();
+  assert.ok(await vent(() => seksjon().textContent
+    .includes("Driftskonsulent")), "rapporten rendret aldri");
+  // Detaljene bygges lat — kortknappen finnes først etter åpning, og
+  // navnet finnes IKKE i DOM før leseren eksplisitt ber om det.
+  assert.doesNotMatch(seksjon().textContent, /Kari Nordmann/);
+  const boks = seksjon().querySelector("tbody details");
+  boks.open = true;
+  boks.dispatchEvent(new (seksjon().ownerDocument.defaultView.Event)(
+    "toggle"));
+  const knapp = [...seksjon().querySelectorAll(".rekrut-kandidatkort button")]
+    .find((b) => b.textContent === t("ui.rekruttering.kandidatkort.vis"));
+  assert.ok(knapp, "kandidatkort-knappen mangler i detaljene");
+  knapp.click();
+  assert.ok(await vent(() => seksjon().textContent
+    .includes("Kari Nordmann")), "avmaskeringen rendret aldri");
+  const tekst = seksjon().textContent;
+  assert.match(tekst, /kari@eksempel\.no/);
+  assert.match(tekst, /cv\.pdf/);
+  // Etikettene er locale-tekster utledet av tokenet — aldri rå tokener.
+  // (Målt på KORTET: flatens blinding-forklaring nevner selv [NAVN-1]
+  // som eksempel, så hele seksjonen kan ikke bære negativen.)
+  const kort = seksjon().querySelector(".rekrut-kandidatkort");
+  assert.match(kort.textContent,
+    new RegExp(t("ui.rekruttering.kandidatkort.felt.navn")));
+  assert.doesNotMatch(kort.textContent, /\[NAVN-1\]/);
+  assert.match(tekst,
+    new RegExp(t("ui.rekruttering.kandidatkort.dokumenter")));
+});

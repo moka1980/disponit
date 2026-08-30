@@ -1059,6 +1059,89 @@ def evaluering_slett_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def kandidatkort_endepunkt(tjeneste, request):
+    """GET /v1/rekruttering/kandidatkort/{oppdrag_id}/{kandidat_id} —
+    avmaskeringen for ÉN kandidat (eiers bestilling 30/8).
+
+    Blindingen står urørt i selve vurderingen: modellen og rapporten ser
+    aldri navn. Men koblingen tilbake er KUNDENS EGNE data (bunten de
+    selv lastet opp), og kartet token→klartekst ligger alt i
+    `kandidat_avmaskering` til kundens frist. Dette er leseveien dit —
+    for utfallet, aldri for prosessen.
+
+    Grensene er rapportrutens: levende anker (ureapet, ubestilt, frist
+    ikke passert) — etter fristen finnes kortet ikke, samme 404-doktrine.
+    Scope er flatens (`decisions:read`): leseren ser alt funn med
+    sitater fra samme søknad. Men hver avmaskering SPORES i driftsloggen
+    med oppdrag og kandidat — lesing av persondata skal etterlate spor.
+
+    `kandidat_id` tar begge formene: lagerets uuid (dypdykket) og
+    buntens egen id (rapportens rangering) — sistnevnte løses med
+    skrivedørens deterministiske uuid5, samme navnerom og skilletegn."""
+    import uuid as uuidmod
+
+    from .app import _KANDIDAT_NS, _rid
+    from .policyadmin_http import _feil, _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        oppdrag_id = int(request.path_params["oppdrag_id"])
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+    kid_raa = str(request.path_params.get("kandidat_id") or "")
+    # Kontraktens kandidatnavn er inntil 64 tegn; alt lenger er støy.
+    if not kid_raa or len(kid_raa) > 64:
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
+        prad = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess p"
+            " WHERE p.tenant=%s AND p.oppdrag_id=%s"
+            "   AND p.slettet_ts IS NULL AND p.slett_bestilt_ts IS NULL"
+            "   AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "               + p.slettefrist_dogn * interval '1 day'",
+            (tenant, oppdrag_id)).fetchone()
+        if prad is None:
+            return _feil("ikke_funnet", rid, 404)
+        pid = prad[0]
+        try:
+            kid = uuidmod.UUID(kid_raa)
+        except ValueError:
+            kid = uuidmod.uuid5(_KANDIDAT_NS,
+                                f"{tenant}\x1f{pid}\x1f{kid_raa}")
+        rad = conn.execute(
+            "SELECT felter FROM kandidat_avmaskering"
+            " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s"
+            "   AND slettet_ts IS NULL AND felter IS NOT NULL",
+            (tenant, pid, kid)).fetchone()
+        dokumenter = [d[0] for d in conn.execute(
+            "SELECT filnavn FROM kandidat_originaldokument"
+            " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s"
+            "   AND slettet_ts IS NULL AND filnavn IS NOT NULL"
+            " ORDER BY filnavn",
+            (tenant, pid, kid)).fetchall()]
+        if rad is None and not dokumenter:
+            return _feil("ikke_funnet", rid, 404)
+        # 057 har ingen formsjekk på lagrene (samme dom som
+        # `_kandidater`): kartet serveres bare når det ER et kart av
+        # strenger — aldri normalisert til noe det ikke sa.
+        felter = {tok: v for tok, v in (rad[0] or {}).items()
+                  if isinstance(tok, str) and isinstance(v, str)} \
+            if rad is not None and isinstance(rad[0], dict) else {}
+        # Avmaskeringen etterlater spor: hvem-leste-hva er sikkerhetens
+        # halvdel av at kortet i det hele tatt finnes.
+        tjeneste.logg.hendelse("kandidat_avmaskert", rid, tenant,
+                               art="sikkerhet", oppdrag_id=oppdrag_id,
+                               kandidat=str(kid))
+        return _ok({"kandidat_id": kid_raa, "felter": felter,
+                    "dokumenter": dokumenter}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def evaluering_avbryt_endepunkt(tjeneste, request):
     """POST /v1/rekruttering/evaluering/{oppdrag_id}/avbryt.
 

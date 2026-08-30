@@ -24,6 +24,59 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
+
+// Kandidatkortet (eiers bestilling 30/8): koblingen tilbake fra
+// kandidatnummeret til kundens egne data — avmaskerte felter og
+// originaldokumentenes navn. Hentes FØRST når leseren ber om det
+// (hver lesing spores på serveren), og bak samme frist som resten:
+// etter kundens frist finnes kortet ikke (404 → «utilgjengelig»).
+function kandidatkortBoks(oppdragId, kandidatId) {
+  const beholder = el("div", { class: "rekrut-kandidatkort" });
+  const knapp = el("button", { class: "knapp", type: "button",
+    text: t("ui.rekruttering.kandidatkort.vis") });
+  knapp.addEventListener("click", async () => {
+    knapp.disabled = true;
+    let svar;
+    try {
+      svar = await hentJson("/v1/rekruttering/kandidatkort/"
+        + `${oppdragId}/${encodeURIComponent(kandidatId)}`);
+    } catch {
+      knapp.disabled = false;
+      sett(beholder, el("p", { role: "alert",
+        text: t("ui.rekruttering.kandidatkort.utilgjengelig") }), knapp);
+      return;
+    }
+    const felter = Object.entries(svar.felter || {});
+    const liste = el("dl", { class: "rekrut-kandidatkort-felter" });
+    for (const [token, verdi] of felter) {
+      // Tokenet bærer felttypen ([NAVN-1] → navn); etiketter bor i
+      // locale med tokenet selv som ærlig reserve.
+      const m = /^\[([A-Z]+)-\d+\]$/.exec(token);
+      const felt = m ? m[1].toLowerCase() : null;
+      liste.append(
+        el("dt", { text: felt
+          ? t(`ui.rekruttering.kandidatkort.felt.${felt}`, felt)
+          : token }),
+        el("dd", { text: verdi }));
+    }
+    const dok = (svar.dokumenter || [])
+      .filter((f) => typeof f === "string")
+      .map((f) => el("li", { text: f }));
+    // Knappen leseren sto på erstattes av innholdet — fokus flyttes
+    // dit (CodeRabbit): en tastaturbruker skal lande på kortet, ikke
+    // falle til body.
+    const innhold = el("div", { tabindex: "-1" },
+      felter.length ? liste : el("p", {
+        text: t("ui.rekruttering.kandidatkort.ingen_felter") }),
+      el("h4", { text: t("ui.rekruttering.kandidatkort.dokumenter") }),
+      dok.length ? el("ul", {}, ...dok) : el("p", {
+        text: t("ui.rekruttering.kandidatkort.ingen_dokumenter") }));
+    sett(beholder, innhold);
+    innhold.focus();
+  });
+  beholder.append(knapp);
+  return beholder;
+}
 import { Detaljpanel, Bekreftelsesdialog } from "../dialog.js";
 import { Faner, Tidspunkt, meldLive } from "../komponenter.js";
 import { medStatus, flateHode } from "./felles.js";
@@ -1031,7 +1084,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
         el("p", { text: `${t("ui.rekruttering.kol_poeng")}: ${poeng}` }),
         el("h3", { text: t("ui.rekruttering.funn_tittel") }),
         funn.length ? el("ul", {}, ...funn)
-          : el("p", { text: t("ui.rekruttering.ingen_funn") })),
+          : el("p", { text: t("ui.rekruttering.ingen_funn") }),
+        prosess.oppdrag_id != null
+          ? kandidatkortBoks(prosess.oppdrag_id, kandidat.kandidat_id)
+          : el("span")),
     });
   }
 
@@ -1493,9 +1549,11 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         [...radPar].sort(etterPoeng)
           .forEach((p, i) => {
             kropp.append(p.hovedrad, p.detaljrad);
-            p.hovedrad.classList.toggle("rekrut-sjikt-topp", i < 5);
-            p.hovedrad.classList.toggle("rekrut-sjikt-neste",
-              i >= 5 && i < 10);
+            for (const rad of [p.hovedrad, p.detaljrad]) {
+              rad.classList.toggle("rekrut-sjikt-topp", i < 5);
+              rad.classList.toggle("rekrut-sjikt-neste",
+                i >= 5 && i < 10);
+            }
           });
       };
       ranger();
@@ -1652,7 +1710,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           boks.append(
             el("p", {
               text: `${t("ui.rekruttering.kandidat")}: ${rad.kandidat_id}` }),
-            el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn);
+            el("h4", { text: t("ui.rekruttering.evalueringer.funn") }), funn,
+            kandidatkortBoks(svar.oppdrag_id, rad.kandidat_id));
         });
         return boks;
       }
