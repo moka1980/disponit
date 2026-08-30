@@ -1117,8 +1117,9 @@ def kandidatkort_endepunkt(tjeneste, request):
             " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s"
             "   AND slettet_ts IS NULL AND felter IS NOT NULL",
             (tenant, pid, kid)).fetchone()
-        dokumenter = [d[0] for d in conn.execute(
-            "SELECT filnavn FROM kandidat_originaldokument"
+        dokumenter = [{"dokument_id": str(did), "filnavn": fn}
+                      for did, fn in conn.execute(
+            "SELECT dokument_id, filnavn FROM kandidat_originaldokument"
             " WHERE tenant=%s AND prosess_id=%s AND kandidat_id=%s"
             "   AND slettet_ts IS NULL AND filnavn IS NOT NULL"
             " ORDER BY filnavn",
@@ -1138,6 +1139,72 @@ def kandidatkort_endepunkt(tjeneste, request):
                                kandidat=str(kid))
         return _ok({"kandidat_id": kid_raa, "felter": felter,
                     "dokumenter": dokumenter}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def kandidatdokument_les_endepunkt(tjeneste, request):
+    """GET /v1/rekruttering/kandidatdokument/{oppdrag_id}/{dokument_id}
+    — originaldokumentet bak kandidatkortet (natten 30/8).
+
+    ALLTID NEDLASTING, ALDRI RENDRING: dokumentene er kundeopplastede
+    filer (HTML inkludert), og å rendre dem på appens origin ville gitt
+    lagret skript sesjonskaken. Content-Disposition: attachment +
+    nosniff, og innholdstypen som serveres er alltid octet-stream —
+    filnavnet (sanert) sier hva leseren lagrer. Samme grenser som
+    kortet: flatens lesescope, levende anker/frist, og hver lesing
+    spores."""
+    import re as remod
+    import uuid as uuidmod
+
+    from starlette.responses import Response as RaaRespons
+
+    from .app import _rid
+    from .policyadmin_http import _feil, _med_conn
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        oppdrag_id = int(request.path_params["oppdrag_id"])
+        did = uuidmod.UUID(str(request.path_params["dokument_id"]))
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
+        prad = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess p"
+            " WHERE p.tenant=%s AND p.oppdrag_id=%s"
+            "   AND p.slettet_ts IS NULL AND p.slett_bestilt_ts IS NULL"
+            "   AND now() < coalesce(p.lukket_ts, p.opprettet)"
+            "               + p.slettefrist_dogn * interval '1 day'",
+            (tenant, oppdrag_id)).fetchone()
+        if prad is None:
+            return _feil("ikke_funnet", rid, 404)
+        rad = conn.execute(
+            "SELECT filnavn, dokument FROM kandidat_originaldokument"
+            " WHERE tenant=%s AND prosess_id=%s AND dokument_id=%s"
+            "   AND slettet_ts IS NULL AND dokument IS NOT NULL",
+            (tenant, prad[0], did)).fetchone()
+        if rad is None:
+            return _feil("ikke_funnet", rid, 404)
+        filnavn, innhold = rad
+        # Filnavnet inn i headeren SANERES: kun kanonens trygge tegn,
+        # aldri linjeskift/anførselstegn — resten byttes med '_'.
+        trygt = remod.sub(r"[^A-Za-z0-9._/-]", "_", filnavn or "dokument")
+        trygt = trygt.replace("/", "_")[:120] or "dokument"
+        tjeneste.logg.hendelse("kandidatdokument_lest", rid, tenant,
+                               art="sikkerhet", oppdrag_id=oppdrag_id,
+                               dokument=str(did))
+        return RaaRespons(
+            bytes(innhold), media_type="application/octet-stream",
+            headers={
+                "content-disposition": f'attachment; filename="{trygt}"',
+                "x-content-type-options": "nosniff",
+                "cache-control": "no-store",
+                "x-request-id": rid,
+            })
 
     return _med_conn(tjeneste, rid, kjor)
 

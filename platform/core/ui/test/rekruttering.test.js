@@ -6814,7 +6814,8 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
       kandidat_id: "kandidat-01",
       felter: { "[NAVN-1]": "Kari Nordmann",
                 "[KONTAKT-1]": "kari@eksempel.no" },
-      dokumenter: ["cv.pdf"] },
+      dokumenter: [{ dokument_id: "d0000000-0000-5000-8000-000000000001",
+                     filnavn: "cv.pdf" }] },
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
@@ -6841,13 +6842,20 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
   knapp.click();
   assert.ok(await vent(() => seksjon().textContent
     .includes("Kari Nordmann")), "avmaskeringen rendret aldri");
+  const kortEl = () => seksjon().querySelector(".rekrut-kandidatkort");
   const tekst = seksjon().textContent;
   assert.match(tekst, /kari@eksempel\.no/);
   assert.match(tekst, /cv\.pdf/);
+  // Dokumentet er en NEDLASTINGSLENKE mot dokumentruten — aldri
+  // inline-rendring av kundeopplastet innhold.
+  const lenke = kortEl().querySelector("a");
+  assert.ok(lenke && lenke.getAttribute("href").includes(
+    "/v1/rekruttering/kandidatdokument/96/"), "dokumentlenken mangler");
+  assert.equal(lenke.getAttribute("download"), "cv.pdf");
   // Etikettene er locale-tekster utledet av tokenet — aldri rå tokener.
   // (Målt på KORTET: flatens blinding-forklaring nevner selv [NAVN-1]
   // som eksempel, så hele seksjonen kan ikke bære negativen.)
-  const kort = seksjon().querySelector(".rekrut-kandidatkort");
+  const kort = kortEl();
   assert.match(kort.textContent,
     new RegExp(t("ui.rekruttering.kandidatkort.felt.navn")));
   assert.doesNotMatch(kort.textContent, /\[NAVN-1\]/);
