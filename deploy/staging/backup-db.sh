@@ -505,8 +505,27 @@ if [ "$(sudo -u postgres psql -Atd "$VERIF" -c \
     "SELECT lager_sti FROM inndata_artefakt
       WHERE status IN ('lastet','bundet') AND lager_sti IS NOT NULL" \
     | sed '/^$/d' | sort -u > "$LISTE.krav"
+  # DIGESTENE (070, sak #245): radens `lagret_sha256` er målt av
+  # skriveveien over nøyaktig de bytene som ble fsync-et — den ene
+  # verdien som lar backupen felle en AVKORTET eller KORRUPT ciphertext
+  # uten å kunne lese den. `sha256sum -c`-formatet bygges her; NULL
+  # hoppes over med vilje (rader født før 070 — en diktet digest ville
+  # gjort porten til en løgn), og en base eldre enn 070 mangler hele
+  # kolonnen og gir en tom fil i stedet for en død backup.
+  if [ "$(sudo -u postgres psql -Atd "$VERIF" -c \
+          "SELECT count(*) FROM information_schema.columns
+            WHERE table_name='inndata_artefakt'
+              AND column_name='lagret_sha256'")" = 1 ]; then
+    sudo -u postgres psql -Atd "$VERIF" -c \
+      "SELECT lagret_sha256 || '  ' || lager_sti FROM inndata_artefakt
+        WHERE status IN ('lastet','bundet') AND lager_sti IS NOT NULL
+          AND lagret_sha256 IS NOT NULL" > "$LISTE.digester"
+  else
+    : > "$LISTE.digester"
+  fi
 else
   : > "$LISTE.krav"
+  : > "$LISTE.digester"
 fi
 VERIF_NAVN="$VERIF"
 sudo -u postgres dropdb --if-exists "$VERIF"
@@ -665,6 +684,29 @@ done < "$LISTE.krav"
       done
   exit 1
 }
+
+# INNHOLDET MÅLES MOT SKRIVEVEIENS EGEN DIGEST (070, sak #245).
+# Navneporten over feller tomme og forsvunne filer; DENNE feller delvis
+# avkorting og byte-korrupsjon — formen sviktende lagring faktisk tar
+# når den ikke tar alt. Ciphertexten kan ikke leses her (DEK-en er
+# ikke på verten, med vilje), men den kan MÅLES: `lagret_sha256` ble
+# regnet av API-et over nøyaktig de bytene som ble fsync-et.
+# Feilutskriften korthashes som de andre portenes — stiene hører ikke
+# hjemme i journald.
+if [ -s "$LISTE.digester" ]; then
+  DIGESTFEIL=$( (cd "$LAGER" && sha256sum --check --quiet --strict \
+                   "$LISTE.digester" 2>&1) ) || {
+    echo "AVBRUTT: $(printf '%s\n' "$DIGESTFEIL" | grep -c ':') av" \
+         "$(wc -l < "$LISTE.digester") ciphertext-fil(er) matcher ikke" \
+         "digesten skriveveien målte — avkortet eller korrupt lagring." \
+         "Korthash per linje:" >&2
+    printf '%s\n' "$DIGESTFEIL" | sed -n '1,5p' \
+      | while IFS= read -r linje; do
+          printf '  %s\n' "$(printf '%s' "$linje" | sha256sum | cut -c1-12)" >&2
+        done
+    exit 1
+  }
+fi
 
 # ALLE portene har svart — dumpens to og arkivets én. FØRST nå får FILENE
 # backupnavnene sine, og de får dem SAMMEN: paret er gjenopprettingsenheten,

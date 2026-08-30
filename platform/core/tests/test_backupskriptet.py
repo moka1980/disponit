@@ -363,8 +363,9 @@ def test_tenantstier_gaar_ikke_i_loggen():
            and "sha256sum" not in l and "wc -l" not in l
            and "grep -c" not in l]
     assert not raa, f"rå tenant-stier skrives til stderr: {raa}"
-    assert SKRIPT.count("sha256sum | cut -c1-12") == 2, (
-        "begge feilveiene skal hashe stien — én av dem lekker fortsatt")
+    # Tre feilveier etter 070-porten (sak #245): navn, innhold, digest.
+    assert SKRIPT.count("sha256sum | cut -c1-12") == 3, (
+        "hver feilvei skal hashe stien — én av dem lekker fortsatt")
     # Operatøren må få vite HVOR klarteksten finnes, ellers er
     # redaksjonen en forringelse og ikke en beskyttelse.
     assert "$LISTE.krav" in SKRIPT and "tmpfs for klartekst" in SKRIPT, \
@@ -499,3 +500,31 @@ def test_tar_listing_gaar_til_indexfil_med_literal_sitering():
     assert "chr(10)" in SKRIPT, (
         "linjeskift-vakten er borte — en sti med \\n splittes i to krav"
         " som aldri matcher, og backupen feiler med villedende melding")
+
+
+def test_digestporten_maaler_ciphertexten_mot_skriveveiens_verdi():
+    """Sak #245: navneporten feller tomme og forsvunne filer, men `tar`
+    arkiverer en HALV fil like lydig som en hel. `lagret_sha256` (070)
+    er skriveveiens egen måling av de fsync-ede bytene — den ene lagrede
+    verdien som lar backupen felle avkorting og korrupsjon uten DEK-en.
+
+    Porten hopper over NULL (rader født før 070 — en diktet digest ville
+    vært en løgn) og en base uten kolonnen (eldre enn 070), og den står
+    FØR finaliseringen: et par som feiler her skal aldri få navnene sine.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `sha256sum --check`-blokken, eller
+    flytt den bak `mv "$ARKIV_DELVIS"` — da publiseres paret som
+    verifisert med en ciphertext ingen kan dekryptere.
+    """
+    digestkrav = _pos("AND lagret_sha256 IS NOT NULL")
+    sjekk = _pos('sha256sum --check --quiet --strict')
+    assert digestkrav < sjekk, "digestlisten bygges etter at den måles"
+    assert sjekk < _pos('mv "$ARKIV_DELVIS" "$ARKIV"'), (
+        "digestporten står etter finaliseringen — paret er alt"
+        " publisert når den feller")
+    assert "information_schema.columns" in SKRIPT, (
+        "kolonnesjekken er borte — en base eldre enn 070 dreper backupen"
+        " i stedet for å hoppe over målingen")
+    # … og porten kjører der filene faktisk ligger.
+    assert 'cd "$LAGER"' in SKRIPT, (
+        "sha256sum -c uten cd til lageret måler relative stier mot feil rot")
