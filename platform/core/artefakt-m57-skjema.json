@@ -52,50 +52,64 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "arkiv_utpakking_utenfor_grense_brudd",
-        "arkiv_utpakking_utenfor_grense_forsok",
-        "bestilling_over_5000_akseptert_brudd",
-        "bestilling_over_5000_akseptert_forsok",
-        "bias_digester_kjort",
-        "bias_maalinger",
-        "bias_maling_mangler_for_digest_brudd",
-        "bias_maling_mangler_for_digest_forsok",
-        "blinding_avskrudd_uten_auditrad_brudd",
-        "blinding_avskrudd_uten_auditrad_forsok",
-        "blinding_maskert_felt_i_modellinput_brudd",
-        "blinding_maskert_felt_i_modellinput_forsok",
-        "ddl_begge_kjoringer_gronne",
-        "funn_uten_kildereferanse_brudd",
-        "funn_uten_kildereferanse_forsok",
-        "kjoring_delvis_resultat_promotert_brudd",
-        "kjoring_delvis_resultat_promotert_forsok",
-        "liste_forelder_i_annen_serie_brudd",
-        "liste_forelder_i_annen_serie_forsok",
-        "liste_signert_versjon_endret_brudd",
-        "liste_signert_versjon_endret_forsok",
-        "oppdrag_frigivelse_id_endret_brudd",
-        "oppdrag_frigivelse_id_endret_forsok",
-        "oppdrag_frigivelse_pa_annen_opprinnelse_brudd",
-        "oppdrag_frigivelse_pa_annen_opprinnelse_forsok",
-        "serie_forgrenet_historikk_brudd",
-        "serie_forgrenet_historikk_forsok",
-        "serie_to_signerte_versjoner_brudd",
-        "serie_to_signerte_versjoner_forsok",
-        "serie_uten_entydig_rot_brudd",
-        "serie_uten_entydig_rot_forsok",
-        "ttl_lager_utenfor_kandidatgrensen_brudd",
-        "ttl_lager_utenfor_kandidatgrensen_forsok",
-        "ttl_persondata_funnet_etter_reaping_brudd",
-        "ttl_persondata_funnet_etter_reaping_forsok",
-        "ui_axe_alvorlige_brudd_brudd",
-        "ui_axe_alvorlige_brudd_forsok",
-        "ui_tastaturgjennomgang_dokumentert",
-        "utsending_modellgenerert_fritekst_brudd",
-        "utsending_modellgenerert_fritekst_forsok",
-        "utsending_uten_signaturkjede_brudd",
         "utsending_uten_signaturkjede_forsok",
+        "utsending_uten_signaturkjede_brudd",
+        "liste_signert_versjon_endret_forsok",
+        "liste_signert_versjon_endret_brudd",
+        "serie_to_signerte_versjoner_forsok",
+        "serie_to_signerte_versjoner_brudd",
+        "liste_forelder_i_annen_serie_forsok",
+        "liste_forelder_i_annen_serie_brudd",
+        "ttl_persondata_funnet_etter_reaping_forsok",
+        "ttl_persondata_funnet_etter_reaping_brudd",
+        "blinding_maskert_felt_i_modellinput_forsok",
+        "blinding_maskert_felt_i_modellinput_brudd",
+        "utsending_modellgenerert_fritekst_forsok",
+        "utsending_modellgenerert_fritekst_brudd",
+        "arkiv_utpakking_utenfor_grense_forsok",
+        "arkiv_utpakking_utenfor_grense_brudd",
+        "oppdrag_frigivelse_id_endret_forsok",
+        "oppdrag_frigivelse_id_endret_brudd",
+        "oppdrag_frigivelse_pa_annen_opprinnelse_forsok",
+        "oppdrag_frigivelse_pa_annen_opprinnelse_brudd",
+        "serie_forgrenet_historikk_forsok",
+        "serie_forgrenet_historikk_brudd",
+        "serie_uten_entydig_rot_forsok",
+        "serie_uten_entydig_rot_brudd",
+        "funn_uten_kildereferanse_forsok",
+        "funn_uten_kildereferanse_brudd",
+        "blinding_avskrudd_uten_auditrad_forsok",
+        "blinding_avskrudd_uten_auditrad_brudd",
+        "bias_maling_mangler_for_digest_forsok",
+        "bias_maling_mangler_for_digest_brudd",
+        "ttl_lager_utenfor_kandidatgrensen_forsok",
+        "ttl_lager_utenfor_kandidatgrensen_brudd",
+        "bestilling_over_5000_akseptert_forsok",
+        "bestilling_over_5000_akseptert_brudd",
+        "kjoring_delvis_resultat_promotert_forsok",
+        "kjoring_delvis_resultat_promotert_brudd",
+        "ui_axe_alvorlige_brudd_forsok",
+        "ui_axe_alvorlige_brudd_brudd",
+        "artefakt_versjon_uten_registrering_forsok",
+        "artefakt_versjon_uten_registrering_brudd",
+        "type_to_gjeldende_versjoner_forsok",
+        "type_to_gjeldende_versjoner_brudd",
+        "versjon_avviklet_reaktivert_forsok",
+        "versjon_avviklet_reaktivert_brudd",
+        "promotering_mot_avviklet_versjon_forsok",
+        "promotering_mot_avviklet_versjon_brudd",
+        "rapport_borte_etter_reaping_forsok",
+        "rapport_borte_etter_reaping_brudd",
+        "rapport_treff_etter_reaping_forsok",
+        "rapport_treff_etter_reaping_brudd",
+        "v1rapporter_utenfor_kandidatgrensen_forsok",
+        "v1rapporter_utenfor_kandidatgrensen_brudd",
+        "ui_tastaturgjennomgang_dokumentert",
+        "ddl_begge_kjoringer_gronne",
+        "ytelse_full_bunt_soknader",
         "ytelse_full_bunt_minutter",
-        "ytelse_full_bunt_soknader"
+        "bias_digester_kjort",
+        "bias_maalinger"
       ],
       "properties": {
         "utsending_uten_signaturkjede_forsok": {
@@ -247,6 +261,62 @@
           "minimum": 0
         },
         "ui_axe_alvorlige_brudd_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artefakt_versjon_uten_registrering_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "artefakt_versjon_uten_registrering_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type_to_gjeldende_versjoner_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type_to_gjeldende_versjoner_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "versjon_avviklet_reaktivert_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "versjon_avviklet_reaktivert_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "promotering_mot_avviklet_versjon_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "promotering_mot_avviklet_versjon_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rapport_borte_etter_reaping_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rapport_borte_etter_reaping_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rapport_treff_etter_reaping_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rapport_treff_etter_reaping_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v1rapporter_utenfor_kandidatgrensen_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v1rapporter_utenfor_kandidatgrensen_brudd": {
           "type": "integer",
           "minimum": 0
         },

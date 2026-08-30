@@ -4200,12 +4200,17 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             # karantene + sikkerhetssak som binding-/epoch-avvik under:
             # artefaktet bevares for etterforskning, aldri som evidens.
             arad = conn.execute(
-                "SELECT artefakttype, ciphertext, nonce, dek_ref FROM"
+                "SELECT artefakttype, ciphertext, nonce, dek_ref,"
+                "       skjemaversjon FROM"
                 " artefakt WHERE tenant=%s AND artefakt_id=%s",
                 (tenant, art_id)).fetchone()
             promotert = arad is not None
             if promotert:
-                skjema = artefaktskjema.hent_skjema(conn, arad[0])
+                # 072: revalideringen går mot RADENS versjon — en v1
+                # promotert i flippvinduet skal aldri måles mot v2s
+                # skjema (og motsatt); versjonen er radens identitet.
+                skjema = artefaktskjema.hent_skjema_for_versjon(
+                    conn, arad[0], arad[4])
                 if skjema is None:
                     promotert = False
                 else:

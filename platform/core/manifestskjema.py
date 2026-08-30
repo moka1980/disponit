@@ -443,6 +443,15 @@ M57_INVARIANTER: tuple[str, ...] = (
     "bestilling_over_5000_akseptert",
     "kjoring_delvis_resultat_promotert",
     "ui_axe_alvorlige_brudd",
+    # BESLUTNING-168 (072): skjemaversjonen som relasjonell identitet —
+    # grensene er pinnet FØR akseptrunden (§0), som resten av settet.
+    "artefakt_versjon_uten_registrering",
+    "type_to_gjeldende_versjoner",
+    "versjon_avviklet_reaktivert",
+    "promotering_mot_avviklet_versjon",
+    "rapport_borte_etter_reaping",
+    "rapport_treff_etter_reaping",
+    "v1rapporter_utenfor_kandidatgrensen",
 )
 KRAVGRENSER["m57-v1"] = {
     # Settet er PINNET her, ikke avledet av artefaktet: et artefakt som
