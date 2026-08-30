@@ -2813,6 +2813,21 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
         prosess_id = rad[0]
         kid_uuid = uuid.uuid5(
             _KANDIDAT_NS, f"{tenant}\x1f{prosess_id}\x1f{kid}")
+        # 075 (#157): ankeret fødes FØRST, gjennom døren — idempotent,
+        # med samme FOR SHARE-serialisering mot reaperen som lagervaktene.
+        # Lagrene FK-er ankeret, så en skrivefeil i kandidat-id-en er
+        # ikke lenger en ny, lovlig kandidat med ett lager.
+        try:
+            conn.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                         (tenant, prosess_id, kid_uuid))
+        except psycopg.errors.InsufficientPrivilege:
+            # Dørens egen dom (reapet/usynlig prosess) er en AVVISNING av
+            # skrivet — samme kode som lagervaktens, aldri en driftsfeil.
+            conn.rollback()
+            tjeneste.logg.hendelse("kandidatdata_avvist", rid, tenant,
+                                   art="sikkerhet", oppdrag_id=opp_id,
+                                   detalj="ankerfodsel")
+            return _feilsvar("kandidatdata_avvist", rid)
 
         def _konflikt(detalj):
             conn.rollback()

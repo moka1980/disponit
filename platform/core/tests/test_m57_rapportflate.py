@@ -1251,6 +1251,10 @@ def test_v2_rapportens_funn_leses_fra_lageret(migrator, miljo):
         kid = uuidmod.uuid5(_KANDIDAT_NS, f"{TENANT}\x1f{pid}\x1fk1")
         _sett_kontekst(migrator, TENANT)
         migrator.execute(
+            "INSERT INTO kandidat (tenant, prosess_id, kandidat_id)"
+            " VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+            (TENANT, pid, kid))
+        migrator.execute(
             "INSERT INTO kandidat_evalueringsartefakt (tenant,"
             " prosess_id, kandidat_id, artefakt, innhold_sha256)"
             " VALUES (%s,%s,%s,%s,'h')",

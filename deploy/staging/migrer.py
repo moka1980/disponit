@@ -95,6 +95,8 @@ GRANT UPDATE (status) ON aktiveringsrunde TO {rolle};
 -- definer, mens denne rettigheten er den som holder runtime helt utenfor.
 -- EXECUTE på de to prosessfunksjonene ligger i M37_RETTIGHETER_API.
 GRANT SELECT ON rekrutteringsprosess TO {rolle};
+-- 075 (#157): ankeret leses av runtime; fødselen er dørens.
+GRANT SELECT ON kandidat TO {rolle};
 GRANT SELECT, INSERT ON kandidat_originaldokument,
     kandidat_parsettekst, kandidat_evalueringsartefakt,
     kandidat_intervjusporsmal, kandidat_utsendingsdata,
@@ -382,6 +384,7 @@ GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rol
 -- kryss-tenant og hører til timerrollen (038-formen, betinget DO-blokk i
 -- migrasjonen).
 GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_kandidat(TEXT, UUID, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
 GRANT EXECUTE ON FUNCTION bestill_tidligsletting(TEXT, UUID) TO {rolle};
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et

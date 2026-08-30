@@ -184,6 +184,8 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  "kandidat_parsettekst", "kandidat_originaldokument",
                  "kandidat_evalueringsartefakt", "kandidat_intervjusporsmal",
                  "kandidat_utsendingsdata", "kandidat_avmaskering",
+                 # 075 (#157): ankeret mellom lagrene og prosessen.
+                 "kandidat",
                  "rekrutteringsprosess",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det

@@ -171,6 +171,8 @@ def _seed_prosess(vekter=None):
                               "kilde": {"start": 0, "slutt": 4,
                                         "sitat": "Uten"}}]))):
                 kid = uuid.uuid4()
+                rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                           (TEN, pid, kid))
                 rt.execute(
                     "INSERT INTO kandidat_evalueringsartefakt (tenant,"
                     " prosess_id, kandidat_id, artefakt, innhold_sha256)"
@@ -601,6 +603,8 @@ def _artefakt(prosess_id: str, oppfylt: dict, funn=(), ekstra=None,
     try:
         sett_kontekst(rt, TEN, "test", "r-art")
         kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TEN, prosess_id, kid))
         innhold = (raa if raa is not None else
                    {"oppfylt": oppfylt, "vekter": {"drift": 3, "sky": 2},
                     "funn": list(funn), "intervjusporsmal": [],
@@ -625,6 +629,8 @@ def _sporsmalslager(prosess_id: str, kandidat_id: str, verdi):
     rt = koble(DSN)
     try:
         sett_kontekst(rt, TEN, "test", "r-spm")
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TEN, prosess_id, kandidat_id))
         rt.execute(
             "INSERT INTO kandidat_intervjusporsmal (tenant, prosess_id,"
             " kandidat_id, sporsmal, innhold_sha256) VALUES (%s,%s,%s,%s,%s)",
@@ -2090,6 +2096,9 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
             " WHERE tenant=%s AND prosess_id=%s", (TEN, pid)).fetchone()[0]
         # Buntens egen id → lagerets uuid5 (skrivedørens form, ordrett).
         kid = uuid.uuid5(_KANDIDAT_NS, f"{TEN}\x1f{pid}\x1fkandidat-77")
+        m.execute(
+            "INSERT INTO kandidat (tenant, prosess_id, kandidat_id)"
+            " VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (TEN, pid, kid))
         m.execute(
             "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
             " kandidat_id, felter, innhold_sha256) VALUES (%s,%s,%s,"
