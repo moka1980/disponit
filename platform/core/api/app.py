@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import queue
 import re
@@ -2566,6 +2567,16 @@ def _har_ulagringsbart_tegn(rot) -> bool:
                 verdi.encode("utf-8")
             except UnicodeEncodeError:
                 return True
+        # IKKE-ENDELIGE TALL ER SAMME KLASSE (#260 P2-1, Codex på #259):
+        # `json.loads` er permissiv og tar imot `NaN`/`Infinity`, og
+        # `json.dumps` skriver de samme ikke-standard-tokenene ut igjen
+        # — men `jsonb` avviser dem, og da er kjeden nøyaktig nullbytens:
+        # rå psycopg.Error → db_utilgjengelig → falsk driftsalarm og en
+        # brent retrykjede mot en frisk base. Verdien raden ikke kan ta
+        # imot måles HER, i den ene gjennomgangen begge veiene alt spør.
+        # `bool` er en int-subklasse og aldri float, så armen er ren.
+        elif isinstance(verdi, float) and not math.isfinite(verdi):
+            return True
         elif isinstance(verdi, dict):
             stakk.extend(verdi.keys())
             stakk.extend(verdi.values())
@@ -2657,7 +2668,15 @@ def _kandidatdata(tjeneste: Tjeneste, request: Request, form: str) -> Response:
                 or not isinstance(generasjon, int) \
                 or isinstance(generasjon, bool) \
                 or not isinstance(kid, str) \
-                or not _KANDIDAT_ID_KANON.fullmatch(kid):
+                or not _KANDIDAT_ID_KANON.fullmatch(kid) \
+                or _har_ulagringsbart_tegn(tenant) \
+                or _har_ulagringsbart_tegn(claim_id):
+            # KONVOLUTTEN MÅLES OGSÅ (#260 P2-2, Codex på #259):
+            # `tenant`/`owner_claim_id` gikk bare gjennom typesjekk, så
+            # et løsrevet surrogat nådde `sett_kontekst`/claim-oppslaget
+            # og reiste `UnicodeEncodeError` — hverken psycopg.Error
+            # eller noe porten fanger: en UKODET 500, på hvert retry.
+            # (`kandidat_id` bæres av _KANDIDAT_ID_KANON alene.)
             tjeneste.logg.hendelse("request_feilformet", rid)
             return _feilsvar("request_feilformet", rid)
 

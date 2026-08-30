@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from tid import rfc3339_lesbar  # noqa: F401  (re-eksport: modulens kontrakt)
 
 from . import blinding
+from .rapportskjema import FUNN_MAKS, SITAT_MAKS
 
 #: Lukket kategorisett (§6). Ingen karaktertrekk: kategoriene beskriver
 #: DOKUMENTASJONEN mot stillingens krav, aldri personen. En ny kategori
@@ -122,6 +123,18 @@ def valider_funn(funn: dict, soknadstekst: str,
             or not 0 <= start < slutt <= len(soknadstekst)
             or soknadstekst[start:slutt] != sitat):
         raise Evalueringsfeil("uten_kildereferanse")
+    # BUDSJETTET ER KONTRAKTENS, IKKE ADAPTERENS (#260 P2-3, Codex på
+    # #259): `SITAT_MAKS` sto håndhevet bare i `Ollamamodell.vurder`,
+    # men modellen er injiserbar — og payloaden strømmes FØR
+    # rapportvalideringen, så en alternativ modells fulltekst-«sitat»
+    # ble enten en persistert artefakt som etterpå feiler på skjemaet,
+    # eller et sprengt 50 MiB-budsjett felt som kandidatlagring_feilet.
+    # Her, i den delte porten, er avvisningen KODET og kommer FØR noe
+    # er strømmet. (Ollama-adapteren DROPPER fortsatt ved sin grense —
+    # en fossende modell skal ikke felle en ellers gyldig evaluering;
+    # denne porten er baksperren for adaptere uten den høfligheten.)
+    if len(sitat) > SITAT_MAKS:
+        raise Evalueringsfeil("sitat_over_budsjett", str(len(sitat)))
     # SITATET KAN IKKE KRYSSE EN DOKUMENTGRENSE (#174, Codex G7 på #170).
     #
     # Kandidatens dokumenter settes sammen til én tekst før modellen leser
@@ -211,6 +224,10 @@ def _krev_helt_svar(svar: object, vekter: dict[str, int]) -> dict:
     # kalleren — og forskjellen avgjør om kjøringen kan retryes eller ei.
     if any(not isinstance(f, dict) for f in svar["funn"]):
         raise Evalueringsfeil("ufullstendig_modellsvar", "funn")
+    # Antallstaket måles i samme delte port som elementene (#260 P2-3):
+    # skjemaets `maxItems` finnes, men ETTER strømmingen — for sent.
+    if len(svar["funn"]) > FUNN_MAKS:
+        raise Evalueringsfeil("funn_over_budsjett", str(len(svar["funn"])))
     if set(svar["oppfylt"]) != set(vekter):
         raise Evalueringsfeil(
             "ufullstendig_modellsvar",

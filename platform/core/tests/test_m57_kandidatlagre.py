@@ -2592,6 +2592,40 @@ def test_173_nullbyte_er_feilformet_ikke_doed_base(migrator, miljo):
             assert r.status_code == 400, r.text
             assert r.json()["feil"] == "request_feilformet"
 
+            # Ikke-endelige tall er samme klasse (#260 P2-1): `json.loads`
+            # tar imot NaN-tokenet, `jsonb` gjør det ikke — uten porten
+            # er kjeden nullbytens (db_utilgjengelig, falsk driftsalarm).
+            import json as _json
+            kropp = _json.dumps({**trippel, "kandidat_id": "k1",
+                                 "artefakt": {"funn": [], "oppfylt": {},
+                                              "kildetekst": "x",
+                                              "poeng": float("nan")},
+                                 "avmaskering": {}})
+            assert "NaN" in kropp
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       content=kropp.encode(),
+                       headers={**hode,
+                                "content-type": "application/json"})
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
+            # Konvolutten måles også (#260 P2-2): et løsrevet surrogat i
+            # `tenant` nådde sett_kontekst og reiste UnicodeEncodeError
+            # — en UKODET 500 på hvert retry. Kroppen bygges som rå
+            # bytes: klientens egen UTF-8-koding ville ellers felt den.
+            kropp = _json.dumps({**trippel, "tenant": "SURRPLASS",
+                                 "kandidat_id": "k1",
+                                 "artefakt": {"funn": [], "oppfylt": {},
+                                              "kildetekst": "x"},
+                                 "avmaskering": {}}
+                                ).replace('"SURRPLASS"', '"\\ud800"')
+            r = c.post("/v1/rekruttering/kandidatartefakt",
+                       content=kropp.encode(),
+                       headers={**hode,
+                                "content-type": "application/json"})
+            assert r.status_code == 400, r.text
+            assert r.json()["feil"] == "request_feilformet"
+
             # Uten nullbyten går nøyaktig de samme kroppene inn — porten
             # felte tegnet, ikke forespørselen.
             assert c.post("/v1/rekruttering/kandidatdokument",

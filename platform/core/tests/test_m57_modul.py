@@ -5565,3 +5565,52 @@ def test_blindingen_maales_paa_den_sammensatte_inputen():
     samlet = blinding.SKJOT.join(blindede)
     assert "Kari" not in samlet
     blinding.krev_blindet(samlet, avmask)      # skal ikke kaste
+
+
+def test_ulagringsbare_verdier_maales_i_det_ene_predikatet():
+    """#260 P2-1: NaN/Infinity er samme klasse som nullbyten og det
+    løsrevne surrogatet — verdier raden ikke kan ta imot, målt i den ENE
+    gjennomgangen begge skriveveiene spør."""
+    from api.app import _har_ulagringsbart_tegn
+
+    for stygg in (float("nan"), float("inf"), float("-inf")):
+        assert _har_ulagringsbart_tegn(stygg), stygg
+        assert _har_ulagringsbart_tegn({"a": [{"b": stygg}]}), stygg
+    for grei in (1.5, 0.0, -2.25, 10**18, True, None, "tekst"):
+        assert not _har_ulagringsbart_tegn(grei), grei
+    assert not _har_ulagringsbart_tegn({"poeng": [1.0, {"v": 2.5}]})
+
+
+def test_funnbudsjettene_haandheves_i_den_delte_porten():
+    """#260 P2-3: SITAT_MAKS og FUNN_MAKS er kontraktens tall, ikke
+    Ollama-adapterens. En injisert modell uten adapterens høflighet skal
+    møte en KODET avvisning i den delte valideringen — FØR payloaden er
+    strømmet — aldri en persistert artefakt som etterpå feiler på
+    skjemaet eller et sprengt dørbudsjett."""
+    import pytest
+
+    from modules.m57_ats import evaluering
+    from modules.m57_ats.rapportskjema import FUNN_MAKS, SITAT_MAKS
+
+    tekst = "a" * (SITAT_MAKS + 10)
+    for_langt = {"kategori": "manglende_dokumentasjon",
+                 "kilde": {"start": 0, "slutt": SITAT_MAKS + 1,
+                           "sitat": tekst[:SITAT_MAKS + 1]}}
+    with pytest.raises(evaluering.Evalueringsfeil) as e:
+        evaluering.valider_funn(for_langt, tekst)
+    assert e.value.kode == "sitat_over_budsjett"
+    # …og nøyaktig på grensen går det gjennom: porten feller budsjettet,
+    # ikke sitatet.
+    paa_grensen = {"kategori": "manglende_dokumentasjon",
+                   "kilde": {"start": 0, "slutt": SITAT_MAKS,
+                             "sitat": tekst[:SITAT_MAKS]}}
+    evaluering.valider_funn(paa_grensen, tekst)
+
+    svar = {"funn": [{} for _ in range(FUNN_MAKS + 1)],
+            "oppfylt": {"drift": True}}
+    with pytest.raises(evaluering.Evalueringsfeil) as e:
+        evaluering._krev_helt_svar(svar, {"drift": 3})
+    assert e.value.kode == "funn_over_budsjett"
+    svar["funn"] = svar["funn"][:FUNN_MAKS]
+    # Grensen selv er lovlig — elementvalideringen tar resten.
+    evaluering._krev_helt_svar(svar, {"drift": 3})
