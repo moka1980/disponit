@@ -91,6 +91,7 @@
   "ui.sprak": "Language",
   "ui.sprak.nb": "Norsk",
   "ui.sprak.en": "English",
+  "ui.sprak.hentefeil": "Could not load the language — please try again.",
   "ui.logg_ut_bekreft_tittel": "Log out?",
   "ui.logg_ut_bekreft_tekst": "You will be logged out of Disponit. You can log in again at any time.",
   "ui.logg_ut_bekreft_primar": "Log out",
