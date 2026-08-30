@@ -252,10 +252,10 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     veier (uadressert medlem og manglende medlem er like rødt), og
     `len(kandidater)` må være == oppdragets `antall_soknader` og ≤ 5000
     FØR innholdet parses — ekstern-lesing-doktrinen, samme grunn som
-    resten av denne gaten kjører før utpakking. `kjoring.py` (som ikke
-    finnes ennå — `les_porsjonsvis` har ingen kaller utenfor test) bytter
-    kandidat-utledning til manifestet i samme PR som snittet fra
-    utførelsesarmen. Ny maskin: eget issue (#161) + egen PR.
+    resten av denne gaten kjører før utpakking. Manifestoppslaget bor i
+    `kjoring.kjor_bunt` (#161-arbeidet er landet — den forrige
+    formuleringen her sa at `kjoring.py` ikke fantes ennå, og villedet
+    review; #262 P3-1).
     """
     if not zipfile.is_zipfile(sti):
         raise Buntfeil("ikke_zip")
