@@ -1128,6 +1128,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return rekruttering_http.stillingsprofil_slett_endepunkt(
             tjeneste, request)
 
+    def rekruttering_kandidatdokument_les(request: Request) -> Response:
+        return rekruttering_http.kandidatdokument_les_endepunkt(
+            tjeneste, request)
+
     def rekruttering_signer(request: Request) -> Response:
         return rekruttering_http.signer_endepunkt(tjeneste, request)
 
@@ -1317,6 +1321,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               rekrutteringsrapport_detalj, methods=["GET"]),
         Route("/v1/rekruttering/kandidatkort/{oppdrag_id:int}/{kandidat_id}",
               rekruttering_kandidatkort, methods=["GET"]),
+        Route("/v1/rekruttering/kandidatdokument/{oppdrag_id:int}/{dokument_id}",
+              rekruttering_kandidatdokument_les, methods=["GET"]),
         Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
               methods=["GET"]),
         Route("/v1/unntak/{id:int}", unntak_detalj, methods=["GET"]),
@@ -1812,6 +1818,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # Kandidatkortet (eiers bestilling 30/8): avmaskeringen leses av den
     # samme leseren som alt ser blindede funn — men hver lesing SPORES.
     ("GET",  "/v1/rekruttering/kandidatkort/{oppdrag_id:int}/{kandidat_id}"):
+        "decisions:read",
+    # Dokumentet bak kortet — alltid nedlasting, aldri rendring.
+    ("GET",  "/v1/rekruttering/kandidatdokument/{oppdrag_id:int}/{dokument_id}"):
         "decisions:read",
     ("GET",  "/v1/rekruttering/stillingsprofiler"): "decisions:read",
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —

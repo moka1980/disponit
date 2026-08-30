@@ -59,9 +59,17 @@ function kandidatkortBoks(oppdragId, kandidatId) {
           : token }),
         el("dd", { text: verdi }));
     }
+    // Nedlastingslenker — vanlig navigasjon, så nettleseren lagrer
+    // filen (serveren tvinger attachment; kundeopplastet HTML skal
+    // aldri rendres på appens origin).
     const dok = (svar.dokumenter || [])
-      .filter((f) => typeof f === "string")
-      .map((f) => el("li", { text: f }));
+      .filter((d) => d && typeof d === "object"
+        && typeof d.filnavn === "string"
+        && typeof d.dokument_id === "string")
+      .map((d) => el("li", {}, el("a", {
+        href: "/v1/rekruttering/kandidatdokument/"
+          + `${oppdragId}/${encodeURIComponent(d.dokument_id)}`,
+        download: d.filnavn }, d.filnavn)));
     // Knappen leseren sto på erstattes av innholdet — fokus flyttes
     // dit (CodeRabbit): en tastaturbruker skal lande på kortet, ikke
     // falle til body.
