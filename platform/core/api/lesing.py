@@ -723,6 +723,37 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
         if "kandidater" not in rapport:
             rapport["kandidater"] = _funn_fra_lageret(
                 conn, auth.tenant, oid, rapport)
+        # … OG PROFILENS VEKTER (samme flytting): beslutningssporet
+        # bærer referansen (profil_id, versjon), aldri kravlisten —
+        # uten den falt flaten til husets standardvekter med et varsel
+        # om at «evalueringen lagret ikke sine egne» (eiers skjermbilde
+        # 30/8). Kravene ER registrerte data i profillageret; leseveien
+        # supplerer dem på v1-formen flaten kjenner. Slår oppslaget
+        # feil (ukjent/uleselig referanse), står reserven som før —
+        # ærlig, aldri en gjettet vekting.
+        prof = rapport.get("profil")
+        if isinstance(prof, dict) and "krav" not in prof:
+            pver = prof.get("versjon")
+            try:
+                import uuid as uuidmod
+                puid = uuidmod.UUID(str(prof.get("profil_id")))
+            except (ValueError, TypeError):
+                puid = None
+            # Streng heltallsdom (CodeRabbit): int() ville tvunget både
+            # True og 3.7 til lovlige versjoner — referansen skal VÆRE
+            # et heltall, ellers står reserven.
+            if isinstance(pver, bool) or not isinstance(pver, int):
+                puid = None
+            if puid is not None:
+                krav = [{"kravnavn": kn, "vekt": v} for kn, v in
+                        conn.execute(
+                            "SELECT kravnavn, vekt FROM"
+                            " stillingsprofil_krav WHERE tenant=%s"
+                            " AND profil_id=%s AND versjon=%s"
+                            " ORDER BY rekkefolge",
+                            (auth.tenant, puid, pver)).fetchall()]
+                if krav:
+                    prof["krav"] = krav
         return kanonisk_json({
             "oppdrag_id": oid,
             "artefakt_id": str(art_id),
