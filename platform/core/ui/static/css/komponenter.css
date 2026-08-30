@@ -1231,3 +1231,7 @@ th.rekrut-kandidat { white-space: normal; }
 /* Poengfordelingen som første linje i funn-detaljen (eiers funn 30/8). */
 .rekrut-detalj .rekrut-fordeling { color: var(--muted); font-size: .88rem;
   margin: var(--sp-2) 0 var(--sp-1); }
+
+/* Dypdykkets slette-handling (eiers funn 30/8 ×3). */
+.rekrut-prosesshandling { display: flex; justify-content: flex-end;
+  margin: var(--sp-2) 0; }

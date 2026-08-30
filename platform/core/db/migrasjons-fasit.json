@@ -68,5 +68,6 @@
   "067_makulering_ved_reap.sql": "9b307af898354b1d6ced2f5b59365bba2a4fa5a21cd70bdee31f403637865ede",
   "068_revisjonshendelse.sql": "79a77b3a5da12a5276495bb59a73bc0c68a59202cb133ea461224c937c759198",
   "069_tidligsletting.sql": "57f7692c61cdd52a791079c3f47fb83266da897d04ff8e03cc0b2a2ed6105388",
-  "070_lagret_digest.sql": "ba6a9b2eebe4a7f7de01c90a69750d3dc90d7f394839ce3100f8f17e5e788caf"
+  "070_lagret_digest.sql": "ba6a9b2eebe4a7f7de01c90a69750d3dc90d7f394839ce3100f8f17e5e788caf",
+  "071_liste_skjuling.sql": "7352f6ac2c346898d014089c3c881ae2d9ebd20cecd4649a47f70297335a0b8b"
 }

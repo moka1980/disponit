@@ -1887,27 +1887,34 @@ def test_svaret_vokser_ikke_med_antall_prosesser(klient):
     bruker = _bruker("les-183", ["leser"])
     cookie, _ = _browsersesjon(bruker)
 
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    # EIERS FUNN 30/8: et FERDIG løp auto-vises aldri — begge seedene
+    # her er utfort, så standardvalget skal ikke være noen av dem
+    # (aktiv-ellers-ingen; delt base kan bære en fremmed aktiv).
+    r0 = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    assert r0.status_code == 200, r0.text
+    assert r0.json()["valgt_prosess_id"] not in (str(gammel), str(ny)), \
+        "et utfort løp valgte seg selv — gamle rapporter stabler seg"
+
+    # #183-invarianten måles på det EKSPLISITTE valget: ÉN bærer data.
+    r = _get(klient, cookie,
+             f"/v1/rekruttering/prosesser?prosess_id={ny}")
     assert r.status_code == 200, r.text
     svar = r.json()
     etter = {p["prosess_id"]: p for p in svar["prosesser"]}
     assert str(gammel) in etter and str(ny) in etter, \
         "begge prosessene skal stå i indeksen — velgeren trenger dem"
-
-    # ÉN bærer data, resten er indeks.
     med_data = [pid for pid, p in etter.items() if "kandidater" in p]
-    assert med_data == [svar["valgt_prosess_id"]], \
+    assert med_data == [str(ny)] == [svar["valgt_prosess_id"]], \
         f"flere enn den valgte bar kandidater: {med_data}"
-    assert svar["valgt_prosess_id"] == str(ny), \
-        "standardvalget skal være den nyeste prosessen"
     assert not etter[str(gammel)].get("kandidater"), \
         "den andre prosessens kandidater ble serialisert likevel — det er" \
         " nettopp veksten #183 finnes for"
 
-    # Indeksen bærer det velgeren trenger, og ikke mer.
+    # Indeksen bærer det velgeren trenger, og ikke mer (+ oppdraget,
+    # som 071-slettingen i dypdykket går gjennom).
     lett = etter[str(gammel)]
-    assert set(lett) == {"prosess_id", "opprettet", "evaluering_status",
-                         "kandidat_antall"}, \
+    assert set(lett) == {"prosess_id", "oppdrag_id", "opprettet",
+                         "evaluering_status", "kandidat_antall"}, \
         f"indeksraden bærer felter velgeren ikke bruker: {sorted(lett)}"
 
 
@@ -1933,7 +1940,10 @@ def test_indeksraden_teller_kandidatene_sine(klient):
     ny, _r2, _h2 = _seed_prosess()
     cookie, _ = _browsersesjon(_bruker("les-183d", ["leser"]))
 
-    r = _get(klient, cookie, "/v1/rekruttering/prosesser")
+    # Aktiv-ellers-ingen (eiers funn 30/8): begge seedene er utfort,
+    # så etiketten måles på et EKSPLISITT valg.
+    r = _get(klient, cookie,
+             f"/v1/rekruttering/prosesser?prosess_id={ny}")
     assert r.status_code == 200, r.text
     svar = r.json()
     etter = {p["prosess_id"]: p for p in svar["prosesser"]}

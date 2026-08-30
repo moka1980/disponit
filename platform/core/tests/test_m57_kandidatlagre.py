@@ -3530,6 +3530,15 @@ def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
                 " WHERE o.tenant=%s AND o.id=%s", (TENANT, oid)).fetchone()
             migrator.rollback()
             assert rad == ("kansellert", True), rad
+            # BARE AKTIVE LØP AUTO-VISES i prosessindeksen (eiers funn
+            # 30/8): den kansellerte er uten kandidatdata og står ikke i
+            # indeksen i det heletatt — og ingenting velger seg selv.
+            rp = c.get("/v1/rekruttering/prosesser",
+                       cookies=ck, headers=hode)
+            assert rp.status_code == 200, rp.text
+            assert rp.json()["valgt_prosess_id"] is None, (
+                "et terminalt løp valgte seg selv — gamle rapporter"
+                " stabler seg i dypdykket igjen: " + rp.text)
             # Terminal: 409 med egen kode.
             r2 = c.post(f"/v1/rekruttering/evaluering/{oid}/avbryt",
                         cookies=ck, headers=hode)
@@ -3546,15 +3555,20 @@ def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
                 " WHERE tenant=%s AND prosess_id=%s",
                 (TENANT, pid)).fetchone()[0]
             migrator.rollback()
-            # Bestillingen ER slettingen sett fra kunden (069-utvidelsen av
-            # grenseformelen): listen dømmer «slettet» og indeksen mister
-            # prosessen I SAMME ØYEBLIKK — ikke først ved reaperens batch.
+            # SLETT BETYR AT RADEN FORSVINNER (071, eiers funn 30/8):
+            # listen slipper raden i svaret på selve slett-kallet —
+            # historikken består i basen med enveis-merket satt.
             r5 = c.get("/v1/rekruttering/evalueringer",
                        cookies=ck, headers=hode)
             assert r5.status_code == 200, r5.text
-            mine = [e for e in r5.json()["evalueringer"]
-                    if e["oppdrag_id"] == oid]
-            assert mine and mine[0]["slettet"] is True, mine
+            assert all(e["oppdrag_id"] != oid
+                       for e in r5.json()["evalueringer"]), r5.text
+            _sett_kontekst(migrator, TENANT)
+            assert migrator.execute(
+                "SELECT liste_skjult_ts IS NOT NULL FROM oppdrag"
+                " WHERE tenant=%s AND id=%s",
+                (TENANT, oid)).fetchone()[0], "skjule-merket ble aldri satt"
+            migrator.rollback()
             r6 = c.get("/v1/rekruttering/prosesser",
                        cookies=ck, headers=hode)
             assert r6.status_code == 200, r6.text
@@ -3588,12 +3602,29 @@ def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
             assert r7.status_code == 200, r7.text
             assert r7.json()["ingenting_lagret"] is True
             assert r7.json()["slett_bestilt"] is False
+            # … og raden er UTE av listen (071): det var hele poenget —
+            # en feilet evaluering uten data ble ellers stående for
+            # alltid uten noen vei bort.
             r8 = c.get("/v1/rekruttering/evalueringer",
                        cookies=ck, headers=hode)
-            anker = {e["oppdrag_id"]: e.get("har_anker")
-                     for e in r8.json()["evalueringer"]}
-            assert anker.get(oid) is True, anker
-            assert anker.get(o_uten) is False, anker
+            assert all(e["oppdrag_id"] != o_uten
+                       for e in r8.json()["evalueringer"]), r8.text
+            # Skjule-merket er ENVEIS og kun for terminale løp — samme
+            # disiplin som 069-merket, målt mot vakten selv.
+            _sett_kontekst(migrator, TENANT)
+            import pytest as _pt
+            from psycopg.errors import InsufficientPrivilege as _IP
+            with _pt.raises(_IP):
+                migrator.execute(
+                    "UPDATE oppdrag SET liste_skjult_ts = NULL"
+                    " WHERE tenant=%s AND id=%s", (TENANT, o_uten))
+            migrator.rollback()
+            _sett_kontekst(migrator, TENANT)
+            with _pt.raises(_IP):
+                migrator.execute(
+                    "UPDATE oppdrag SET liste_skjult_ts = now()"
+                    " WHERE tenant=%s AND id=%s", (TENANT, o_aktiv))
+            migrator.rollback()
     finally:
         rt.close()
 
