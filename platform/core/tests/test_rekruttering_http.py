@@ -2067,3 +2067,67 @@ def test_ukjent_prosess_id_er_ikke_funnet_ikke_den_nyeste(klient):
              "?prosess_id=00000000-0000-0000-0000-000000000000")
     assert r.status_code == 404, \
         f"en ukjent prosess-id ga data i stedet for 404: {r.text}"
+
+
+def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
+    """Kandidatkortet (eiers bestilling 30/8): koblingen tilbake fra
+    kandidatnummeret — avmaskerte felter + originaldokumentenes navn —
+    bak flatens lesescope, med rapportrutens fristgrense, og med
+    skrivedørens uuid5-form for buntens egne id-er.
+
+    MUTASJONEN SOM DREPER DENNE: fjern fristleddet i
+    `kandidatkort_endepunkt`, eller slutt å filtrere ikke-strenger fra
+    `felter`."""
+    from api.app import _KANDIDAT_NS
+
+    pid, _lid, _ih = _seed_prosess()
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r-kort")
+        oid = m.execute(
+            "SELECT oppdrag_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s", (TEN, pid)).fetchone()[0]
+        # Buntens egen id → lagerets uuid5 (skrivedørens form, ordrett).
+        kid = uuid.uuid5(_KANDIDAT_NS, f"{TEN}\x1f{pid}\x1fkandidat-77")
+        m.execute(
+            "INSERT INTO kandidat_avmaskering (tenant, prosess_id,"
+            " kandidat_id, felter, innhold_sha256) VALUES (%s,%s,%s,"
+            # Ett ikke-streng-felt med vilje: 057 har ingen formsjekk,
+            # og kortet skal aldri servere det som ikke er et kart av
+            # strenger.
+            " '{\"[NAVN-1]\": \"Kari Nordmann\","
+            "   \"[KONTAKT-1]\": \"kari@eksempel.no\","
+            "   \"[ALDER-1]\": 42}', 'h')", (TEN, pid, kid))
+        m.execute(
+            "INSERT INTO kandidat_originaldokument (tenant, prosess_id,"
+            " kandidat_id, dokument_id, filnavn, innholdstype, dokument,"
+            " storrelse_bytes, innhold_sha256) VALUES"
+            " (%s,%s,%s,%s,'cv.pdf','application/pdf',%s,4,%s)",
+            (TEN, pid, kid, uuid.uuid4(), b"%PDF", "c" * 64))
+        m.commit()
+    finally:
+        m.close()
+
+    bid = _bruker("leser-kort", ["leser"])
+    cookie, _ = _browsersesjon(bid)
+    # Begge id-formene svarer: buntens egen og lagerets uuid.
+    for form in ("kandidat-77", str(kid)):
+        r = _get(klient, cookie, f"/v1/rekruttering/kandidatkort/{oid}/{form}")
+        assert r.status_code == 200, r.text
+        k = r.json()
+        assert k["felter"] == {"[NAVN-1]": "Kari Nordmann",
+                               "[KONTAKT-1]": "kari@eksempel.no"}, \
+            "ikke-streng-feltet skulle vært filtrert, strengene servert"
+        assert k["dokumenter"] == ["cv.pdf"]
+    # En kandidat uten lagrede rader er «finnes ikke» — aldri et tomt kort.
+    assert _get(klient, cookie,
+                f"/v1/rekruttering/kandidatkort/{oid}/kandidat-99"
+                ).status_code == 404
+    # Fristen stenger kortet FØR reaperens batch (samme grense som
+    # rapporten) — persondata skal aldri leve på reaperens etterslep.
+    _forbi_frist(pid)
+    assert not _merket(pid)
+    assert _get(klient, cookie,
+                f"/v1/rekruttering/kandidatkort/{oid}/kandidat-77"
+                ).status_code == 404

@@ -1152,15 +1152,23 @@ html[data-visning="landing"] .skall-hoved {
 .trafikklys-vurderes{color:var(--guard)}
 .trafikklys-innstilt_avslag{color:var(--danger)}
 
-/* Rangeringssjiktene (eiers funn 30/8): topp 5 grønn, 6–10 svak grønn.
-   Fargen er REDUNDANT koding — radens plass i tabellen og poengtallet i
-   cellen bærer rangeringen (samme WCAG 1.4.1-doktrine som trafikklyset
-   over). Det svake sjiktet blandes av samme token, så begge følger
-   temaet uten egen fargedefinisjon. */
+/* Rangeringssjiktene (eiers funn 30/8, justert samme kveld: --auto-bg
+   alene var knapt synlig på mobil, og de to sjiktene kunne ikke
+   skilles). Fargen er REDUNDANT koding — radens plass og poengtallet
+   bærer rangeringen (trafikklys-doktrinen, WCAG 1.4.1). Begge sjiktene
+   blandes av AKSENTEN (--auto), ikke av den blasse bakgrunnstokenen:
+   topp 5 får tydelig grønt bånd + full venstrekant, 6–10 halv styrke og
+   dempet kant — forskjellen skal kunne ses i dagslys. Kanten står på
+   radens første celle; funn-raden bærer samme sjiktklasse, så hver
+   kandidat tegner ETT sammenhengende bånd. */
 tr.rekrut-sjikt-topp > th, tr.rekrut-sjikt-topp > td {
-  background: var(--auto-bg); }
+  background: color-mix(in srgb, var(--auto) 16%, var(--card)); }
+tr.rekrut-sjikt-topp > :first-child {
+  box-shadow: inset 4px 0 0 var(--auto); }
 tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
-  background: color-mix(in srgb, var(--auto-bg) 45%, transparent); }
+  background: color-mix(in srgb, var(--auto) 7%, var(--card)); }
+tr.rekrut-sjikt-neste > :first-child {
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--auto) 40%, var(--card)); }
 
 /* --- Rekruttering: mobilflate (sak 251 + mobil-redesignet 29/8) ------------- */
 /* Radoverskriften i rapporten skal kunne brytes: den globale
