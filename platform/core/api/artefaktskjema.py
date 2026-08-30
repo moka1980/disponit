@@ -126,14 +126,35 @@ def _er_rfc3339(verdi) -> bool:
 
 
 def hent_skjema(conn: psycopg.Connection, artefakttype: str) -> dict | None:
-    """Skjemaet artefakttypen er bundet til, via registerets `skjema_hash`.
-    -> None når typen mangler i registeret ELLER hashen mangler skjemarad —
-    begge er samme svar for kalleren: innholdet kan ikke valideres, og da
-    skal det heller ikke tas imot."""
+    """GJELDENDE versjons skjema for typen (072, BESLUTNING-168):
+    identiteten er tuppelen (artefakttype, skjemaversjon), og opplastingen
+    valideres mot den versjonen raden stemples med. Registeret er
+    reserven for en type uten versjonsrad — backfillen i 072 gjør den
+    grenen teoretisk, men et uvaliderbart innhold skal uansett aldri
+    tas imot, så begge fraværene er samme None."""
     rad = conn.execute(
-        "SELECT s.skjema FROM artefakttype_register r"
-        "  JOIN artefaktskjema s ON s.skjema_hash = r.skjema_hash"
-        " WHERE r.artefakttype = %s", (artefakttype,)).fetchone()
+        "SELECT s.skjema FROM artefakttype_versjon v"
+        "  JOIN artefaktskjema s ON s.skjema_hash = v.skjema_hash"
+        " WHERE v.artefakttype = %s AND v.status = 'gjeldende'",
+        (artefakttype,)).fetchone()
+    if rad is None:
+        rad = conn.execute(
+            "SELECT s.skjema FROM artefakttype_register r"
+            "  JOIN artefaktskjema s ON s.skjema_hash = r.skjema_hash"
+            " WHERE r.artefakttype = %s", (artefakttype,)).fetchone()
+    return rad[0] if rad else None
+
+
+def hent_skjema_for_versjon(conn: psycopg.Connection, artefakttype: str,
+                            skjemaversjon: int) -> dict | None:
+    """RADENS egen versjon (072): et artefakt revalideres alltid mot den
+    versjonen det ble skrevet med — en v1-rapport måles aldri mot v2s
+    skjema, uansett hva som er gjeldende i dag (A4/SP-12 relasjonelt)."""
+    rad = conn.execute(
+        "SELECT s.skjema FROM artefakttype_versjon v"
+        "  JOIN artefaktskjema s ON s.skjema_hash = v.skjema_hash"
+        " WHERE v.artefakttype = %s AND v.skjemaversjon = %s",
+        (artefakttype, skjemaversjon)).fetchone()
     return rad[0] if rad else None
 
 

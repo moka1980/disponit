@@ -53,11 +53,14 @@ def test_grensen_dekker_klarsignalets_punkter():
     — krymper settet, er det denne som skal rødne, ikke bare validatoren
     som stille måler færre punkter."""
     g = KRAVGRENSER["m57-v1"]
-    assert len(M57_INVARIANTER) == 19
+    # 19 fra klarsignalet §10 + 7 fra BESLUTNING-168 (072-regimet:
+    # skjemaversjonen som relasjonell identitet) — dommens evidensgrense-
+    # tillegg, pinnet FØR akseptrunden som resten.
+    assert len(M57_INVARIANTER) == 26
     assert len(g["krav_ja"]) == 2
     assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
     # Settet er unikt og grensen bærer det pinnede settet, ikke en kopi.
-    assert len(set(M57_INVARIANTER)) == 19
+    assert len(set(M57_INVARIANTER)) == 26
     assert g["invarianter"] is M57_INVARIANTER
 
 

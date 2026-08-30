@@ -160,6 +160,9 @@ GRANT SELECT ON modulkontrakt, modulhode, modulrelease, moduldeployment,
 -- tenantidentifikator. Bevisradene leses av eier- og driftsveien.
 GRANT SELECT ON modulaksept_status, akseptkrav_punkt TO {rolle};
 GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
+-- 072 (BESLUTNING-168): skjemaoppslaget går via gjeldende versjon —
+-- runtime leser versjonstabellen, skriver den aldri.
+GRANT SELECT ON artefakttype_versjon TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
 GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};

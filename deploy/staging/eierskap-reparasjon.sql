@@ -342,6 +342,13 @@ INSERT INTO _design VALUES
     -- skrives ut slik `regprocedure` gjengir den, ellers matcher raden
     -- ingen funksjon.
     ('FUNCTION', 'makuler_artefakter_for_prosess(text,bigint,timestamp with time zone)', 'disponit_domene_eier'),
+    -- 072 (BESLUTNING-168): versjonsdøren — samme eier som resten av
+    -- artefakt-familien, av samme grunn.
+    ('FUNCTION', 'registrer_artefaktskjemaversjon(text,integer,text,boolean,text)', 'disponit_domene_eier'),
+    -- 072: fødselstriggeren på registeret — SECURITY DEFINER fordi
+    -- registrering skjer som modul-/policy-eier, mens raden i
+    -- artefakttype_versjon bare kan skrives av domene-eieren.
+    ('FUNCTION', 'artefakttype_versjon_foedsel()', 'disponit_domene_eier'),
     -- 043 §8: samme validering og samme lås som `bevar_artefakt`, uten
     -- skrivingen — den sene kvitteringsveien må kunne avvise et fremmed
     -- artefakt også når `direkte`-reversibiliteten sier at artefaktet skal

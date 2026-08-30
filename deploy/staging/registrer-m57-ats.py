@@ -125,12 +125,22 @@ def main() -> int:
         # ulikt, mot en rad som er immutabel for alltid.
         try:
             h = registrer(c, rapportskjema.SKJEMA, "deploy")
+            # BESLUTNING-168: v2-skjemaet (beslutningssporet) registreres
+            # i samme kjøring — samme delte vei, samme metasjekk.
+            h2 = registrer(c, rapportskjema.SKJEMA_V2, "deploy")
         except Skjemaugyldig as e:
             raise SystemExit(f"rapportskjemaet kan ikke registreres: {e}")
         c.execute("RESET ROLE")
         c.execute("SET ROLE disponit_domains_admin")
         c.execute("SELECT registrer_artefakttype(%s, %s, 1, %s, %s,"
                   " 'deploy')", (ARTEFAKTTYPE, MODUL, kontrakt_hash, h))
+        # BESLUTNING-168 §3: v2 settes GJELDENDE og v1 avviklet i SAMME
+        # transaksjon (dørens egen semantikk) — «bør ikke promoteres i
+        # mellomtiden» er en lagringstilstand, ikke en intensjon. v1-raden
+        # finnes fra 072-backfillen; payloadfri=true er reap-sidens
+        # halvdel: beslutningssporet består etter reaping.
+        c.execute("SELECT registrer_artefaktskjemaversjon(%s, 2, %s,"
+                  " true, 'deploy')", (ARTEFAKTTYPE, h2))
         c.commit()
     print(f"registrert: {MODUL} {release_id} — {OPPDRAGSTYPE} /"
           f" {ARTEFAKTTYPE} (skjema {h[:12]}…)")
