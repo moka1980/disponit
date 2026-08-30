@@ -2108,12 +2108,13 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
             " '{\"[NAVN-1]\": \"Kari Nordmann\","
             "   \"[KONTAKT-1]\": \"kari@eksempel.no\","
             "   \"[ALDER-1]\": 42}', 'h')", (TEN, pid, kid))
+        did = uuid.uuid4()
         m.execute(
             "INSERT INTO kandidat_originaldokument (tenant, prosess_id,"
             " kandidat_id, dokument_id, filnavn, innholdstype, dokument,"
             " storrelse_bytes, innhold_sha256) VALUES"
-            " (%s,%s,%s,%s,'cv.pdf','application/pdf',%s,4,%s)",
-            (TEN, pid, kid, uuid.uuid4(), b"%PDF", "c" * 64))
+            " (%s,%s,%s,%s,'cv.pdf','text/html',%s,4,%s)",
+            (TEN, pid, kid, did, b"%PDF", "c" * 64))
         m.commit()
     finally:
         m.close()
@@ -2128,10 +2129,25 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
         assert k["felter"] == {"[NAVN-1]": "Kari Nordmann",
                                "[KONTAKT-1]": "kari@eksempel.no"}, \
             "ikke-streng-feltet skulle vært filtrert, strengene servert"
-        assert k["dokumenter"] == ["cv.pdf"]
+        assert k["dokumenter"] == [{"dokument_id": str(did),
+                                    "filnavn": "cv.pdf"}]
     # En kandidat uten lagrede rader er «finnes ikke» — aldri et tomt kort.
     assert _get(klient, cookie,
                 f"/v1/rekruttering/kandidatkort/{oid}/kandidat-99"
+                ).status_code == 404
+    # DOKUMENTET BAK KORTET: alltid nedlasting, aldri rendring —
+    # kundeopplastet HTML får octet-stream + attachment + nosniff, så
+    # lagret skript aldri kjører på appens origin med sesjonskaken.
+    rd = _get(klient, cookie,
+              f"/v1/rekruttering/kandidatdokument/{oid}/{did}")
+    assert rd.status_code == 200, rd.text
+    assert rd.content == b"%PDF"
+    assert rd.headers["content-type"].startswith("application/octet-stream")
+    assert rd.headers["content-disposition"] == 'attachment; filename="cv.pdf"'
+    assert rd.headers["x-content-type-options"] == "nosniff"
+    # Ukjent dokument er «finnes ikke».
+    assert _get(klient, cookie,
+                f"/v1/rekruttering/kandidatdokument/{oid}/{uuid.uuid4()}"
                 ).status_code == 404
     # Fristen stenger kortet FØR reaperens batch (samme grense som
     # rapporten) — persondata skal aldri leve på reaperens etterslep.
@@ -2140,6 +2156,9 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
     assert _get(klient, cookie,
                 f"/v1/rekruttering/kandidatkort/{oid}/kandidat-77"
                 ).status_code == 404
+    assert _get(klient, cookie,
+                f"/v1/rekruttering/kandidatdokument/{oid}/{did}"
+                ).status_code == 404, "fristen skal stenge dokumentet også"
 
 
 def test_profilsletting_er_enveis_skjuling(klient):
