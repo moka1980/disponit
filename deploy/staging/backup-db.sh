@@ -53,6 +53,20 @@ FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 # En dump uten sitt arkiv ER funnet dette skriptet lukker, bare flyttet inn
 # i backupkatalogen.
 ARKIV="$KATALOG/disponit-$STEMPEL.inndata.tar.age"
+# STEMPELET MÅ VÆRE FERSKT (sak #246 pkt. 3). Gjenbrukes et stempel —
+# klokka justert bakover, to raske manuelle kjøringer — kunne et krasj
+# mellom finaliseringens to `mv` latt eksistenssjekken se det NYE
+# arkivet og den GAMLE dumpen, og bevare et par som aldri hørte sammen.
+# Sjekken står FØR trapen installeres, med vilje: trapen rydder
+# endelige navn når paret er halvt, og et eksisterende, fremmed par
+# skal aldri kunne bli «vårt halve».
+# `-L` i tillegg til `-e`: en HENGENDE symlenke på et av navnene er
+# også en kollisjon (`-e` følger lenken og svarer nei) — og uansett en
+# tilstand backupkatalogen aldri lovlig har (CodeRabbit).
+if [ -e "$FIL" ] || [ -L "$FIL" ] || [ -e "$ARKIV" ] || [ -L "$ARKIV" ]; then
+  echo "AVBRUTT: stempelet $STEMPEL finnes allerede i $KATALOG —"        "to kjøringer i samme sekund, eller en klokke justert bakover" >&2
+  exit 1
+fi
 
 # Codex P1 (#178, runde 6): BACKUPNAVNET FÅS FØRST NÅR BACKUPEN ER SANN.
 # opp.sh steg 5 stopper `disponit-backup.service` for å holde `pg_dump`
@@ -211,6 +225,29 @@ trap opprydd EXIT
 # annen kjøring eier en `.delvis` akkurat nå.
 rm -f "$KATALOG"/disponit-*.dump.age.delvis \
       "$KATALOG"/disponit-*.inndata.tar.age.delvis
+# … OG FERDIGNAVNEDE HALVPAR (sak #246 pkt. 1). Dør prosessen mellom
+# finaliseringens to `mv`, står et ARKIV med endelig navn uten sin dump.
+# Retensjonen finner kandidater utelukkende fra dumpnavn, så det arkivet
+# ville ellers ligget for alltid. `flock` over garanterer at ingen annen
+# kjøring er midt i sine to `mv` akkurat nå — et arkiv uten dump ER en
+# rest. (Dump uten arkiv finnes ikke fra denne koden: dumpen får navnet
+# SIST, og trapen/feilarmen rydder halvpar med holdbar sync.)
+for ark in "$KATALOG"/disponit-*.inndata.tar.age; do
+  [ -e "$ark" ] || continue
+  st=$(basename "$ark"); st=${st#disponit-}; st=${st%.inndata.tar.age}
+  [ -f "$KATALOG/disponit-$st.dump.age" ] || rm -f "$ark"
+done
+# … OG VERIFISERINGSBASER ETTER SIGKILL (sak #246 pkt. 2). `$VERIF`
+# slippes bare av EXIT-trapen, og navnet er PID-avledet: en drept
+# kjøring etterlater basen sin i clusteret, og neste kjøring lager en
+# ny. `flock` garanterer at enhver `disponit_backup_verif_%` nå er en
+# rest — og feien er fail-closed: kan ikke listen leses, ville også
+# `createdb` under feilet, så det er riktig å stoppe her.
+sudo -u postgres psql -Atc   "SELECT datname FROM pg_database
+    WHERE datname LIKE 'disponit\_backup\_verif\_%'"   | while IFS= read -r db; do
+      [ -n "$db" ] || continue
+      sudo -u postgres dropdb --if-exists "$db"
+    done
 
 # RETENSJONEN FØR DISKPORTEN (Codex P1, denne runden). Sto sveipen sist,
 # var den uoppnåelig nettopp når den trengtes: fylte de beholdte parene
@@ -438,6 +475,43 @@ STORRELSE=$(stat -c%s "$DELVIS")
 # skrives.
 rm -f "$RAA"
 
+# KRAVLISTEN LESES NÅ — OG ENGANGSBASEN SLIPPES (sak #246 pkt. 4/5).
+# `$VERIF` levde før til EXIT-trapen, så under `tar` lå hele den
+# restaurerte basen OG arkivet på samme /var — en peak diskporten aldri
+# målte. Kravlisten trenger bare den restaurerte basen, ikke arkivet, så
+# den leses her; deretter droppes basen eksplisitt, og arkivfasen kjører
+# uten den. Fasene sameksisterer ikke lenger, og portens formel
+# (lager + dump + margin) ER det faktiske taket for hver fase: fase 1 er
+# dump-delvis + engangsbasen (≤ dump ukomprimert ×2 ≤ formelens ledd),
+# fase 2 er dump-delvis + arkivet (≤ dump + lager).
+if [ "$(sudo -u postgres psql -Atd "$VERIF" -c \
+        "SELECT to_regclass('public.inndata_artefakt') IS NOT NULL")" = t ]; then
+  # LINJESKIFT I EN STI KAN IKKE SAMMENLIGNES LINJEBASERT (sak #246
+  # pkt. 6): psql -At skriver én sti per linje, så et linjeskift INNE i
+  # `lager_sti` ville splittet den i to krav som aldri matcher noe
+  # arkivmedlem — hver backup feiler, med en melding om manglende filer
+  # som ikke mangler. Målt i basen, der stien fortsatt er én verdi, og
+  # avvist med sin egen ordlyd i stedet for den villedende.
+  NL_RADER=$(sudo -u postgres psql -Atd "$VERIF" -c \
+    "SELECT count(*) FROM inndata_artefakt
+      WHERE status IN ('lastet','bundet')
+        AND lager_sti LIKE '%' || chr(10) || '%'")
+  [ "$NL_RADER" = 0 ] || {
+    echo "AVBRUTT: $NL_RADER lager_sti-rad(er) bærer linjeskift —" \
+         "arkivporten er linjebasert og kan ikke måle dem" >&2
+    exit 1
+  }
+  sudo -u postgres psql -Atd "$VERIF" -c \
+    "SELECT lager_sti FROM inndata_artefakt
+      WHERE status IN ('lastet','bundet') AND lager_sti IS NOT NULL" \
+    | sed '/^$/d' | sort -u > "$LISTE.krav"
+else
+  : > "$LISTE.krav"
+fi
+VERIF_NAVN="$VERIF"
+sudo -u postgres dropdb --if-exists "$VERIF"
+VERIF=""
+
 # ============================================================
 # INNDATA-LAGERET (#191, Codex P1 fra #190)
 #
@@ -469,7 +543,7 @@ rm -f "$RAA"
 # angriper med diskaksess leser null; en tar-liste med kundenavn bryter den
 # like fullt som en lesbar bunt.
 # ============================================================
-# Medlemslisten fanges fra DENNE ene passeringen (`--verbose` til stderr).
+# Medlemslisten fanges fra DENNE ene passeringen (`--index-file`).
 # Den krypterte filen kan ikke leses tilbake her — privatnøkkelen er ikke på
 # verten, med vilje — så porten under måler samme strøm som ble skrevet,
 # nøyaktig som dumpens egen verifisering gjør det.
@@ -502,8 +576,20 @@ rm -f "$RAA"
 # og omdøpt før raden ble committet (rekkefølgen er utledet lenger oppe), så
 # ekskluderingen kan ikke skjule noe porten trenger — og skulle den likevel
 # mangle, feller innholdsporten under det høyt.
-tar --create --directory="$LAGER" --verbose --exclude='./*/*.bin.tmp' \
-    --file=- . 2>"$LISTE" \
+# LISTEN GÅR TIL `--index-file`, DIAGNOSTIKKEN TIL JOURNALEN (sak #246
+# pkt. 8). `2>"$LISTE"` fanget BÅDE medlemsnavnene og enhver diagnostikk
+# — en uleselig fil, en I/O-feil — og lot tjenesten sitte igjen med en
+# exitkode uten årsak i journald. Diagnostikklinjer i listen kunne aldri
+# gi falsk PASS (`comm -23` er enveis), bare falsk AVBRUTT; nå finnes
+# ingen av delene. OG SITERINGEN ER LITERAL (pkt. 6): GNU tar escaper
+# ellers bakoverskråstrek/tab i listingen, mens psql-siden skriver rå
+# byte — da matchet en slik tenant-ID aldri sitt eget arkivmedlem, og
+# HVER backup for den kunden feilet. Linjeskift, det ene tegnet literal
+# linjebasert form ikke bærer, er alt avvist med egen ordlyd over.
+tar --create --directory="$LAGER" --verbose --index-file="$LISTE" \
+    --quoting-style=literal --no-wildcards-match-slash \
+    --exclude='./*/*.bin.tmp' \
+    --file=- . \
   | age -R "$MOTTAKER" > "$ARKIV_DELVIS"
 chmod 600 "$ARKIV_DELVIS"
 
@@ -513,15 +599,8 @@ chmod 600 "$ARKIV_DELVIS"
 # og porten passerer, i stedet for at hele backupen dør på en manglende
 # tabell.
 sed 's#^\./##' "$LISTE" | sed '/^$/d' | sort -u > "$LISTE.sett"
-if [ "$(sudo -u postgres psql -Atd "$VERIF" -c \
-        "SELECT to_regclass('public.inndata_artefakt') IS NOT NULL")" = t ]; then
-  sudo -u postgres psql -Atd "$VERIF" -c \
-    "SELECT lager_sti FROM inndata_artefakt
-      WHERE status IN ('lastet','bundet') AND lager_sti IS NOT NULL" \
-    | sed '/^$/d' | sort -u > "$LISTE.krav"
-else
-  : > "$LISTE.krav"
-fi
+# Kravlisten sto klar FØR arkivfasen (pkt. 4/5-blokken over) — her måles
+# den bare mot det som faktisk ble skrevet.
 MANGLER=$(comm -23 "$LISTE.krav" "$LISTE.sett")
 [ -z "$MANGLER" ] || {
   # STIENE GÅR IKKE I LOGGEN (Codex P2, runde 7). `disponit-backup.service`
@@ -657,6 +736,6 @@ if [ -n "$SPART" ]; then
 fi
 
 
-echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF" \
+echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF_NAVN" \
      "(${TABELLER} tabeller); arkiv: $ARKIV ($(stat -c%s "$ARKIV") B," \
      "${BUNTER} bunt(er) bekreftet); slettet $SLETTET utløpte par"
