@@ -429,7 +429,7 @@ def _mal_056(conn) -> list[str]:
         conn.execute(
             "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
             " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
-            " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'm1')",
+            " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'psn-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
             (TEN, liste[0], liste[2], liste[1]))
         feil.append("frigivelse UTEN signatur ble akseptert")
         conn.rollback()
@@ -445,7 +445,7 @@ def _mal_056(conn) -> list[str]:
     frig = conn.execute(
         "INSERT INTO utsendingsfrigivelse (tenant, frigivelse_id,"
         " liste_id, innhold_hash, utkast_serie, mottaker_ref)"
-        " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'm1')"
+        " VALUES (%s, gen_random_uuid(), %s, %s, %s, 'psn-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')"
         " RETURNING frigivelse_id", (TEN, liste[0], liste[2],
                                      liste[1])).fetchone()[0]
     conn.execute(
