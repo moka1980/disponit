@@ -2,6 +2,7 @@
 evalueringsrapporten leses via SIN rute, aldri via WCAG-rendrerens — og
 motsatt. 200-og-feiler-under-rendring-klassen er umulig per
 konstruksjon når flatene filtrerer på hver sin diskriminator."""
+import os
 import secrets
 
 import pytest
@@ -975,9 +976,66 @@ def test_ankerlukkingen_hoerer_til_statusskiftet():
 
 
 @pg
-def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
-        migrator, miljo, monkeypatch):
+def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200():
+    """#257: VOKTEREN — probet over kjøres i en SEPARAT TERMINERBAR
+    prosess med hard frist.
+
+    To formforsøk i samme prosess er brukt opp (join(30) i runde 2,
+    daemon+is_alive i runde 3), og begge strandet på samme rotårsak: en
+    synkron Starlette-rute drives av `run_in_threadpool`, og AnyIO
+    forlater ikke arbeidertråden ved kansellering — enhver utgang av
+    `with TestClient` venter på den. En avgrensning som deler prosess
+    med det som kan blokkere, kan derfor ikke love noe. Denne deler
+    ingenting: overskrider barnet fristen, er grensen `kill()`, og
+    suiten får barnets utskrift som en navngitt feil i stedet for en
+    hengende pytest på CI.
+
+    Fristen er romslig mot probets egne verstefall (20 s søm-vent +
+    20 s vindus-vent + 30 s join + app-oppstart), så et drap her betyr
+    en EKTE hengning — aldri bare en treg base; treg base felles av
+    probets egen `forgjeves`-diagnose med sin egen ordlyd.
+
+    Alternativet i #257 — `Connection.cancel()` på forespørselens egen
+    forbindelse — er vurdert og lagt bort: det krever en ny søm inn i
+    appens pool og avgrenser bare SQL-nivå-blokkering; kill() avgrenser
+    påstanden selv.
+
+    MUTASJONEN SOM DREPER DENNE: kjør probet direkte igjen (fjern
+    env-vakten og vokteren) — da er suiten prisgitt at ingenting i
+    nøyaktig den samtidigheten riggen diagnostiserer noensinne henger."""
+    import subprocess
+    import sys
+
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:randomly",
+           "--no-header", "-x",
+           f"{__file__}::test_223_probe_interleavet_reap"]
+    barn = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env={**os.environ, "DISPONIT_223_PROBE": "1"})
+    try:
+        ut, _ = barn.communicate(timeout=180)
+    except subprocess.TimeoutExpired:
+        barn.kill()
+        ut, _ = barn.communicate()
+        raise AssertionError(
+            "probet hang forbi 180 s og ble DREPT — forespørselen står"
+            " fast utenfor dekrypteringssømmen (#257-klassen). Barnets"
+            " utskrift:\n" + (ut or "<ingen>"))
+    assert barn.returncode == 0, (
+        "probet felte TOCTOU-påstanden i barneprosessen:\n" + ut)
+
+
+def _probe_223(migrator, miljo, monkeypatch):
     """#223: TOCTOU-beviset med TO FORBINDELSER — ikke en kildemåling.
+
+    KJØRES ALDRI DIREKTE (#257): dette er PROBET, og det kjører kun i
+    barneprosessen vokteren over starter. Testformen av det defineres
+    BETINGET nederst i filen — i forelderen finnes den ikke i det hele
+    tatt, så CI-porten «ingen DB-tester hoppet over» ser aldri en skip. Grensen mot en hengende
+    forespørsel kan ikke bygges i samme prosess (synkron rute →
+    run_in_threadpool → en arbeidertråd kansellering ikke forlater);
+    den ligger i forelderens kill(), som ikke kan blokkeres av det som
+    blokkerer.
 
     `test_ankersjekken_staar_etter_dekrypteringen` beviser de
     deterministiske halvdelene (re-sjekken virker begge veier, og den
@@ -1122,17 +1180,14 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
             # diagnostiserer) — `join` bare returnerte. Da navngir denne
             # asserten feilen i stedet for å la den være taus.
             #
-            # DELVIS GRENSE, og det sies her (Codex P2, K1-utsatt til
-            # #257): asserten river IKKE ned en forespørsel som står
-            # fast. Ruten er en synkron `def` (`app.py:853`), så
-            # Starlette kjører den via `run_in_threadpool` →
-            # `anyio.to_thread.run_sync`, som ikke forlater
-            # arbeidertråden ved kansellering. `TestClient`-utgangen
-            # kansellerer ASGI-oppgaven, men venter på arbeideren; og
-            # `daemon=True` over gjelder bare kallertråden, ikke den
-            # arbeideren. En ekte grense må ligge UTENFOR det som kan
-            # blokkere — probet i en separat terminerbar prosess, som er
-            # egen maskin og derfor egen PR (#257).
+            # DELVIS GRENSE — MED VILJE (#257): asserten river IKKE ned
+            # en forespørsel som står fast (synkron rute →
+            # run_in_threadpool; arbeidertråden forlater ikke
+            # kanselleringen). Den HELE grensen er forelderens kill()
+            # i vokteren under: henger noe her, dør hele barneprosessen
+            # på fristen, og suiten får en navngitt feil i stedet for
+            # en hengende pytest. Asserten står igjen fordi den navngir
+            # feilen presist i de tilfellene nedstengingen faktisk går.
             assert not traad.is_alive(), (
                 "forespørselstråden lever etter `slipp` + 30 s join — "
                 "kallet står fast utenfor dekrypteringssømmen")
@@ -1152,3 +1207,12 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200(
             "reapet og aldri-funnet skal være samme svar (058-doktrinen)"
     finally:
         rt.close()
+
+
+# #257: probets TESTFORM finnes kun i barneprosessen (env-vakten) — en
+# skipif i forelderen ville felt CI-porten «ingen DB-tester ble hoppet
+# over», og en ubetinget definisjon ville kjørt probet uten grense.
+if os.environ.get("DISPONIT_223_PROBE") == "1":
+    @pg
+    def test_223_probe_interleavet_reap(migrator, miljo, monkeypatch):
+        _probe_223(migrator, miljo, monkeypatch)
