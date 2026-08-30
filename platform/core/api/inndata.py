@@ -300,6 +300,11 @@ async def opplast_endepunkt(tjeneste, request):
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
         ct, nonce = kryptering.krypter_bytes(dek, raa, tenant, key_id,
                                              formaal=b"inndata")
+        # 070 (sak #245): digesten over CIPHERTEXTEN — nøyaktig de bytene
+        # som fsync-es under — skrives i samme transaksjon som raden. Da
+        # kan backupens arkivport (og enhver annen leser) måle at filen
+        # på disk er den som ble skrevet, uten å kunne dekryptere den.
+        lagret = hashlib.sha256(ct).hexdigest()
         # B-maskinen (059): raden BÆRER den relative stien fra fødselen —
         # API-et velger aldri. Fast sti gjør samtidige opplastinger på
         # samme jti til et EKTE kappløp om én fil, så skriverne
@@ -338,8 +343,9 @@ async def opplast_endepunkt(tjeneste, request):
             try:
                 rad = conn.execute(
                     "SELECT ut_inndata_id, ut_lager_sti FROM"
-                    " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
-                    (tenant, jti, lest, sha, key_id, nonce)).fetchone()
+                    " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
+                    (tenant, jti, lest, sha, key_id, nonce,
+                     lagret)).fetchone()
             except psycopg.errors.InvalidParameterValue as e:
                 raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid,
                                      409)) from e
@@ -403,8 +409,8 @@ async def opplast_endepunkt(tjeneste, request):
         try:
             rad = conn.execute(
                 "SELECT ut_inndata_id, ut_lager_sti FROM"
-                " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, lest, sha, key_id, nonce)).fetchone()
+                " registrer_inndata_lastet(%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, jti, lest, sha, key_id, nonce, lagret)).fetchone()
         except psycopg.errors.InvalidParameterValue as e:
             os.unlink(sti)
             raise _Avbrudd(_feil("inndata_reservasjon_ugyldig", rid, 409)) \

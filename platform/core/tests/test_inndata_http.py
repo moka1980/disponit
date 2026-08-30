@@ -1043,8 +1043,9 @@ def test_kryptostrukturen_avvises_uten_a_brenne_jti(klient):
     try:
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             c.execute(
-                "SELECT * FROM registrer_inndata_lastet(%s,%s,%s,%s,%s,%s)",
-                (tenant, jti, 10, "a" * 64, key_id, b"\x01"))
+                "SELECT * FROM registrer_inndata_lastet"
+                "(%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, jti, 10, "a" * 64, key_id, b"\x01", "b" * 64))
         c.rollback()
     finally:
         c.close()
@@ -1152,8 +1153,9 @@ def test_innhold_sha256_maa_ha_hashens_form(klient):
         for sha in ("", "nei", "A" * 64, "a" * 63, "a" * 65):
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 c.execute("SELECT * FROM registrer_inndata_lastet"
-                          "(%s,%s,%s,%s,%s,%s)",
-                          (tenant, jti, 10, sha, key_id, b"n" * 12))
+                          "(%s,%s,%s,%s,%s,%s,%s)",
+                          (tenant, jti, 10, sha, key_id, b"n" * 12,
+                           "b" * 64))
             c.rollback()
             _kontekst(c, tenant)
     finally:
@@ -1910,6 +1912,12 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
     # stille (Cursor P2 på #202).
     sql += (rot / "platform/core/db/migrations/060_inndata_resolver.sql"
             ).read_text(encoding="utf-8")
+    # 070 (sak #245) byttet signaturen på `registrer_inndata_lastet` —
+    # unionen må lese den OG trekke fra det senere migrasjoner DROPper,
+    # ellers krever porten et speil for en dør som ikke finnes lenger
+    # (nøyaktig 058-fellen kommentaren over beskriver, ett hakk frem).
+    sql += (rot / "platform/core/db/migrations/070_lagret_digest.sql"
+            ).read_text(encoding="utf-8")
     kjorer = (rot / "deploy/staging/migrer.py").read_text(encoding="utf-8")
     rettigheter = kjorer.split('RETTIGHETER = """', 1)[1].split('"""', 1)[0]
 
@@ -1922,6 +1930,9 @@ def test_execute_gis_ogsaa_til_kjorerens_konfigurerte_runtimerolle():
         return {" ".join(s.split()) for s in funnet}
 
     doerene = signaturer(sql, "disponit")
+    droppede = {" ".join(d.split()) for d in re.findall(
+        r"DROP FUNCTION IF EXISTS\s+(.*?);", sql, re.S)}
+    doerene -= droppede
     assert doerene, "059 gir ingen EXECUTE — porten ville vært blind"
     mangler = doerene - signaturer(rettigheter, r"\{rolle\}")
     assert not mangler, (
@@ -2003,3 +2014,65 @@ def test_opplastingen_krever_ferskt_snapshot():
             c.rollback()
     finally:
         c.close()
+
+
+@pg
+def test_070_lagret_digest_maaler_ciphertexten(klient, inndata_rot):
+    """Sak #245: raden bærer skriveveiens egen digest over CIPHERTEXTEN
+    (070), målt av API-et på nøyaktig de fsync-ede bytene — den ene
+    lagrede verdien som lar backupens arkivport felle en avkortet eller
+    korrupt fil uten å kunne dekryptere den. Akseptkriteriet måles
+    begge veier: digesten matcher disken etter skriving, og en
+    avkorting etter skriving gjør at NØYAKTIG samme måling feller den.
+
+    MUTASJONEN SOM DREPER DENNE: la `registrer_inndata_lastet` skrive
+    NULL i `lagret_sha256` — porten mister hele målingen sin."""
+    tenant, _bid, cookie, csrf = _rigg(klient)
+    r = _reserver(klient, cookie, csrf)
+    assert r.status_code == 201, r.text
+    jti = r.json()["reservasjon_jti"]
+    kropp = _zipbytes()
+    r2 = _opplast(klient, cookie, csrf, jti, kropp)
+    assert r2.status_code == 201, r2.text
+
+    from db.pg import koble, sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, tenant, "test", "r1")
+        rad = m.execute(
+            "SELECT lager_sti, lagret_sha256 FROM inndata_artefakt"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            (tenant, jti)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert rad and rad[1], "lagret_sha256 ble aldri skrevet (070)"
+    sti, lagret = rad
+    fil = inndata_rot / sti
+    assert hashlib.sha256(fil.read_bytes()).hexdigest() == lagret, (
+        "digesten i raden matcher ikke bytene på disk — da måler"
+        " backupporten en annen fil enn den som ble skrevet")
+    # Negativ arm (sakens akseptkriterium): avkort filen ETTER skriving
+    # — samme måling feller den nå, uten DEK.
+    byte = fil.read_bytes()
+    fil.write_bytes(byte[: len(byte) // 2])
+    assert hashlib.sha256(fil.read_bytes()).hexdigest() != lagret, (
+        "avkortingen er usynlig for digesten — porten kan ikke felle den")
+    # Gjenspillet sammenligner ALDRI digesten (fersk nonce per forsøk gir
+    # ny ciphertext) og skriver heller aldri en ny — filen på disk hører
+    # til RADENS nonce. Repareres først, så gjenspilles det trygt.
+    fil.write_bytes(byte)
+    r3 = _opplast(klient, cookie, csrf, jti, kropp)
+    assert r3.status_code == 201, r3.text
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, tenant, "test", "r1")
+        etter = m.execute(
+            "SELECT lagret_sha256 FROM inndata_artefakt"
+            " WHERE tenant=%s AND reservasjon_jti=%s",
+            (tenant, jti)).fetchone()[0]
+        m.rollback()
+    finally:
+        m.close()
+    assert etter == lagret, (
+        "gjenspillet skrev en NY digest — raden lyver nå om filen på disk")
