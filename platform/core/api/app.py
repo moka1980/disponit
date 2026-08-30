@@ -1321,8 +1321,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               rekrutteringsrapport_detalj, methods=["GET"]),
         Route("/v1/rekruttering/kandidatkort/{oppdrag_id:int}/{kandidat_id}",
               rekruttering_kandidatkort, methods=["GET"]),
-        Route("/v1/rekruttering/kandidatdokument/{oppdrag_id:int}"
-              "/{dokument_id}",
+        Route("/v1/rekruttering/kandidatdokument/{oppdrag_id:int}/{dokument_id}",  # noqa: E501
               rekruttering_kandidatdokument_les, methods=["GET"]),
         Route("/v1/rekruttering/evalueringer", rekrutteringsevalueringer,
               methods=["GET"]),
