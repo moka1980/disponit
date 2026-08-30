@@ -733,11 +733,16 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
         # ærlig, aldri en gjettet vekting.
         prof = rapport.get("profil")
         if isinstance(prof, dict) and "krav" not in prof:
+            pver = prof.get("versjon")
             try:
                 import uuid as uuidmod
                 puid = uuidmod.UUID(str(prof.get("profil_id")))
-                pver = int(prof.get("versjon"))
             except (ValueError, TypeError):
+                puid = None
+            # Streng heltallsdom (CodeRabbit): int() ville tvunget både
+            # True og 3.7 til lovlige versjoner — referansen skal VÆRE
+            # et heltall, ellers står reserven.
+            if isinstance(pver, bool) or not isinstance(pver, int):
                 puid = None
             if puid is not None:
                 krav = [{"kravnavn": kn, "vekt": v} for kn, v in
