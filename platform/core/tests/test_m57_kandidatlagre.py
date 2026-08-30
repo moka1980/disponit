@@ -38,6 +38,11 @@ LAGRE = {
     "kandidat_avmaskering": ("felter",),
 }
 
+#: 075 (#157): reapingens MEDLEMMER er de seks payloadlagrene pluss
+#: ankeret — det syvende har ingen payload (identiteten er en UUID),
+#: men reaperen må nevne og merke det, og samlet-porten teller det.
+MEDLEMMER = {"kandidat": (), **LAGRE}
+
 
 def _claimet(m):
     """Et AKTIVT CLAIMET `rekruttering.evaluering`-oppdrag — den ENESTE
@@ -67,6 +72,8 @@ def _fyll_lagrene(rt, pid, kandidat=None):
     kid = kandidat or uuid.uuid4()
     did = uuid.uuid4()
     sha = secrets.token_hex(32)
+    # 075 (#157): ankeret fødes FØRST, gjennom døren — lagrene FK-er det.
+    rt.execute("SELECT opprett_kandidat(%s,%s,%s)", (TENANT, pid, kid))
     rt.execute(
         "INSERT INTO kandidat_originaldokument (tenant, prosess_id,"
         " kandidat_id, dokument_id, filnavn, innholdstype, dokument,"
@@ -941,6 +948,14 @@ def test_port18_reaping_tommer_alle_seks_lagrene(migrator):
                 f" WHERE tenant=%s AND prosess_id=%s",
                 (TENANT, pid)).fetchone()
             assert rad[0] >= 1 and rad[0] == rad[1] == rad[2], tabell
+        # 075 (#157): det SYVENDE medlemmet merkes i samme sveip — raden
+        # består som evidens (identiteten er en UUID, uten payload).
+        anker = migrator.execute(
+            "SELECT count(*), count(*) FILTER (WHERE slettet_ts IS"
+            " NOT NULL) FROM kandidat WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()
+        assert anker[0] >= 1 and anker[0] == anker[1], \
+            "ankeret ble ikke merket sammen med lagrene"
         assert migrator.execute(
             "SELECT slettet_ts IS NOT NULL FROM rekrutteringsprosess"
             " WHERE tenant=%s AND prosess_id=%s",
@@ -1354,13 +1369,17 @@ def test_port19_settet_av_lagre_er_maalt_mot_katalogen(migrator):
             " WHERE c.confrelid = 'kandidat_originaldokument'::regclass"
             "   AND c.contype = 'f'").fetchall()}
     fk_tabeller.discard("kandidat_originaldokument")
-    assert fk_tabeller | {"kandidat_originaldokument"} == set(LAGRE), \
-        "kandidatlagrene i katalogen er ikke testens seks"
+    assert fk_tabeller | {"kandidat_originaldokument"} == set(MEDLEMMER), \
+        "medlemmene i katalogen er ikke testens sju (#157: ankeret er med)"
     kilde = migrator.execute(
         "SELECT pg_get_functiondef('reap_kandidatdata(int)'::regprocedure)"
     ).fetchone()[0]
-    for tabell, kolonner in LAGRE.items():
-        assert tabell in kilde, f"reaperen nevner ikke {tabell}"
+    for tabell, kolonner in MEDLEMMER.items():
+        # Kvalifisert referanse, ikke delstreng (CodeRabbit): «kandidat»
+        # er en delstreng av alle seks lagrene — «public.kandidat k» er
+        # nøyaktig reaperens egen form for medlemmet.
+        assert f"public.{tabell} k" in kilde, \
+            f"reaperen nevner ikke {tabell}"
         for kol in kolonner:
             assert f"{kol} = NULL" in kilde, \
                 f"reaperen nuller ikke {tabell}.{kol}"
@@ -1383,7 +1402,7 @@ def test_port19_ingen_prosess_har_halvtomme_lagre(migrator):
     invariant-test over «hele basen» ville vært grønn på ingenting.
     `m57_reaper`-policyen er den ene eksplisitte kryss-tenant-veien."""
     unionen = " UNION ALL ".join(
-        f"SELECT tenant, prosess_id, slettet_ts FROM {t}" for t in LAGRE)
+        f"SELECT tenant, prosess_id, slettet_ts FROM {t}" for t in MEDLEMMER)
     rt = _rt()
     rp = None
     try:
@@ -1481,6 +1500,9 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
         # første — og neste INSERT feller på FK i stedet for på grensen.
         rt.commit()
         _sett_kontekst(rt, TENANT)
+        stor_kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TENANT, pid, stor_kid))
         with pytest.raises(psycopg.errors.CheckViolation):
             rt.execute(
                 "INSERT INTO kandidat_originaldokument (tenant,"
@@ -1488,11 +1510,14 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
                 " innholdstype, dokument, storrelse_bytes,"
                 " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
                 " %s, 26*1024*1024, '0')",
-                (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x"))
+                (TENANT, pid, stor_kid, uuid.uuid4(), b"x"))
         rt.rollback()
         # ... og en LØGN om størrelsen er like avvist: `storrelse_bytes`
         # på 1 med et dokument på 32 byte er ikke en 1-bytes fil.
         _sett_kontekst(rt, TENANT)
+        logn_kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TENANT, pid, logn_kid))
         with pytest.raises(psycopg.errors.CheckViolation):
             rt.execute(
                 "INSERT INTO kandidat_originaldokument (tenant,"
@@ -1500,17 +1525,20 @@ def test_enkeltfilgrensen_star_i_basen(migrator):
                 " innholdstype, dokument, storrelse_bytes,"
                 " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
                 " %s, 1, '0')",
-                (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x" * 32))
+                (TENANT, pid, logn_kid, uuid.uuid4(), b"x" * 32))
         rt.rollback()
         # Positiv kontroll: sann størrelse går.
         _sett_kontekst(rt, TENANT)
+        sann_kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TENANT, pid, sann_kid))
         rt.execute(
             "INSERT INTO kandidat_originaldokument (tenant,"
             " prosess_id, kandidat_id, dokument_id, filnavn,"
             " innholdstype, dokument, storrelse_bytes,"
             " innhold_sha256) VALUES (%s,%s,%s,%s,'a.pdf','x',"
             " %s, 32, '0')",
-            (TENANT, pid, uuid.uuid4(), uuid.uuid4(), b"x" * 32))
+            (TENANT, pid, sann_kid, uuid.uuid4(), b"x" * 32))
         rt.rollback()
     finally:
         rt.close()
@@ -1526,6 +1554,9 @@ _REAP_SETNINGER = (
     ("kandidat_intervjusporsmal", "sporsmal=NULL"),
     ("kandidat_utsendingsdata", "mottaker_ref=NULL, flettefelt=NULL"),
     ("kandidat_avmaskering", "felter=NULL"),
+    # 075 (#157): ankeret er det syvende medlemmet — ingen payload å
+    # nulle, bare merket (uttrykket er en no-op-kolonne så malen står).
+    ("kandidat", "kandidat_id=kandidat_id"),
 )
 
 
@@ -1744,6 +1775,8 @@ def test_innhold_sha256_utledes_av_payloaden_ikke_av_kalleren(migrator):
         for kid, tekst in ((kid_a, "samme tekst"), (kid_b, "samme tekst"),
                            (kid_c, "en annen tekst")):
             did = uuid.uuid4()
+            rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                       (TENANT, pid, kid))
             rt.execute(
                 "INSERT INTO kandidat_originaldokument (tenant,"
                 " prosess_id, kandidat_id, dokument_id, filnavn,"
@@ -1810,6 +1843,8 @@ def test_opprettet_settes_av_basen_ikke_av_kalleren(migrator):
         kid_frem, kid_bak = uuid.uuid4(), uuid.uuid4()
         for kid, forskyvning in ((kid_frem, "+ interval '400 days'"),
                                  (kid_bak, "- interval '400 days'")):
+            rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                       (TENANT, pid, kid))
             rt.execute(
                 "INSERT INTO kandidat_evalueringsartefakt (tenant,"
                 " prosess_id, kandidat_id, artefakt, innhold_sha256,"
@@ -3635,3 +3670,159 @@ test_069_slett_og_avbryt_endepunktene = _dekker069(
     "evaluering_terminal")(test_069_slett_og_avbryt_endepunktene)
 test_069_slett_og_avbryt_endepunktene = _dekker069(
     "evaluering_aktiv")(test_069_slett_og_avbryt_endepunktene)
+
+
+@pg
+def test_157_ankerdoren_er_eneste_fodselsvei(migrator):
+    """#157: kandidatens fødsel er DØRENS — runtime har ingen rå INSERT
+    på ankeret, uten tenantkontekst finnes ingen fødsel, en reapet
+    prosess føder ingen kandidat, og samme trippel er et stille ja
+    (dokumentstrømmen kaller døren per medlem).
+
+    MUTASJONEN SOM DREPER DENNE: GRANT INSERT ON kandidat til runtime,
+    eller fjern reapet-armen i `opprett_kandidat`."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        rt.commit()
+        kid = uuid.uuid4()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute(
+                "INSERT INTO kandidat (tenant, prosess_id, kandidat_id)"
+                " VALUES (%s,%s,%s)", (TENANT, pid, kid))
+        rt.rollback()
+        # Uten kontekst: kontekstporten feller før noe skrives.
+        with pytest.raises(psycopg.errors.Error):
+            rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                       (TENANT, pid, kid))
+        rt.rollback()
+        # Idempotent gjennom døren — én rad, ikke to.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)", (TENANT, pid, kid))
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)", (TENANT, pid, kid))
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat WHERE tenant=%s"
+            " AND prosess_id=%s AND kandidat_id=%s",
+            (TENANT, pid, kid)).fetchone()[0] == 1
+        migrator.rollback()
+        # En reapet prosess føder ingen kandidat.
+        _, pid2 = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid2)
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid2))
+        rt.commit()
+        rp, _timer = _reaperkobling()
+        try:
+            rp.execute("SELECT * FROM reap_kandidatdata(50)")
+            rp.commit()
+        finally:
+            rp.close()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                       (TENANT, pid2, uuid.uuid4()))
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_157_rekkefolgebeviset_reap_uten_anker_felles(migrator):
+    """#157s bevispunkt, ordrett fra eiers dom: porten skal være RØD når
+    ankeret er lagt til uten at reaperen lærte det. Tilstanden en slik
+    reaper ville etterlatt — de seks lagrene reapet, ankeret levende —
+    felles ved COMMIT; med ankeret i samme transaksjon går det.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kandidat-armene fra
+    `m57_lagrene_reapes_samlet` (tilbake til 057-kroppen)."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+        # «Reaperen som ikke lærte det syvende medlemmet»: de seks
+        # lagrene alene. Setningene går — COMMIT-en gjør det ikke.
+        _sett_kontekst(migrator, TENANT)
+        for tab, payload in _REAP_SETNINGER:
+            if tab == "kandidat":
+                continue
+            migrator.execute(
+                f"UPDATE {tab} SET {payload}, slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            migrator.commit()
+        migrator.rollback()
+        # Positiv kontroll: alle SJU i samme transaksjon går gjennom.
+        _sett_kontekst(migrator, TENANT)
+        for tab, payload in _REAP_SETNINGER:
+            migrator.execute(
+                f"UPDATE {tab} SET {payload}, slettet_ts=now()"
+                " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.commit()
+    finally:
+        rt.close()
+
+
+@pg
+def test_157_kapplop_fodsel_mot_reaper_gir_ingen_halvtom(migrator):
+    """#157s kappløpspunkt: dørens `FOR SHARE` serialiseres mot reaperens
+    `FOR UPDATE`. A (reaperen) holder en ucommittet reap; B (døren)
+    blokkerer på prosessradens lås, ser den NYE versjonen etter As
+    commit, og avvises — aldri en kandidat født på en prosess som
+    nettopp ble slettet, aldri en halvtom prosess.
+
+    MUTASJONEN SOM DREPER DENNE: bytt dørens `FOR SHARE` til et ulåst
+    `EXISTS`."""
+    import threading
+
+    rt = _rt()
+    a = None
+    try:
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        a, _timer = _reaperkobling()
+        a.execute("SELECT * FROM reap_kandidatdata(50)")
+        # As transaksjon står åpen: prosessraden er FOR UPDATE-låst.
+        resultat: dict = {}
+
+        def fodsel():
+            try:
+                _sett_kontekst(rt, TENANT)
+                rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                           (TENANT, pid, uuid.uuid4()))
+                rt.commit()
+                resultat["kom_gjennom"] = True
+            except Exception as feil:
+                resultat["feil"] = feil
+                rt.rollback()
+
+        t = threading.Thread(target=fodsel)
+        t.start()
+        t.join(timeout=2)
+        assert t.is_alive(), \
+            "døren leste forbi reaperens ucommittede FOR UPDATE"
+        a.commit()
+        t.join(timeout=10)
+        assert not t.is_alive(), "døren kom aldri gjennom etter reapen"
+        assert isinstance(resultat.get("feil"),
+                          psycopg.errors.InsufficientPrivilege), resultat
+        assert "reapet" in str(resultat["feil"]), resultat["feil"]
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT count(*) FROM kandidat WHERE tenant=%s"
+            " AND prosess_id=%s AND slettet_ts IS NULL",
+            (TENANT, pid)).fetchone()[0] == 0, \
+            "en levende kandidat på en reapet prosess er halvtomheten"
+        migrator.rollback()
+    finally:
+        if a is not None:
+            a.close()
+        rt.close()
