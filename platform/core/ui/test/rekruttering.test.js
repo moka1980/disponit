@@ -6577,7 +6577,7 @@ test("Kaskadeporten: kandidatoverskriften OMBREKKER faktisk — målt i beregnet
 });
 
 
-test("Slett vises bare der noe faktisk er lagret — og vektene er lukket som standard (eiers funn 30/8)", async () => {
+test("Slett står på hvert terminalt løp — og vektene er lukket som standard (eiers funn 30/8 ×2)", async () => {
   KALL = [];
   SVAR = { "/v1/rekruttering/prosesser": prosess(),
     "/v1/rekruttering/stillingsprofiler": profiler(),
@@ -6587,7 +6587,13 @@ test("Slett vises bare der noe faktisk er lagret — og vektene er lukket som st
         har_anker: true },
       { oppdrag_id: 97, status: "feilet",
         opprettet: "2026-08-27T08:06:00+00:00", rapport_klar: false,
-        har_anker: false }],
+        har_anker: false },
+      { oppdrag_id: 94, status: "utfort",
+        opprettet: "2026-08-24T14:43:00+00:00", rapport_klar: false,
+        har_anker: true },
+      { oppdrag_id: 99, status: "plukket",
+        opprettet: "2026-08-29T21:12:00+00:00", rapport_klar: false,
+        har_anker: true }],
     flere: false },
     "/v1/rekruttering/rapport/98": { oppdrag_id: 98, rapport: {
       rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
@@ -6607,10 +6613,17 @@ test("Slett vises bare der noe faktisk er lagret — og vektene er lukket som st
     .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett")
       && b.getAttribute("aria-label").includes(String(id)));
   assert.ok(slettFor(98), "Slett mangler der kandidatdata finnes");
-  // 97 feilet FØR ankeret ble født: serveren ville svart 404, og en
-  // knapp som lover en sletting som ikke finnes er en blindvei.
-  assert.ok(!slettFor(97),
-    "Slett står på en evaluering uten retensjonsanker — 404-blindveien");
+  // SLETT BETYR AT RADEN FORSVINNER (071, eiers funn 30/8): også en
+  // feilet evaluering UTEN anker skal kunne slettes — serveren fjerner
+  // raden fra listen og sier ærlig at ingen data var lagret.
+  assert.ok(slettFor(97),
+    "Slett mangler på den feilede — raden kan aldri ryddes bort");
+  assert.ok(slettFor(94),
+    "Slett mangler på den utilgjengelige (utfort uten rapport) —"
+    + " eiers oppdrag 94");
+  // Et AKTIVT løp har Avbryt som sin vei — aldri Slett.
+  assert.ok(!slettFor(99),
+    "Slett står på et aktivt løp — veien dit er Avbryt");
   // Rapportens vekter er sammenleggbare og LUKKET som standard: listen
   // er produktet, og fire skyveknapper skal ikke dytte den under bretten.
   assert.ok(await vent(() => hoved.querySelector(".rekrut-vekterfold")),
@@ -6621,4 +6634,69 @@ test("Slett vises bare der noe faktisk er lagret — og vektene er lukket som st
     t("ui.rekruttering.vekter_tittel"));
   assert.ok(fold.querySelector(".rekrut-rapportvekter input[type=range]"),
     "skyveknappene forsvant fra folden — re-vektingen er borte");
+});
+
+test("Dypdykket auto-viser aldri et ferdig løp — og har egen Slett (eiers funn 30/8 ×3)", async () => {
+  KALL = [];
+  const idx = (valgt) => ({
+    valgt_prosess_id: valgt,
+    prosesser: [{ prosess_id: "p-9", oppdrag_id: 98,
+      opprettet: "2026-08-27T16:59:00+00:00",
+      evaluering_status: "utfort", kandidat_antall: 2,
+      ...(valgt === "p-9" ? {
+        blinding_av: false, vekter: { drift: 3 }, vekter_kilde: "profil",
+        kandidater: [
+          { kandidat_id: "K-1", oppfylt: { drift: true }, funn: [] },
+          { kandidat_id: "K-2", oppfylt: { drift: false }, funn: [] }],
+        lister: [] } : {}) }],
+  });
+  // Objektform: funksjonsformen får bare den strippede stien, og
+  // prosessbyttet trenger den eksakte URL-nøkkelen.
+  const svarkart = {
+    "/v1/rekruttering/prosesser": idx(null),
+    "/v1/rekruttering/prosesser?prosess_id=p-9": idx("p-9"),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [], flere: false },
+    "/v1/rekruttering/evaluering/98/slett": { slett_bestilt: true },
+  };
+  SVAR = svarkart;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  // Uten aktivt løp: velger med plassholder, infotekst, INTET dypdykk.
+  assert.ok(await vent(() => hoved.textContent
+    .includes(t("ui.rekruttering.ingen_aktiv_prosess"))),
+  "flaten sa aldri at ingen prosess er valgt");
+  assert.ok(!hoved.querySelector(".rekrut-tabell"),
+    "et ferdig løp auto-rendret dypdykket — gamle rapporter stabler seg");
+  const velger = hoved.querySelector("#rekrut-prosessvelger");
+  assert.ok(velger, "velgeren mangler — brukeren kan ikke åpne noe");
+  assert.equal(velger.value, "", "velgeren later som et valg er gjort");
+  // Brukeren velger den ferdige eksplisitt → dypdykket kommer, MED Slett.
+  velger.value = "p-9";
+  velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.ok(await vent(() => hoved.querySelector(".rekrut-tabell")),
+    "det valgte løpet rendret aldri");
+  const slett = [...hoved.querySelectorAll(".rekrut-prosesshandling button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"));
+  assert.ok(slett, "dypdykket mangler Slett på et terminalt løp");
+  assert.ok(slett.getAttribute("aria-label").includes("98"));
+  slett.click();
+  const dlg = hoved.ownerDocument.querySelector("dialog[open], [role=dialog]");
+  assert.ok(dlg, "bekreftelsesdialogen åpnet ikke");
+  assert.ok(!KALL.some((k) => k.sti.endsWith("/slett")),
+    "slettingen gikk uten bekreftelse");
+  [...dlg.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/evaluering/98/slett"
+    && k.metode === "POST")), "POST-en gikk aldri");
+  // Etterpå hentes indeksen på nytt — 069-filteret har sluppet
+  // prosessen, og dypdykket står tomt igjen.
+  svarkart["/v1/rekruttering/prosesser"] =
+    { valgt_prosess_id: null, prosesser: [] };
+  assert.ok(await vent(() => hoved.textContent
+    .includes(t("ui.rekruttering.ingen_prosess"))
+    || hoved.textContent.includes(t("ui.rekruttering.ingen_aktiv_prosess"))),
+  "dypdykket ble stående etter slettingen");
 });

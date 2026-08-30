@@ -535,8 +535,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // usignerte utsendingene hennes — utilgjengelig for en tenant med mer
   // enn én pågående rekruttering. Velgeren vises bare når det FINNES noe
   // å velge mellom; valget tegner flaten på nytt for den prosessen.
+  // BARE ET AKTIVT LØP AUTO-VISES (eiers funn 30/8): ferdige prosesser
+  // stablet seg under evalueringsrapporten som «enda en rapport».
+  // Serverens valgt følger samme regel; her speiles den for et lokalt
+  // re-tegn. `null` betyr: velgeren står, dypdykket venter på et valg.
+  // Regelen om HVEM som auto-vises eier serveren (aktiv-else-ingen);
+  // klienten ærer `valgt_prosess_id` — det er raden svaret faktisk
+  // bærer full data for. `null` betyr: velgeren står, dypdykket venter.
   const prosess = prosesser.find((p) => p.prosess_id === valgtId)
-    || prosesser[0];
+    || prosesser.find((p) => data
+      && p.prosess_id === data.valgt_prosess_id)
+    || null;
   let velgerRot = null;
   // Feilveien for prosessbyttet (#183): `role="alert"`, fordi et bytte som
   // ikke gikk gjennom er noe brukeren må vite FØR hun leser videre.
@@ -546,14 +555,19 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // Velgeren står over dem, så en gjenbruk her ville kapret oppslaget og
   // gitt en tom node der utfallet skulle stått. Målt: den gjorde det.
   const velgerFeil = el("div", { role: "alert", class: "rekrut-velgerfeil" });
-  if (prosesser.length > 1) {
+  if (prosesser.length > 1 || !prosess) {
     const velgerId = "rekrut-prosessvelger";
     const velger = el("select", { id: velgerId },
+      // Plassholderen er valget «ingen»: uten aktiv prosess skal flaten
+      // ikke late som om en gammel er valgt.
+      ...(!prosess ? [el("option", { value: "", selected: "",
+        disabled: "" }, t("ui.rekruttering.velg_prosess"))] : []),
       ...prosesser.map((p) => el("option",
         { value: p.prosess_id,
-          ...(p.prosess_id === prosess.prosess_id ? { selected: "" } : {}) },
+          ...(prosess && p.prosess_id === prosess.prosess_id
+            ? { selected: "" } : {}) },
         prosessetikett(p))));
-    velger.value = prosess.prosess_id;
+    velger.value = prosess ? prosess.prosess_id : "";
     velger.addEventListener("change", () => {
       // FROSSET ER FROSSET (A-dommen, #212). `disabled` er brukerens vei:
       // nettleseren sender ingen `change` fra en låst kontroll. Men hele
@@ -563,7 +577,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       // derfor også her, ett sted fra: låsen spørres, valget rulles
       // tilbake til den prosessen som faktisk vises.
       if (okt.bestilling.paagaaende) {
-        velger.value = prosess.prosess_id;
+        velger.value = prosess ? prosess.prosess_id : "";
         return;
       }
       // BYTTE ER EN HENTING, IKKE EN OM-TEGNING (#183, Codex P2 fra #176).
@@ -590,7 +604,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       // henting flytter det (`tegn` tegner velgeren på nytt med `nyId`).
       // Samme form som `paagaaende`-vakten seksten linjer over, og samme
       // grunn: låsen er brukerens vei, invarianten er husets.
-      velger.value = prosess.prosess_id;
+      velger.value = prosess ? prosess.prosess_id : "";
       // ... OG SVARET MÅ FORTSATT VÆRE ØNSKET NÅR DET LANDER (Cursor P2).
       // Hentingen er husets tredje async-vei inn i denne flaten, og de to
       // andre — rapporten og evalueringslisten — bærer begge vakten alt:
@@ -725,6 +739,17 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     // på flaten som river bestillingsseksjonen og bygger den på nytt.
     laas.meld("velger", velger);
   }
+  if (!prosess) {
+    fanevalg({
+      evalueringer: el("div", {}, evalDel, hoppAnker, velgerRot,
+        el("p", { class: "muted",
+          text: t("ui.rekruttering.ingen_aktiv_prosess") })),
+      bestill: bestillDel
+        || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
+      profiler: profilDel,
+    });
+    return;
+  }
   const vekter = { ...prosess.vekter };
   const kanBestille = harScope(ctx, "bestilling:opprett");
 
@@ -767,6 +792,56 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // POSITIVT sier `utfort`. Et gammelt svar uten feltet er ikke et bevis
   // på at evalueringen er ferdig.
   const merknadRot = el("div", { class: "rekrut-evaluering" });
+  // SLETT OGSÅ HER (eiers funn 30/8 ×3): dypdykket er enda et sted
+  // «rapporten» står, og et terminalt løp skal kunne ryddes bort der
+  // det vises. Samme dialog og samme dør som listens knapp (069+071);
+  // etterpå hentes prosessindeksen på nytt — 069-filteret har da
+  // sluppet prosessen, og evalueringslisten oppfriskes om den står.
+  if (harScope(ctx, "bestilling:opprett") && prosess.oppdrag_id != null
+      && ["utfort", "feilet", "kansellert"]
+        .includes(prosess.evaluering_status)) {
+    const slettKnapp = el("button", { type: "button", class: "knapp fare",
+      text: t("ui.rekruttering.evalueringer.slett") });
+    slettKnapp.setAttribute("aria-label",
+      t("ui.rekruttering.evalueringer.slett")
+      + " — " + t("ui.rekruttering.evalueringer.oppdrag")
+      + " " + prosess.oppdrag_id);
+    slettKnapp.addEventListener("click", () => {
+      // Samme vakt som velgerens: under en pågående mutasjon rives
+      // ingenting (A-dommen, #212).
+      if (okt.bestilling.paagaaende) return;
+      Bekreftelsesdialog({
+        tittel: t("ui.rekruttering.evalueringer.slett_tittel"),
+        tekst: flett(t("ui.rekruttering.evalueringer.slett_tekst"),
+          { oppdrag: prosess.oppdrag_id }),
+        primarTekst: t("ui.rekruttering.evalueringer.slett"),
+        farlig: true,
+        paaPrimar: async () => {
+          const min = ++okt.prosessHent.nr;
+          let svar;
+          try {
+            await slettEvaluering(prosess.oppdrag_id);
+            svar = await hentJson("/v1/rekruttering/prosesser");
+          } catch (e) {
+            if (e instanceof UautorisertFeil) {
+              ctx.paaUautorisert(); return;
+            }
+            okt.utfall = t("ui.rekruttering.evalueringer.handlingsfeil");
+            if (min === okt.prosessHent.nr && hoved.isConnected) {
+              tegn(hoved, ctx, data, okt, valgtId);
+            }
+            return;
+          }
+          okt.utfall = t("ui.rekruttering.evalueringer.slett_bestilt");
+          if (okt.evaluering) okt.evaluering.oppdater();
+          if (min !== okt.prosessHent.nr || !hoved.isConnected) return;
+          tegn(hoved, ctx, svar, okt);
+        },
+      });
+    });
+    merknadRot.append(el("div", { class: "rekrut-prosesshandling" },
+      slettKnapp));
+  }
   if (prosess.evaluering_status !== "utfort") {
     merknadRot.append(el("p", { class: "rekrut-evaluering-status",
       text: t(["feilet", "kansellert"].includes(prosess.evaluering_status)
@@ -1302,8 +1377,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       farlig: nokkel === "slett",
       paaPrimar: async () => {
         try {
-          await kall(oppdragId);
-          meldLive(t(kvittering));
+          const svar = await kall(oppdragId);
+          meldLive(t(typeof kvittering === "function"
+            ? kvittering(svar) : kvittering));
           if (etter) etter();
         } catch (feil) {
           if (feil instanceof UautorisertFeil) {
@@ -1828,8 +1904,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           "ui.rekruttering.evalueringer.avbrutt"));
         handling.append(avbryt);
       }
-      if (kanSkrive && !e2.slettet && e2.har_anker !== false
-          && (e2.rapport_klar || e2.status === "feilet")) {
+      // SLETT BETYR AT RADEN FORSVINNER (eiers funn 30/8, migrasjon
+      // 071): knappen står på HVERT terminalt løp — klar rapport,
+      // feilet, kansellert, utilgjengelig og alt bestilt slettet —
+      // uansett om det finnes kandidatdata bak (serveren tar begge
+      // delene i samme vending). Bare et AKTIVT løp mangler den:
+      // veien dit er Avbryt.
+      if (kanSkrive && (e2.rapport_klar || e2.slettet
+          || ["feilet", "kansellert", "utfort"].includes(e2.status))) {
         const slett = el("button", { type: "button", class: "knapp fare",
           text: t("ui.rekruttering.evalueringer.slett") });
         slett.setAttribute("aria-label",
@@ -1838,7 +1920,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           + " " + e2.oppdrag_id);
         slett.addEventListener("click", () => bekreftHandling(e2,
           "slett", slettEvaluering,
-          "ui.rekruttering.evalueringer.slett_bestilt"));
+          (svar) => (svar && svar.ingenting_lagret
+            ? "ui.rekruttering.evalueringer.fjernet"
+            : "ui.rekruttering.evalueringer.slett_bestilt")));
         handling.append(slett);
       }
       // Terminale statuser er sine egne sannheter — "venter" er bare for

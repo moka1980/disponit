@@ -511,11 +511,22 @@ def prosesser_endepunkt(tjeneste, request):
             if valgt is None:
                 return _feil("ikke_funnet", rid, 404)
         else:
-            valgt = rader[0] if rader else None
+            # BARE ET AKTIVT LØP AUTO-VISES (eiers funn 30/8: «trenges
+            # ikke gamle rapporter vises» — ferdige prosesser stablet seg
+            # under evalueringsrapporten som enda en rapport). Nyeste
+            # opprettet/plukket velger seg selv; finnes ingen, får flaten
+            # kun indeksen og lar brukeren velge eksplisitt. Et navngitt
+            # `prosess_id`-kall (grenen over) åpner fortsatt hvilken som
+            # helst.
+            valgt = next((r for r in rader
+                          if r[2] in ("opprettet", "plukket")), None)
 
         for pid, oppdrag_id, status, opprettet, antall in rader:
             post = {
                 "prosess_id": str(pid),
+                # 071-slettingen trenger oppdraget — flatens Slett-knapp
+                # i dypdykket går samme vei som listens.
+                "oppdrag_id": oppdrag_id,
                 "opprettet": opprettet.isoformat(),
                 "evaluering_status": status,
                 "kandidat_antall": antall,
@@ -1017,10 +1028,29 @@ def evaluering_slett_endepunkt(tjeneste, request):
             # fremtiden. Veien dit er Avbryt, og flaten viser den.
             if eier[0] in ("opprettet", "plukket"):
                 return _feil("evaluering_aktiv", rid, 409)
+            # RADEN FORSVINNER FRA LISTEN (071, eiers funn 30/8): det er
+            # dét sletting BETYR for eieren. Historikken består i basen;
+            # listevisningen slipper raden. Enveis-vakten eier reglene.
+            conn.execute(
+                "UPDATE oppdrag SET liste_skjult_ts = now()"
+                " WHERE tenant=%s AND id=%s AND liste_skjult_ts IS NULL",
+                (tenant, oppdrag_id))
+            conn.commit()
+            tjeneste.logg.hendelse("evaluering_fjernet", rid, tenant,
+                                   art="drift", oppdrag_id=oppdrag_id)
             return _ok({"slett_bestilt": False,
                         "ingenting_lagret": True}, rid)
         conn.execute("SELECT bestill_tidligsletting(%s,%s)",
                      (tenant, rad[0]))
+        # … og raden forlater listen i samme vending (071) — men KUN når
+        # løpet er terminalt: vakten avviser skjuling av et aktivt løp,
+        # og et API-direktekall på et plukket oppdrag skal fortsatt få
+        # tidligslettingen sin uten å snuble i den regelen.
+        conn.execute(
+            "UPDATE oppdrag SET liste_skjult_ts = now()"
+            " WHERE tenant=%s AND id=%s AND liste_skjult_ts IS NULL"
+            "   AND status IN ('utfort','feilet','kansellert')",
+            (tenant, oppdrag_id))
         conn.commit()
         tjeneste.logg.hendelse("tidligsletting_bestilt", rid, tenant,
                                art="drift", oppdrag_id=oppdrag_id)

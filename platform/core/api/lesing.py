@@ -770,6 +770,9 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             " AS har_anker"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
+            # 071: en rad eieren har slettet er UTE av listen — det er
+            # hele betydningen av merket. Basen beholder historikken.
+            "   AND o.liste_skjult_ts IS NULL"
             # Keyset-leddet: fortsettelsen er «eldre enn siste viste rad»,
             # målt på (opprettet, id) — samme par cursoren bærer, og samme
             # par sorteringen går på, så vinduene verken overlapper eller
