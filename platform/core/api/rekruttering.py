@@ -1231,6 +1231,9 @@ def stillingsprofiler_endepunkt(tjeneste, request):
                 "       s.opprettet_av"
                 "  FROM stillingsprofil s"
                 " WHERE s.tenant=%s"
+                # 074: slett = skjuling — raden forlater listen (og
+                # dermed Ny bestilling), historikken består i basen.
+                "   AND s.skjult_ts IS NULL"
                 "   AND s.versjon = (SELECT max(i.versjon)"
                 "                      FROM stillingsprofil i"
                 "                     WHERE i.tenant=s.tenant"
@@ -1248,6 +1251,45 @@ def stillingsprofiler_endepunkt(tjeneste, request):
                 "opprettet_av": av_, "krav": krav,
             })
         return _ok({"profiler": profiler}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def stillingsprofil_slett_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/stillingsprofil/{profil_id}/slett — slett
+    betyr det samme som i evalueringslisten (071/074): profilen
+    forsvinner fra flaten og fra Ny bestilling; versjonene består i
+    basen, for rapportene refererer dem (v2-leseveien supplerer kravene
+    derfra). Enveis — vakten i 074 eier reglene. Idempotent: en alt
+    skjult profil er et stille ja."""
+    import uuid as uuidmod
+
+    from .app import _rid
+    from .policyadmin_http import _browserkontekst, _feil, _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        puid = uuidmod.UUID(str(request.path_params["profil_id"]))
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        "bestilling:opprett")
+        finnes = conn.execute(
+            "SELECT count(*) FROM stillingsprofil"
+            " WHERE tenant=%s AND profil_id=%s",
+            (tenant, puid)).fetchone()[0]
+        if not finnes:
+            return _feil("ikke_funnet", rid, 404)
+        conn.execute("SELECT skjul_stillingsprofil(%s,%s)",
+                     (tenant, puid))
+        conn.commit()
+        tjeneste.logg.hendelse("stillingsprofil_slettet", rid, tenant,
+                               art="drift", profil=str(puid))
+        return _ok({"slettet": True}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

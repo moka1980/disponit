@@ -1124,6 +1124,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rekruttering_kandidatkort(request: Request) -> Response:
         return rekruttering_http.kandidatkort_endepunkt(tjeneste, request)
 
+    def rekruttering_profil_slett(request: Request) -> Response:
+        return rekruttering_http.stillingsprofil_slett_endepunkt(
+            tjeneste, request)
+
     def rekruttering_signer(request: Request) -> Response:
         return rekruttering_http.signer_endepunkt(tjeneste, request)
 
@@ -1348,6 +1352,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/rekruttering/stillingsprofiler",
               rekruttering_profil_lagre, methods=["POST"]),
+        Route("/v1/rekruttering/stillingsprofil/{profil_id}/slett",
+              rekruttering_profil_slett, methods=["POST"]),
         Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/slett",
               rk_slett, methods=["POST"]),
         Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/avbryt",
@@ -1811,6 +1817,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # Skriving av profilen er kundens/adminens bestillingsmyndighet —
     # samme scope som signeringen og inndata-reservasjonen.
     ("POST", "/v1/rekruttering/stillingsprofiler"): "bestilling:opprett",
+    # 074: slett = enveis skjuling — samme myndighet som skrivingen.
+    ("POST", "/v1/rekruttering/stillingsprofil/{profil_id}/slett"):
+        "bestilling:opprett",
     # Modulveien (060): retten er CLAIMET — ORDRESCOPE-klassen som
     # claim/kvittering; auth avgjøres i endepunktet (modultoken).
     ("POST", "/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}"):

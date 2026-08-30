@@ -6854,3 +6854,47 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
   assert.match(tekst,
     new RegExp(t("ui.rekruttering.kandidatkort.dokumenter")));
 });
+
+test("Profiler: Slett skjuler profilen etter bekreftelse (eiers bestilling 30/8)", async () => {
+  KALL = [];
+  let slettet = false;
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") {
+      return slettet ? { profiler: [] } : profiler();
+    }
+    if (sti.startsWith("/v1/rekruttering/stillingsprofil/")
+        && sti.endsWith("/slett")) {
+      slettet = true;
+      return { slettet: true };
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(
+    "section[aria-labelledby=profil-tittel] li")), "profillisten kom aldri");
+  const profilDel = hoved.querySelector(
+    "section[aria-labelledby=profil-tittel]");
+  const slettKnapp = [...profilDel.querySelectorAll("li button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.slett"));
+  assert.ok(slettKnapp, "Slett-knappen mangler i profillisten");
+  // Navngitt for øret — flere profiler gir ellers N like «Slett».
+  assert.ok(slettKnapp.getAttribute("aria-label").length
+    > t("ui.rekruttering.profiler.slett").length);
+  slettKnapp.click();
+  // Bekreftelsesdialogen eier den irreversible handlingen.
+  const dialog = document.querySelector(".dialog");
+  assert.ok(dialog, "bekreftelsesdialogen åpnet ikke");
+  assert.ok(dialog.textContent.includes(
+    t("ui.rekruttering.profiler.slett_tittel")));
+  const primar = [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.slett"));
+  primar.click();
+  assert.ok(await vent(() => slettet), "slettekallet gikk aldri");
+  assert.ok(await vent(() => !profilDel.querySelector("li")),
+    "profilen ble stående i listen etter slettingen");
+  assert.ok(profilDel.textContent.includes(
+    t("ui.rekruttering.profiler.slettet").split("{")[0].trim()),
+  "kvitteringen mangler");
+});

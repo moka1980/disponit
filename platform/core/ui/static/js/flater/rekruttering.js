@@ -18,7 +18,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
-         slettEvaluering, avbrytEvaluering,
+         slettEvaluering, avbrytEvaluering, slettStillingsprofil,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
@@ -2962,6 +2962,40 @@ function profilSeksjon(hoved, ctx, data, okt, laas, paaProfilendring) {
           text: t("ui.rekruttering.profiler.rediger") });
         rediger.addEventListener("click", () => aapneSkjema(p));
         deler.push(" ", rediger);
+        // SLETT OGSÅ HER (eiers bestilling 30/8): samme dør og dialog
+        // som evalueringslisten. Slett = raden forlater flaten og
+        // Ny bestilling; versjonene består i basen, for rapportene
+        // refererer dem (074 eier enveis-regelen).
+        const slett = el("button", { type: "button", class: "fare",
+          text: t("ui.rekruttering.profiler.slett") });
+        slett.setAttribute("aria-label",
+          `${t("ui.rekruttering.profiler.slett")} — ${p.navn}`);
+        slett.addEventListener("click", () => {
+          if (okt.bestilling.paagaaende) return;
+          Bekreftelsesdialog({
+            tittel: t("ui.rekruttering.profiler.slett_tittel"),
+            tekst: flett(t("ui.rekruttering.profiler.slett_tekst"),
+              { navn: p.navn }),
+            primarTekst: t("ui.rekruttering.profiler.slett"),
+            farlig: true,
+            paaPrimar: async () => {
+              try {
+                await slettStillingsprofil(p.profil_id);
+                sett(utfall, flett(
+                  t("ui.rekruttering.profiler.slettet"),
+                  { navn: p.navn }));
+                await oppdaterListe();
+              } catch (e) {
+                if (e instanceof UautorisertFeil) {
+                  ctx.paaUautorisert(); return;
+                }
+                sett(utfall, el("span", { role: "alert",
+                  text: t("ui.rekruttering.profiler.slett_feil") }));
+              }
+            },
+          });
+        });
+        deler.push(" ", slett);
       }
       return el("li", {}, ...deler);
     });

@@ -71,5 +71,6 @@
   "070_lagret_digest.sql": "ba6a9b2eebe4a7f7de01c90a69750d3dc90d7f394839ce3100f8f17e5e788caf",
   "071_liste_skjuling.sql": "7352f6ac2c346898d014089c3c881ae2d9ebd20cecd4649a47f70297335a0b8b",
   "072_skjemaversjon.sql": "77551962ad8585f67d6b795c760491f25c0a6763b6a7e891f275f37e146d3571",
-  "073_v1_restansen.sql": "954179a627c8611cd0b5d8c41521bf3afa2ce7b5918a98de2af5b9fd9f2f4069"
+  "073_v1_restansen.sql": "954179a627c8611cd0b5d8c41521bf3afa2ce7b5918a98de2af5b9fd9f2f4069",
+  "074_profil_skjuling.sql": "c3dc6da93e29836f0874de808db8be09a8c1bd08a5d4fbd172ba142bbdf9c43e"
 }
