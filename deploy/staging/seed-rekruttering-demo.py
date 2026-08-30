@@ -221,8 +221,7 @@ def main() -> int:
         flettefelt = {"kandidatnavn": "[NAVN-1]",
                       "stilling": "Demo-stilling",
                       "tidsvalg_lenke":
-                          f"https://tidsvalg.example.invalid/{kid}",
-                      "firmatekst": "Vennlig hilsen Demo-firma AS"}
+                          f"https://tidsvalg.example.invalid/{kid}"}
         maler.flett("invitasjon", flettefelt)
         if not funn and all(v is True for v in oppfylt.values()):
             mottakere.append({"kandidat_id": str(kid),

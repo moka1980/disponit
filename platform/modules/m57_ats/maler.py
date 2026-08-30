@@ -21,6 +21,24 @@ from __future__ import annotations
 import re
 
 
+class KundeeidFirmatekst:
+    """Firmateksten som REFERANSE (#160, klarsignalet §6): den eneste
+    lovlige bæreren av kundens tone inn i `flett`. Konstrueres av
+    resolveren i core — et oppslag i det kundeeide, versjonerte
+    utsendingstekst-lageret (079) — aldri av modellsiden. Port 13 måler
+    fortsatt at denne fila ikke importerer noe modellsymbol; typekravet
+    i `flett` måler at en fri streng aldri når malen — dataflyt gjennom
+    en KALLER er nå også stengt, for kalleren har ingen strengvei å
+    sende modellprosa inn."""
+
+    __slots__ = ("tekst_id", "versjon", "tekst")
+
+    def __init__(self, tekst_id: str, versjon: int, tekst: str):
+        self.tekst_id = tekst_id
+        self.versjon = versjon
+        self.tekst = tekst
+
+
 class Malfeil(Exception):
     def __init__(self, kode: str, detalj: str = ""):
         self.kode = kode
@@ -36,8 +54,8 @@ class Malfeil(Exception):
 MALER: dict[str, dict] = {
     "invitasjon": {
         "malversjon": "invitasjon-v1",
-        "felter": frozenset({"stilling", "kandidatnavn", "tidsvalg_lenke",
-                             "firmatekst"}),
+        "felter": frozenset({"stilling", "kandidatnavn",
+                             "tidsvalg_lenke"}),
         "tekst": ("Hei {kandidatnavn},\n\n"
                   "vi inviterer deg til intervju for stillingen"
                   " {stilling}. Velg et tidspunkt som passer deg her:"
@@ -45,8 +63,7 @@ MALER: dict[str, dict] = {
     },
     "avslag": {
         "malversjon": "avslag-v1",
-        "felter": frozenset({"stilling", "kandidatnavn", "funn_id",
-                             "firmatekst"}),
+        "felter": frozenset({"stilling", "kandidatnavn", "funn_id"}),
         "tekst": ("Hei {kandidatnavn},\n\n"
                   "takk for søknaden din til stillingen {stilling}."
                   " Vi går dessverre ikke videre med den. Vurderingen"
@@ -57,30 +74,34 @@ MALER: dict[str, dict] = {
 
 _FELTMONSTER = re.compile(r"\{([a-z_]+)\}")
 
-#: Feltene som LOVLIG kan være tomme (Codex P2). `firmatekst` er kundens
-#: tone, og «ingen tone» er en ekte tilstand — en kunde som ikke har satt
-#: noe, skal få malens struktur uten et påhengt avsnitt. Alle ANDRE felter
-#: bærer selve løftet i setningen de står i: en invitasjon uten
-#: `tidsvalg_lenke` ber kandidaten velge et tidspunkt «her:» og peker
-#: ingen steder, og et avslag uten `funn_id` sier at vurderingen er
-#: sporbar med en referanse som ikke finnes. Porten målte bare TYPEN og
-#: flettesyntaksen, så en tom streng passerte som en verdi. Den er ikke en
-#: verdi — den er et hull med riktig type.
-_KAN_VAERE_TOMME = frozenset({"firmatekst"})
+#: (#160: `firmatekst` er ute av feltene — «kan være tom» gjelder nå
+#: bare referansens fravær, håndtert i `flett` selv. Alle gjenværende
+#: felter bærer løftet i setningen de står i og må ha innhold.)
 
 
-def flett(malnavn: str, felter: dict[str, str]) -> dict:
-    """-> {malversjon, tekst}. Feltene må være NØYAKTIG malens (port 14):
-    et felt utenfor malen er avvist, et manglende felt likeså — en mal
-    med hull er ikke en utsendingstekst. Verdiene må være rene strenger
-    uten flettefeltsyntaks (ingen andreordens fletting), og for alle
-    felter utenom `_KAN_VAERE_TOMME` må de faktisk bære innhold — et
-    tomt påkrevd felt er samme hull som et manglende felt, bare med
-    riktig type."""
+def flett(malnavn: str, felter: dict[str, str], *,
+          firmatekst: KundeeidFirmatekst | None = None) -> dict:
+    """-> {malversjon, tekst, firmatekst_ref, firmatekst_versjon}.
+
+    Feltene må være NØYAKTIG malens (port 14): et felt utenfor malen er
+    avvist, et manglende felt likeså — en mal med hull er ikke en
+    utsendingstekst. Verdiene må være rene strenger uten
+    flettefeltsyntaks (ingen andreordens fletting) og faktisk bære
+    innhold — et tomt påkrevd felt er samme hull som et manglende felt.
+
+    FIRMATEKSTEN ER EN REFERANSE (#160): den tas ALDRI som felt eller
+    fri streng — bare som `KundeeidFirmatekst` fra resolverens oppslag
+    i det kundeeide lageret, eller `None` («ingen tone», en ekte
+    tilstand). Svaret bærer referansen, så utsendelsen er sporbar til
+    nøyaktig den forfattede versjonen."""
     mal = MALER.get(malnavn)
     if mal is None:
         raise Malfeil("ukjent_mal", malnavn)
     gitt = set(felter)
+    if "firmatekst" in gitt:
+        raise Malfeil("firmatekst_er_referanse",
+                      "kundens tone hentes fra lageret (079), aldri som"
+                      " fri streng")
     if gitt - mal["felter"]:
         raise Malfeil("flettefelt_utenfor_malen",
                       ",".join(sorted(gitt - mal["felter"])))
@@ -90,7 +111,20 @@ def flett(malnavn: str, felter: dict[str, str]) -> dict:
     for navn, verdi in felter.items():
         if not isinstance(verdi, str) or _FELTMONSTER.search(verdi):
             raise Malfeil("ugyldig_feltverdi", navn)
-        if navn not in _KAN_VAERE_TOMME and not verdi.strip():
+        if not verdi.strip():
             raise Malfeil("tomt_flettefelt", navn)
+    if firmatekst is None:
+        tone = ""
+        ref, ref_versjon = None, None
+    else:
+        if not isinstance(firmatekst, KundeeidFirmatekst):
+            raise Malfeil("firmatekst_er_referanse", type(firmatekst).__name__)
+        if not isinstance(firmatekst.tekst, str) \
+                or _FELTMONSTER.search(firmatekst.tekst):
+            raise Malfeil("ugyldig_feltverdi", "firmatekst")
+        tone = firmatekst.tekst
+        ref, ref_versjon = firmatekst.tekst_id, firmatekst.versjon
     return {"malversjon": mal["malversjon"],
-            "tekst": mal["tekst"].format(**felter)}
+            "tekst": mal["tekst"].format(**felter, firmatekst=tone),
+            "firmatekst_ref": ref,
+            "firmatekst_versjon": ref_versjon}

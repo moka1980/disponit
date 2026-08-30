@@ -6160,13 +6160,14 @@ test("Faner: tre paneler, aktiv fane overlever prosessbytte, innhold rives aldri
     "/v1/rekruttering/evalueringer": { evalueringer: [], flere: false } };
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
-  assert.ok(await vent(() => hoved.querySelectorAll("[role=tab]").length === 3),
+  assert.ok(await vent(() => hoved.querySelectorAll("[role=tab]").length === 4),
     "fanelinja kom aldri");
   const faner = [...hoved.querySelectorAll("[role=tab]")];
   assert.deepEqual(faner.map((f) => f.textContent), [
     t("ui.rekruttering.fane.evalueringer"),
     t("ui.rekruttering.fane.bestill"),
-    t("ui.rekruttering.fane.profiler")]);
+    t("ui.rekruttering.fane.profiler"),
+    t("ui.rekruttering.fane.tekster")]);
   // Bestillingsfanen: skjemaet finnes og verdier består over fanebytte
   // (behold-modus — panelene tømmes aldri av et bytte).
   faner[1].click();
@@ -6905,4 +6906,73 @@ test("Profiler: Slett skjuler profilen etter bekreftelse (eiers bestilling 30/8)
   assert.ok(profilDel.textContent.includes(
     t("ui.rekruttering.profiler.slettet").split("{")[0].trim()),
   "kvitteringen mangler");
+});
+
+test("Utsendingstekster: fanen forfatter, versjonerer og sletter kundens tone (#160)", async () => {
+  KALL = [];
+  let lagret = null; let slettet = null;
+  let tekster = [{ tekst_id: "t-1", versjon: 2, navn: "Standardhilsen",
+    tekst: "Hilsen oss", opprettet: "2026-08-30T00:00:00+00:00",
+    opprettet_av: "b-1" }];
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/prosesser") return prosess();
+    if (sti === "/v1/rekruttering/stillingsprofiler") return profiler();
+    if (sti === "/v1/rekruttering/evalueringer") {
+      return { evalueringer: [], flere: false };
+    }
+    if (sti === "/v1/rekruttering/utsendingstekster") {
+      if ((opts.method || "GET") === "POST") {
+        lagret = JSON.parse(opts.body);
+        tekster = [{ ...tekster[0], versjon: 3, tekst: lagret.tekst }];
+        return { tekst_id: "t-1", versjon: 3 };
+      }
+      return { tekster };
+    }
+    if (sti === "/v1/rekruttering/utsendingstekst/t-1/slett") {
+      slettet = true; tekster = [];
+      return { slettet: true };
+    }
+    return undefined;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelectorAll("[role=tab]").length === 4));
+  const fane = [...hoved.querySelectorAll("[role=tab]")]
+    .find((f) => f.textContent === t("ui.rekruttering.fane.tekster"));
+  fane.click();
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=tekst-tittel]");
+  assert.ok(await vent(() => seksjon()
+    && seksjon().textContent.includes("Standardhilsen")),
+  "tekstlisten kom aldri");
+  // Rediger → ny versjon gjennom skrivedøren, med idempotensnøkkel.
+  [...seksjon().querySelectorAll("li button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.rediger"))
+    .click();
+  const kropp = seksjon().querySelector("#tekst-kropp");
+  kropp.value = "Hilsen oss – v3";
+  seksjon().querySelector("form")
+    .dispatchEvent(new (hoved.ownerDocument.defaultView.Event)(
+      "submit", { bubbles: true, cancelable: true }));
+  assert.ok(await vent(() => lagret !== null), "lagringen gikk aldri");
+  assert.equal(lagret.tekst_id, "t-1");
+  assert.equal(lagret.tekst, "Hilsen oss – v3");
+  const lagreKall = KALL.find((k) =>
+    k.sti === "/v1/rekruttering/utsendingstekster" && k.metode === "POST");
+  assert.ok(lagreKall.hoder["Idempotency-Key"]
+    || lagreKall.hoder["idempotency-key"],
+  "lagringen mangler idempotensnøkkel");
+  assert.ok(await vent(() => seksjon().textContent.includes("versjon 3")
+    || seksjon().textContent.includes("Hilsen oss – v3")));
+  // Slett → bekreftelse → skjuling; listen tømmes.
+  [...seksjon().querySelectorAll("li button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.slett"))
+    .click();
+  const dialog = document.querySelector(".dialog");
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.profiler.slett"))
+    .click();
+  assert.ok(await vent(() => slettet === true), "slettekallet gikk aldri");
+  assert.ok(await vent(() => seksjon().textContent
+    .includes(t("ui.rekruttering.tekster.ingen"))));
 });
