@@ -210,3 +210,20 @@ rollbackmaal_kompatibelt() {  # <forrige-katalog> <runtime-migrator-url>
   fi
   vurder_rollbackmaal "$fv" "$bv"
 }
+
+# #182 (eiervalg A, K2 fra #178): steg 8s klarhetsløkke, DELT med
+# `selvrevers()`. De to svarte før på samme spørsmål («serverer API-et?»)
+# med hver sin måling, og `is-active` er feil svar: `Type=simple` gjør
+# «active» til et utsagn om prosessen, ikke om at den svarer — et API som
+# hang i oppstart, eller ble samplet mellom to feil i en restart-løkke,
+# ga «SELVREVERSERT» uten å servere. Én kropp, to kallere; drift mellom
+# dem er umulig per konstruksjon.
+vent_paa_ready() {  # -> 0 når /ready svarer over socketen innen 30 s
+  local _i
+  for _i in $(seq 1 30); do
+    if curl -fsS --unix-socket /run/disponit/api.sock \
+         http://disponit/ready >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
