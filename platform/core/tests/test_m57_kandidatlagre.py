@@ -3564,6 +3564,36 @@ def test_069_slett_og_avbryt_endepunktene(migrator, miljo):
             r4 = c.post("/v1/rekruttering/evaluering/99999999/slett",
                         cookies=ck, headers=hode)
             assert r4.status_code == 404, r4.text
+            # EIERS FUNN 30/8: en FEILET evaluering som aldri rakk å føde
+            # prosessen har ingenting å slette — og det skal sies med et
+            # ærlig 200, ikke et 404 flaten bare kan vise som generisk
+            # handlingsfeil. Oppdraget finnes i tenantens egen liste, så
+            # skillet mot ukjent-404 er ikke et orakel. Og listen bærer
+            # fakta knappene trenger: har_anker.
+            # … og en AKTIV evaluering uten anker (køstående — kjøringen
+            # skal jo produsere data) avvises med egen kode: veien er
+            # Avbryt, aldri en «ingenting lagret»-løgn om fremtiden.
+            o_aktiv, _g2 = _grunnlag(migrator,
+                                     oppdragstype="rekruttering.evaluering",
+                                     status="opprettet")
+            r6b = c.post(f"/v1/rekruttering/evaluering/{o_aktiv}/slett",
+                         cookies=ck, headers=hode)
+            assert r6b.status_code == 409, r6b.text
+            assert r6b.json()["feil"] == "evaluering_aktiv"
+            o_uten, _g = _grunnlag(migrator,
+                                   oppdragstype="rekruttering.evaluering",
+                                   status="feilet")
+            r7 = c.post(f"/v1/rekruttering/evaluering/{o_uten}/slett",
+                        cookies=ck, headers=hode)
+            assert r7.status_code == 200, r7.text
+            assert r7.json()["ingenting_lagret"] is True
+            assert r7.json()["slett_bestilt"] is False
+            r8 = c.get("/v1/rekruttering/evalueringer",
+                       cookies=ck, headers=hode)
+            anker = {e["oppdrag_id"]: e.get("har_anker")
+                     for e in r8.json()["evalueringer"]}
+            assert anker.get(oid) is True, anker
+            assert anker.get(o_uten) is False, anker
     finally:
         rt.close()
 
@@ -3572,3 +3602,5 @@ from .test_api import dekker as _dekker069  # noqa: E402
 
 test_069_slett_og_avbryt_endepunktene = _dekker069(
     "evaluering_terminal")(test_069_slett_og_avbryt_endepunktene)
+test_069_slett_og_avbryt_endepunktene = _dekker069(
+    "evaluering_aktiv")(test_069_slett_og_avbryt_endepunktene)

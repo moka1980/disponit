@@ -1422,7 +1422,9 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   // à 100 funn) — før åpning finnes verken funn eller spørsmål i DOM.
   assert.doesNotMatch(etter, /\[NAVN-1\] har/);
   assert.doesNotMatch(etter, /Fortell om driftserfaringen/);
-  const boks = seksjon.querySelector("details");
+  // Radenes funn-detalj, ikke vekterfolden (eiers mobilfunn 30/8 la
+  // vektene i sin egen <details> foran tabellen).
+  const boks = seksjon.querySelector("tbody details");
   boks.open = true;
   boks.dispatchEvent(new (seksjon.ownerDocument.defaultView.Event)("toggle"));
   const aapnet = seksjon.textContent;
@@ -1443,9 +1445,12 @@ test("Evalueringer: liste med status, og rapporten rendres blindet", async () =>
   // (rangeringen og nedbrytningen), og begge skal stå i .tablewrap.
   assert.ok(seksjon.querySelectorAll(".tablewrap table").length >= 1,
     "rapporttabellen mangler .tablewrap");
-  // Nedbrytningskolonnen bærer sin EGEN etikett, ikke funnenes.
-  assert.match(etter,
-    new RegExp(t("ui.rekruttering.evalueringer.nedbrytning")));
+  // Poengfordelingen bor i DETALJEN, ikke i en egen kolonne (eiers
+  // funn 30/8: linjen tok halve mobilskjermen per rad) — og den finnes.
+  assert.ok(seksjon.querySelector(".rekrut-detalj .rekrut-fordeling"),
+    "poengfordelingen forsvant fra funn-detaljen");
+  assert.ok(!etter.includes(t("ui.rekruttering.evalueringer.nedbrytning")),
+    "nedbrytningskolonnen er tilbake i tabellen — mobilplassen er borte");
   assert.match(etter,
     new RegExp(t("ui.rekruttering.evalueringer.blindet").slice(0, 20)));
   const brudd = await alvorligeBrudd(hoved);
@@ -5159,8 +5164,11 @@ test("Rapport: detaljene ligger i kandidatens RAD, ikke som en mur under", async
   const iRad = tabell.querySelectorAll("tbody tr details");
   assert.equal(iRad.length, 2, "detaljene ligger ikke i radene");
   // ...og ingen står igjen utenfor tabellen.
+  // Vekterfolden er en EGEN, villet detalj (mobilfunn 30/8) — muren
+  // porten vokter mot er funn-detaljene.
   const utenfor = [...hoved.querySelectorAll("details")]
-    .filter((d) => !tabell.contains(d));
+    .filter((d) => !tabell.contains(d)
+      && !d.classList.contains("rekrut-vekterfold"));
   assert.equal(utenfor.length, 0,
     `${utenfor.length} detaljbokser står fortsatt som en mur under tabellen`);
 });
@@ -6566,4 +6574,51 @@ test("Kaskadeporten: kandidatoverskriften OMBREKKER faktisk — målt i beregnet
   } finally {
     stil.remove();
   }
+});
+
+
+test("Slett vises bare der noe faktisk er lagret — og vektene er lukket som standard (eiers funn 30/8)", async () => {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 98, status: "utfort",
+        opprettet: "2026-08-27T16:59:00+00:00", rapport_klar: true,
+        har_anker: true },
+      { oppdrag_id: 97, status: "feilet",
+        opprettet: "2026-08-27T08:06:00+00:00", rapport_klar: false,
+        har_anker: false }],
+    flere: false },
+    "/v1/rekruttering/rapport/98": { oppdrag_id: 98, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+        kildetekst: "[NAVN-1]" } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector(".rekrut-kortliste")),
+    "listen kom aldri");
+  const slettFor = (id) => [...hoved.querySelectorAll(".rekrut-kortliste button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.slett")
+      && b.getAttribute("aria-label").includes(String(id)));
+  assert.ok(slettFor(98), "Slett mangler der kandidatdata finnes");
+  // 97 feilet FØR ankeret ble født: serveren ville svart 404, og en
+  // knapp som lover en sletting som ikke finnes er en blindvei.
+  assert.ok(!slettFor(97),
+    "Slett står på en evaluering uten retensjonsanker — 404-blindveien");
+  // Rapportens vekter er sammenleggbare og LUKKET som standard: listen
+  // er produktet, og fire skyveknapper skal ikke dytte den under bretten.
+  assert.ok(await vent(() => hoved.querySelector(".rekrut-vekterfold")),
+    "vekterfolden kom aldri");
+  const fold = hoved.querySelector(".rekrut-vekterfold");
+  assert.ok(!fold.open, "vektene står åpne og tar skjermen på mobil");
+  assert.equal(fold.querySelector("summary").textContent,
+    t("ui.rekruttering.vekter_tittel"));
+  assert.ok(fold.querySelector(".rekrut-rapportvekter input[type=range]"),
+    "skyveknappene forsvant fra folden — re-vektingen er borte");
 });
