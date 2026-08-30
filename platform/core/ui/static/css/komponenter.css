@@ -1152,6 +1152,16 @@ html[data-visning="landing"] .skall-hoved {
 .trafikklys-vurderes{color:var(--guard)}
 .trafikklys-innstilt_avslag{color:var(--danger)}
 
+/* Rangeringssjiktene (eiers funn 30/8): topp 5 grønn, 6–10 svak grønn.
+   Fargen er REDUNDANT koding — radens plass i tabellen og poengtallet i
+   cellen bærer rangeringen (samme WCAG 1.4.1-doktrine som trafikklyset
+   over). Det svake sjiktet blandes av samme token, så begge følger
+   temaet uten egen fargedefinisjon. */
+tr.rekrut-sjikt-topp > th, tr.rekrut-sjikt-topp > td {
+  background: var(--auto-bg); }
+tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
+  background: color-mix(in srgb, var(--auto-bg) 45%, transparent); }
+
 /* --- Rekruttering: mobilflate (sak 251 + mobil-redesignet 29/8) ------------- */
 /* Radoverskriften i rapporten skal kunne brytes: den globale
    `th { white-space: nowrap }` slo `overflow-wrap: anywhere` (sak 251, P2) —
