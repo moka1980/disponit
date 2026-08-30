@@ -1198,6 +1198,13 @@ function tegn(hoved, ctx, data, okt, valgtId) {
 function evalueringSeksjon(hoved, ctx, data, okt) {
   const rot = el("section", { "aria-labelledby": "evaluering-tittel" });
   const utfall = el("div", { role: "alert", class: "utfall" });
+  // LISTEFEIL OG RAPPORTSVAR DELER IKKE NODE (#258 P2-B, Codex på #255):
+  // med ett felles utfallsområde ryddet en vellykket rapporttegning
+  // (`rHent.tegn`) bort varselet om at LISTEN fortsatt var utdatert —
+  // brukeren mistet beskjeden uten at listeoperasjonen lyktes. To
+  // eiere, to noder; hver ryddes kun av sin egen neste handling.
+  const listeutfall = el("div", { role: "alert",
+    class: "rekrut-listeutfall" });
   const rapportRot = el("div");
   // To raske klikk må ikke la det TREGESTE svaret vinne: bare den sist
   // bestilte hentingen får rendre (eller melde feil). Generasjonen og
@@ -1229,7 +1236,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // rot er ikke et lerret (samme regel som `rHent.tegn`).
   const meldListefeil = (feilet) => {
     if (!rot.isConnected) return;
-    sett(utfall,
+    sett(listeutfall,
       ...(feilet ? [t("ui.rekruttering.evalueringer.handlingfeil")] : []));
   };
   // FOKUS OVERLEVER OM-TEGNINGEN (Codex P2). `tegnListe` bytter hele
@@ -1249,9 +1256,17 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // aldri rive fokus fra skjemaet brukeren står i.
   const etterListeklikk = (foretrukket, antall) => {
     if (!rot.isConnected) return;
+    // BARE ET FALT FOKUS GJENOPPRETTES (#258 P2-D, Codex på #255):
+    // klikk→svar er en hel nettrundtur, og i det vinduet kan brukeren
+    // ha tabbet videre — typisk ned i bestillingsskjemaet. Står fokus
+    // på et levende element utenfor seksjonen, er flyttingen deres, og
+    // vi river dem ikke tilbake; annonseringen går uansett.
+    const aktiv = rot.ownerDocument.activeElement;
+    const flyttet = aktiv && aktiv !== rot.ownerDocument.body
+      && !rot.contains(aktiv);
     const ny = rot.querySelector("." + foretrukket)
       || rot.querySelector(".eval-oppdater");
-    if (ny) ny.focus();
+    if (ny && !flyttet) ny.focus();
     meldLive(t("ui.rekruttering.evalueringer.listemeldt")
       .replace("{antall}", String(antall)));
   };
@@ -1735,14 +1750,14 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.listefeil") }),
         ...(oppdaterKnapp ? [oppdaterKnapp] : []),
-        utfall, rapportRot);
+        listeutfall, utfall, rapportRot);
       return;
     }
     if (!evalueringer.length) {
       sett(rot, tittel,
         el("p", { text: t("ui.rekruttering.evalueringer.ingen") }),
         ...(oppdaterKnapp ? [oppdaterKnapp] : []),
-        utfall, rapportRot);
+        listeutfall, utfall, rapportRot);
       return;
     }
     // HANDLINGENE DER DE TRENGS (eiers bestilling 29/8: vis, slett,
@@ -1750,6 +1765,23 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     // feilet, Avbryt på en som venter. Begge de irreversible går
     // gjennom Bekreftelsesdialogen, og utfallet oppfriskes fra basen —
     // aldri en optimistisk rad flaten selv har diktet.
+    // EN OBSERVERT UGYLDIG RAPPORT BLIR IKKE STÅENDE (#258 P2-E,
+    // Codex på #255): sier den oppfriskede listen om NETTOPP den åpne
+    // rapportens oppdrag at den er slettet eller ikke lenger klar, tas
+    // både visningen og klikk-cachen ned — flaten skal aldri påstå
+    // «slettet» i listen og vise full kandidatrapport under, og cachen
+    // skal ikke la den gjenoppstå. KUN observert: en rapport utenfor
+    // det oppfriskede vinduet (paginering) er *ikke observert*, ikke
+    // slettet, og røres aldri — samme grense som 069-formelen ellers:
+    // basen dømmer, flaten dikter ikke.
+    if (rHent.siste) {
+      const egen = evalueringer.find((e2) =>
+        e2.oppdrag_id === rHent.siste.oppdrag_id);
+      if (egen && (egen.slettet || !egen.rapport_klar)) {
+        rHent.siste = null;
+        rHent.tegn(null, []);
+      }
+    }
     const kanSkrive = harScope(ctx, "bestilling:opprett");
     const bekreftHandling = (e2, nokkel, kall, kvittering) =>
       bekreftEvalueringshandling(e2.oppdrag_id, nokkel, kall, kvittering);
@@ -1888,6 +1920,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       ...(oppdaterKnapp ? [oppdaterKnapp] : []),
       utfall,
       liste,
+      listeutfall,
       // Et fullt vindu KAN bety flere — aldri stille avkorting: uten en
       // cursor å følge (eldre server, eller ingen økt å appende i) står
       // meldingen; med den står knappen.

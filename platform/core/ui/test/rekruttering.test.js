@@ -1659,7 +1659,7 @@ test("Evalueringer: en feilet listehandling MELDER fra — ikke stille "
     "section[aria-labelledby=evaluering-tittel]");
   const knapp = (nokkel) => [...seksjon.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.evalueringer." + nokkel));
-  const alert = () => seksjon.querySelector("[role=alert]").textContent;
+  const alert = () => seksjon.querySelector(".rekrut-listeutfall").textContent;
   assert.equal(alert(), "", "positiv kontroll: utfallsområdet står tomt");
   knapp("last_flere").click();
   assert.ok(await vent(() => alert().includes(
@@ -1782,7 +1782,8 @@ test("Evalueringer: en taperunde låser ikke «Last flere» når «Oppdater» "
   //    «Last flere»-noden lever fortsatt.
   SVAR["/v1/rekruttering/evalueringer"] = 503;
   knapp("oppdater").click();
-  assert.ok(await vent(() => seksjon.querySelector("[role=alert]").textContent
+  assert.ok(await vent(() => seksjon.querySelector(".rekrut-listeutfall")
+    .textContent
     .includes(t("ui.rekruttering.evalueringer.handlingfeil"))),
   "riggen feilet: «Oppdater» meldte aldri fra");
   // 3) Den tapte siden lander. Den skal ikke skrive noe — og ikke låse.
@@ -2957,7 +2958,9 @@ test("Profiler: uten bestilling:opprett finnes ingen skriveknapper (P2-1)", asyn
   const seksjon = hoved.querySelector("section[aria-labelledby=profil-tittel]");
   assert.ok(seksjon, "profilseksjonen mangler — lesing skal stå åpen");
   assert.match(seksjon.textContent, /Driftskonsulent/);
-  const tekster = [...seksjon.querySelectorAll("tbody button")].map((b) => b.textContent);
+  // #258 P2-C: profilseksjonen har ingen tbody — «tbody button» var
+  // alltid tom, og de negative armene gikk grønt uansett.
+  const tekster = [...seksjon.querySelectorAll("button")].map((b) => b.textContent);
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.ny")),
     "Ny-knappen finnes uten skrive-scope");
   assert.ok(!tekster.includes(t("ui.rekruttering.profiler.rediger")),
@@ -6375,4 +6378,136 @@ test("Rapporten: Slett står i rapporthodet, gjennom dialogen — og tar visning
   assert.ok(![...hoved2.querySelectorAll(".rekrut-rapporthode button")]
     .some((b) => b.textContent === t("ui.rekruttering.evalueringer.slett")),
   "Slett uten bestilling:opprett er en blindvei (P2-1-klassen)");
+});
+
+test("Listefeil og rapport eier hver sin node — rapporten rydder aldri listevarselet (#258 P2-B)", async () => {
+  KALL = [];
+  const rapportFor = (id) => ({ oppdrag_id: id, rapport: {
+    rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+    profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+    antall_soknader: 1,
+    rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+      nedbrytning: { drift: 5 } }],
+    kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+      kildetekst: "[NAVN-1]" } },
+    fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+  } });
+  let listesvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true },
+    { oppdrag_id: 97, status: "utfort",
+      opprettet: "2026-08-27T01:00:00+00:00", rapport_klar: true }],
+  flere: false };
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": listesvar,
+    "/v1/rekruttering/rapport/96": rapportFor(96),
+    "/v1/rekruttering/rapport/97": rapportFor(97),
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon()
+    && seksjon().querySelector(".rekrut-rapporthode")), "rapporten kom aldri");
+  // Listen feiler …
+  listesvar = 500;
+  [...seksjon().querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.oppdater"))
+    .click();
+  assert.ok(await vent(() => seksjon().querySelector(".rekrut-listeutfall")
+    .textContent.includes(t("ui.rekruttering.evalueringer.handlingfeil"))),
+  "listefeilen ble aldri meldt");
+  // … og en VELLYKKET rapporttegning etterpå rydder IKKE varselet:
+  // listen er fortsatt utdatert, og det skal fortsatt stå der.
+  // 96, ikke 97: auto-åpningen valgte alt den ferskeste (97), og et
+  // klikk på samme rapport er et cache-treff uten ny tegning
+  // (CodeRabbit). 96 tvinger en EKTE `rHent.tegn`-runde.
+  [...seksjon().querySelectorAll(".rekrut-kortliste button")]
+    .filter((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))[0]
+    .click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/rapport/96")), "rapport 96 ble aldri hentet");
+  assert.ok(await vent(() => seksjon().textContent.includes("kandidat-01")),
+    "rapport 96 rendret aldri");
+  assert.ok(seksjon().querySelector(".rekrut-listeutfall").textContent
+    .includes(t("ui.rekruttering.evalueringer.handlingfeil")),
+  "rapporttegningen ryddet bort varselet om den utdaterte listen");
+});
+
+test("Fokus rives ikke tilbake fra en bruker som flyttet seg under et tregt svar (#258 P2-D)", async () => {
+  KALL = [];
+  const rad = (id) => ({ oppdrag_id: id, status: "opprettet",
+    opprettet: "2026-08-27T02:00:00+00:00", rapport_klar: false });
+  let slipp; let treg = null;
+  SVAR = (sti) => {
+    if (sti === "/v1/rekruttering/evalueringer" && treg) return treg;
+    return ({ "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/evalueringer": {
+        evalueringer: [rad(200)], flere: false } })[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon()
+    && seksjon().querySelector(".rekrut-kortliste")), "listen kom aldri");
+  // Neste henting er TREG.
+  treg = new Promise((res) => { slipp = res; });
+  const oppdater = seksjon().querySelector(".eval-oppdater");
+  oppdater.click();
+  // Brukeren flytter seg UT av seksjonen mens svaret er i lufta.
+  const fane = hoved.querySelector(".faner-liste button")
+    || hoved.querySelector("button");
+  fane.focus();
+  slipp({ evalueringer: [rad(200), rad(201)], flere: false });
+  assert.ok(await vent(() => seksjon().textContent.includes("201")),
+    "den trege oppfriskningen tegnet aldri");
+  assert.equal(hoved.ownerDocument.activeElement, fane,
+    "fokus ble revet tilbake til listen fra brukerens eget mål");
+  // Kunngjøringen gikk likevel — brukeren fikk beskjed uten fokustyveri.
+  assert.ok([...hoved.ownerDocument.querySelectorAll("[aria-live=polite]")]
+    .some((n) => n.textContent.length > 0),
+  "flyttet fokus skal ikke koste annonseringen");
+});
+
+test("En observert ugyldig rapport ryddes av den oppfriskede listen (#258 P2-E)", async () => {
+  KALL = [];
+  let listesvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }],
+  flere: false };
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": listesvar,
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "kandidat-01", poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { "kandidat-01": { funn: [], intervjusporsmal: [],
+        kildetekst: "[NAVN-1]" } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } },
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon()
+    && seksjon().querySelector(".rekrut-rapporthode")), "rapporten kom aldri");
+  // Fristen passerte: den oppfriskede listen OBSERVERER 96 som slettet.
+  listesvar = { evalueringer: [
+    { oppdrag_id: 96, status: "utfort",
+      opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: false,
+      slettet: true }], flere: false };
+  seksjon().querySelector(".eval-oppdater").click();
+  assert.ok(await vent(() => !seksjon().querySelector(".rekrut-rapporthode")),
+    "listen sier slettet mens full kandidatrapport står under (#258 P2-E)");
+  assert.ok(!seksjon().textContent.includes("kandidat-01"),
+    "kandidatpayloaden ble stående etter at basen dømte den borte");
 });
