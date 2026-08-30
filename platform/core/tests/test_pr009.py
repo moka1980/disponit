@@ -1803,8 +1803,8 @@ def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
     måler i `$VERIF` gjelder også fila som havner i katalogen.
 
     MUTASJONEN SOM DREPER DENNE: gi verifiseringen sin egen `pg_dump` igjen,
-    eller la `$VERIF` restores fra noe annet enn mellomfila som mates til
-    `age`.
+    eller la `$VERIF` restores fra en annen strøm enn den som mates til
+    `age` (sak #244: strømmen ERSTATTET mellomfila; invarianten består).
     """
     skript = (ROT / "deploy/staging/backup-db.sh").read_text(encoding="utf-8")
     # Hele KOMMANDOEN, ikke tekstlinjen: en omdirigering som er skjøvet ned
@@ -1820,24 +1820,25 @@ def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
         else:
             linjer.append(rå)
 
+    # Sak #244 byttet mellomfila mot en STRØM — invarianten er den samme
+    # (én passering, samme byte til begge forbrukerne), formen er en
+    # pipeline: pg_dump | tee <navngitt rør som age leser> | pg_restore.
     dumpelinjer = [ln for ln in linjer if "pg_dump" in ln]
     assert len(dumpelinjer) == 1, \
         f"{len(dumpelinjer)} pg_dump-passeringer — to snapshots betyr at " \
         "lager_sti-porten måler et annet tidspunkt enn det som arkiveres"
     (dumpen,) = dumpelinjer
-    assert dumpen == 'sudo -u postgres pg_dump --format=custom' \
-                     ' --dbname=disponit > "$RAA"', \
-        "dumpen går ikke til mellomfila — da har forbrukerne hver sin strøm"
+    assert '| tee "$DUMPROR"' in dumpen and "pg_restore" in dumpen \
+        and '--dbname="$VERIF"' in dumpen, (
+        "dump, kryptering og gjenoppretting deler ikke lenger ÉN "
+        f"passering: {dumpen}")
 
     krypteringen = [ln for ln in linjer
                     if 'age -R "$MOTTAKER"' in ln and '"$DELVIS"' in ln]
-    gjenopprettingen = [ln for ln in linjer if "pg_restore" in ln]
-    assert krypteringen == ['age -R "$MOTTAKER" < "$RAA" > "$DELVIS"'], \
-        "backupfila krypteres ikke fra mellomfila — den lagrede dumpen er " \
-        "da et annet snapshot enn det som verifiseres"
-    assert len(gjenopprettingen) == 1 and '"$RAA"' in gjenopprettingen[0], \
-        "engangsbasen gjenopprettes ikke fra den SAMME mellomfila — porten " \
-        "måler et snapshot som aldri ble lagret"
+    assert krypteringen == [
+        'age -R "$MOTTAKER" < "$DUMPROR" > "$DELVIS" &'], \
+        "backupfila krypteres ikke fra det samme røret tee mater — den " \
+        "lagrede dumpen er da et annet snapshot enn det som verifiseres"
 
     def indeks(bit):
         for i, ln in enumerate(linjer):
@@ -1868,17 +1869,12 @@ def test_backupen_maler_lager_sti_mot_samme_dump_som_lagres():
     assert len(feien) == 1 and "-user root" in feien[0] \
         and "-name 'disponit-backup.*' -exec rm -rf {} +" in feien[0], \
         "en mellomfil fra en drept kjøring ryddes aldri opp"
-    i_rm = indeks('rm -f "$RAA"')
-    i_tar = indeks("tar --create")
-    assert 0 <= i_rm < i_tar, \
-        "klarteksten ligger igjen gjennom arkiveringen — den lengste delen " \
-        "av kjøringen, og den trapen ikke dekker ved SIGKILL"
-    # Endelsen må stå utenfor BEGGE globbene: matchet den backupnavnet, ville
-    # en ukryptert dump sett ut som dagens backup; matchet den retention,
-    # ville den blitt slettet som et par den ikke er halvparten av.
-    assert not fnmatch.fnmatch("disponit-20260828T000000.dump.raa",
-                               "disponit-*.dump.age"), \
-        "mellomfila matcher backup-globben og kan forveksles med en backup"
+    # Sak #244: klarteksten finnes ikke som FIL i det hele tatt lenger —
+    # røret er kjernebuffer, og pipelinen er over før `tar` starter. Det
+    # som gjensto å rydde (rm -f "$RAA" før arkiveringen) har ingen
+    # gjenstand: porten måler i stedet at ingen klartekstfil skrives.
+    assert '.dump.raa' not in skript and '> "$RAA"' not in skript, \
+        "en klartekst-mellomfil er tilbake i skriptet — sak #244 gjenåpnet"
 
 
 def test_backupen_par_finaliseres_atomisk_eller_ryddes():
@@ -2085,35 +2081,31 @@ def test_feien_av_tmpfs_rester_treffer_bare_vare_egne():
         "feien kan rm -rf-e en root-eid FIL — våre rester er kataloger"
 
 
-def test_runbooken_leter_etter_klarteksten_i_shm_ikke_i_katalogen():
-    """Cursor P2 på `4a6dccf`: dommen flyttet fila, runbooken ble stående.
-
-    DEPLOY.md sa fortsatt «en `disponit-<stempel>.dump.raa` i katalogen»
-    og sendte operatøren til `/var/backups/disponit`. Etter tmpfs-dommen
-    ligger klarteksten aldri der — så etter et `SIGKILL`/OOM ser
-    operatøren en ren katalog, konkluderer at ingenting ble etterlatt,
-    og den gjenopprettbare klarteksten blir liggende i `/dev/shm` til
-    neste omstart. Runbooken ledet altså vekk fra det ene stedet den
-    fantes.
+def test_runbooken_forteller_at_klarteksten_ikke_finnes():
+    """Cursor P2 på `4a6dccf` (opprinnelig form) → sak #244 (denne):
+    runbooken skal alltid beskrive der klarteksten faktisk KAN ligge —
+    først flyttet tmpfs-dommen den fra katalogen til /dev/shm, og nå har
+    strømmen fjernet fila helt. En runbook som fortsatt beskrev en
+    mellomdump ville sendt operatøren på leting etter noe som ikke
+    finnes — og skjult at en `.raa` som LIKEVEL dukker opp er fra en
+    eldre versjon og skal bort.
 
     Porten er tekstuell fordi runbooken er det: en leseinstruks kan bare
     drifte fra koden i én retning, og det er den retningen dette måler.
 
-    MUTASJONEN SOM DREPER DENNE: skriv `.raa`-avsnittet tilbake til
-    backupkatalogen, eller fjern `/dev/shm`-stien fra det.
+    MUTASJONEN SOM DREPER DENNE: skriv et mellomdump-avsnitt tilbake,
+    eller fjern eldre-versjon-instruksen fra `.raa`-omtalen.
     """
     deploy = (ROT / "docs/DEPLOY.md").read_text(encoding="utf-8")
-    assert "/dev/shm/disponit-backup" in deploy, \
-        "runbooken navngir ikke tmpfs-stien der klarteksten faktisk " \
-        "kan bli liggende etter et SIGKILL"
-    # Avsnittet som nevner mellomfila skal ikke samtidig sende
-    # operatøren til backupkatalogen etter den.
-    avsnitt = [a for a in deploy.split("\n\n") if "dump.raa" in a]
-    assert avsnitt, "runbooken nevner ikke mellomfila i det hele tatt"
+    assert "strømmes" in deploy and "swap" in deploy, \
+        "runbooken forklarer ikke strømmen og swap-grunnen bak den — " \
+        "neste operatør gjeninnfører mellomfila i god tro"
+    avsnitt = [a for a in deploy.split("\n\n") if ".raa" in a]
+    assert avsnitt, "runbooken sier ikke hva en gjenfunnet .raa betyr"
     for a in avsnitt:
-        assert "/dev/shm" in a, \
-            "et avsnitt om `.raa` uten tmpfs-stien — operatøren ledes " \
-            "til å lete i backupkatalogen etter en fil som ikke er der"
+        assert "eldre versjon" in a, \
+            "en gjenfunnet .raa uten eldre-versjon-dommen — operatøren " \
+            "vet ikke at den er en rest som skal bort"
 
 
 def test_opprydding_sletter_aldri_et_komplett_par():
