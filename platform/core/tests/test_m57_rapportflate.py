@@ -1261,9 +1261,26 @@ def test_v2_rapportens_funn_leses_fra_lageret(migrator, miljo):
                 "vekter": {"drift": 3},
                 "kildetekst": "HEMMELIG-KILDETEKST-168"})))
         migrator.commit()
+        # Profilen er REFERANSE i v2 — kravene bor i profillageret, og
+        # leseveien skal supplere dem (eiers skjermbilde 30/8: uten
+        # dette falt flaten til husets standardvekter).
+        puid = uuidmod.uuid4()
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO stillingsprofil (tenant, profil_id, versjon,"
+            " navn, opprettet_av, operasjonsnokkel, innhold_hash)"
+            " VALUES (%s,%s,3,'Testprofil','test',%s,'h')",
+            (TENANT, puid, secrets.token_hex(8)))
+        migrator.execute(
+            "INSERT INTO stillingsprofil_krav (tenant, profil_id,"
+            " versjon, rekkefolge, kravnavn, vekt)"
+            " VALUES (%s,%s,3,1,'drift',6)", (TENANT, puid))
+        migrator.commit()
         _promotert_rapportartefakt(migrator, oid, rapport={
             "rapporttype": "rekruttering.evaluering.rapport",
             "versjon": 2,
+            "profil": {"profil_id": str(puid), "versjon": 3,
+                       "navn": "Testprofil"},
             "rangering": [{"kandidat_id": "k1", "poeng": 3,
                            "nedbrytning": {"drift": 3}}]})
         a = lag_app(DSN)
@@ -1280,5 +1297,9 @@ def test_v2_rapportens_funn_leses_fra_lageret(migrator, miljo):
             # spørringen, ikke strippet i minnet.
             assert "HEMMELIG-KILDETEKST-168" not in r.text
             assert "kildetekst" not in r.text
+            # Profilens vekter supplert fra lageret (referansen er
+            # sporet, kravene er registrerte data).
+            assert rapport["profil"]["krav"] == [
+                {"kravnavn": "drift", "vekt": 6}]
     finally:
         rt.close()
