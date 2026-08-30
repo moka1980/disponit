@@ -1169,6 +1169,10 @@ tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
   background: color-mix(in srgb, var(--auto) 7%, var(--card)); }
 tr.rekrut-sjikt-neste > :first-child {
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--auto) 40%, var(--card)); }
+/* Plassnummeret (eiers bestilling 30/8): rangeringen sies med tall, ikke
+   bare som rekkefølge — dempet, tabulære sifre, fast luke til navnet. */
+.rekrut-plass { color: var(--muted); font-variant-numeric: tabular-nums;
+  margin-right: var(--sp-2); font-weight: 600; }
 
 /* --- Rekruttering: mobilflate (sak 251 + mobil-redesignet 29/8) ------------- */
 /* Radoverskriften i rapporten skal kunne brytes: den globale

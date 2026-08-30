@@ -946,11 +946,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     // grønn. Sjiktet regnes ALLTID av poeng synkende — det er
     // kandidatens plass i rangeringen, ikke radens plass i visningen —
     // så fargen står riktig også når leseren sorterer stigende.
-    const sjikt = new Map([...rader]
+    const rangert = [...rader]
       .sort((a, b) => b.poeng - a.poeng
-        || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1))
-      .map((r, i) => [r.kandidat.kandidat_id,
-        i < 5 ? "rekrut-sjikt-topp" : i < 10 ? "rekrut-sjikt-neste" : ""]));
+        || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
+    const sjikt = new Map(rangert.map((r, i) => [r.kandidat.kandidat_id,
+      i < 5 ? "rekrut-sjikt-topp" : i < 10 ? "rekrut-sjikt-neste" : ""]));
+    // Plassen følger kandidaten (poeng synkende), ikke radens posisjon
+    // i visningen — samme regel som sjiktet, samme kart.
+    const plassFor = new Map(rangert.map((r, i) =>
+      [r.kandidat.kandidat_id, i + 1]));
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
       kolonner: [
@@ -998,9 +1002,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           // strengen som løfter kolonnens min-content og skyver
           // tabellen ut i `.tablewrap`-ens sidescroll. Samme token,
           // samme regel: ingen ny maskin.
-          kandidat: el("span",
-            { class: "rekrut-kandidat", title: kandidat.kandidat_id },
-            kortnavn(kandidat.kandidat_id)),
+          // Plassen står UTENFOR navnespanet: kortnavn-portene måler
+          // `.rekrut-kandidat` som ren referanse, og nummeret er sin
+          // egen opplysning.
+          kandidat: el("span", {},
+            el("span", { class: "rekrut-plass",
+              text: `${plassFor.get(kandidat.kandidat_id)}.` }),
+            el("span",
+              { class: "rekrut-kandidat", title: kandidat.kandidat_id },
+              kortnavn(kandidat.kandidat_id))),
           poeng: String(poeng),
           // Trafikklys: tekst + klasse, aldri farge alene.
           kategori: el("span",
@@ -1522,16 +1532,24 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
             .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
             .join(", ") });
         boks.append(fordeling);
+        // Plassnummeret (eiers bestilling 30/8): rangeringen SIES, ikke
+        // bare vises som rekkefølge — og tallet oppdateres av `ranger()`
+        // i samme løkke som flytter raden.
+        const plass = el("span", { class: "rekrut-plass" });
         const hovedrad = el("tr", {},
           el("th", { scope: "row", class: "rekrut-kandidat",
-            title: rad.kandidat_id, text: kortnavn(rad.kandidat_id) }),
+            title: rad.kandidat_id }, plass,
+            // Navnet i egen node: portene som måler referansen (kortnavn,
+            // tilgjengelige navn, ombrekking) leser NAVNET, ikke nummeret.
+            el("span", { class: "rekrut-kandidatnavn" },
+              kortnavn(rad.kandidat_id))),
           poengCelle);
         // FUNNENE FÅR FULL BREDDE (mobil-redesignet): detaljboksen bor i
         // sin egen rad som spenner alle kolonnene — aldri i en smal
         // kolonne som bryter ord for ord på mobil.
         const detaljrad = el("tr", { class: "rekrut-detaljrad" },
           el("td", { colspan: "2", class: "rekrut-detalj" }, boks));
-        return { rad, oppfylt, poeng: rad.poeng,
+        return { rad, oppfylt, poeng: rad.poeng, plass,
           poengCelle, fordeling, hovedrad, detaljrad };
       });
       const kropp = el("tbody", {},
@@ -1549,6 +1567,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         [...radPar].sort(etterPoeng)
           .forEach((p, i) => {
             kropp.append(p.hovedrad, p.detaljrad);
+            p.plass.textContent = `${i + 1}.`;
             for (const rad of [p.hovedrad, p.detaljrad]) {
               rad.classList.toggle("rekrut-sjikt-topp", i < 5);
               rad.classList.toggle("rekrut-sjikt-neste",
