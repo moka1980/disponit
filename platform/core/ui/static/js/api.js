@@ -201,6 +201,9 @@ export const hentEvalueringer = (cursor) =>
 export const slettEvaluering = (oppdragId) =>
   _muter(`/v1/rekruttering/evaluering/${encodeURIComponent(oppdragId)}/slett`,
     "POST", {});
+export const slettStillingsprofil = (profilId) =>
+  _muter(`/v1/rekruttering/stillingsprofil/${encodeURIComponent(profilId)}`
+    + "/slett", "POST", {});
 export const avbrytEvaluering = (oppdragId) =>
   _muter(`/v1/rekruttering/evaluering/${encodeURIComponent(oppdragId)}/avbryt`,
     "POST", {});

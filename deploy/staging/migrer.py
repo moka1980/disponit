@@ -67,6 +67,8 @@ GRANT SELECT ON policyer TO {rolle};
 -- tabellene): inne i en SET LOCAL ROLE-blokk ville GRANT-en feilet på
 -- manglende grant-rett og rullet hele blokken.
 GRANT SELECT ON stillingsprofil, stillingsprofil_krav TO {rolle};
+-- 074: slett = enveis skjuling gjennom døren — aldri rå UPDATE.
+GRANT EXECUTE ON FUNCTION skjul_stillingsprofil(TEXT, UUID) TO {rolle};
 -- PR-013: policyadministrasjon. Runtime LESER hodet/utkast/runder og SKRIVER
 -- utkast/runder/attestasjoner direkte (RLS-gated), men når ALDRI `policyer`
 -- eller `policy_hode`-pekeren — aktivering går kun via den herdede

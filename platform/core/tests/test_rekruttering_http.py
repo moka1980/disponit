@@ -2131,3 +2131,96 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
     assert _get(klient, cookie,
                 f"/v1/rekruttering/kandidatkort/{oid}/kandidat-77"
                 ).status_code == 404
+
+
+def test_profilsletting_er_enveis_skjuling(klient):
+    """Slett for stillingsprofiler (eiers bestilling 30/8, 074): raden
+    forlater listen (og dermed Ny bestilling), versjonene består i
+    basen (rapportene refererer dem), merket er enveis, og idempotent
+    re-sletting er et stille ja.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `skjult_ts IS NULL`-leddet i
+    liste-spørringen, eller enveis-armen i 074-vakten."""
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r-profil")
+        puid = uuid.uuid4()
+        m.execute(
+            "INSERT INTO stillingsprofil (tenant, profil_id, versjon,"
+            " navn, opprettet_av, operasjonsnokkel, innhold_hash)"
+            " VALUES (%s,%s,1,'Sletteprofil','test',%s,'h')",
+            (TEN, puid, secrets.token_hex(8)))
+        m.execute(
+            "INSERT INTO stillingsprofil_krav (tenant, profil_id,"
+            " versjon, rekkefolge, kravnavn, vekt)"
+            " VALUES (%s,%s,1,1,'drift',5)", (TEN, puid))
+        m.commit()
+    finally:
+        m.close()
+
+    sjef = _bruker("profil-sjef", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    for_sletting = _get(klient, cookie, "/v1/rekruttering/stillingsprofiler")
+    assert any(p["profil_id"] == str(puid)
+               for p in for_sletting.json()["profiler"]), \
+        "positiv kontroll: profilen skal stå i listen før slettingen"
+    r = _post(klient, cookie, csrf,
+              f"/v1/rekruttering/stillingsprofil/{puid}/slett", {})
+    assert r.status_code == 200, r.text
+    assert r.json()["slettet"] is True
+    etter = _get(klient, cookie, "/v1/rekruttering/stillingsprofiler")
+    assert all(p["profil_id"] != str(puid)
+               for p in etter.json()["profiler"]), \
+        "profilen skal forlate listen"
+    # Idempotent: en alt slettet profil er et stille ja.
+    assert _post(klient, cookie, csrf,
+                 f"/v1/rekruttering/stillingsprofil/{puid}/slett",
+                 {}).status_code == 200
+    # Ukjent profil er «finnes ikke».
+    assert _post(klient, cookie, csrf,
+                 f"/v1/rekruttering/stillingsprofil/{uuid.uuid4()}/slett",
+                 {}).status_code == 404
+
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r-profil2")
+        # Radene består (rapportenes vekt-referanse lever videre) …
+        krav = m.execute(
+            "SELECT count(*) FROM stillingsprofil_krav"
+            " WHERE tenant=%s AND profil_id=%s", (TEN, puid)).fetchone()[0]
+        assert krav == 1, "kravradene skal bestå etter sletting"
+        # … og merket er ENVEIS: heller ikke migrator får nullet det.
+        import psycopg as psy
+        with pytest.raises(psy.errors.InsufficientPrivilege):
+            m.execute(
+                "UPDATE stillingsprofil SET skjult_ts = NULL"
+                " WHERE tenant=%s AND profil_id=%s", (TEN, puid))
+        m.rollback()
+        # Append-only for alt annet står ubrutt (kun skjuling kan skrives).
+        with pytest.raises(psy.errors.InsufficientPrivilege):
+            _sett = sett_kontekst(m, TEN, "test", "r-profil3")
+            m.execute(
+                "UPDATE stillingsprofil SET navn='Omdøpt'"
+                " WHERE tenant=%s AND profil_id=%s", (TEN, puid))
+        m.rollback()
+    finally:
+        m.close()
+
+    # SKJULINGEN ER PROFILENS (CodeRabbit): runtime har ingen rå UPDATE
+    # i det hele tatt — en enkeltversjons-skjuling kan ikke uttrykkes.
+    # Døren er den ENESTE veien, og den tar hele profilen.
+    from db.pg import koble, sett_kontekst as _ktx
+    rt = koble(DSN)
+    try:
+        _ktx(rt, TEN, "test", "r-profil4")
+        import psycopg as psy
+        with pytest.raises(psy.errors.InsufficientPrivilege):
+            rt.execute(
+                "UPDATE stillingsprofil SET skjult_ts = now()"
+                " WHERE tenant=%s AND profil_id=%s AND versjon=1",
+                (TEN, puid))
+        rt.rollback()
+    finally:
+        rt.close()
