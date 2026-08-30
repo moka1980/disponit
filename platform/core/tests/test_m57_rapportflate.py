@@ -1025,14 +1025,13 @@ def test_223_interleavet_reap_i_dekrypteringsvinduet_feller_200():
         "probet felte TOCTOU-påstanden i barneprosessen:\n" + ut)
 
 
-@pg
-@pytest.mark.skipif(os.environ.get("DISPONIT_223_PROBE") != "1",
-                    reason="kjøres kun som barneprosess av vokteren under")
-def test_223_probe_interleavet_reap(migrator, miljo, monkeypatch):
+def _probe_223(migrator, miljo, monkeypatch):
     """#223: TOCTOU-beviset med TO FORBINDELSER — ikke en kildemåling.
 
     KJØRES ALDRI DIREKTE (#257): dette er PROBET, og det kjører kun i
-    barneprosessen vokteren under starter. Grensen mot en hengende
+    barneprosessen vokteren over starter. Testformen av det defineres
+    BETINGET nederst i filen — i forelderen finnes den ikke i det hele
+    tatt, så CI-porten «ingen DB-tester hoppet over» ser aldri en skip. Grensen mot en hengende
     forespørsel kan ikke bygges i samme prosess (synkron rute →
     run_in_threadpool → en arbeidertråd kansellering ikke forlater);
     den ligger i forelderens kill(), som ikke kan blokkeres av det som
@@ -1208,3 +1207,12 @@ def test_223_probe_interleavet_reap(migrator, miljo, monkeypatch):
             "reapet og aldri-funnet skal være samme svar (058-doktrinen)"
     finally:
         rt.close()
+
+
+# #257: probets TESTFORM finnes kun i barneprosessen (env-vakten) — en
+# skipif i forelderen ville felt CI-porten «ingen DB-tester ble hoppet
+# over», og en ubetinget definisjon ville kjørt probet uten grense.
+if os.environ.get("DISPONIT_223_PROBE") == "1":
+    @pg
+    def test_223_probe_interleavet_reap(migrator, miljo, monkeypatch):
+        _probe_223(migrator, miljo, monkeypatch)
