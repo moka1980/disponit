@@ -6511,3 +6511,59 @@ test("En observert ugyldig rapport ryddes av den oppfriskede listen (#258 P2-E)"
   assert.ok(!seksjon().textContent.includes("kandidat-01"),
     "kandidatpayloaden ble stående etter at basen dømte den borte");
 });
+
+test("Kaskadeporten: kandidatoverskriften OMBREKKER faktisk — målt i beregnet stil, ikke regex (sak 251 valg C)", async () => {
+  // Rotårsaken bak sak 251: `th { white-space: nowrap }` i komponenter.css
+  // slo `.rekrut-kandidat { overflow-wrap: anywhere }` i base.css, og
+  // regex-porten som grep'et ÉN fil så det aldri — den gikk grønn mens
+  // layouten sto ødelagt. Denne porten laster BEGGE stilarkene i
+  // dokumentet og spør den ekte kaskaden (K4: ekte koder, aldri en
+  // etterligning): hva ER white-space/overflow-wrap på noden som rendres?
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }],
+    flere: false },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 1,
+      profil: { profil_id: "p-1", versjon: 2, navn: "Driftskonsulent" },
+      antall_soknader: 1,
+      rangering: [{ kandidat_id: "e".repeat(64), poeng: 5,
+        nedbrytning: { drift: 5 } }],
+      kandidater: { ["e".repeat(64)]: { funn: [], intervjusporsmal: [],
+        kildetekst: "[NAVN-1]" } },
+      fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 50 },
+    } } };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() => hoved.querySelector("th.rekrut-kandidat")),
+    "rapportens radoverskrift kom aldri");
+  const dok = hoved.ownerDocument;
+  const stil = dok.createElement("style");
+  stil.textContent = ["base.css", "komponenter.css"]
+    .map((navn) => readFileSync(join(ROT,
+      "platform/core/ui/static/css", navn), "utf-8"))
+    .join("\n");
+  dok.head.append(stil);
+  try {
+    const vindu = dok.defaultView;
+    const th = hoved.querySelector("th.rekrut-kandidat");
+    const stilTh = vindu.getComputedStyle(th);
+    assert.equal(stilTh.whiteSpace, "normal",
+      "th-nowrap vinner over klassen igjen — sak 251-regresjonen");
+    assert.equal(stilTh.overflowWrap, "anywhere",
+      "radoverskriften kan ikke bryte en 64-tegns kandidat-id");
+    // …og prosesstabellens kandidatcelle måles i SAMME kaskade (P3-2:
+    // dens gamle port sjekket bare at klassen fantes på noden).
+    const span = hoved.querySelector("span.rekrut-kandidat")
+      || hoved.querySelector(".rekrut-kandidat:not(th)");
+    assert.ok(span, "prosesstabellens kandidatcelle finnes ikke — da "
+      + "måler porten ingenting (CodeRabbit: aldri en vakuøs arm)");
+    assert.equal(vindu.getComputedStyle(span).overflowWrap, "anywhere",
+      "prosesscellens ombrekking forsvant fra kaskaden");
+  } finally {
+    stil.remove();
+  }
+});
