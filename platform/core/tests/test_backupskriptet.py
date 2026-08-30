@@ -22,6 +22,21 @@ def _pos(nal: str) -> int:
     return i
 
 
+def _tar_linjen() -> str:
+    """Hele den LOGISKE `tar --create`-linjen — kommandoen spenner
+    flere fysiske linjer med fortsettelses-`\\` (sak #246-runden), og
+    en port som leser bare første fragment måler bare et fragment."""
+    linjer = SKRIPT.splitlines()
+    start = next(i for i, l in enumerate(linjer)
+                 if l.lstrip().startswith("tar --create"))
+    samlet = ""
+    for l in linjer[start:]:
+        samlet += l.rstrip("\\") + " "
+        if not l.endswith("\\"):
+            break
+    return samlet
+
+
 def test_retensjonen_star_for_diskporten():
     """Codex P1: porten hindret sin egen forutsetning.
 
@@ -300,8 +315,7 @@ def test_en_paagaaende_opplasting_dreper_ikke_backupen():
     MUTASJONEN SOM DREPER DENNE: fjern `--exclude`, eller utvid den til
     `*.bin` og skjul dermed det porten måler.
     """
-    tar_linje = next(l for l in SKRIPT.splitlines()
-                     if l.lstrip().startswith("tar --create"))
+    tar_linje = _tar_linjen()
     assert "--exclude='./*/*.bin.tmp'" in tar_linje, (
         f"arkivet leser opplastingens midlertidige filer: {tar_linje}")
     # MØNSTERET MÅ VÆRE SMALT (Codex P2, runde 8). `tar --exclude`
@@ -389,8 +403,7 @@ def test_arkivporten_maler_innhold_ikke_bare_navn():
     # Målt på selve kommandolinjen, ikke på prosaen rundt den — kommen-
     # taren over NEVNER flagget, og en tekstsøk over hele skriptet ville
     # lest sin egen begrunnelse som et treff.
-    tar_linje = next(l for l in SKRIPT.splitlines()
-                     if l.lstrip().startswith("tar --create"))
+    tar_linje = _tar_linjen()
     assert "--dereference" not in tar_linje and " -h" not in tar_linje, (
         f"arkivet følger nå lenker: {tar_linje}")
     assert innholdsport < _pos('mv "$ARKIV_DELVIS" "$ARKIV"'), (
@@ -402,3 +415,87 @@ def test_arkivporten_maler_innhold_ikke_bare_navn():
     assert "HVA DEN IKKE GJØR" in SKRIPT, (
         "restklassen er ikke skrevet ned — neste leser tror porten"
         " dekker byte-korrupsjon")
+
+
+def test_oppstartsfeien_tar_halvpar_og_verifbaser():
+    """Sak #246 pkt. 1+2: utrappbare avbrudd (SIGKILL, strømbrudd)
+    etterlater to klasser rester traps aldri så — et ARKIV med endelig
+    navn uten sin dump (vinduet mellom finaliseringens to `mv`), og en
+    PID-navngitt verifiseringsbase i clusteret. Ingen av dem ryddes av
+    retensjonen (den finner kandidater fra dumpnavn) eller av neste
+    kjørings trap (nytt PID-navn). Feiene står etter `flock` — da er
+    enhver av dem beviselig en rest — og FØR retensjonen/`createdb`.
+
+    MUTASJONEN SOM DREPER DENNE: fjern en av feiene — resten blir
+    liggende for alltid (arkivet) eller spise clusterplass (basen).
+    """
+    arkivfei = _pos('[ -f "$KATALOG/disponit-$st.dump.age" ] || rm -f "$ark"')
+    assert _pos("flock") < arkivfei < _pos('UTLOPTE=$(find "$KATALOG"'), (
+        "halvpar-feien må eies av flock-en og gå før retensjonen — "
+        "ellers kan den treffe en levende kjøring, eller aldri kjøre")
+    veriffei = _pos("disponit\\_backup\\_verif\\_%")
+    # Ankeret er selve `createdb`-KOMMANDOEN — prosaen i feiens egen
+    # kommentar nevner ordet og ville ellers vært et treff.
+    assert _pos("flock") < veriffei < _pos('createdb "$VERIF"'), (
+        "verifbase-feien må eies av flock-en og gå før en ny base fødes")
+
+
+def test_stempelkollisjon_avvises_foer_trapen_finnes():
+    """Sak #246 pkt. 3: gjenbrukes et stempel (klokke justert bakover,
+    to raske manuelle kjøringer), må kjøringen avvises FØR
+    `trap opprydd` installeres — trapen sletter endelige navn når paret
+    er halvt, og et eksisterende, fremmed par skal aldri kunne bli
+    «vårt halve».
+
+    MUTASJONEN SOM DREPER DENNE: flytt sjekken etter trap-linjen — da
+    kan en kollisjon ende med at trapen rydder forrige kjørings par.
+    """
+    sjekk = _pos('if [ -e "$FIL" ] || [ -L "$FIL" ] || [ -e "$ARKIV" ] || [ -L "$ARKIV" ]; then')
+    assert sjekk < _pos("trap opprydd EXIT"), (
+        "kollisjonsvakten står etter trap-installasjonen")
+    assert sjekk < _pos("pg_dump"), "kollisjonen avvises etter arbeidet"
+
+
+def test_engangsbasen_slippes_foer_arkivfasen():
+    """Sak #246 pkt. 4/5: `$VERIF` levde til EXIT-trapen, så under `tar`
+    lå den restaurerte basen OG arkivet på samme /var — en peak
+    diskporten aldri målte, av faser som ikke trengte å sameksistere.
+    Kravlisten trenger bare basen, så den leses før arkivfasen, og basen
+    droppes eksplisitt før `tar` starter.
+
+    MUTASJONEN SOM DREPER DENNE: flytt kravlese/dropp tilbake bak
+    `tar` — peaken gjenoppstår, umålt.
+    """
+    krav = _pos('sort -u > "$LISTE.krav"')
+    dropp = _pos('sudo -u postgres dropdb --if-exists "$VERIF"\nVERIF=""')
+    tar = _pos("tar --create")
+    assert krav < dropp < tar, (
+        "kravlisten/droppen står ikke foran arkivfasen — den restaurerte"
+        " basen og arkivet deler /var igjen")
+
+
+def test_tar_listing_gaar_til_indexfil_med_literal_sitering():
+    """Sak #246 pkt. 6+8: `2>"$LISTE"` blandet medlemsnavn og
+    diagnostikk (årsaken forsvant fra journalen), og GNU tars
+    standard-sitering escapet bakoverskråstrek/tab i listingen mens
+    psql-siden skrev rå byte — en slik tenant-ID matchet aldri sitt
+    eget arkivmedlem, og HVER backup for den kunden feilet. Linjeskift,
+    det ene tegnet linjebasert literal form ikke bærer, avvises med
+    egen ordlyd i kravlesingen.
+
+    MUTASJONEN SOM DREPER DENNE: bytt tilbake til `2>"$LISTE"`, eller
+    fjern `--quoting-style=literal` eller chr(10)-vakten.
+    """
+    tar_linje = _tar_linjen()
+    assert '--index-file="$LISTE"' in tar_linje, (
+        f"medlemslisten går ikke i index-fila: {tar_linje}")
+    assert "--quoting-style=literal" in tar_linje, (
+        f"tar-siteringen matcher ikke psql-sidens rå byte: {tar_linje}")
+    # Målt på kommandolinjen, ikke hele skriptet: prosaen som begrunner
+    # byttet SITERER den gamle formen (samme regel som dereference-porten).
+    assert '2>"$LISTE"' not in tar_linje, (
+        "stderr fanges fortsatt i medlemslisten — diagnostikken når"
+        " aldri journalen")
+    assert "chr(10)" in SKRIPT, (
+        "linjeskift-vakten er borte — en sti med \\n splittes i to krav"
+        " som aldri matcher, og backupen feiler med villedende melding")
