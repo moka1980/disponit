@@ -197,7 +197,7 @@ test("Rekruttering: tabell med caption, scope, aria-sort — og axe rent", async
   // Rangert: K-1 (5 poeng) foran K-2 (3 poeng).
   const rader = [...tabell.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
-  assert.deepEqual(rader, ["K-1", "K-2"]);
+  assert.deepEqual(rader, ["1.K-1", "2.K-2"]);
   const brudd = await alvorligeBrudd(hoved);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
@@ -240,7 +240,7 @@ test("Rekruttering: vektendring uten mus re-rangerer og kunngjøres (port 30)", 
   // Uten sky-vekt: K-1 og K-2 har begge 3 — likhet brytes på kandidat-id.
   const rader = [...hoved.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
-  assert.deepEqual(rader, ["K-1", "K-2"]);
+  assert.deepEqual(rader, ["1.K-1", "2.K-2"]);
   const kunngjoring = hoved.querySelector('[aria-live="polite"]');
   assert.ok(kunngjoring.textContent.includes("K-1"),
     "re-rangeringen ble ikke kunngjort");
@@ -292,7 +292,7 @@ test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", asy
   poengTh.querySelector("button").click();
   await vent(() => hoved.querySelector('th[aria-sort="ascending"]'));
   assert.deepEqual([...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td").textContent), ["K-2", "K-1"],
+    .map((tr) => tr.querySelector("td").textContent), ["2.K-2", "1.K-1"],
     "stigende sortering slo ikke igjennom");
 
   // …og så en vektendring, som bygger tabellen på nytt.
@@ -301,9 +301,11 @@ test("Rekruttering: brukerens sortering overlever en vektendring (port 30)", asy
   range.dispatchEvent(new window.Event("input", { bubbles: true }));
   assert.ok(hoved.querySelector('th[aria-sort="ascending"]'),
     "vektendringen kastet brukerens sortering tilbake til synkende");
-  // K-1 (9+2=11) og K-2 (9+0=9): stigende betyr K-2 først, fortsatt.
+  // K-1 (9+2=11) og K-2 (9+0=9): stigende betyr K-2 først, fortsatt —
+  // og plassnummeret følger KANDIDATEN (poeng synkende), ikke radens
+  // posisjon: K-2 er nr. 2 selv når hun står øverst i stigende visning.
   assert.deepEqual([...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td").textContent), ["K-2", "K-1"]);
+    .map((tr) => tr.querySelector("td").textContent), ["2.K-2", "1.K-1"]);
   // Kunngjøringen leser den raden som FAKTISK står øverst, ikke den
   // høyest rangerte: den skal aldri si noe annet enn det tabellen viser.
   assert.ok(hoved.querySelector('[aria-live="polite"]').textContent
@@ -555,7 +557,7 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
   // svaret er der. Testen må derfor vente på tegningen i stedet for å
   // lese DOM-en på samme tikk.
   assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
-    .some((tr) => tr.querySelector("td").textContent === "K-9")),
+    .some((tr) => tr.querySelector("td").textContent.endsWith("K-9"))),
     "prosessbyttet hentet aldri den valgte prosessen");
   // ... og den kunne BARE komme derfra: indeksraden for p-2 bærer ingen
   // kandidater, så K-9 finnes ikke i det første svaret (#183).
@@ -564,7 +566,7 @@ test("Rekruttering: hver prosess i svaret kan velges (ikke bare den første)", a
     "byttet ba aldri om den valgte prosessen på id");
   const rader = [...hoved.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
-  assert.deepEqual(rader, ["K-9"]);
+  assert.deepEqual(rader, ["1.K-9"]);
   assert.equal(hoved.querySelector("#rekrut-prosessvelger").value, "p-2",
     "velgeren mistet valget da flaten ble tegnet på nytt");
   // Med bare én prosess står ingen velger i veien.
@@ -621,7 +623,7 @@ test("Rekruttering: en åpen dialog river ikke prosessen ut under seg",
 
   // ... og MENS den henger, åpner leseren en kandidatdetalj.
   const rad = [...hoved.querySelectorAll("tbody tr")]
-    .find((tr) => tr.querySelector("td").textContent === "K-2");
+    .find((tr) => tr.querySelector("td").textContent.endsWith("K-2"));
   const detaljer = [...rad.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.detaljer"));
   assert.ok(detaljer, "raden mangler detaljknappen");
@@ -645,7 +647,7 @@ test("Rekruttering: en åpen dialog river ikke prosessen ut under seg",
     "dialogen forsvant med prosessen under den");
   const viste = [...hoved.querySelectorAll("tbody tr")]
     .map((tr) => tr.querySelector("td").textContent);
-  assert.deepEqual([...viste].sort(), ["K-1", "K-2"],
+  assert.deepEqual([...viste].sort(), ["1.K-1", "2.K-2"],
     "flaten byttet prosess under en åpen dialog");
   assert.ok(!viste.includes("K-9"),
     "p-2s kandidat kom inn under dialogen som eier p-1");
@@ -1024,7 +1026,7 @@ test("Rekruttering: «Detaljer» åpner panelet med funn, sitat og spørsmål", 
   // MUTASJONEN SOM DREPER DENNE: bytt `paaKlikk` tilbake til `utfor`.
   const hoved = await tegnet();
   const rad = [...hoved.querySelectorAll("tbody tr")]
-    .find((tr) => tr.querySelector("td").textContent === "K-2");
+    .find((tr) => tr.querySelector("td").textContent.endsWith("K-2"));
   const detaljer = [...rad.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.detaljer"));
   assert.ok(detaljer, "raden mangler detaljknappen");
@@ -1066,7 +1068,7 @@ test("Rekruttering: et funn uten sitat åpner panelet og skjules ikke", async ()
   visRekruttering(hoved, ctx());
   await vent(() => hoved.querySelector("table"));
   const rad = [...hoved.querySelectorAll("tbody tr")]
-    .find((tr) => tr.querySelector("td").textContent === "K-2");
+    .find((tr) => tr.querySelector("td").textContent.endsWith("K-2"));
   [...rad.querySelectorAll("button")]
     .find((b) => b.textContent === t("ui.rekruttering.detaljer")).click();
   const panel = document.querySelector('[role="dialog"]');
@@ -1301,7 +1303,7 @@ test("Rekruttering: hver detaljknapp har sitt eget tilgjengelige navn (port 29)"
   // Navnet bærer kandidat-id-en raden viser med øyet — og radene står i
   // rangert rekkefølge, så navnet må følge SIN rad, ikke fikstureringen.
   for (const rad of hoved.querySelectorAll("tbody tr")) {
-    const id = rad.querySelector("td").textContent;
+    const id = rad.querySelector(".rekrut-kandidat").textContent;
     const knapp = rad.querySelector(".handling-celle button");
     assert.ok(knapp.getAttribute("aria-label").includes(id),
       `knappen på raden for ${id} navngir ikke kandidaten`);
@@ -1314,7 +1316,7 @@ test("Rekruttering: hver detaljknapp har sitt eget tilgjengelige navn (port 29)"
     "detaljpanelet åpnet ikke");
   const panel = document.querySelector(".dialog.skuff");
   assert.ok(panel.textContent.includes(knapper[0].closest("tr")
-    .querySelector("td").textContent),
+    .querySelector(".rekrut-kandidat").textContent),
     "detaljpanelet viser en annen kandidat enn knappen navnga");
   panel.querySelector(".dialog-lukk").click();
 
@@ -2431,7 +2433,7 @@ test("Evalueringer: auto-lastingen kjører ÉN gang per økt — "
   velger.value = "p-2";
   velger.dispatchEvent(new window.Event("change", { bubbles: true }));
   assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
-    .some((tr) => tr.querySelector("td").textContent === "K-9")),
+    .some((tr) => tr.querySelector("td").textContent.endsWith("K-9"))),
     "prosessbyttet hentet aldri den valgte prosessen");
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(KALL.filter(
@@ -5211,7 +5213,7 @@ test("Prosess: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
   const viste = [...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td, th").textContent.trim());
+    .map((tr) => tr.querySelector(".rekrut-kandidatnavn, .rekrut-kandidat").textContent.trim());
   assert.equal(new Set(viste).size, 2,
     `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
   // Og begge hele id-ene er fortsatt å få tak i.
@@ -5292,7 +5294,7 @@ test("Vis funn: det tilgjengelige navnet er en LOCALE-mal, ikke en setning i kod
     assert.ok(etter !== undefined, "malen har ikke lenger {kandidat}");
     assert.ok(for_.trim(), "malen er tom — da måler resten ingenting");
     for (const rad of rader) {
-      const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+      const synlig = rad.querySelector(".rekrut-kandidatnavn").textContent.trim();
       const sm = rad.nextElementSibling.querySelector("details > summary");
       assert.equal(sm.getAttribute("aria-label"), `${for_}${synlig}${etter}`,
         "det tilgjengelige navnet følger ikke malen i locale");
@@ -5458,7 +5460,7 @@ test("Rapport: to id-er med samme åtte tegn får ULIKE kortnavn", async () => {
   }));
   const tabell = rapporttabellen(hoved);
   const viste = [...tabell.querySelectorAll("tbody th[scope=row]")]
-    .map((th) => th.textContent.trim());
+    .map((th) => th.querySelector(".rekrut-kandidatnavn").textContent.trim());
   assert.equal(new Set(viste).size, 2,
     `to kandidater vises med SAMME referanse: ${JSON.stringify(viste)}`);
   // Og begge hele id-ene er fortsatt å få tak i.
@@ -5545,7 +5547,8 @@ test("Kandidatcellen bryter den lange id-en i stedet for tabellen — BEGGE tabe
     return tb && tb.querySelectorAll("tbody th[scope=row]").length === 1;
   }));
   const th = rapporttabellen(hoved).querySelector("tbody th[scope=row]");
-  assert.equal(th.textContent.trim(), lang,
+  assert.equal(th.querySelector(".rekrut-kandidatnavn").textContent.trim(),
+    lang,
     "fiksturen ble kortet — da bærer ikke cellen bredden porten måler");
   assert.ok(th.classList.contains("rekrut-kandidat"),
     "rapportens radoverskrift har ingen ombrekking — den lange id-en løfter "
@@ -5601,7 +5604,7 @@ test("Kortnavn: et beskrivende manifestnavn kortes ALDRI, uansett lengde",
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2));
   const viste = [...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td, th").textContent.trim());
+    .map((tr) => tr.querySelector(".rekrut-kandidatnavn, .rekrut-kandidat").textContent.trim());
   assert.ok(viste.includes(navn),
     `det beskrivende navnet ble kortet bort: ${JSON.stringify(viste)}`);
   // ... OG den ugjennomsiktige id-en kortes fortsatt, ellers måler porten
@@ -5644,7 +5647,7 @@ test("Kortnavn: en ren sifferstreng er ikke heksveggen — den står hel",
   visRekruttering(hoved, ctx());
   assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 3));
   const iProsess = [...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td, th").textContent.trim());
+    .map((tr) => tr.querySelector(".rekrut-kandidatnavn, .rekrut-kandidat").textContent.trim());
   assert.ok(iProsess.includes(siffer),
     `sifferid-en ble kortet i prosesstabellen: ${JSON.stringify(iProsess)}`);
   // ... OG heksveggen kortes fortsatt — begge grenene, hver for seg.
@@ -5664,7 +5667,7 @@ test("Kortnavn: en ren sifferstreng er ikke heksveggen — den står hel",
     return tb && tb.querySelectorAll("tbody th[scope=row]").length === 2;
   }));
   const iRapport = [...rapporttabellen(hoved)
-    .querySelectorAll("tbody th[scope=row]")].map((th) => th.textContent.trim());
+    .querySelectorAll("tbody th[scope=row]")].map((th) => th.querySelector(".rekrut-kandidatnavn").textContent.trim());
   assert.ok(iRapport.includes(siffer),
     `sifferid-en ble kortet i rapporttabellen: ${JSON.stringify(iRapport)}`);
   assert.ok(iRapport.some((v) => v.endsWith("…") && uuid.startsWith(v.slice(0, -1))),
@@ -5713,7 +5716,7 @@ test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID"
 
   const pNavn = [];
   for (const rad of hoved.querySelectorAll("tbody tr")) {
-    const synlig = rad.querySelector("td").textContent.trim();
+    const synlig = rad.querySelector(".rekrut-kandidat").textContent.trim();
     const navn = rad.querySelector(".handling-celle button")
       .getAttribute("aria-label");
     pNavn.push(navn);
@@ -5753,7 +5756,7 @@ test("Kortnavn: det tilgjengelige navnet bærer RADENS referanse, ikke rå UUID"
   const rNavn = [];
   for (const rad of rTabell.querySelectorAll(
     "tbody tr:not(.rekrut-detaljrad)")) {
-    const synlig = rad.querySelector("th[scope=row]").textContent.trim();
+    const synlig = rad.querySelector(".rekrut-kandidatnavn").textContent.trim();
     const navn = rad.nextElementSibling.querySelector("details > summary")
       .getAttribute("aria-label");
     rNavn.push(navn);
@@ -5812,7 +5815,7 @@ test("Kortnavn: re-rangeringen KUNNGJØR radens referanse, ikke rå UUID",
   assert.ok(await vent(() => hoved.querySelectorAll("tbody tr").length === 2),
     "prosesstabellen kom aldri");
   const forst = () => hoved.querySelector("tbody tr")
-    .querySelector("td, th").textContent.trim();
+    .querySelector(".rekrut-kandidat").textContent.trim();
   assert.ok(forst().startsWith("58f17252"),
     `utgangsrekkefølgen er ikke den porten bygger på: ${forst()}`);
 
@@ -5917,7 +5920,7 @@ test("Prosessbytte: en feilet henting ruller valget tilbake og SIER fra",
     .map((tr) => tr.querySelector("td").textContent);
   assert.ok(!rader.includes("K-9"),
     `en feilet henting tegnet den andre prosessen likevel: ${rader}`);
-  assert.deepEqual([...rader].sort(), ["K-1", "K-2"]);
+  assert.deepEqual([...rader].sort(), ["1.K-1", "2.K-2"]);
 });
 
 test("Prosessbytte: 500 og nettverksfeil går samme vei som 404", async () => {
@@ -5950,7 +5953,7 @@ test("Prosessbytte: 500 og nettverksfeil går samme vei som 404", async () => {
   const feil = hoved.querySelector(".rekrut-velgerfeil");
   assert.ok(feil, "flaten har ingen egen feilregion for byttet");
   const rader = () => [...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td").textContent);
+    .map((tr) => tr.querySelector(".rekrut-kandidat").textContent);
   // SERVEREN FALLER (500): ingen kode i kroppen, bare en feil.
   KALL = [];
   SVAR = (sti) => (sti === "/v1/rekruttering/prosesser" ? 500 : undefined);
@@ -6026,7 +6029,7 @@ test("Prosessbytte: velgeren viser prosessen som VISES, ikke den som hentes",
     k.url === "/v1/rekruttering/prosesser?prosess_id=p-2")),
     "byttet hentet aldri — testen måler ikke det den tror");
   const rader = () => [...hoved.querySelectorAll("tbody tr")]
-    .map((tr) => tr.querySelector("td").textContent);
+    .map((tr) => tr.querySelector(".rekrut-kandidat").textContent);
   assert.ok(!rader().includes("K-9"),
     `tabellen viste prosess B før svaret var der: ${rader().join(",")}`);
   assert.equal(velger.value, "p-1",
@@ -6146,7 +6149,7 @@ test("Prosessbytte: bare det SISTE byttet får tegne", async () => {
   // ... og det NYESTE tegner, så testen ikke består på en død kjede.
   slippene[1](prosess());
   assert.ok(await vent(() => [...hoved.querySelectorAll("tbody tr")]
-    .some((tr) => tr.querySelector("td").textContent === "K-1")),
+    .some((tr) => tr.querySelector("td").textContent.endsWith("K-1"))),
     "det nyeste byttet tegnet aldri");
 });
 
@@ -6773,6 +6776,12 @@ test("Rapporten: vektendring flytter kandidatene og sjiktfargene følger (eiers 
   assert.equal(navn(hovedrader()[0]), "kandidat-06",
     "rangeringen snudde ikke da vekten falt");
   assert.equal(navn(hovedrader()[11]), "kandidat-05");
+  // Plassnummeret følger plassbyttet (eiers bestilling 30/8): raden som
+  // rykket opp bærer «1.», og tallene er radenes nye rekkefølge.
+  assert.deepEqual(hovedrader().map((tr) =>
+    tr.querySelector(".rekrut-plass").textContent),
+  Array.from({ length: 12 }, (_, i) => `${i + 1}.`),
+  "plassnumrene fulgte ikke omsorteringen");
   assert.deepEqual(klasser(), ["topp", "topp", "topp", "topp", "topp",
     "neste", "neste", "neste", "neste", "neste", "", ""],
     "sjiktfargene fulgte ikke plassbyttet");
