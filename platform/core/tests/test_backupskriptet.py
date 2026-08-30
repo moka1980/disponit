@@ -528,3 +528,39 @@ def test_digestporten_maaler_ciphertexten_mot_skriveveiens_verdi():
     # … og porten kjører der filene faktisk ligger.
     assert 'cd "$LAGER"' in SKRIPT, (
         "sha256sum -c uten cd til lageret måler relative stier mot feil rot")
+
+
+def test_dumpen_strommes_og_hvert_ledd_propagerer():
+    """Sak #244: klarteksten skal ikke ligge NOE sted — tmpfs-sider kan
+    swappes til vertens aktive, ukrypterte swap, og `rm` sletter ingen
+    swap-blokker. Dumpen strømmes derfor til begge forbrukerne i samme
+    passering: `age` leser fra et navngitt rør (kjernebuffer, aldri
+    lagring), `pg_restore` fra pipelinen — nøyaktig samme byte, så
+    verifiseringen fortsatt gjelder filen som havner i katalogen.
+
+    Statuspropagering er sakens eget akseptkriterium: `pipefail` dekker
+    pg_dump→tee→pg_restore, og `wait` på age-PID-en henter den ene
+    statusen en prosess-substitusjon ville mistet (defektklassen
+    `find < <(...)` alt er felt på i dette skriptet).
+
+    MUTASJONEN SOM DREPER DENNE: skriv dumpen til en fil igjen, bytt
+    røret mot `>(...)`, eller fjern `wait`-armen.
+    """
+    assert 'mkfifo -m 600 "$DUMPROR"' in SKRIPT, (
+        "det navngitte røret er borte — da mellomlagres klarteksten"
+        " igjen, eller age-statusen mistes i en prosess-substitusjon")
+    ror = _pos('age -R "$MOTTAKER" < "$DUMPROR" > "$DELVIS" &')
+    strom = _pos('| tee "$DUMPROR"')
+    ventearm = _pos('wait "$AGE_PID" || {')
+    assert ror < strom < ventearm < _pos('STORRELSE=$(stat'), (
+        "strømmens ledd står i feil rekkefølge — leseren må åpne røret"
+        " før skriveren, og age-statusen må hentes før filen stoles på")
+    assert ".dump.raa" not in SKRIPT and '> "$RAA"' not in SKRIPT, (
+        "en klartekst-mellomfil er tilbake — sak #244 gjenåpnet")
+    # pipefail målt som AKTIV kommando, ikke som ord i prosa (CodeRabbit):
+    # kommentarer i skriptet siterer flagget når de begrunner det.
+    aktive = [l.strip() for l in SKRIPT.splitlines()
+              if not l.strip().startswith("#")]
+    assert any(l.startswith("set ") and "pipefail" in l for l in aktive), (
+        "pipefail er ikke lenger en aktiv set-kommando — tee/pg_restore-"
+        "feil ville passert stille")

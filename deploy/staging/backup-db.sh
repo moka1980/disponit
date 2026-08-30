@@ -84,31 +84,18 @@ fi
 # rest kan verken forveksles med en backup eller slettes som en.
 DELVIS="$FIL.delvis"
 ARKIV_DELVIS="$ARKIV.delvis"
-# ÉN DUMP, TO FORBRUKERE (Cursor P2, #191). Skriptet kjørte `pg_dump` to
-# ganger: den lagrede filen kom fra pass 1, mens engangsbasen — og dermed
-# `lager_sti`-porten — ble bygget fra pass 2. Porten beviste da konsistens
-# for et ANNET tidspunkt enn det som ble arkivert, og mellom passene rekker
-# en `forkastet`-rydding å unlinke en fil: pass 2 ser ikke raden, kravmengden
-# blir tom, porten passerer — og den lagrede pass-1-dumpen har fortsatt raden
-# som `lastet` uten fil i arkivet. Nøyaktig #191, gjennom porten som skulle
-# fange det.
-#
-# Mellomfila er UKRYPTERT og lever bare inne i kjøringen: root-eid 600 i en
-# 700-katalog, ryddet av trapen, av feiesvingen under, og eksplisitt så snart
-# begge forbrukerne er ferdige.
-#
-# DEN LIGGER I MINNE, IKKE PÅ DISK (#229, eiers dom 28/8). Codex (P1) og
-# Cursor (P2) sto mot hverandre på nettopp denne fila: Cursor krevde ÉN
-# dump, fordi to `pg_dump` betyr at porten måler et annet snapshot enn det
-# som lagres; Codex krevde at klartekst aldri persisteres, fordi katalogens
-# trusselmodell er at diskaksess gir null — privatnøkkelen ligger bevisst
-# ikke på verten, og da er gjenopprettbare klartekstblokker i /var/backups
-# inkonsekvent.
-#
-# Motsetningen var ekte bare så lenge «én snapshot» ble antatt å kreve «fil
-# på disk». tmpfs oppfyller begge: samme byte-sekvens til kryptering,
-# `pg_restore` og `lager_sti`-porten, og klarteksten når aldri varig
-# lagring. Målt på verten: /dev/shm har 2,0 GB fri mot en dump på 3,0 MB.
+# ÉN DUMP, TO FORBRUKERE — OG INGEN MELLOMFIL (Cursor P2 #191 → eiers
+# tmpfs-dom 28/8 → sak #244). Historikken i tre trinn, fordi hvert
+# trinn er en invariant som fortsatt gjelder: (1) to `pg_dump` lot
+# porten bevise konsistens for et annet snapshot enn det som ble
+# arkivert — derfor ÉN passering. (2) klartekst persisteres aldri i
+# katalogen — privatnøkkelen er ikke på verten, og da er gjenopprettbare
+# klartekstblokker i /var/backups inkonsekvent. (3, #244) tmpfs var
+# heller ikke nok: verten har aktiv ukryptert swap, og tmpfs-sider kan
+# swappes — så dumpen STRØMMES nå til begge forbrukerne i samme
+# passering (se dump-blokken under), og klarteksten ligger aldri på noe
+# filsystem i det hele tatt. Katalogen her bærer bare medlemslistene og
+# det navngitte røret — aldri dumpbyte på lagring.
 #
 # `mktemp -d` og ikke et konstruert søskennavn: katalogen er reservert av
 # kjernen, og 0700 settes FØR fila finnes — et navn man gjetter seg til kan
@@ -143,7 +130,6 @@ find /dev/shm -mindepth 1 -maxdepth 1 -user root -type d \
      -name 'disponit-backup.*' -exec rm -rf {} +
 RAA_KAT=$(mktemp -d -p /dev/shm disponit-backup.XXXXXXXX)
 chmod 700 "$RAA_KAT"
-RAA="$RAA_KAT/disponit-$STEMPEL.dump.raa"
 # Ett felles trap fra og med HER, ikke etter dumpen: det er nettopp
 # intervallet før den gamle `trap`-linjen som er avbruddsvinduet. `VERIF`
 # er tom til engangsbasen finnes, så oppryddingen dekker begge fasene uten
@@ -441,26 +427,42 @@ KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
 # er den nøyaktige mutasjonen `test_migrator_naar_ikke_kapabilitetene_uten_
 # set_role` finnes for å forby. Uniten kjører som root; superbrukeren ser alt
 # uten at rettighetsmodellen røres.
-# Omdirigeringene gjøres av ROOT-skallet, ikke av `postgres`: mellomfila bor
-# i en 700-katalog `postgres` ikke kommer inn i, og `< "$RAA"` gir
-# `pg_restore` en ferdig åpnet fd — samme grep som den gamle pipen brukte,
-# uten å slippe noen inn i backupkatalogen.
-sudo -u postgres pg_dump --format=custom --dbname=disponit > "$RAA"
-chmod 600 "$RAA"
-age -R "$MOTTAKER" < "$RAA" > "$DELVIS"
-chmod 600 "$DELVIS"
-
-# Gjenopprettingsverifisering: restore til en ISOLERT engangsbase.
-# Verifiseringen bruker den UKRYPTERTE mellomfila — den krypterte filens
-# innhold kan ikke leses her (privatnøkkelen er ikke på verten, med vilje),
-# så det som verifiseres er at dumpen er komplett og gjenopprettbar, og at
-# den krypterte filen ble skrevet i sin helhet. Og fordi det er NØYAKTIG de
-# samme bytene som ble kryptert, gjelder alt porten under måler i
-# engangsbasen også for fila som havner i katalogen.
+# KLARTEKSTEN LIGGER INGEN STEDER — DEN STRØMMES (sak #244, Codex P1 ×2
+# + P2 fra #229). tmpfs-dommen 28/8 holdt klarteksten unna katalogen,
+# men ikke unna PERSISTENT lagring: verten har aktiv, ukryptert swap
+# (målt: /swapfile 4G), tmpfs-sider kan swappes, og `rm` sletter ingen
+# swap-blokker. SIGKILL/strømbrudd/snapshot er samme sak fra en annen
+# kant, og /dev/shm ble aldri målt før bruk. Svaret som lukker alle tre
+# er at dumpen aldri MELLOMLAGRES: `pg_dump` strømmes til BEGGE
+# forbrukerne samtidig — `age` (som skriver backupen) og `pg_restore`
+# (som verifiserer) leser nøyaktig de samme bytene fra samme passering,
+# så verifiseringen gjelder fortsatt filen som havner i katalogen.
+#
+# STATUSEN FRA HVERT LEDD PROPAGERER (sakens eget akseptkriterium, og
+# defektklassen `find < <(...)` alt er felt på): `pipefail` dekker
+# pg_dump → tee → pg_restore, men en prosess-substitusjon ville mistet
+# `age` sin exitkode — derfor NAVNGITT RØR + eksplisitt `wait`, som gir
+# den ekte statusen. Røret bor i den private tmpfs-katalogen (0700,
+# root-eid) og bærer aldri data på lagring — et rør er kjernebuffer.
+# `$DELVIS` pre-opprettes 600 så ingen andre kan lese den mens den
+# skrives; `age` sitt truncate beholder modusen.
 VERIF="disponit_backup_verif_$$"
 sudo -u postgres createdb "$VERIF"
-sudo -u postgres pg_restore --dbname="$VERIF" --no-owner --role=postgres \
-  < "$RAA"
+DUMPROR="$RAA_KAT/dump.fifo"
+mkfifo -m 600 "$DUMPROR"
+: > "$DELVIS"
+chmod 600 "$DELVIS"
+age -R "$MOTTAKER" < "$DUMPROR" > "$DELVIS" &
+AGE_PID=$!
+sudo -u postgres pg_dump --format=custom --dbname=disponit \
+  | tee "$DUMPROR" \
+  | sudo -u postgres pg_restore --dbname="$VERIF" --no-owner \
+      --role=postgres
+wait "$AGE_PID" || {
+  echo "AVBRUTT: age feilet på dumpstrømmen — den krypterte filen kan" \
+       "ikke stoles på, uansett hva restoren sa" >&2
+  exit 1
+}
 TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
   "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
 [ "$TABELLER" -ge 10 ] || {
@@ -469,11 +471,6 @@ TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
 }
 STORRELSE=$(stat -c%s "$DELVIS")
 [ "$STORRELSE" -gt 1024 ] || { echo "AVBRUTT: backupfilen er tom" >&2; exit 1; }
-# BEGGE FORBRUKERNE ER FERDIGE — klarteksten skal ikke ligge og vente på
-# `tar`. Trapen tar den uansett, men den dekker ikke SIGKILL, og resten av
-# kjøringen er den lengste delen av den. Frigjør også plassen før arkivet
-# skrives.
-rm -f "$RAA"
 
 # KRAVLISTEN LESES NÅ — OG ENGANGSBASEN SLIPPES (sak #246 pkt. 4/5).
 # `$VERIF` levde før til EXIT-trapen, så under `tar` lå hele den
