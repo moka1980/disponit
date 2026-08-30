@@ -1234,33 +1234,56 @@ def test_port13_ingen_vei_fra_modell_til_utsendingstekst():
 
 def test_port14_flettefelt_utenfor_malen():
     felter = {"stilling": "Utvikler", "kandidatnavn": "A",
-              "tidsvalg_lenke": "https://x/t", "firmatekst": "Hilsen oss"}
-    ut = maler.flett("invitasjon", felter)
+              "tidsvalg_lenke": "https://x/t"}
+    tone = maler.KundeeidFirmatekst("t-1", 2, "Hilsen oss")
+    ut = maler.flett("invitasjon", felter, firmatekst=tone)
     assert "Utvikler" in ut["tekst"] and ut["malversjon"] == "invitasjon-v1"
+    assert "Hilsen oss" in ut["tekst"]
+    # Utsendelsen er sporbar til den forfattede versjonen (#160).
+    assert (ut["firmatekst_ref"], ut["firmatekst_versjon"]) == ("t-1", 2)
     with pytest.raises(maler.Malfeil) as e:
         maler.flett("invitasjon", felter | {"fritekst": "modellens prosa"})
     assert e.value.kode == "flettefelt_utenfor_malen"
     with pytest.raises(maler.Malfeil) as e:
         maler.flett("invitasjon", {k: v for k, v in felter.items()
-                                   if k != "firmatekst"})
+                                   if k != "tidsvalg_lenke"})
     assert e.value.kode == "flettefelt_mangler"
-    # Ingen andreordens fletting: en verdi med {felt}-syntaks er avvist.
+    # Ingen andreordens fletting — heller ikke gjennom tonen.
     with pytest.raises(maler.Malfeil) as e:
-        maler.flett("invitasjon", felter | {"firmatekst": "{funn_id}"})
+        maler.flett("invitasjon", felter,
+                    firmatekst=maler.KundeeidFirmatekst("t-1", 1,
+                                                        "{funn_id}"))
     assert e.value.kode == "ugyldig_feltverdi"
-    # Codex P2: en TOM streng er et hull med riktig type. Invitasjonen
-    # ber kandidaten velge tidspunkt «her:» og peker ingen steder;
-    # avslaget lover en sporbar referanse som ikke finnes.
+    # Codex P2: en TOM streng er et hull med riktig type.
     for tomt in ("", "   ", "\n"):
         with pytest.raises(maler.Malfeil) as e:
             maler.flett("invitasjon", felter | {"tidsvalg_lenke": tomt})
         assert e.value.kode == "tomt_flettefelt"
         with pytest.raises(maler.Malfeil) as e:
-            maler.flett("avslag", {"stilling": "Utvikler", "kandidatnavn": "A",
-                                   "funn_id": tomt, "firmatekst": "Hilsen"})
+            maler.flett("avslag", {"stilling": "Utvikler",
+                                   "kandidatnavn": "A", "funn_id": tomt})
         assert e.value.kode == "tomt_flettefelt"
-    # `firmatekst` er kundens tone, og «ingen tone» er en ekte tilstand.
-    assert maler.flett("invitasjon", felter | {"firmatekst": ""})["tekst"]
+    # «Ingen tone» er en ekte tilstand: None gir malens struktur alene.
+    uten = maler.flett("invitasjon", felter)
+    assert uten["tekst"] and uten["firmatekst_ref"] is None
+
+
+def test_160_firmateksten_er_referanse_aldri_streng():
+    """#160 (klarsignalet §6): dataflyt gjennom en KALLER er stengt —
+    det finnes ingen strengvei for modellprosa inn i utsendingsteksten.
+    `firmatekst` som felt avvises, en fri streng avvises på TYPE, og
+    bare resolverens `KundeeidFirmatekst` (oppslag i det kundeeide,
+    versjonerte lageret, 079) bærer tonen.
+
+    MUTASJONEN SOM DREPER DENNE: ta imot `firmatekst` som streng igjen."""
+    felter = {"stilling": "Utvikler", "kandidatnavn": "A",
+              "tidsvalg_lenke": "https://x/t"}
+    with pytest.raises(maler.Malfeil) as e:
+        maler.flett("invitasjon", felter | {"firmatekst": "modellens prosa"})
+    assert e.value.kode == "firmatekst_er_referanse"
+    with pytest.raises(maler.Malfeil) as e:
+        maler.flett("invitasjon", felter, firmatekst="modellens prosa")
+    assert e.value.kode == "firmatekst_er_referanse"
 
 
 def test_port15_funn_uten_kildereferanse():

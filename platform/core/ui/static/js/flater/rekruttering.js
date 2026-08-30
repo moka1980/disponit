@@ -19,6 +19,8 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          slettEvaluering, avbrytEvaluering, slettStillingsprofil,
+         hentUtsendingstekster, lagreUtsendingstekst,
+         slettUtsendingstekst,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, UautorisertFeil } from "../api.js";
@@ -542,6 +544,10 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   // et vindu. Full lasting nullstiller den sammen med resten.
   const evalDel = okt.evalDel
     || (okt.evalDel = evalueringSeksjon(hoved, ctx, data, okt));
+  // #160-fanen bygges LAT — første fetch skjer når leseren åpner den,
+  // aldri som en bieffekt av at flaten monteres.
+  const tekstDel = () => okt.tekstDel
+    || (okt.tekstDel = tekstSeksjon(ctx));
   // HOPPLENKENS LANDINGSPUNKT (Cursor P2). «Produktet først» legger en
   // auto-rendret rangering — én fokusbar `<summary>` per kandidat, opp
   // mot 5000 — foran prosessvelger, vekter og signering. Tastaturveien
@@ -570,6 +576,8 @@ function tegn(hoved, ctx, data, okt, valgtId) {
           bygg: () => paneler.bestill },
         { nokkel: "profiler", tittel: t("ui.rekruttering.fane.profiler"),
           bygg: () => paneler.profiler },
+        { nokkel: "tekster", tittel: t("ui.rekruttering.fane.tekster"),
+          bygg: () => paneler.tekster() },
       ],
       // Fanen hører til ØKTEN: et prosessbytte re-tegner flaten, og
       // brukeren skal stå igjen i fanen hun sto i.
@@ -589,6 +597,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       bestill: bestillDel
         || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
       profiler: profilDel,
+      tekster: tekstDel,
     });
     return;
   }
@@ -810,6 +819,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       bestill: bestillDel
         || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
       profiler: profilDel,
+      tekster: tekstDel,
     });
     return;
   }
@@ -1336,6 +1346,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
     bestill: bestillDel
       || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
     profiler: profilDel,
+    tekster: tekstDel,
   });
   tegnTabell();
 }
@@ -2726,6 +2737,166 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
+  return rot;
+}
+
+
+function tekstSeksjon(ctx) {
+  // #160: kundens utsendingstekster — kilden `flett` refererer.
+  // Formen er Profiler-fanens: liste med Rediger (ny versjon) og Slett
+  // (skjuling), pluss et lite skjema. Uavhengig av bestillingskjeden.
+  const rot = el("section", { "aria-labelledby": "tekst-tittel" });
+  const kanSkrive = harScope(ctx, "bestilling:opprett");
+  const utfall = el("p", { "aria-live": "polite" });
+  const liste = el("div", {});
+  const skjemaRot = el("div", {});
+  const tekster = [];
+  let idem = null;
+
+  const oppdaterListe = async () => {
+    const svar = await hentUtsendingstekster();
+    tekster.length = 0;
+    for (const t_ of (svar && svar.tekster) || []) tekster.push(t_);
+    tegnListe();
+  };
+
+  const aapneSkjema = (tekst) => {
+    idem = null;
+    const navnInp = el("input", { type: "text", id: "tekst-navn",
+      maxlength: "200", value: tekst ? tekst.navn : "" });
+    const kropp = el("textarea", { id: "tekst-kropp", rows: "5",
+      maxlength: "4000" });
+    kropp.value = tekst ? tekst.tekst : "";
+    const lagre = el("button", { type: "submit",
+      text: t("ui.rekruttering.tekster.lagre") });
+    const avbryt = el("button", { type: "button",
+      text: t("ui.rekruttering.tekster.avbryt") });
+    avbryt.addEventListener("click", () => sett(skjemaRot));
+    const skjema = el("form", {},
+      el("p", {}, el("label", { for: "tekst-navn",
+        text: t("ui.rekruttering.tekster.navn") }), navnInp),
+      el("p", {}, el("label", { for: "tekst-kropp",
+        text: t("ui.rekruttering.tekster.tekst") }), kropp),
+      el("p", {}, lagre, " ", avbryt));
+    // Nøkkelen binder ETT innhold (profil-editorens nyIntensjon-dom,
+    // CodeRabbit): endres feltene, er det en ny operasjon — og et
+    // definitivt 4xx-svar forbruker nøkkelen. Bare tapte svar og 5xx
+    // beholder den, så retryet gjenspiller nøyaktig det som ble sendt.
+    skjema.addEventListener("input", () => { idem = null; });
+    skjema.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (!idem) idem = nyIdempotensnokkel();
+      const sendtNavn = navnInp.value.trim();
+      let svar;
+      try {
+        svar = await lagreUtsendingstekst(
+          tekst ? tekst.tekst_id : null, sendtNavn, kropp.value, idem);
+      } catch (e) {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e && e.status >= 400 && e.status < 500) idem = null;
+        sett(utfall, el("span", { role: "alert",
+          text: t("ui.rekruttering.tekster.feil") }));
+        return;
+      }
+      idem = null;
+      // Kvitteringen er SKRIVETS (CodeRabbit): en feilet gjenlasting av
+      // listen får aldri erstatte den — den sies for seg.
+      sett(utfall, flett(t("ui.rekruttering.tekster.lagret"),
+        { navn: sendtNavn, versjon: svar.versjon }));
+      sett(skjemaRot);
+      try {
+        await oppdaterListe();
+      } catch {
+        utfall.append(" ", el("span", { class: "muted",
+          text: t("ui.rekruttering.tekster.liste_feil") }));
+      }
+    });
+    sett(skjemaRot, skjema);
+    navnInp.focus();
+  };
+
+  const tegnListe = () => {
+    const rader = tekster.map((tk) => {
+      const deler = [
+        el("strong", { text: tk.navn }), " — ",
+        t("ui.rekruttering.profiler.versjon")
+          .replace("{versjon}", String(tk.versjon)),
+        " · ", el("span", { class: "muted", text: tk.tekst.length > 60
+          ? tk.tekst.slice(0, 60) + "…" : tk.tekst }),
+      ];
+      if (kanSkrive) {
+        const rediger = el("button", { type: "button",
+          text: t("ui.rekruttering.profiler.rediger") });
+        rediger.addEventListener("click", () => aapneSkjema(tk));
+        const slett = el("button", { type: "button", class: "fare",
+          text: t("ui.rekruttering.profiler.slett") });
+        slett.setAttribute("aria-label",
+          `${t("ui.rekruttering.profiler.slett")} — ${tk.navn}`);
+        slett.addEventListener("click", () => {
+          Bekreftelsesdialog({
+            tittel: t("ui.rekruttering.tekster.slett_tittel"),
+            tekst: flett(t("ui.rekruttering.tekster.slett_tekst"),
+              { navn: tk.navn }),
+            primarTekst: t("ui.rekruttering.profiler.slett"),
+            farlig: true,
+            paaPrimar: async () => {
+              try {
+                await slettUtsendingstekst(tk.tekst_id);
+              } catch (e) {
+                if (e instanceof UautorisertFeil) {
+                  ctx.paaUautorisert(); return;
+                }
+                sett(utfall, el("span", { role: "alert",
+                  text: t("ui.rekruttering.tekster.feil") }));
+                return;
+              }
+              sett(utfall, flett(
+                t("ui.rekruttering.tekster.slettet"), { navn: tk.navn }));
+              try {
+                await oppdaterListe();
+              } catch {
+                utfall.append(" ", el("span", { class: "muted",
+                  text: t("ui.rekruttering.tekster.liste_feil") }));
+              }
+            },
+          });
+        });
+        deler.push(" ", rediger, " ", slett);
+      }
+      return el("li", {}, ...deler);
+    });
+    sett(liste, tekster.length
+      ? el("ul", {}, rader)
+      : el("p", { text: t("ui.rekruttering.tekster.ingen") }));
+  };
+
+  tegnListe();
+  // FØRSTELASTINGEN ER STILLE (samme dom som prosessbyttets 401-port):
+  // 401 er innlogging og eies av flaten; andre feil ved MONTERING roper
+  // ikke — listen står tom med en Prøv igjen-knapp, og bare feil på
+  // brukerens egne handlinger får role=alert.
+  const provIgjen = () => oppdaterListe().catch((e) => {
+    if (e instanceof UautorisertFeil) return;
+    const knapp = el("button", { type: "button",
+      text: t("ui.rekruttering.tekster.prov_igjen") });
+    knapp.addEventListener("click", () => { sett(utfall); provIgjen(); });
+    sett(utfall, el("span", { class: "muted",
+      text: t("ui.rekruttering.tekster.feil") }), " ", knapp);
+  });
+  provIgjen();
+  const bunn = el("p", {});
+  if (kanSkrive) {
+    const ny = el("button", { type: "button",
+      text: t("ui.rekruttering.tekster.ny") });
+    ny.addEventListener("click", () => aapneSkjema(null));
+    bunn.append(ny);
+  }
+  sett(rot,
+    el("h2", { id: "tekst-tittel",
+      text: t("ui.rekruttering.tekster.tittel") }),
+    el("p", { class: "muted",
+      text: t("ui.rekruttering.tekster.forklaring") }),
+    utfall, liste, bunn, skjemaRot);
   return rot;
 }
 

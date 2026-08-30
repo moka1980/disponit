@@ -1322,6 +1322,158 @@ def stillingsprofiler_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def utsendingstekster_endepunkt(tjeneste, request):
+    """GET /v1/rekruttering/utsendingstekster — kundens forfattede
+    utsendingstekster (#160): siste versjon per tekst, skjulte utelatt.
+    Speiler stillingsprofil-listen, medlem for medlem."""
+    from .app import _rid
+    from .policyadmin_http import _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
+        tekster = [{
+            "tekst_id": str(tid), "versjon": versjon, "navn": navn,
+            "tekst": tekst, "opprettet": opprettet.isoformat(),
+            "opprettet_av": av_,
+        } for tid, versjon, navn, tekst, opprettet, av_ in conn.execute(
+            "SELECT t.tekst_id, t.versjon, t.navn, t.tekst, t.opprettet,"
+            "       t.opprettet_av"
+            "  FROM utsendingstekst t"
+            " WHERE t.tenant=%s AND t.skjult_ts IS NULL"
+            "   AND t.versjon = (SELECT max(i.versjon)"
+            "                      FROM utsendingstekst i"
+            "                     WHERE i.tenant=t.tenant"
+            "                       AND i.tekst_id=t.tekst_id)"
+            " ORDER BY t.opprettet DESC", (tenant,)).fetchall()]
+        return _ok({"tekster": tekster}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def utsendingstekst_lagre_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/utsendingstekster — ny tekst ELLER ny
+    versjon (#160). Redigering er aldri en mutasjon; døren (079)
+    gjenspiller på idempotensnøkkelen — 061-formens kontrakt, ordrett."""
+    import uuid as uuidlib
+
+    from .app import _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       _SIGNERINGSSCOPE)
+        nokkel = _krev_idem(request, rid)
+        kropp = _kropp(request)
+        tekst_id = kropp.get("tekst_id")
+        if tekst_id is not None:
+            try:
+                tekst_id = uuidlib.UUID(str(tekst_id))
+            except ValueError:
+                raise _Avbrudd(_feil("request_feilformet", rid))
+        navn, tekst = kropp.get("navn"), kropp.get("tekst")
+        if not isinstance(navn, str) or not isinstance(tekst, str):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        try:
+            rad = conn.execute(
+                "SELECT ut_tekst_id, ut_versjon FROM"
+                " opprett_utsendingstekst_versjon(%s,%s,%s,%s,%s,%s)",
+                (tenant, tekst_id, navn, tekst, bid, nokkel)).fetchone()
+        except psycopg.errors.InvalidParameterValue as e:
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        except psycopg.errors.CheckViolation as e:
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        except psycopg.errors.UniqueViolation as e:
+            if getattr(e.diag, "constraint_name", None) == \
+                    "utsendingstekst_idem":
+                conn.rollback()
+                from db.pg import sett_kontekst
+                sett_kontekst(conn, tenant, bid, rid)
+                try:
+                    rad = conn.execute(
+                        "SELECT ut_tekst_id, ut_versjon FROM"
+                        " opprett_utsendingstekst_versjon(%s,%s,%s,%s,"
+                        "%s,%s)",
+                        (tenant, tekst_id, navn, tekst, bid,
+                         nokkel)).fetchone()
+                except psycopg.errors.UniqueViolation as e2:
+                    raise _Avbrudd(_feil("idempotenskonflikt", rid)) \
+                        from e2
+            elif getattr(e.diag, "constraint_name", None) is None:
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            else:
+                raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        conn.commit()
+        return _ok({"tekst_id": str(rad[0]), "versjon": rad[1]},
+                   rid, 201)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def utsendingstekst_slett_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/utsendingstekst/{tekst_id}/slett — enveis
+    skjuling gjennom døren (079); sendte utsendelser beholder
+    referansen sin (fletteresultatet bærer tekst_id + versjon)."""
+    import uuid as uuidlib
+
+    from .app import _rid
+    from .policyadmin_http import _browserkontekst, _feil, _med_conn, _ok
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        tid = uuidlib.UUID(str(request.path_params["tekst_id"]))
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        _SIGNERINGSSCOPE)
+        finnes = conn.execute(
+            "SELECT count(*) FROM utsendingstekst"
+            " WHERE tenant=%s AND tekst_id=%s", (tenant, tid)).fetchone()[0]
+        if not finnes:
+            return _feil("ikke_funnet", rid, 404)
+        conn.execute("SELECT skjul_utsendingstekst(%s,%s)", (tenant, tid))
+        conn.commit()
+        tjeneste.logg.hendelse("utsendingstekst_slettet", rid, tenant,
+                               art="drift", tekst=str(tid))
+        return _ok({"slettet": True}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def hent_firmatekst(conn, tenant: str, tekst_id, versjon=None):
+    """Resolveren (#160): oppslaget som konstruerer den ENESTE lovlige
+    bæreren av kundens tone inn i `maler.flett`. Siste uskjulte versjon
+    når versjon ikke er gitt; en eksakt versjon slås opp uansett
+    skjuling (sendte utsendelser refererer den). -> KundeeidFirmatekst
+    eller None."""
+    from modules.m57_ats.maler import KundeeidFirmatekst
+    if versjon is None:
+        rad = conn.execute(
+            "SELECT versjon, tekst FROM utsendingstekst"
+            " WHERE tenant=%s AND tekst_id=%s AND skjult_ts IS NULL"
+            " ORDER BY versjon DESC LIMIT 1", (tenant, tekst_id)).fetchone()
+    else:
+        rad = conn.execute(
+            "SELECT versjon, tekst FROM utsendingstekst"
+            " WHERE tenant=%s AND tekst_id=%s AND versjon=%s",
+            (tenant, tekst_id, versjon)).fetchone()
+    if rad is None:
+        return None
+    return KundeeidFirmatekst(str(tekst_id), rad[0], rad[1])
+
+
 def stillingsprofil_slett_endepunkt(tjeneste, request):
     """POST /v1/rekruttering/stillingsprofil/{profil_id}/slett — slett
     betyr det samme som i evalueringslisten (071/074): profilen

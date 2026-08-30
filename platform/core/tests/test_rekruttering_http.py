@@ -2252,3 +2252,75 @@ def test_profilsletting_er_enveis_skjuling(klient):
         rt.rollback()
     finally:
         rt.close()
+
+
+@pg
+def test_160_utsendingstekstene_er_kundeeide_og_versjonerte(klient):
+    """#160 (klarsignalet §6): kundens tone bor i et eget, versjonert
+    lager — forfattet gjennom døren, lest av resolveren, aldri skrevet
+    av en modul eller en modell. Speiler stillingsprofil-kontrakten:
+    idempotent lagring, redigering = ny versjon, slett = enveis
+    skjuling, append-only for alt annet."""
+    sjef = _bruker("tekst-sjef", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    r = _post(klient, cookie, csrf, "/v1/rekruttering/utsendingstekster",
+              {"navn": "Standardhilsen", "tekst": "Med vennlig hilsen oss"},
+              idem="tekst-" + secrets.token_hex(6))
+    assert r.status_code == 201, r.text
+    tid = r.json()["tekst_id"]
+    assert r.json()["versjon"] == 1
+    # Redigering er en NY versjon.
+    r2 = _post(klient, cookie, csrf, "/v1/rekruttering/utsendingstekster",
+               {"tekst_id": tid, "navn": "Standardhilsen",
+                "tekst": "Hilsen oss – v2"},
+               idem="tekst-" + secrets.token_hex(6))
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["versjon"] == 2
+    rl = _get(klient, cookie, "/v1/rekruttering/utsendingstekster")
+    rad = next(t for t in rl.json()["tekster"] if t["tekst_id"] == tid)
+    assert rad["versjon"] == 2 and rad["tekst"] == "Hilsen oss – v2"
+    # Resolveren bærer tonen som TYPE — og eksakt versjon slås opp.
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        from api.rekruttering import hent_firmatekst
+        sett_kontekst(m, TEN, "test", "r-tone")
+        tone = hent_firmatekst(m, TEN, tid)
+        assert tone.versjon == 2 and tone.tekst == "Hilsen oss – v2"
+        v1 = hent_firmatekst(m, TEN, tid, versjon=1)
+        assert v1.tekst == "Med vennlig hilsen oss"
+        # … og resultatet flettes bare gjennom typen (#160-porten i
+        # maler-suiten tar strengveien; her måles hele kjeden).
+        from modules.m57_ats import maler
+        ut = maler.flett("invitasjon",
+                         {"stilling": "Utvikler", "kandidatnavn": "K",
+                          "tidsvalg_lenke": "https://x/t"},
+                         firmatekst=tone)
+        assert "Hilsen oss – v2" in ut["tekst"]
+        assert ut["firmatekst_ref"] == tid and ut["firmatekst_versjon"] == 2
+        # Append-only: selv migrator får ikke redigere en versjon.
+        import psycopg as psy
+        with pytest.raises(psy.errors.InsufficientPrivilege):
+            m.execute("UPDATE utsendingstekst SET tekst='hacket'"
+                      " WHERE tenant=%s AND tekst_id=%s", (TEN, tid))
+        m.rollback()
+    finally:
+        m.close()
+    # Slett = skjuling: raden forlater listen; versjonene består for
+    # sendte utsendelsers referanser.
+    assert _post(klient, cookie, csrf,
+                 f"/v1/rekruttering/utsendingstekst/{tid}/slett",
+                 {}).status_code == 200
+    etter = _get(klient, cookie, "/v1/rekruttering/utsendingstekster")
+    assert all(t["tekst_id"] != tid for t in etter.json()["tekster"])
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        from api.rekruttering import hent_firmatekst
+        sett_kontekst(m, TEN, "test", "r-tone2")
+        assert hent_firmatekst(m, TEN, tid) is None, \
+            "siste-versjon-oppslaget skal respektere skjulingen"
+        assert hent_firmatekst(m, TEN, tid, versjon=2).tekst \
+            == "Hilsen oss – v2", "eksakte referanser lever videre"
+    finally:
+        m.close()

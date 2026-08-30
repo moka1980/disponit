@@ -67,6 +67,8 @@ GRANT SELECT ON policyer TO {rolle};
 -- tabellene): inne i en SET LOCAL ROLE-blokk ville GRANT-en feilet på
 -- manglende grant-rett og rullet hele blokken.
 GRANT SELECT ON stillingsprofil, stillingsprofil_krav TO {rolle};
+-- 079 (#160): kundeeid utsendingstekst — runtime leser, dørene skriver.
+GRANT SELECT ON utsendingstekst TO {rolle};
 -- 074: slett = enveis skjuling gjennom døren — aldri rå UPDATE.
 GRANT EXECUTE ON FUNCTION skjul_stillingsprofil(TEXT, UUID) TO {rolle};
 -- PR-013: policyadministrasjon. Runtime LESER hodet/utkast/runder og SKRIVER
@@ -200,6 +202,8 @@ GRANT EXECUTE ON FUNCTION reserver_inndata(TEXT, TEXT, TEXT, BIGINT, TEXT) TO {r
 GRANT EXECUTE ON FUNCTION registrer_inndata_lastet(TEXT, TEXT, BIGINT, TEXT, TEXT, BYTEA, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION bind_inndata(TEXT, UUID, BIGINT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION opprett_stillingsprofil_versjon(TEXT, UUID, TEXT, TEXT, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_utsendingstekst_versjon(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION skjul_utsendingstekst(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION hent_inndata_for_oppdrag(BIGINT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er

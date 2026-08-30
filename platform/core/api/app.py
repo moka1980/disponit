@@ -1128,6 +1128,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return rekruttering_http.stillingsprofil_slett_endepunkt(
             tjeneste, request)
 
+    def rekruttering_tekster(request: Request) -> Response:
+        return rekruttering_http.utsendingstekster_endepunkt(
+            tjeneste, request)
+
+    def rekruttering_tekst_lagre(request: Request) -> Response:
+        return rekruttering_http.utsendingstekst_lagre_endepunkt(
+            tjeneste, request)
+
+    def rekruttering_tekst_slett(request: Request) -> Response:
+        return rekruttering_http.utsendingstekst_slett_endepunkt(
+            tjeneste, request)
+
     def rekruttering_kandidatdokument_les(request: Request) -> Response:
         return rekruttering_http.kandidatdokument_les_endepunkt(
             tjeneste, request)
@@ -1360,6 +1372,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               rekruttering_profil_lagre, methods=["POST"]),
         Route("/v1/rekruttering/stillingsprofil/{profil_id}/slett",
               rekruttering_profil_slett, methods=["POST"]),
+        Route("/v1/rekruttering/utsendingstekster", rekruttering_tekster,
+              methods=["GET"]),
+        Route("/v1/rekruttering/utsendingstekster",
+              rekruttering_tekst_lagre, methods=["POST"]),
+        Route("/v1/rekruttering/utsendingstekst/{tekst_id}/slett",
+              rekruttering_tekst_slett, methods=["POST"]),
         Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/slett",
               rk_slett, methods=["POST"]),
         Route("/v1/rekruttering/evaluering/{oppdrag_id:int}/avbryt",
@@ -1828,6 +1846,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/rekruttering/stillingsprofiler"): "bestilling:opprett",
     # 074: slett = enveis skjuling — samme myndighet som skrivingen.
     ("POST", "/v1/rekruttering/stillingsprofil/{profil_id}/slett"):
+        "bestilling:opprett",
+    # #160: kundeeid utsendingstekst — lesing bak flatens scope,
+    # forfatting/sletting bak bestillingsmyndigheten.
+    ("GET",  "/v1/rekruttering/utsendingstekster"): "decisions:read",
+    ("POST", "/v1/rekruttering/utsendingstekster"): "bestilling:opprett",
+    ("POST", "/v1/rekruttering/utsendingstekst/{tekst_id}/slett"):
         "bestilling:opprett",
     # Modulveien (060): retten er CLAIMET — ORDRESCOPE-klassen som
     # claim/kvittering; auth avgjøres i endepunktet (modultoken).

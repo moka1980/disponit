@@ -201,6 +201,14 @@ export const hentEvalueringer = (cursor) =>
 export const slettEvaluering = (oppdragId) =>
   _muter(`/v1/rekruttering/evaluering/${encodeURIComponent(oppdragId)}/slett`,
     "POST", {});
+export const hentUtsendingstekster = () =>
+  hentJson("/v1/rekruttering/utsendingstekster");
+export const lagreUtsendingstekst = (tekstId, navn, tekst, idem) =>
+  _muter("/v1/rekruttering/utsendingstekster", "POST",
+    { ...(tekstId ? { tekst_id: tekstId } : {}), navn, tekst }, idem);
+export const slettUtsendingstekst = (tekstId) =>
+  _muter(`/v1/rekruttering/utsendingstekst/${encodeURIComponent(tekstId)}`
+    + "/slett", "POST", {});
 export const slettStillingsprofil = (profilId) =>
   _muter(`/v1/rekruttering/stillingsprofil/${encodeURIComponent(profilId)}`
     + "/slett", "POST", {});
