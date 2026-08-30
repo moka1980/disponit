@@ -997,9 +997,28 @@ def evaluering_slett_endepunkt(tjeneste, request):
             " WHERE tenant=%s AND oppdrag_id=%s",
             (tenant, oppdrag_id)).fetchone()
         if rad is None:
-            # En evaluering uten retensjonsanker har ingen kandidatdata
-            # aa slette — samme ord som leseveien bruker om fravaeret.
-            return _feil("ikke_funnet", rid, 404)
+            # UTEN ANKER ER DET INGENTING Å SLETTE — OG DET SIES (eiers
+            # funn 30/8): en feilet evaluering som aldri rakk å føde
+            # prosessen svarte 404 her, flaten meldte generisk
+            # handlingsfeil, og slettingen «virket ikke». Finnes
+            # OPPDRAGET i tenantens egen liste, er svaret et ærlig 200:
+            # ingen kandidatdata er lagret, så slettingen er allerede
+            # sann. 404 består KUN for et oppdrag tenanten ikke har —
+            # listen viser alt egne oppdrag, så dette er ikke et orakel.
+            eier = conn.execute(
+                "SELECT status FROM oppdrag WHERE tenant=%s AND id=%s"
+                "   AND oppdragstype='rekruttering.evaluering'",
+                (tenant, oppdrag_id)).fetchone()
+            if eier is None:
+                return _feil("ikke_funnet", rid, 404)
+            # … men bare for TERMINALE løp (CodeRabbit major): en
+            # opprettet/plukket evaluering uten anker skal jo KJØRE og
+            # få data — «ingenting lagret» ville vært en løgn om
+            # fremtiden. Veien dit er Avbryt, og flaten viser den.
+            if eier[0] in ("opprettet", "plukket"):
+                return _feil("evaluering_aktiv", rid, 409)
+            return _ok({"slett_bestilt": False,
+                        "ingenting_lagret": True}, rid)
         conn.execute("SELECT bestill_tidligsletting(%s,%s)",
                      (tenant, rad[0]))
         conn.commit()

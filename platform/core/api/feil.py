@@ -182,6 +182,13 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "denne beholder den. Drift, ikke sikkerhet — et sammenstøt i "
         "tid, ikke et forsøk på noe. 058-formen står: koden røper "
         "ingenting en samtidig VINNENDE bestilling ikke alt vet.")),
+    Feilvei("evaluering_aktiv", 409, ("drift",), None, notat=(
+        "Slett traff en evaluering som ennå ikke er ferdig og ikke har "
+        "født kandidatdata (opprettet/plukket uten anker). «Ingenting "
+        "lagret» ville vært en løgn om fremtiden — kjøringen skal jo "
+        "produsere data. Veien er Avbryt først; flaten viser den "
+        "knappen for nettopp disse radene. Drift: et sammenstøt i tid, "
+        "ikke et forsøk på noe.")),
     Feilvei("evaluering_terminal", 409, ("drift",), None, notat=(
         "Avbryt traff en evaluering som alt er ferdig (utført, feilet "
         "eller kansellert). Ingen tilstand endres — utfallet står, og "
