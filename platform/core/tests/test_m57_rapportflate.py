@@ -5,6 +5,8 @@ konstruksjon når flatene filtrerer på hver sin diskriminator."""
 import os
 import secrets
 
+import psycopg
+
 import pytest
 
 from .test_api import (ANNEN_TENANT, DSN, MIGRATOR_DSN,  # noqa: F401
@@ -115,7 +117,7 @@ def _promoter_kopi(migrator, fra_oid, til_oid, artefakttype):
     migrator.commit()
 
 
-def _promotert_rapportartefakt(m, oid) -> str:
+def _promotert_rapportartefakt(m, oid, rapport=None) -> str:
     """Et promotert rapportartefakt på `oid`, i claim-kontraktens ekte
     form (kontrakt_hash, release, epoch) med dekrypterbar payload — og
     samme dømmekraft som `_promoter_kopi`: leseveien dømmer på koblingen
@@ -123,7 +125,7 @@ def _promotert_rapportartefakt(m, oid) -> str:
     from db import kryptering
     _sett_kontekst(m, TENANT)
     key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, TENANT)
-    rapport = {"rapporttype": "rekruttering.evaluering.rapport"}
+    rapport = rapport or {"rapporttype": "rekruttering.evaluering.rapport"}
     ct, nonce = kryptering.krypter(dek, rapport, TENANT, key_id)
     kh = m.execute(
         "SELECT kontrakt_hash FROM modulkontrakt"
@@ -1216,3 +1218,67 @@ if os.environ.get("DISPONIT_223_PROBE") == "1":
     @pg
     def test_223_probe_interleavet_reap(migrator, miljo, monkeypatch):
         _probe_223(migrator, miljo, monkeypatch)
+
+
+@pg
+def test_v2_rapportens_funn_leses_fra_lageret(migrator, miljo):
+    """LESEFLATE-FLYTTINGEN (BESLUTNING-168, #183-nabolaget):
+    beslutningssporet (v2) bærer ingen `kandidater` — leseruten
+    supplerer funnene fra 057-lageret på formen flaten alt kjenner
+    ({kid: {funn}}), avgrenset til rangeringens eget kandidatsett, og
+    kildeteksten forlater aldri basen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_funn_fra_lageret`-kallet i
+    `rekrutteringsrapport_detalj`, eller slutt å subtrahere
+    `kildetekst` i hjelperen."""
+    import uuid as uuidmod
+
+    from starlette.testclient import TestClient
+    from api import sesjon as sesjonmodul
+    from api.app import _KANDIDAT_NS, lag_app
+    from .test_m57_kandidatlagre import _claimet
+    from .test_m57_utsending import _rt as _rekrutt_rt
+    rt = _rekrutt_rt()
+    try:
+        oid, _ = _claimet(migrator)
+        _sett_kontekst(rt, TENANT)
+        pid = rt.execute(
+            "SELECT opprett_rekrutteringsprosess(%s,%s,%s)",
+            (TENANT, oid, 30)).fetchone()[0]
+        rt.commit()
+        # Lagerraden — dørens deterministiske uuid5 over
+        # (tenant, prosess, kandidat), samme navnerom som skriveveien.
+        kid = uuidmod.uuid5(_KANDIDAT_NS, f"{TENANT}\x1f{pid}\x1fk1")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+            " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+            " VALUES (%s,%s,%s,%s,'h')",
+            (TENANT, pid, kid, psycopg.types.json.Jsonb({
+                "funn": [{"kategori": "krav_ikke_dokumentert",
+                          "kilde": {"sitat": "SITAT-168"}}],
+                "oppfylt": {"drift": False},
+                "vekter": {"drift": 3},
+                "kildetekst": "HEMMELIG-KILDETEKST-168"})))
+        migrator.commit()
+        _promotert_rapportartefakt(migrator, oid, rapport={
+            "rapporttype": "rekruttering.evaluering.rapport",
+            "versjon": 2,
+            "rangering": [{"kandidat_id": "k1", "poeng": 3,
+                           "nedbrytning": {"drift": 3}}]})
+        a = lag_app(DSN)
+        with TestClient(a) as c:
+            cookie, _csrf = _adminsesjon()
+            ck = {sesjonmodul.C_SESJON: cookie}
+            r = c.get(f"/v1/rekruttering/rapport/{oid}", cookies=ck)
+            assert r.status_code == 200, r.text
+            rapport = r.json()["rapport"]
+            # Suppleringen: funnene er der, på v1-formen, fra lageret.
+            assert rapport["kandidater"]["k1"]["funn"][0]["kilde"][
+                "sitat"] == "SITAT-168"
+            # … og kildeteksten forlot aldri basen — subtrahert i
+            # spørringen, ikke strippet i minnet.
+            assert "HEMMELIG-KILDETEKST-168" not in r.text
+            assert "kildetekst" not in r.text
+    finally:
+        rt.close()

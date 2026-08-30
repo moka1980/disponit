@@ -1870,3 +1870,43 @@ def test_uleselig_horisont_faller_tilbake_paa_telleren(monkeypatch):
     assert puls.tapt == "forny_utilgjengelig", (puls.tapt, forsok)
     #: Telleren startet på nytt etter den bekreftede fornyelsen.
     assert len(forsok) == 1 + controller.FORNY_TAPT_ETTER, forsok
+
+
+def test_produsentbyttet_folger_claimens_skjemaversjon(monkeypatch):
+    """BESLUTNING-168 §3: formen produsenten bygger er claim-svarets
+    gjeldende skjemaversjon — en lagringstilstand, aldri en avtale i
+    koden. Bærer svaret 2, bygges beslutningssporet (payloadfritt, med
+    modelldigest); uten feltet (en server fra før flippen) bygges v1
+    nøyaktig som før.
+
+    MUTASJONEN SOM DREPER DENNE: hardkod `bygg`/`bygg_v2`-valget."""
+    from modules.m57_ats import controller, rapportskjema
+    monkeypatch.setattr(controller, "_sov", lambda s: None)
+
+    class _Fanger(_Stubklient):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.artefakter = []
+
+        def post(self, sti, json=None, headers=None, timeout=None):
+            if sti == "/v1/artefakt":
+                self.artefakter.append(json)
+            return super().post(sti, json=json, headers=headers,
+                                timeout=timeout)
+
+    k = _Fanger(opplasting={"jti": "kap",
+                            "utloper": "2099-01-01T00:00:00+00:00",
+                            "skjemaversjon": rapportskjema.VERSJON_V2})
+    res = _kjor(k)
+    assert res["utfall"] == "utfort", res
+    rapport = k.artefakter[0]["rapport"]
+    assert rapport["versjon"] == rapportskjema.VERSJON_V2
+    assert rapport["modelldigest"] == _Modell.image_digest
+    assert "kandidater" not in rapport, \
+        "beslutningssporet skal aldri bære kandidatpayload"
+    # … og uten feltet bygges v1 som før — payloaden er der.
+    k1 = _Fanger()
+    res1 = _kjor(k1)
+    assert res1["utfall"] == "utfort", res1
+    assert "kandidater" in k1.artefakter[0]["rapport"]
+    assert k1.artefakter[0]["rapport"]["versjon"] == 1

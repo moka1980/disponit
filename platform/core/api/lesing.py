@@ -20,6 +20,7 @@ transaksjonen, RLS+FORCE, identisk 404 for ukjent og annen tenants ID.
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
@@ -37,7 +38,7 @@ from . import kjerne
 # Importeres av `app.lag_app()` ETTER at hjelperne under er definert —
 # modulnivå-importen her er derfor trygg selv om `app` importerer oss.
 from .app import (kanonisk_json, _feilsvar, _rid, _autentiser,
-                  SIDE_STANDARD, LESESCOPES)
+                  SIDE_STANDARD, LESESCOPES, _KANDIDAT_NS)
 
 #: PR-008-listene har eget tak (spesifikasjonen: limit <= 100, default 50).
 #: `SIDE_MAKS` (200) gjelder det eksisterende `/v1/unntak` og røres ikke.
@@ -556,6 +557,51 @@ def _artefakt_lever(conn, tenant, artefakt_id) -> bool:
         (tenant, artefakt_id)).fetchone()[0]
 
 
+def _funn_fra_lageret(conn, tenant: str, oppdrag_id: int,
+                      rapport: dict) -> dict:
+    """v2-rapportens kandidatdetaljer, lest fra 057-lageret
+    (BESLUTNING-168: beslutningssporet bærer referanser, aldri funn —
+    funnene bor i `kandidat_evalueringsartefakt` og lever til kundens
+    frist, nøyaktig så lenge som denne ruten i det hele tatt svarer).
+
+    Samme lesedoktrine som `rekruttering._kandidater`: nøkkel-
+    subtraksjon av `kildetekst`/`avmaskering` i basen (aldri hentet), og
+    et artefakt som ikke er et objekt normaliseres ALDRI til noe
+    grønnere — funnlisten serveres som lest, eller tom når raden ikke
+    bærer en liste. Avgrensningen er rangeringens eget kandidatsett;
+    lagernøkkelen er skrivedørens deterministiske uuid5 over
+    (tenant, prosess, kandidat) — samme navnerom, samme skilletegn."""
+    prad = conn.execute(
+        "SELECT prosess_id FROM rekrutteringsprosess"
+        " WHERE tenant=%s AND oppdrag_id=%s AND slettet_ts IS NULL",
+        (tenant, oppdrag_id)).fetchone()
+    rangering = rapport.get("rangering")
+    kids = [r.get("kandidat_id") for r in rangering
+            if isinstance(r, dict)
+            and isinstance(r.get("kandidat_id"), str)] \
+        if isinstance(rangering, list) else []
+    if prad is None or not kids:
+        return {}
+    kart = {uuid.uuid5(_KANDIDAT_NS,
+                       f"{tenant}\x1f{prad[0]}\x1f{kid}"): kid
+            for kid in kids}
+    rader = conn.execute(
+        "SELECT a.kandidat_id,"
+        "       CASE WHEN jsonb_typeof(a.artefakt) = 'object'"
+        "            THEN a.artefakt - 'kildetekst' - 'avmaskering'"
+        "       END"
+        "  FROM kandidat_evalueringsartefakt a"
+        " WHERE a.tenant=%s AND a.prosess_id=%s"
+        "   AND a.slettet_ts IS NULL AND a.kandidat_id = ANY(%s)",
+        (tenant, prad[0], list(kart))).fetchall()
+    ut = {}
+    for kid_uuid, art in rader:
+        raa = art.get("funn") if isinstance(art, dict) else None
+        ut[kart[kid_uuid]] = {"funn": raa if isinstance(raa, list)
+                              else []}
+    return ut
+
+
 def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
     """GET /v1/rekruttering/rapport/{oppdrag_id} — den promoterte
     evalueringsrapporten. M-57s EGEN leseflate (kontraktens
@@ -581,7 +627,7 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
                and t.rapportflate == RAPPORTFLATE_ATS]
         rad = conn.execute(
             "SELECT a.artefakt_id, a.ciphertext, a.nonce, a.dek_ref,"
-            " a.promotert_ts, a.artefakttype"
+            " a.promotert_ts, a.artefakttype, a.skjemaversjon"
             "  FROM artefakt a JOIN oppdrag o"
             "    ON o.tenant = a.tenant AND o.id = a.oppdrag_id"
             " WHERE a.tenant=%s AND a.oppdrag_id=%s"
@@ -627,7 +673,8 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
              [p[1] for p in par])).fetchone()
         if rad is None:
             return _feilsvar("ikke_funnet", rid)
-        art_id, ct, nonce, dek_ref, ts, artefakttype = rad
+        (art_id, ct, nonce, dek_ref, ts, artefakttype,
+         skjemaversjon) = rad
         from db import kryptering
         try:
             dek = kryptering.hent_dek(conn, auth.tenant, dek_ref)
@@ -665,10 +712,22 @@ def rekrutteringsrapport_detalj(tjeneste, request: Request) -> Response:
             if isinstance(_k, dict):
                 _k.pop("kildetekst", None)
                 _k.pop("intervjusporsmal", None)
+        # LESEFLATE-FLYTTINGEN (BESLUTNING-168, #183-nabolaget): et
+        # beslutningsspor (v2) bærer ingen `kandidater` — funnene leses
+        # fra 057-lageret, som ankerpredikatet over alt har målt levende.
+        # Svaret beholder formen flaten kjenner ({kid: {funn}}), så
+        # leseren er den samme for begge generasjoner. Etter fristen
+        # svarer ruten 404 som før — at det VARIGE sporet (rangeringen
+        # uten funn) skal få en egen lesevei etter reaping er et
+        # arkitektvalg som ikke tas her.
+        if "kandidater" not in rapport:
+            rapport["kandidater"] = _funn_fra_lageret(
+                conn, auth.tenant, oid, rapport)
         return kanonisk_json({
             "oppdrag_id": oid,
             "artefakt_id": str(art_id),
             "artefakttype": artefakttype,
+            "skjemaversjon": skjemaversjon,
             "promotert_ts": ts.isoformat() if ts else None,
             "rapport": rapport,
             "request_id": rid,
