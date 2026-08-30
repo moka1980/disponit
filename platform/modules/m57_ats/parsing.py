@@ -211,6 +211,36 @@ def _apne_katalog(sti: str | Path) -> zipfile.ZipFile:
                        f"{type(feil).__name__}: {feil}") from feil
 
 
+def _deklarert_antall(sti) -> int:
+    """EOCD-postens deklarerte oppføringsantall — en PÅSTAND, lest uten
+    å parse katalogen (#162 funn 2).
+
+    Sluttposten (PK\x05\x06) står i de siste 65557 bytene (fast del +
+    maks kommentar); den SISTE forekomsten er den zipfile selv bruker.
+    Feltet på offset 10 er totalantallet; 0xFFFF betyr zip64, og da
+    bærer zip64-sluttposten (PK\x06\x06) det ekte tallet på offset 32.
+    Finnes ingen sluttpost er filen ikke en zip — `is_zipfile` over har
+    alt sagt ja, så det utfallet er en korrupt hale og dømmes som 0:
+    katalogparsingen under feller den med sin egen kode.
+    """
+    import struct as _struct
+    sti = Path(sti)
+    storrelse = sti.stat().st_size
+    with open(sti, "rb") as fil:
+        fil.seek(max(0, storrelse - 65_557))
+        hale = fil.read()
+        i = hale.rfind(b"PK\x05\x06")
+        if i < 0 or i + 12 > len(hale):
+            return 0
+        antall = _struct.unpack_from("<H", hale, i + 10)[0]
+        if antall != 0xFFFF:
+            return antall
+        j = hale.rfind(b"PK\x06\x06", 0, i)
+        if j < 0 or j + 40 > len(hale):
+            return antall
+        return _struct.unpack_from("<Q", hale, j + 32)[0]
+
+
 def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     """Hele gaten mot KATALOGEN, før én byte pakkes ut.
 
@@ -259,6 +289,15 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     """
     if not zipfile.is_zipfile(sti):
         raise Buntfeil("ikke_zip")
+    # ANTALLET DØMMES PÅ EOCD-PÅSTANDEN, FØR KATALOGEN MATERIALISERES
+    # (#162 funn 2, K1-utsatt fra #153): `infolist()` allokerer én
+    # `ZipInfo` per oppføring, så en kompakt zip med hundretusener av
+    # oppføringer betalte parse-arbeidet FØR taket ble målt. Zip-ens
+    # egen sluttpost bærer antallet som et tall; lyver den lavt, feller
+    # `infolist`-tellingen under den fortsatt (påstand først, sannhet
+    # etterpå — samme todeling som resten av gaten).
+    if _deklarert_antall(sti) > MAKS_FILER:
+        raise Buntfeil("for_mange_filer", "deklarert i sluttposten")
     medlemmer: list[Medlem] = []
     total = 0
     sett: set[str] = set()
@@ -381,15 +420,18 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     lyver da bare om sin egen nevner. `compress_size <= 0` på noe som
     leverte byte er et uendelig forhold, ikke «ukomprimert».
 
-    ETT BUDSJETT, ÉN GANG (runde 9, presisert av Cursor-runde 2).
-    Tidligere la strømmen containerens målte byte OG docx-gatens
-    katalogsum til totalen, så et docx-lag betalte to ganger. Formen
-    overlevde inn i denne gaten: containerens `lest` ble lagt til, og
-    så betalte hvert indre medlem for de SAMME bytene en gang til.
-    Nå betaler BLADENE, og bare de: et docx-medlem legger ikke sin egen
-    blob til totalen, fordi medlemmene inni den gjør det. PDF og HTML
-    er blader og betaler for seg selv. Ingen dobbelttelling, ingen
-    nullstilling.
+    ETT BUDSJETT — OG TAKET MÅLER ARBEID (eierdom 30/8, K2-eskaleringen
+    fra #250). `MAKS_TOTAL_UTPAKKET` bar to uforenlige lesninger:
+    payload (bytene telles én gang — container og innhold er de samme
+    bytene) og arbeid (begge lag dekomprimeres faktisk — begge telles).
+    For en ZIP_STORED-docx spriker de med faktor 2, og runden pendlet
+    mellom dem til K2 stoppet den. Eiers dom er ARBEID: hvert lag som
+    faktisk pakkes ut, betaler — containeren OG dens indre medlemmer.
+    Sikkerhetsporten feiler lukket; prisen — en ærlig bunt med over
+    ~1 GB ukomprimert docx-innhold avvises — er valgt med åpne øyne og
+    ligger langt fra reelle søknadsbunter. Ingen NULLSTILLING og ingen
+    dobbelt-telling AV SAMME ARBEID består som før: hver utpakking
+    betales nøyaktig én gang.
     """
     fullt = f"{kontekst}/{navn}" if kontekst else navn
     _sjekk_navn(navn, kontekst=fullt if kontekst else None)
@@ -420,27 +462,33 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
     if endelse == ".docx" and dybde:
         raise Buntfeil("nostet_arkiv", fullt)
 
-    # CONTAINEREN BETALER IKKE FOR BARNA SINE. Et DOCX-medlem måles ett
-    # nivå ned, byte for byte, og de bytene ER containerens innhold. Ble
-    # begge lagt til, betalte hvert docx-lag omtrent DOBBELT mot
-    # klarsignalets «utpakket totalstørrelse | 2 GB» — for `ZIP_STORED`
-    # eller nesten ukomprimerbart innhold er containeren ≈ summen av de
-    # indre bytene — og ærlige bunter under taket ble avvist. Zip-bomben
-    # felles av den INDRE målingen, som er den som måler den faktiske
-    # ekspansjonen. Dybdevakten over gjør betingelsen eksakt: en `.docx`
-    # som kommer HIT har alltid dybde 0, og da følger indre måling
-    # alltid i `_mal_docx`. Containerens egne byte er likevel BUNDET —
-    # av `MAKS_ENKELTFIL` og av forholdet mot dens `komprimert`, begge
-    # under — og den ytre katalogporten holder buntens leste totalsum
-    # under taket uansett.
-    betaler = endelse != ".docx"
-
+    # ALLE BETALER (eierdom 30/8, valg A): taket måler ARBEIDET gaten
+    # utfører, og en docx-container pakkes faktisk ut — så den betaler
+    # for sine egne byte, og de indre medlemmene for sine. Se
+    # docstringen for hele dommen; formvalget «bladene alene» fra
+    # forrige runde er reversert MED den vakttesten det plantet
+    # (test_155_docx_arbeid_betales_av_begge_lag er den nye).
     biter: list[bytes] = []
     lest = 0
     with aapne() as f:
         hode = f.read(_HODEBYTE)
         biter.append(hode)
         lest = len(hode)
+        # MAGIEN MÅLES PÅ HODET, FØR RESTEN LESES (#262 P2-2, Codex på
+        # #250): et medlem hvis første byte alt motsier endelsen — en
+        # 25 MiB «.pdf» uten %PDF — brukte hele per-fil-budsjettet i
+        # dekompresjon og minne før den ble avvist. Alle mønstrene er
+        # kortere enn `_HODEBYTE`, så dommen er identisk med den gamle
+        # helbuffer-dommen — bare tidlig. ZIP-halesjekken (`er_arkiv`)
+        # står igjen på hele bufferet under: den trenger alle bytene.
+        for magi in _MAGI.get(endelse, ()):
+            if not hode.startswith(magi):
+                raise Buntfeil("feil_innholdstype", fullt)
+        if endelse in (".html", ".htm"):
+            if any(hode.startswith(m) for m in _ARKIVMAGI):
+                raise Buntfeil("nostet_arkiv", fullt)
+            if not _ser_ut_som_html(hode):
+                raise Buntfeil("feil_innholdstype", fullt)
         while True:
             bit = f.read(1 << 16)
             if not bit:
@@ -448,33 +496,20 @@ def _mal_medlem(navn: str, aapne, *, budsjett: Budsjett,
             lest += len(bit)
             if lest > MAKS_ENKELTFIL:
                 raise Buntfeil("enkeltfil_for_stor", fullt)
-            if betaler and budsjett.byte + lest > MAKS_TOTAL_UTPAKKET:
+            if budsjett.byte + lest > MAKS_TOTAL_UTPAKKET:
                 raise Buntfeil("total_for_stor", fullt)
             biter.append(bit)
     if lest > 0 and komprimert is not None and (
             komprimert <= 0
             or lest / komprimert > MAKS_KOMPRIMERINGSFORHOLD):
         raise Buntfeil("komprimeringsforhold", fullt)
-    if betaler:
-        budsjett.byte += lest
-        if budsjett.byte > MAKS_TOTAL_UTPAKKET:
-            raise Buntfeil("total_for_stor", fullt)
+    budsjett.byte += lest
+    if budsjett.byte > MAKS_TOTAL_UTPAKKET:
+        raise Buntfeil("total_for_stor", fullt)
     data = b"".join(biter)
 
-    # KLASSIFISERINGEN LESER BYTENE (runde 7). `_ser_ut_som_html` avviser
-    # på FORM — positiv gjenkjenning — mens den gamle docx-veien avviste
-    # på det katalogen PÅSTOD. Katalogen i en zip er ikke bytene i den, og
-    # de to sidene har samme rot. Her er begge sider samme spørsmål: hva
-    # ER dette, målt på innholdet?
-    for magi in _MAGI.get(endelse, ()):
-        if not data.startswith(magi):
-            raise Buntfeil("feil_innholdstype", fullt)
-    if endelse in (".html", ".htm"):
-        if any(data.startswith(m) for m in _ARKIVMAGI):
-            raise Buntfeil("nostet_arkiv", fullt)
-        if not _ser_ut_som_html(data[:_HODEBYTE]):
-            raise Buntfeil("feil_innholdstype", fullt)
-
+    # Klassifiseringen skjedde på HODET over (#262 P2-2) — her nede står
+    # bare det som trenger HELE bufferet: zip-halen.
     er_arkiv = zipfile.is_zipfile(io.BytesIO(data))
     if endelse != ".docx" and er_arkiv:
         raise Buntfeil("nostet_arkiv", fullt)
@@ -549,6 +584,7 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
         # samme. `_mal_medlem` beholder derfor sine egne porter urørt;
         # den er fortsatt den ene gaten, og den er sannheten.
         sett: set[str] = set()
+        deklarert = 0
         for info in alle:
             _sjekk_navn(info.filename,
                         kontekst=f"{kontekst}/{info.filename}")
@@ -571,6 +607,21 @@ def _mal_docx(data: bytes, *, budsjett: Budsjett, kontekst: str) -> None:
             # kjent av katalogen, og lesingen er unødig.
             if _endelse(info.filename) in ARKIVENDELSER | {".docx"}:
                 raise Buntfeil("nostet_arkiv", f"{kontekst}/{info.filename}")
+            # OGSÅ TALLENE DØMMES FØR UTPAKKING (#262 P2-1, Codex på
+            # #250): katalogen påstår størrelser, og en påstand som
+            # alene sprenger taket skal ikke først koste dekompresjonen
+            # opp til strømmegrensen. Strømmesjekkene i `_mal_medlem`
+            # BESTÅR — en katalog kan lyve lavt, og bytene er sannheten.
+            # Under arbeids-dommen (30/8) teller den deklarerte summen
+            # oppå budsjettet slik det står — containeren har alt
+            # betalt sitt når vi er her.
+            if info.file_size > MAKS_ENKELTFIL:
+                raise Buntfeil("enkeltfil_for_stor",
+                               f"{kontekst}/{info.filename}")
+            deklarert += info.file_size
+            if budsjett.byte + deklarert > MAKS_TOTAL_UTPAKKET:
+                raise Buntfeil("total_for_stor",
+                               f"{kontekst}/{info.filename}")
         if not DOCX_PAKKEMEDLEMMER <= sett:
             raise Buntfeil(
                 "feil_innholdstype",
