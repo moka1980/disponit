@@ -3361,17 +3361,18 @@ def test_sp10_daekker_067():
     seed + måling registrert i SEEDS, og CI-pekeren på plass, ellers
     kjører den aldri i pipelinen.
 
-    CI-PEKEREN MANGLER ENNÅ, OG DET STÅR HER I KLARTEKST: linja
-    `python deploy/staging/sp10-provekjoring.py 67` hører hjemme i
-    SP-10-steget i `.github/workflows/ci.yml`, rett under `59`. Denne
-    sløyfa kan ikke skrive den — GitHub avviser workflow-endringer fra
-    app-tokenet uten `workflows`-rettighet — så den ene linja er eiers
-    håndgrep. Porten under holder seedet og målingen på plass i
-    mellomtiden; assert-en på pekeren legges til i samme commit som
-    linja, av den som kan skrive den (`test_sp10_daekker_059` viser
-    formen)."""
+    CI-pekeren (`sp10-provekjoring.py 67` i SP-10-steget) er på plass
+    (sak #263, skrevet med eiers auth under ny prosess — den gamle
+    sløyfas app-token manglet workflows-retten), så porten krever den
+    her på samme måte som 049/056/059 gjør — uten linja kjører seedet
+    aldri i pipelinen, og en rød `_mal_067` ville ikke stoppet merge."""
+    import re
     from pathlib import Path
     rot = Path(__file__).resolve().parents[3]
+    ci = (rot / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8")
+    assert re.search(r"sp10-provekjoring\.py 67\b", ci), (
+        "SP-10-prøvekjøringen for 067 mangler i CI")
     sp10 = (rot / "deploy" / "staging" / "sp10-provekjoring.py").read_text(
         encoding="utf-8")
     assert "67: (_seed_067, _mal_067)" in sp10, \
