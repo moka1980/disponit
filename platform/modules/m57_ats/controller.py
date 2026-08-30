@@ -661,11 +661,27 @@ def kjor_en(klient, token: str, modell, uttrekker, biasmaalinger,
                     antall_soknader=payload["antall_soknader"],
                     lagre_dokument=lagre_dokument,
                     lagre_kandidat=lagre_kandidat)
-                rapport = rapportskjema.bygg(
-                    resultat, profil=profil,
-                    antall_soknader=payload["antall_soknader"])
-                jsonschema.Draft202012Validator(
-                    rapportskjema.SKJEMA).validate(rapport)
+                # PRODUSENTBYTTET (BESLUTNING-168 §3): formen er
+                # claim-svarets gjeldende skjemaversjon — en
+                # lagringstilstand, aldri en avtale i koden. Flipper
+                # plattformen til v2, bygger neste kjøring
+                # beslutningssporet; til da bygges v1. Valideringen
+                # følger formen som bygges, og opplastingen revalideres
+                # uansett mot gjeldende på plattformsiden.
+                if (claim.get("opplasting") or {}).get(
+                        "skjemaversjon") == rapportskjema.VERSJON_V2:
+                    rapport = rapportskjema.bygg_v2(
+                        resultat, profil=profil,
+                        antall_soknader=payload["antall_soknader"],
+                        modelldigest=modell.image_digest)
+                    jsonschema.Draft202012Validator(
+                        rapportskjema.SKJEMA_V2).validate(rapport)
+                else:
+                    rapport = rapportskjema.bygg(
+                        resultat, profil=profil,
+                        antall_soknader=payload["antall_soknader"])
+                    jsonschema.Draft202012Validator(
+                        rapportskjema.SKJEMA).validate(rapport)
             except kjoring.Kjoringsfeil as e:
                 # LEASE-TAP MIDT I STRØMMEN HETER `lease_tapt` (Cursor
                 # P2-1). Før #173 fullførte en kjøring som mistet leasen

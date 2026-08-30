@@ -164,6 +164,11 @@ def test_full_kjede_hemmelighet_token_claim_kapabilitet(migrator, miljo,
             # avvises strukturelt i 017 og er bevist der).
             assert svar["opplasting"] is not None, svar
             assert svar["opplasting"]["jti"] != svar["kvittering_jti"]
+            # BESLUTNING-168 §3: claim-svaret bærer gjeldende
+            # skjemaversjon for typen — produsentens form er en
+            # lagringstilstand, ikke en avtale. Registerets fødsel (072)
+            # gir v1 til noen flipper.
+            assert svar["opplasting"]["skjemaversjon"] == 1
             # ... og bindingen i basen bærer modultokenets deployment.
             _sett_kontekst(migrator, TENANT)
             binding = migrator.execute(

@@ -2025,9 +2025,23 @@ def _utled_opplastingskapabilitet(conn, auth, tenant: str,
                 # `opplasting` i svaret: jti-en er da aldri utlevert og
                 # kan ikke innløses.
                 if orad is not None and orad[1] <= ef:
+                    # BESLUTNING-168 §3: hvilken form som promoteres NÅ er
+                    # en lagringstilstand, ikke en avtale. Produsenten får
+                    # gjeldende skjemaversjon i samme svar som retten til
+                    # å laste opp, lest i claim-transaksjonen — vinduet
+                    # mellom flipp og opplasting er da nøyaktig
+                    # kjøringens lengde, og synlig (opplastingen
+                    # revalideres mot gjeldende uansett). En type uten
+                    # versjonsrad er pre-072-legacy og bærer v1.
+                    vrad = conn.execute(
+                        "SELECT skjemaversjon FROM artefakttype_versjon"
+                        " WHERE artefakttype=%s AND status='gjeldende'",
+                        (typerad[0],)).fetchone()
                     opplasting = {"jti": orad[0],
                                   "utloper": orad[1].isoformat(),
-                                  "artefakttype": typerad[0]}
+                                  "artefakttype": typerad[0],
+                                  "skjemaversjon":
+                                      vrad[0] if vrad else 1}
 
     return opplasting
 
