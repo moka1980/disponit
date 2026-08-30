@@ -61,6 +61,21 @@ class Ollamamodell:
             "model": self.modellnavn,
             "stream": False,
             "format": "json",
+            # TEMPOET ER KUNDENS VENTETID (eiers funn 30/8: «kundene
+            # blir utålmodige»). To grep som ikke endrer dommen:
+            #  * keep_alive holder modellen i minnet gjennom HELE bunten
+            #    og mellom oppdrag — uten den kunne Ollama laste
+            #    modellen ut mellom kandidater, og hver evaluering
+            #    betalte innlastingen på nytt.
+            #  * num_predict bunder generasjonen: svaret er et lite
+            #    JSON-objekt (oppfylt + noen funn med korte sitater), og
+            #    et svar som babler forbi taket er alt uleselig for
+            #    porten under — grensen koster ingen gyldige svar, men
+            #    kutter halen på de ugyldige.
+            #  * temperature 0: dommen skal være deterministisk — og
+            #    grådig dekoding er også den raskeste.
+            "keep_alive": "30m",
+            "options": {"temperature": 0, "num_predict": 700},
             "messages": [{"role": "system", "content": _SYSTEM},
                          {"role": "user", "content": prompt}],
         }).encode("utf-8")
