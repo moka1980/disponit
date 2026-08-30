@@ -1552,6 +1552,11 @@ def test_oppdragsclaim_paa_tom_ko_gir_204(migrator, miljo, token):
             r = c.post("/v1/oppdrag/claim", json={},
                        headers={"authorization": f"Bearer {tok}"})
             assert r.status_code == 204, r.text
+            # 204 BETYR uten kropp (eiers logfunn 30/8): en JSON-kropp
+            # her fikk h11 til å kutte forbindelsen på Content-Length —
+            # en traceback i journald per tomme poll, døgnet rundt.
+            assert r.content == b"", "204-svaret bærer en kropp"
+            assert r.headers.get("x-request-id"), "request-id-hodet borte"
 
             # Uten prefiks-scope: ingen fullmakt, ingen kø. En tom
             # prefiksliste tolket som «alle» ville gjort et token uten
