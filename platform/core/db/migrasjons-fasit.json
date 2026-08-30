@@ -74,5 +74,6 @@
   "073_v1_restansen.sql": "954179a627c8611cd0b5d8c41521bf3afa2ce7b5918a98de2af5b9fd9f2f4069",
   "074_profil_skjuling.sql": "c3dc6da93e29836f0874de808db8be09a8c1bd08a5d4fbd172ba142bbdf9c43e",
   "075_kandidatanker.sql": "b981ba49fbd998dfa0cf0e4ba2c8eb1584eb6f6f5e982530a4f9e1d84f175a10",
-  "076_samlet_per_prosess.sql": "cabfb863b3f9e579b5672d76429ce5ab6252db5b27c654c2377104dde9db73b2"
+  "076_samlet_per_prosess.sql": "cabfb863b3f9e579b5672d76429ce5ab6252db5b27c654c2377104dde9db73b2",
+  "077_payloadvindu.sql": "2814371101cb0e7e0b7ce0a26fc860cfbdb7ce4dec1b287d37298588ceda6668"
 }
