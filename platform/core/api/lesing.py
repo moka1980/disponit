@@ -723,9 +723,12 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
                if t.rapport_artefakttype is not None
                and t.rapportflate == RAPPORTFLATE_ATS]
         typer, arter = [p[0] for p in par], [p[1] for p in par]
-        rader = conn.execute(
-            "SELECT o.id, o.status, o.opprettet,"
-            " EXISTS (SELECT 1 FROM artefakt a"
+        # ÉN KILDE TIL «KLAR» (eiers valg A på #258-A, 30/8): uttrykket
+        # under brukes BÅDE som listens rapport_klar-kolonne og i
+        # ferskeste-oppslaget — de to kan per konstruksjon ikke være
+        # uenige om hva en klar rapport er.
+        klar_sql = (
+            "EXISTS (SELECT 1 FROM artefakt a"
             "          WHERE a.tenant = o.tenant AND a.oppdrag_id = o.id"
             "            AND a.tilstand='promotert'"
             # … og en MAKULERT rapport er ikke klar (samme ledd som
@@ -743,7 +746,9 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "        AND p.slettet_ts IS NULL"
             "        AND p.slett_bestilt_ts IS NULL"  # 069: som detaljruten
             "        AND now() < coalesce(p.lukket_ts, p.opprettet)"
-            "                    + p.slettefrist_dogn * interval '1 day'),"
+            "                    + p.slettefrist_dogn * interval '1 day')")
+        rader = conn.execute(
+            "SELECT o.id, o.status, o.opprettet, " + klar_sql + ","
             # … og reapingen NAVNGIS (Codex P2): et `utfort` oppdrag med
             # `rapport_klar: false` fordi fristen har makulert det er
             # ikke «under arbeid» — uten dette feltet ville flaten vist
@@ -796,7 +801,22 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
                 tjeneste.cursorpepper, tenant=auth.tenant,
                 endepunkt="rekruttering_evalueringer", retning="desc",
                 filtre={}, ts=rader[99][2], rad_id=rader[99][0])
+        # FERSKESTE KLARE PEKES AV SERVEREN (eiers valg A på #258-A):
+        # klienten sammenlignet (opprettet, id) selv, og JS-Date mister
+        # mikrosekundene serverens nøkkel har — tredje formforsøk på en
+        # nøkkel klienten ikke eier ble stoppet på K2. Nå bærer svaret
+        # pekeren, målt av databasen på NØYAKTIG sorteringsnøkkelen —
+        # og over HELE historikken, ikke bare vinduet: den ferskeste
+        # klare kan lovlig ligge bak en side av uklare rader.
+        ferskeste = conn.execute(
+            "SELECT o.id FROM oppdrag o"
+            " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
+            "   AND o.liste_skjult_ts IS NULL"
+            "   AND " + klar_sql +
+            " ORDER BY o.opprettet DESC, o.id DESC LIMIT 1",
+            (auth.tenant, typer, typer, arter)).fetchone()
         return kanonisk_json({
+            "ferskeste_klar_oppdrag": ferskeste[0] if ferskeste else None,
             "evalueringer": [
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,

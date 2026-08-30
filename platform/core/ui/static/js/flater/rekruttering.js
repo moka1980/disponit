@@ -313,7 +313,9 @@ export function visRekruttering(hoved, ctx) {
       return { ...pros, profiler: (prof && prof.profiler) || [],
                evalueringer: evals ? (evals.evalueringer || []) : null,
                evalueringerFlere: !!(evals && evals.flere),
-               evalueringerCursor: (evals && evals.neste_cursor) || null };
+               evalueringerCursor: (evals && evals.neste_cursor) || null,
+               evalueringerFerskeste:
+                 (evals && evals.ferskeste_klar_oppdrag) ?? null };
     },
     (data) => {
       // En fersk full lasting ER sannheten — også «Prøv igjen» etter en
@@ -2055,20 +2057,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // når inserten faktisk kjører, så en forsinket eldre transaksjon kan
   // få den HØYESTE id-en. `id` alene valgte da en rapport som står lenger
   // ned i en korrekt tidssortert tabell — tabellen riktig, åpningen feil.
-  const seedListe = (eval_ && eval_.liste !== undefined)
-    ? eval_.liste : (data ? data.evalueringer : []);
-  // `opprettet` mangler eller er uparsbar → eldst mulig: en rad uten
-  // tidsstempel skal aldri vinne over en som har ett, og id-en avgjør
-  // fortsatt mellom to like (og mellom to uten).
-  const tid = (e2) => {
-    const ms = Date.parse(e2.opprettet || "");
-    return Number.isNaN(ms) ? -Infinity : ms;
-  };
-  const ferskereEnn = (a, b) => (tid(a) !== tid(b))
-    ? tid(a) > tid(b) : a.oppdrag_id > b.oppdrag_id;
-  const klarRad = (seedListe || []).reduce((beste, e2) =>
-    (e2.rapport_klar && (!beste || ferskereEnn(e2, beste)))
-      ? e2 : beste, null);
+  // SERVEREN PEKER (eiers valg A på #258-A, 30/8): tre runder prøvde å
+  // gjenskape sorteringsnøkkelen (opprettet µs, id) i klienten, og
+  // JS-Date kan ikke bære den — K2 stoppet fjerde formforsøk. Svaret
+  // bærer nå `ferskeste_klar_oppdrag`, målt av databasen på nøyaktig
+  // nøkkelen, over hele historikken. Klienten sammenligner aldri; et
+  // svar uten feltet (eldre server) åpner ærlig ingenting.
+  const ferskesteKlar = data ? data.evalueringerFerskeste : null;
   // ... og kun ÉN gang per økt (Codex P2): listen er tenant-global og
   // uavhengig av valgt prosess — hvert prosessbytte bygger seksjonen på
   // nytt, og en ubetinget auto-lasting hadde re-fetchet og re-rendret
@@ -2082,7 +2077,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
   // (immutabelt artefakt), `aktive` KUN som delt løfte per id; ingen
   // mount-rebuild og ingen aktive-logikk her, for noden — og dermed
   // enhver hengende hentings mål — overlever prosessbyttene.
-  if (klarRad) visRapport(klarRad.oppdrag_id, { fokus: false });
+  if (ferskesteKlar != null) visRapport(ferskesteKlar, { fokus: false });
   // Bestillingsseksjonen melder fra etter et definitivt `tillat` — da
   // hentes listen på nytt så det ferske oppdraget faktisk vises. Feiler
   // hentingen beholdes listen som står; dette er en oppfriskning, ikke

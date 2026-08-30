@@ -47,7 +47,22 @@ globalThis.fetch = async (url, opts = {}) => {
   // «POST-en henger og feiler så med 5xx» var umålbart. Bare løfter ventes
   // på: et vanlig svar går nøyaktig samme vei som før, på samme tikk, så
   // ingen eksisterende test får ny timing.
-  const svar = (raatt && typeof raatt.then === "function") ? await raatt : raatt;
+  let svar = (raatt && typeof raatt.then === "function") ? await raatt : raatt;
+  // TEST-SERVEREN BÆRER DEN NYE KONTRAKTEN (eiers valg A på #258-A):
+  // svaret peker selv på ferskeste klare rapport, målt på nøyaktig
+  // (opprettet, id) — klienten sammenligner aldri. Fixturer som setter
+  // feltet eksplisitt beholder sitt; resten får det utledet her, slik
+  // den ekte serveren gjør det.
+  if (svar && sti === "/v1/rekruttering/evalueringer"
+      && Array.isArray(svar.evalueringer)
+      && svar.ferskeste_klar_oppdrag === undefined) {
+    const klar = svar.evalueringer.filter((e) => e.rapport_klar);
+    klar.sort((a, b) => (a.opprettet === b.opprettet
+      ? b.oppdrag_id - a.oppdrag_id
+      : (a.opprettet < b.opprettet ? 1 : -1)));
+    svar = { ...svar,
+      ferskeste_klar_oppdrag: klar.length ? klar[0].oppdrag_id : null };
+  }
   if (svar === undefined) {
     return { ok: false, status: 404, json: async () => ({ feil: "ikke_funnet" }) };
   }
