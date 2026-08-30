@@ -3826,3 +3826,57 @@ def test_157_kapplop_fodsel_mot_reaper_gir_ingen_halvtom(migrator):
         if a is not None:
             a.close()
         rt.close()
+
+
+@pg
+def test_163_samletporten_staar_pa_ankeret_ikke_per_rad(migrator):
+    """#163 (K2-dom B): invariantens NIVÅ og krokens nivå er det samme —
+    den utsatte porten bor på prosessankeret (én gang per prosess),
+    medlemmene bærer bare den billige markøren som armerer den. De
+    behavioralporte over (ett lager alene, forsinket INSERT,
+    rekkefølgebeviset) beviser at armeringen virker; denne beviser at
+    per-rad-formen ikke kan snike seg tilbake.
+
+    MUTASJONEN SOM DREPER DENNE: flytt constraint-triggeren tilbake på
+    lagrene (057-formen), eller mist en markør."""
+    utsatte = {r[0]: r[1] for r in migrator.execute(
+        "SELECT tgrelid::regclass::text, count(*) FROM pg_trigger"
+        " WHERE tgname LIKE '%reapes_samlet' AND NOT tgisinternal"
+        " GROUP BY 1").fetchall()}
+    assert utsatte == {"rekrutteringsprosess": 1}, utsatte
+    markorer = {r[0] for r in migrator.execute(
+        "SELECT tgrelid::regclass::text FROM pg_trigger"
+        " WHERE tgname LIKE '%\\_beroert' AND NOT tgisinternal"
+    ).fetchall()}
+    assert markorer == set(MEDLEMMER), markorer
+    migrator.rollback()
+
+
+@pg
+def test_163_forfalsket_markortabell_feller_skrivet(migrator):
+    """CodeRabbit på #163-formen: TEMP-retten er PUBLICs, så en kaller
+    kunne pre-lage markørtabellen ferdig seedet og kvele armeringen for
+    sine egne skriv. Porten eier tabellen sin: feil eier feller SKRIVET,
+    fail-closed — aldri bare markeringen."""
+    rt = _rt()
+    try:
+        _, pid = _prosess(migrator, rt)
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "CREATE TEMP TABLE m57_beroerte_prosesser ("
+            " tenant TEXT NOT NULL, prosess_id UUID NOT NULL,"
+            " PRIMARY KEY (tenant, prosess_id)) ON COMMIT DROP")
+        rt.execute(
+            "INSERT INTO pg_temp.m57_beroerte_prosesser VALUES (%s,%s)",
+            (TENANT, pid))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege) as e:
+            _fyll_lagrene(rt, pid)
+        assert "markørtabellen" in str(e.value)
+        rt.rollback()
+        # Positiv kontroll: uten forfalskningen går samme skriv.
+        _sett_kontekst(rt, TENANT)
+        _fyll_lagrene(rt, pid)
+        rt.commit()
+    finally:
+        rt.close()

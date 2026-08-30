@@ -92,6 +92,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_rekrutteringsprosess(text,bigint,integer)', 'disponit_m37_claimer'),
     -- 075 (#157): kandidatankerets fødselsdør — samme eier, samme grunn.
     ('FUNCTION', 'opprett_kandidat(text,uuid,uuid)', 'disponit_m37_claimer'),
+    -- 076 (#163): markøren som armerer samlet-porten — claimer-eid
+    -- definer av samme grunn som lagervaktene.
+    ('FUNCTION', 'm57_marker_beroert_prosess()', 'disponit_m37_claimer'),
     ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'reap_kandidatdata(integer)',                        'disponit_m37_claimer'),
     -- 069: tidligslettingsdoeren gaar gjennom samme

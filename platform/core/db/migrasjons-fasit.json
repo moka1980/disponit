@@ -73,5 +73,6 @@
   "072_skjemaversjon.sql": "77551962ad8585f67d6b795c760491f25c0a6763b6a7e891f275f37e146d3571",
   "073_v1_restansen.sql": "954179a627c8611cd0b5d8c41521bf3afa2ce7b5918a98de2af5b9fd9f2f4069",
   "074_profil_skjuling.sql": "c3dc6da93e29836f0874de808db8be09a8c1bd08a5d4fbd172ba142bbdf9c43e",
-  "075_kandidatanker.sql": "b981ba49fbd998dfa0cf0e4ba2c8eb1584eb6f6f5e982530a4f9e1d84f175a10"
+  "075_kandidatanker.sql": "b981ba49fbd998dfa0cf0e4ba2c8eb1584eb6f6f5e982530a4f9e1d84f175a10",
+  "076_samlet_per_prosess.sql": "cabfb863b3f9e579b5672d76429ce5ab6252db5b27c654c2377104dde9db73b2"
 }
