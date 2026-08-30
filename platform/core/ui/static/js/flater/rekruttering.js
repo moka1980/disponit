@@ -2785,6 +2785,11 @@ function tekstSeksjon(ctx) {
     skjema.addEventListener("input", () => { idem = null; });
     skjema.addEventListener("submit", async (ev) => {
       ev.preventDefault();
+      // ÉN lagring om gangen (CodeRabbit): knappen eier vinduet — et
+      // dobbeltklikk eller en redigering mens POST-en står i lufta
+      // starter aldri en ny.
+      if (lagre.disabled) return;
+      lagre.disabled = true;
       if (!idem) idem = nyIdempotensnokkel();
       const sendtNavn = navnInp.value.trim();
       let svar;
@@ -2792,6 +2797,7 @@ function tekstSeksjon(ctx) {
         svar = await lagreUtsendingstekst(
           tekst ? tekst.tekst_id : null, sendtNavn, kropp.value, idem);
       } catch (e) {
+        lagre.disabled = false;
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         if (e && e.status >= 400 && e.status < 500) idem = null;
         sett(utfall, el("span", { role: "alert",
@@ -2876,7 +2882,9 @@ function tekstSeksjon(ctx) {
   // ikke — listen står tom med en Prøv igjen-knapp, og bare feil på
   // brukerens egne handlinger får role=alert.
   const provIgjen = () => oppdaterListe().catch((e) => {
-    if (e instanceof UautorisertFeil) return;
+    // Utløpt sesjon rutes til innloggingsveien (CodeRabbit) — aldri et
+    // dødt, autentisert skall.
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
     const knapp = el("button", { type: "button",
       text: t("ui.rekruttering.tekster.prov_igjen") });
     knapp.addEventListener("click", () => { sett(utfall); provIgjen(); });
