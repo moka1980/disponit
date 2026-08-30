@@ -1062,13 +1062,27 @@ def test_forlatt_apen_prosess_reapes_etter_maks_levetid(migrator):
         _sett_kontekst(migrator, TENANT)
         migrator.execute(
             "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
-            " oppdrag_id, slettefrist_dogn, opprettet)"
-            " VALUES (%s,%s,%s,30, now() - interval '31 days')",
+            " oppdrag_id, slettefrist_dogn)"
+            " VALUES (%s,%s,%s,30)",
             (TENANT, pid, oid))
         migrator.commit()
+        # Payloaden skrives MENS prosessen lever (#164: vinduet er
+        # stengt etter fristen, også for en forlatt prosess) — så
+        # forlates den: fødselen backdateres med vaktene av, nøyaktig
+        # historien en krasjet kjøring etterlater.
         _sett_kontekst(rt, TENANT)
         _fyll_lagrene(rt, pid)
         rt.commit()
+        migrator.execute("ALTER TABLE rekrutteringsprosess"
+                         " DISABLE TRIGGER USER")
+        _sett_kontekst(migrator, TENANT)
+        migrator.execute(
+            "UPDATE rekrutteringsprosess SET"
+            " opprettet = now() - interval '31 days'"
+            " WHERE tenant=%s AND prosess_id=%s", (TENANT, pid))
+        migrator.execute("ALTER TABLE rekrutteringsprosess"
+                         " ENABLE TRIGGER USER")
+        migrator.commit()
         assert _tell_fixtur(migrator, pid) == 9
         migrator.rollback()
         rp, _timerrolle = _reaperkobling()
@@ -3877,6 +3891,90 @@ def test_163_forfalsket_markortabell_feller_skrivet(migrator):
         # Positiv kontroll: uten forfalskningen går samme skriv.
         _sett_kontekst(rt, TENANT)
         _fyll_lagrene(rt, pid)
+        rt.commit()
+    finally:
+        rt.close()
+
+
+@pg
+def test_164_payloadvinduet_stenger_forsinkede_skriv(migrator):
+    """#164 (eiers B): forutsetningene utledes av ankerets tilstands-
+    maskin — én kilde. Passert frist (før reaperens batch) og bestilt
+    tidligsletting stenger BÅDE lagrenes INSERT og ankerdøren; lukking
+    innenfor fristen er en friststart, aldri en skrivesperre (eiers
+    presisering i #153, målt som positiv kontroll).
+
+    MUTASJONEN SOM DREPER DENNE: sett vaktens/dørens forutsetning
+    tilbake til `slettet_ts` alene."""
+    rt = _rt()
+    try:
+        # (1) Passert frist, reaperen HAR IKKE kjørt: vinduet er stengt
+        # — målt på BEGGE portene (CodeRabbit): kandidaten fødes MENS
+        # vinduet er åpent, så den direkte lager-INSERT-en etterpå måler
+        # LAGERVAKTENS vindu-arm, ikke bare dørens.
+        _, pid = _prosess(migrator, rt, frist=30)
+        _fyll_lagrene(rt, pid)
+        _sett_kontekst(rt, TENANT)
+        aapen_kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TENANT, pid, aapen_kid))
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s,"
+                   " now() - interval '31 days')", (TENANT, pid))
+        rt.commit()
+        _sett_kontekst(migrator, TENANT)
+        assert migrator.execute(
+            "SELECT slettet_ts IS NULL FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s",
+            (TENANT, pid)).fetchone()[0], \
+            "positiv kontroll: reaperen skal IKKE ha kjørt"
+        migrator.rollback()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege) as e1:
+            rt.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+                " VALUES (%s,%s,%s,'{}','0')",
+                (TENANT, pid, aapen_kid))
+        assert "payloadvinduet" in str(e1.value), \
+            "lagervaktens EGEN vindu-arm skal felle skrivet"
+        rt.rollback()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege) as e2:
+            rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                       (TENANT, pid, uuid.uuid4()))
+        assert "payloadvinduet" in str(e2.value)
+        rt.rollback()
+
+        # (2) Bestilt tidligsletting stenger umiddelbart — før batchen,
+        # målt på lagervakten med en alt født kandidat (samme grep).
+        _, pid2 = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid2)
+        _sett_kontekst(rt, TENANT)
+        bestilt_kid = uuid.uuid4()
+        rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
+                   (TENANT, pid2, bestilt_kid))
+        rt.execute("SELECT bestill_tidligsletting(%s,%s)", (TENANT, pid2))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege) as e3:
+            rt.execute(
+                "INSERT INTO kandidat_evalueringsartefakt (tenant,"
+                " prosess_id, kandidat_id, artefakt, innhold_sha256)"
+                " VALUES (%s,%s,%s,'{}','0')",
+                (TENANT, pid2, bestilt_kid))
+        assert "payloadvinduet" in str(e3.value)
+        rt.rollback()
+
+        # (3) Lukket INNENFOR fristen: friststart, ikke skrivesperre —
+        # payload etter lukking reapes med prosessen (kortere levetid).
+        _, pid3 = _prosess(migrator, rt)
+        _fyll_lagrene(rt, pid3)
+        _sett_kontekst(rt, TENANT)
+        rt.execute("SELECT lukk_rekrutteringsprosess(%s,%s, now())",
+                   (TENANT, pid3))
+        rt.commit()
+        _sett_kontekst(rt, TENANT)
+        _fyll_lagrene(rt, pid3)
         rt.commit()
     finally:
         rt.close()
