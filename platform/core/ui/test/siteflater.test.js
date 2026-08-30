@@ -147,6 +147,29 @@ test("Landing: innlogging er en egen side med riktig retursti", async () => {
   // query-strengen på en lokal path-referanse, så leddet overlever turen.
   assert.deepEqual(retur,
     ["/?visning=kundeadmin&sprak=nb", "/?visning=admin&sprak=nb"]);
+  // … OG PÅ ENGELSK (#238 P2): produksjonskoden leser `sprak()`
+  // dynamisk, så en regresjon til hardkodet nb var usynlig for en test
+  // som bare målte norsk. Det er nettopp språket som skal overleve
+  // OIDC-runden — så byttet kjøres på brukerens egen vei (klikket).
+  await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+  [...app.querySelectorAll(".site-sprak-knapp")]
+    .find((k) => k.textContent === NB["ui.sprak.en"])
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await vent(() => {
+    const r = [...app.querySelectorAll('input[name="retursti"]')];
+    return r.length === 2 && r[0].getAttribute("value").includes("sprak=en");
+  });
+  const returEn = [...app.querySelectorAll('input[name="retursti"]')]
+    .map((n) => n.getAttribute("value"));
+  assert.deepEqual(returEn,
+    ["/?visning=kundeadmin&sprak=en", "/?visning=admin&sprak=en"],
+    "engelsk overlever ikke OIDC-runden — returstien mistet språket");
+  // Tilbake til norsk så resten av suiten arver riktig språk.
+  [...app.querySelectorAll(".site-sprak-knapp")]
+    .find((k) => k.getAttribute("lang") === "nb")
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await vent(() => [...app.querySelectorAll('input[name="retursti"]')]
+    .every((n) => n.getAttribute("value").includes("sprak=nb")));
   window.history.replaceState({}, "", "/");
 });
 
@@ -895,4 +918,57 @@ test("Landing: en ukjent side gir hjem, ikke en tom flate", async () => {
   assert.ok(app.textContent.includes(t("site.home.tittel")),
     "en ukjent side ga en tom flate i stedet for hjem");
   window.history.replaceState({}, "", "/");
+});
+
+
+test("Landing: et mislykket språkbytte SIER fra — aldri stille (#238 P3)", async () => {
+  window.history.replaceState({}, "", "/?side=tjenester");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelectorAll(".site-sprak-knapp").length === 2);
+  // Neste locale-henting feiler — nettet falt midt i klikket.
+  const ekteFetch = window.fetch;
+  const felle = (url, ...a) => String(url).includes("/ui/locale/")
+    ? Promise.reject(new TypeError("nett borte"))
+    : ekteFetch(url, ...a);
+  window.fetch = felle;
+  globalThis.fetch = felle;
+  try {
+    [...app.querySelectorAll(".site-sprak-knapp")]
+      .find((k) => k.textContent === NB["ui.sprak.en"])
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await vent(() => app.querySelector(".site-sprak-status")
+      && app.querySelector(".site-sprak-status").textContent.length > 0);
+    const status = app.querySelector(".site-sprak-status");
+    assert.equal(status.textContent, NB["ui.sprak.hentefeil"],
+      "brukeren fikk null tilbakemelding om det mislykkede byttet");
+    assert.equal(status.getAttribute("aria-live"), "polite",
+      "beskjeden annonseres ikke — et mislykket bytte er stille for"
+      + " skjermleseren");
+    // Flaten som sto er fortsatt riktig — feilen re-rendrer ingenting.
+    assert.ok(app.textContent.includes(NB["site.nav.tjenester"]));
+  } finally {
+    window.fetch = ekteFetch;
+    globalThis.fetch = ekteFetch;
+    window.history.replaceState({}, "", "/");
+  }
+});
+
+test("Landing: axe-porten dekker OGSÅ produkt, sikkerhet og innlogging (#238 P3)", async () => {
+  // §6 sier at axe i CI blokkerer merge ved brudd — men en side uten
+  // egen sideport er ikke dekket av den setningen. Hjem, tjenester,
+  // kundeadmin og admin hadde porter; de tre siste offentlige sidene
+  // hvilte på indirekte CI.
+  try {
+    for (const side of ["produkt", "sikkerhet", "innlogging"]) {
+      window.history.replaceState({}, "", `/?side=${side}`);
+      const app = nyttAppBrett();
+      await visInnlogging();
+      const brudd = await alvorligeBrudd(app);
+      assert.equal(brudd.length, 0,
+        `axe på «${side}»: ${beskrivBrudd(brudd)}`);
+    }
+  } finally {
+    window.history.replaceState({}, "", "/");
+  }
 });

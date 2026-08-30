@@ -156,7 +156,21 @@ let byttNr = 0;
 async function byttTil(s) {
   const nr = ++byttNr;
   lagreSprak(s);              // best effort — kan være nektet, og det er greit
-  const i18n = await hentI18n(s);
+  let i18n;
+  try {
+    i18n = await hentI18n(s);
+  } catch {
+    // FEILEN SKAL HØRES (#238 P3): en nettverksfeil her ga ubehandlet
+    // rejection og NULL tilbakemelding — flaten sto urørt, og brukeren
+    // visste ikke om klikket i det hele tatt traff. Statusen bor i
+    // språknavets egen live-region: siden som står er fortsatt riktig,
+    // så ingenting re-rendres — det sies bare fra, på språket flaten
+    // ALT står på (det nye kunne jo ikke hentes).
+    if (nr !== byttNr) return;
+    const status = document.querySelector(".site-sprak-status");
+    if (status) status.textContent = t("ui.sprak.hentefeil");
+    return;
+  }
   if (nr !== byttNr) return;                // forbigått av et nyere valg
   await visInnlogging({ fokuserSprak: true, i18n,
     gjelderFortsatt: () => nr === byttNr });
@@ -172,6 +186,9 @@ async function byttTil(s) {
 function sprakvelger() {
   const valgt = sprak();
   return el("nav", { class: "site-sprak", "aria-label": t("ui.sprak") },
+    // Live-region for byttefeil (#238 P3): tom til noe går galt, og
+    // høflig — et mislykket språkbytte er ikke en alarm.
+    el("span", { class: "site-sprak-status", "aria-live": "polite" }),
     ["nb", "en"].map((s) => {
       const knapp = el("button", {
         type: "button",
