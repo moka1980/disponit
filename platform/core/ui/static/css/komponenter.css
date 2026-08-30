@@ -1219,3 +1219,15 @@ th.rekrut-kandidat { white-space: normal; }
    krympe og brytes, aldri skyve Slett ut av viewporten (CodeRabbit). */
 .rekrut-rapporthode h3 { margin: 0; min-width: 0;
   overflow-wrap: anywhere; }
+
+
+/* Rapportvektene bak en lukket detalj (eiers mobilfunn 30/8). */
+.rekrut-vekterfold { margin: var(--sp-3) 0; }
+.rekrut-vekterfold > summary { cursor: pointer; min-height: var(--touch-min);
+  display: flex; align-items: center; font-weight: 600; }
+.rekrut-vekterfold[open] > summary { margin-bottom: var(--sp-2); }
+.rekrut-vekterfold .rekrut-rapportvekter { margin-top: 0; }
+
+/* Poengfordelingen som første linje i funn-detaljen (eiers funn 30/8). */
+.rekrut-detalj .rekrut-fordeling { color: var(--muted); font-size: .88rem;
+  margin: var(--sp-2) 0 var(--sp-1); }

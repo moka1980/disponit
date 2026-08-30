@@ -1368,19 +1368,26 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           oppfylt[k] = v > 0;
         }
         const poengCelle = el("td", { text: String(rad.poeng) });
-        const nedCelle = el("td", { text: Object.entries(rad.nedbrytning)
-          .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
-          .join(", ") });
+        // POENGFORDELINGEN BOR I DETALJEN, IKKE I EN KOLONNE (eiers funn
+        // 30/8: «Drift: 0, engelsk: 7, …» per rad tok halve mobilskjermen
+        // og var det samme tallet leseren alt ser som sum). Linjen står
+        // ØVERST i «Vis funn»-detaljen — samme sted leseren alt går for
+        // radens hvorfor — og re-vektes levende som cellen gjorde.
+        const fordeling = el("p", { class: "rekrut-fordeling",
+          text: Object.entries(rad.nedbrytning)
+            .map(([k, v]) => `${t(`ui.rekruttering.krav.${k}`, k)}: ${v}`)
+            .join(", ") });
+        boks.append(fordeling);
         const hovedrad = el("tr", {},
           el("th", { scope: "row", class: "rekrut-kandidat",
             title: rad.kandidat_id, text: kortnavn(rad.kandidat_id) }),
-          poengCelle, nedCelle);
+          poengCelle);
         // FUNNENE FÅR FULL BREDDE (mobil-redesignet): detaljboksen bor i
         // sin egen rad som spenner alle kolonnene — aldri i en smal
         // kolonne som bryter ord for ord på mobil.
         const detaljrad = el("tr", { class: "rekrut-detaljrad" },
-          el("td", { colspan: "3", class: "rekrut-detalj" }, boks));
-        return { rad, oppfylt, poengCelle, nedCelle, hovedrad, detaljrad };
+          el("td", { colspan: "2", class: "rekrut-detalj" }, boks));
+        return { rad, oppfylt, poengCelle, fordeling, hovedrad, detaljrad };
       });
       const kropp = el("tbody", {},
         ...radPar.flatMap((p) => [p.hovedrad, p.detaljrad]));
@@ -1389,7 +1396,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           p.poeng = Object.keys(vekter).reduce(
             (sum, k) => sum + (p.oppfylt[k] ? vekter[k] : 0), 0);
           p.poengCelle.textContent = String(p.poeng);
-          p.nedCelle.textContent = Object.keys(vekter)
+          p.fordeling.textContent = Object.keys(vekter)
             .map((k) => `${t(`ui.rekruttering.krav.${k}`, k)}: `
               + `${p.oppfylt[k] ? vekter[k] : 0}`)
             .join(", ");
@@ -1459,9 +1466,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           el("th", { scope: "col",
             text: t("ui.rekruttering.evalueringer.kandidat") }),
           el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.poeng") }),
-          el("th", { scope: "col",
-            text: t("ui.rekruttering.evalueringer.nedbrytning") }))),
+            text: t("ui.rekruttering.evalueringer.poeng") }))),
         kropp);
       // Skjemaet tillater 5000 kandidater à 100 funn + 20 spørsmål — en
       // gyldig maksrapport ville bygget hundretusener av noder opp front.
@@ -1602,11 +1607,18 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           () => { rHent.siste = null; rHent.tegn(null, []); }));
       rapporthode.append(slettKnapp);
     }
+    // VEKTENE ER SAMMENLEGGBARE, LUKKET SOM STANDARD (eiers mobilfunn
+    // 30/8): fire skyveknapper før rangeringen dyttet selve produktet —
+    // listen — under bretten. Detaljene ligger i DOM-en hele tiden, så
+    // re-vektingen virker uendret i det øyeblikket de åpnes.
+    const vektFold = el("details", { class: "rekrut-vekterfold" },
+      el("summary", { text: t("ui.rekruttering.vekter_tittel") }),
+      vektFelt);
     return { overskrift, noder: [
       rapporthode,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
-      vektFelt,
+      vektFold,
       el("div", { class: "tablewrap" }, tabell)] };
   };
 
@@ -1816,7 +1828,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           "ui.rekruttering.evalueringer.avbrutt"));
         handling.append(avbryt);
       }
-      if (kanSkrive && !e2.slettet
+      if (kanSkrive && !e2.slettet && e2.har_anker !== false
           && (e2.rapport_klar || e2.status === "feilet")) {
         const slett = el("button", { type: "button", class: "knapp fare",
           text: t("ui.rekruttering.evalueringer.slett") });

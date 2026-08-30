@@ -759,7 +759,15 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
             "             OR p.slett_bestilt_ts IS NOT NULL"
             "             OR now() >= coalesce(p.lukket_ts, p.opprettet)"
             "                 + p.slettefrist_dogn * interval '1 day'))"
-            " AS slettet"
+            " AS slettet,"
+            # HAR EVALUERINGEN NOE Å SLETTE? (eiers funn 30/8: Slett på en
+            # feilet evaluering UTEN retensjonsanker ga 404, og flaten
+            # kunne ikke vite bedre.) En feilet evaluering som aldri rakk
+            # å føde prosessen har ingen kandidatdata — knappen skal da
+            # ikke stå der. Fakta bor i basen, flaten dikter ikke.
+            " EXISTS (SELECT 1 FROM rekrutteringsprosess p"
+            "      WHERE p.tenant = o.tenant AND p.oppdrag_id = o.id)"
+            " AS har_anker"
             "  FROM oppdrag o"
             " WHERE o.tenant=%s AND o.oppdragstype = ANY(%s::text[])"
             # Keyset-leddet: fortsettelsen er «eldre enn siste viste rad»,
@@ -790,7 +798,8 @@ def rekrutteringsevalueringer(tjeneste, request: Request) -> Response:
                 {"oppdrag_id": r[0], "status": r[1],
                  "opprettet": r[2].isoformat() if r[2] else None,
                  "rapport_klar": r[3],
-                 "slettet": r[4]} for r in rader[:100]],
+                 "slettet": r[4],
+                 "har_anker": r[5]} for r in rader[:100]],
             # #221: fortsettelsen er et felt, ikke bare en påstand.
             "neste_cursor": neste,
             # Aldri stille avkorting: finnes rad 101, MELDER flaten det i
