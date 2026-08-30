@@ -389,3 +389,37 @@ def test_docx_bombe_felles_pa_taket(monkeypatch):
         u.Uttrekker().tekst_for(_medlem("cv.docx"), _docx_bytes(xml))
     assert e.value.kode == "uttrekk_uleselig", e.value.kode
     assert "for stor" in str(e.value)
+
+
+def test_modellkallet_baerer_tempogrepene(monkeypatch):
+    """Eiers funn 30/8 («kundene blir utålmodige»): kallet holder
+    modellen varm gjennom bunten (keep_alive), bunder generasjonen
+    (num_predict — svaret er et lite JSON-objekt, og alt forbi taket er
+    uansett uleselig for porten) og dekoder deterministisk/grådig
+    (temperature 0).
+
+    MUTASJONEN SOM DREPER DENNE: fjern feltene fra kroppen i `_kall`."""
+    import json as jsonmod
+    fanget = {}
+
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return jsonmod.dumps({"message": {"content":
+                '{"oppfylt": {"drift": true}, "funn": []}'}}).encode()
+
+    def _urlopen(req, timeout=None):
+        fanget["kropp"] = jsonmod.loads(req.data.decode("utf-8"))
+        return _R()
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", _urlopen)
+    _modell().vurder("tekst", {"drift": 3})
+    kropp = fanget["kropp"]
+    assert kropp["keep_alive"] == "30m"
+    assert kropp["options"]["temperature"] == 0
+    assert 0 < kropp["options"]["num_predict"] <= 1024
