@@ -926,25 +926,23 @@ selvrevers() {
   # felle reverseringen), og nettopp derfor kan ikke suksess utledes av
   # exit-koden: den må MÅLES.
   #
-  # KJENT GRENSE — se #182 (eiervalg A, K2 fra #178).
-  # `is-active` måler at PROSESSEN lever, ikke at den svarer.
-  # `disponit-api.service` er `Type=simple`, så et API som henger i
-  # oppstart — eller som samples mellom to feil i en restart-løkke — gir
-  # `SELVREVERSERT` på et API som ikke serverer. Steg 8 eier den
-  # autoritative klarhetsporten (30 × `curl --unix-socket .../ready`), og
-  # grunnen til at den ikke brukes her er kun at de to stegene ikke deler
-  # noen hjelper. #182 trekker den ut som `vent_paa_ready()` i lib-opp.sh
-  # og lar begge stedene kalle den.
-  #
-  # DRIFTSVEDTAKET (eier, 24/8) er at terskelen da blir HETEROGEN med
-  # vilje: API-et er SELVREVERSERT først når `/ready` svarer over socketen,
-  # mens M-37 og timerne måles med `is-active` til de har et eget
-  # klarhetssignal. De har ingen `/ready`, og heartbeaten som kunne blitt
-  # ett er en senere maskin — ikke en utvidelse av #182.
+  # TERSKELEN ER HETEROGEN MED VILJE (#182, eiervalg A + driftsvedtak
+  # 24/8): API-et er SELVREVERSERT først når `/ready` svarer over
+  # socketen — målt med NØYAKTIG steg 8s egen kropp (`vent_paa_ready`,
+  # lib-opp.sh), så de to dommene aldri kan drifte. `is-active` var feil
+  # svar for API-et (`Type=simple`: «active» er prosessen, ikke svaret),
+  # men står for M-37 og timerne til de har et eget klarhetssignal — de
+  # har ingen `/ready`, og heartbeaten som kunne blitt ett er en senere
+  # maskin, ikke en utvidelse av #182.
   NEDE=""
   for enhet in $AKTIVE_FOR_VINDUET; do
     systemctl is-active --quiet "$enhet" || NEDE="$NEDE $enhet"
   done
+  case " $AKTIVE_FOR_VINDUET " in *" disponit-api.service "*)
+    case " $NEDE " in *" disponit-api.service "*) : ;; *)
+      vent_paa_ready || NEDE="$NEDE disponit-api.service(/ready)" ;;
+    esac ;;
+  esac
   if [ -z "$NEDE" ]; then
     echo "SELVREVERSERT: forrige release kjører igjen — hver enhet som var i"
     echo "drift før vinduet er aktiv igjen:$AKTIVE_FOR_VINDUET."
@@ -1127,12 +1125,10 @@ systemctl enable --now disponit-domeneverifisering.timer
 # tjenesten: oneshot-en er timerens å starte.
 systemctl enable --now disponit-varselsender.timer
 
+# Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
+# som selvrevers() dømmer API-et med.
 KLAR=nei
-for _ in $(seq 1 30); do
-  if curl -fsS --unix-socket /run/disponit/api.sock \
-       http://disponit/ready >/dev/null 2>&1; then KLAR=ja; break; fi
-  sleep 1
-done
+if vent_paa_ready; then KLAR=ja; fi
 
 API=$(systemctl is-active disponit-api.service || true)
 M37=$(systemctl is-active disponit-m37.service || true)

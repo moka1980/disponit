@@ -2250,3 +2250,39 @@ def test_inndatalageret_er_api_unitens_egen_state_katalog():
         "roten er blitt en knapp igjen — men den kan bare stå i én " \
         "stilling (ProtectSystem=strict), så det den kjøper er at API og " \
         "backup kan lese hver sin katalog uten at noe sier fra"
+
+
+def test_klarheten_maales_med_en_delt_kropp():
+    """#182 (eiervalg A, K2 fra #178): steg 8 og `selvrevers()` svarte på
+    samme spørsmål — «serverer API-et?» — med hver sin måling, og
+    `is-active` er feil svar for en `Type=simple`-tjeneste: «active» er
+    prosessen, ikke svaret. Nå bor klarhetsløkka i `vent_paa_ready`
+    (lib-opp.sh), og BEGGE stedene kaller den — drift mellom dommene er
+    umulig per konstruksjon.
+
+    Terskelen er heterogen med vilje (driftsvedtak 24/8): kun API-et
+    dømmes på /ready; M-37 og timerne står på `is-active` til de har et
+    eget klarhetssignal.
+
+    MUTASJONEN SOM DREPER DENNE: skriv curl-løkka tilbake inline i ett av
+    stegene, eller fjern /ready-armen fra selvrevers().
+    """
+    lib = (ROT / "deploy/staging/lib-opp.sh").read_text(encoding="utf-8")
+    opp = (ROT / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    assert "vent_paa_ready()" in lib and "/ready" in lib, \
+        "den delte klarhetskroppen finnes ikke i lib-opp.sh"
+    # Nøyaktig ÉN kropp: ingen av kallerne har sin egen curl-løkke.
+    assert "unix-socket" not in opp, \
+        "en kaller har fått sin egen socket-curl igjen — dommene kan drifte"
+    # To KALL (steg 8 + selvrevers-armen), målt som kall og ikke som
+    # tekstforekomster — prosaen får nevne navnet så mye den vil.
+    kall = [l for l in opp.splitlines()
+            if "vent_paa_ready" in l and not l.lstrip().startswith("#")]
+    assert len(kall) == 2, (
+        f"forventet nøyaktig to aktive vent_paa_ready-kall, fant {kall}")
+    # Definisjonslinjen, ikke første omtale: prosaen nevner funksjonen
+    # lenge før den defineres.
+    selvrevers = opp.split("selvrevers() {", 1)[1].split("\n}", 1)[0]
+    assert 'disponit-api.service(/ready)' in selvrevers, \
+        "selvrevers dømmer API-et uten /ready — is-active er prosessen," \
+        " ikke svaret"
