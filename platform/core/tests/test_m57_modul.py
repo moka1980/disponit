@@ -1110,9 +1110,11 @@ def test_en_ulesbar_ytre_katalog_er_et_kodet_utfall(tmp_path, skade, kode):
 
 def test_en_ulesbar_indre_docx_katalog_er_feil_innholdstype(tmp_path):
     """Samme dør, innsiden: et INDRE filnavn som påstår UTF-8 uten å
-    være det, feller `ZipFile(...)` med en rå `ValueError` — den ene
-    bibliotekformen `_mal_docx`s dør ikke kjente. En docx som ikke lar
-    seg lese som arkiv er ikke en docx."""
+    være det, feller `ZipFile(...)` med en rå `UnicodeDecodeError` —
+    en av bibliotekformene døren fanger sammen med `BadZipFile`/
+    `RuntimeError`/`NotImplementedError` (`_mal_docx`; docstringen sa
+    før `ValueError`, som døren aldri møter her — #262 P3-2). En docx
+    som ikke lar seg lese som arkiv er ikke en docx."""
     docx = bytearray(_docx())
     i = docx.index(b"PK\x01\x02")
     _katalognavn_lyver_utf8(docx, i)
