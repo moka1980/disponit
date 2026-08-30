@@ -2222,8 +2222,16 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                     if portsvar is not None:
                         return portsvar
                     conn.rollback()
-                return kanonisk_json({"oppdrag": None, "request_id": rid}, 204,
-                                     {"x-request-id": rid})
+                # EKTE 204 — UTEN KROPP (eiers logfunn 30/8). En 204 med
+                # JSON-kropp får h11 til å drepe forbindelsen på «Too
+                # much data for declared Content-Length»: hver eneste
+                # tomme claim-poll (hvert 2.–10. sekund, hele døgnet)
+                # etterlot en full traceback i journald og et avkuttet
+                # svar hos arbeideren — som bare måler statuskoden
+                # (controller.py:489) og aldri leste kroppen. 204 BETYR
+                # ingen kropp; nå er den det.
+                return Response(status_code=204,
+                                headers={"x-request-id": rid})
 
             (opp_id, tenant, unntak_id, oppdragstype, handling, repair_id,
              ct, key_id, nonce, owner_gen, uf, ef) = rad
