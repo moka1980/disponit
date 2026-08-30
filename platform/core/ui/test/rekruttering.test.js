@@ -6715,3 +6715,70 @@ test("Dypdykket auto-viser aldri et ferdig løp — og har egen Slett (eiers fun
     || hoved.textContent.includes(t("ui.rekruttering.ingen_aktiv_prosess"))),
   "dypdykket ble stående etter slettingen");
 });
+
+test("Rapporten: vektendring flytter kandidatene og sjiktfargene følger (eiers funn 30/8)", async () => {
+  KALL = [];
+  // Tolv kandidater i to leire: 01–05 oppfyller drift (vekt 5), 06–12
+  // oppfyller sky (vekt 1). Initialt er 01–05 topp 5 (grønn) og 06–10
+  // sjikt 6–10 (svak grønn). Skrus drift til 0, snur rangeringen: 06–10
+  // skal opp OG bli grønne — plassbyttet og fargen er samme mekanisme.
+  const ids = Array.from({ length: 12 }, (_, i) =>
+    `kandidat-${String(i + 1).padStart(2, "0")}`);
+  const rangering = ids.map((id, i) => (i < 5
+    ? { kandidat_id: id, poeng: 5, nedbrytning: { drift: 5, sky: 0 } }
+    : { kandidat_id: id, poeng: 1, nedbrytning: { drift: 0, sky: 1 } }));
+  SVAR = (sti) => ({
+    "/v1/rekruttering/prosesser": prosess(),
+    "/v1/rekruttering/stillingsprofiler": profiler(),
+    "/v1/rekruttering/evalueringer": { evalueringer: [
+      { oppdrag_id: 96, status: "utfort",
+        opprettet: "2026-08-27T00:40:00+00:00", rapport_klar: true }] },
+    "/v1/rekruttering/rapport/96": { oppdrag_id: 96, rapport: {
+      rapporttype: "rekruttering.evaluering.rapport", versjon: 2,
+      profil: { profil_id: "p-1", versjon: 1, navn: "Driftskonsulent",
+        krav: [{ kravnavn: "drift", vekt: 5 },
+               { kravnavn: "sky", vekt: 1 }] },
+      antall_soknader: 12, rangering,
+      kandidater: Object.fromEntries(ids.map((id) => [id, { funn: [] }])),
+      fremdrift: { filer_lest: 12, filer_totalt: 12, byte_lest: 500 },
+    } },
+  })[sti] ?? 500;
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon() && [...seksjon()
+    .querySelectorAll(".rekrut-kortliste button")]
+    .some((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))));
+  [...seksjon().querySelectorAll(".rekrut-kortliste button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
+    .click();
+  assert.ok(await vent(() => seksjon().textContent
+    .includes("Driftskonsulent")), "rapporten rendret aldri");
+  const hovedrader = () => [...seksjon()
+    .querySelectorAll("tbody tr")].filter((tr) => tr.querySelector("th"));
+  const navn = (tr) => tr.querySelector("th").getAttribute("title");
+  const klasser = () => hovedrader().map((tr) => (
+    tr.classList.contains("rekrut-sjikt-topp") ? "topp"
+      : tr.classList.contains("rekrut-sjikt-neste") ? "neste" : ""));
+  // Initialt: 01 øverst, 5 grønne + 5 svake + 2 umerkede.
+  assert.equal(navn(hovedrader()[0]), "kandidat-01");
+  assert.deepEqual(klasser(), ["topp", "topp", "topp", "topp", "topp",
+    "neste", "neste", "neste", "neste", "neste", "", ""]);
+  // Drift til 0 — sky-leiren skal opp, og fargene skal FLYTTE med.
+  const skyver = seksjon().querySelector("#rapportvekt-drift");
+  skyver.value = "0";
+  skyver.dispatchEvent(new (hoved.ownerDocument.defaultView.Event)(
+    "input", { bubbles: true }));
+  assert.equal(navn(hovedrader()[0]), "kandidat-06",
+    "rangeringen snudde ikke da vekten falt");
+  assert.equal(navn(hovedrader()[11]), "kandidat-05");
+  assert.deepEqual(klasser(), ["topp", "topp", "topp", "topp", "topp",
+    "neste", "neste", "neste", "neste", "neste", "", ""],
+    "sjiktfargene fulgte ikke plassbyttet");
+  // … og sjiktet er en RADENS klasse også i stilarket (fargen finnes).
+  const css = readFileSync(join(ROT,
+    "platform/core/ui/static/css/komponenter.css"), "utf-8");
+  assert.ok(css.includes("rekrut-sjikt-topp"), "topp-sjiktet mangler CSS");
+  assert.ok(css.includes("rekrut-sjikt-neste"), "6–10-sjiktet mangler CSS");
+});

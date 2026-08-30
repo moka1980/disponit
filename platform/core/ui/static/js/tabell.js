@@ -50,7 +50,10 @@ export function DataTabell({ captionTekst, kolonner, rader,
     const liste = rader.slice();
     if (sortNokkel) liste.sort(sammenlign);
     sett(tbody, liste.map((r) => {
-      const tr = el("tr");
+      // Radklassen er RADENS egenskap (f.eks. rangeringssjiktet), ikke
+      // posisjonens: den følger kandidaten uansett hvilken kolonne og
+      // retning leseren sorterer på.
+      const tr = el("tr", r.radKlasse ? { class: r.radKlasse } : {});
       for (const kol of kolonner) {
         const innhold = r.celler[kol.nokkel];
         tr.append(el("td", {},

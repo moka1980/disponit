@@ -889,6 +889,15 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       .sort((a, b) => (sortValg.retning === "ascending"
         ? a.poeng - b.poeng : b.poeng - a.poeng)
         || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1));
+    // Rangeringssjiktene (eiers funn 30/8): topp 5 grønn, 6–10 svak
+    // grønn. Sjiktet regnes ALLTID av poeng synkende — det er
+    // kandidatens plass i rangeringen, ikke radens plass i visningen —
+    // så fargen står riktig også når leseren sorterer stigende.
+    const sjikt = new Map([...rader]
+      .sort((a, b) => b.poeng - a.poeng
+        || (a.kandidat.kandidat_id < b.kandidat.kandidat_id ? -1 : 1))
+      .map((r, i) => [r.kandidat.kandidat_id,
+        i < 5 ? "rekrut-sjikt-topp" : i < 10 ? "rekrut-sjikt-neste" : ""]));
     sett(tabellRot, DataTabell({
       captionTekst: t("ui.rekruttering.tabell_caption"),
       kolonner: [
@@ -900,6 +909,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
       sort: sortValg,
       paaSort: (valg) => { sortValg = valg; },
       rader: rader.map(({ kandidat, poeng }) => ({
+        radKlasse: sjikt.get(kandidat.kandidat_id) || undefined,
         celler: {
           // KANDIDATREFERANSEN KORTES, MEN MISTES IKKE (produktrunden
           // 28/8). Seeden gir kandidatene UUID-er, og en full UUID bryter
@@ -1465,10 +1475,30 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
         // kolonne som bryter ord for ord på mobil.
         const detaljrad = el("tr", { class: "rekrut-detaljrad" },
           el("td", { colspan: "2", class: "rekrut-detalj" }, boks));
-        return { rad, oppfylt, poengCelle, fordeling, hovedrad, detaljrad };
+        return { rad, oppfylt, poeng: rad.poeng,
+          poengCelle, fordeling, hovedrad, detaljrad };
       });
       const kropp = el("tbody", {},
         ...radPar.flatMap((p) => [p.hovedrad, p.detaljrad]));
+      // Stabil omsortering: parene FLYTTES i ny rekkefølge — åpne
+      // `<details>` beholder tilstanden sin, for nodene er de samme.
+      // Rangeringssjiktene (eiers funn 30/8): topp 5 grønn, 6–10 svak
+      // grønn — redundant koding (radens plass og poengtallet bærer
+      // rangeringen, trafikklys-doktrinen), satt på hovedraden i samme
+      // løkke som flytter den. Likhet brytes på kandidat-id, så to like
+      // poengsummer alltid står i samme rekkefølge.
+      const etterPoeng = (a, b) => (b.poeng ?? 0) - (a.poeng ?? 0)
+        || (a.rad.kandidat_id < b.rad.kandidat_id ? -1 : 1);
+      const ranger = () => {
+        [...radPar].sort(etterPoeng)
+          .forEach((p, i) => {
+            kropp.append(p.hovedrad, p.detaljrad);
+            p.hovedrad.classList.toggle("rekrut-sjikt-topp", i < 5);
+            p.hovedrad.classList.toggle("rekrut-sjikt-neste",
+              i >= 5 && i < 10);
+          });
+      };
+      ranger();
       const omVekt = () => {
         for (const p of radPar) {
           p.poeng = Object.keys(vekter).reduce(
@@ -1479,10 +1509,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
               + `${p.oppfylt[k] ? vekter[k] : 0}`)
             .join(", ");
         }
-        // Stabil omsortering: parene FLYTTES i ny rekkefølge — åpne
-        // `<details>` beholder tilstanden sin, for nodene er de samme.
-        [...radPar].sort((a, b) => (b.poeng ?? 0) - (a.poeng ?? 0))
-          .forEach((p) => { kropp.append(p.hovedrad, p.detaljrad); });
+        ranger();
       };
       const vektFelt = el("fieldset", { class: "rekrut-rapportvekter" },
         el("legend", { text: t("ui.rekruttering.vekter_tittel") }));
@@ -1499,8 +1526,7 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           omVekt();
           meldLive(t("ui.rekruttering.ny_rekkefolge").replace("{forst}",
             radPar.length
-              ? kortnavn([...radPar].sort((a, b) =>
-                (b.poeng ?? 0) - (a.poeng ?? 0))[0].rad.kandidat_id)
+              ? kortnavn([...radPar].sort(etterPoeng)[0].rad.kandidat_id)
               : ""));
         });
         vektFelt.append(el("div", { class: "rekrut-vekt" },
