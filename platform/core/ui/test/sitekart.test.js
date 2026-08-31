@@ -290,6 +290,7 @@ test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
   const par = [
     ["ui.nav.wcagkontroll", "ui.wcag.tittel"],
     ["ui.nav.rekruttering", "ui.rekruttering.tittel"],
+    ["ui.nav.nokkeltall", "ui.nokkeltall.tittel"],
   ];
   for (const navn of ["nb", "en"]) {
     const tekster = locale(navn);

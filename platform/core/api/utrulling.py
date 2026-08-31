@@ -50,11 +50,11 @@ RESERVESPRAK = "nb"
 #:     oversettelsene følger raden ut gjennom den AUTENTISERTE veien i stedet.
 _UTRULLING: tuple[dict, ...] = (
     {"id": "nordvik", "navn": "Nordvik Regnskap AS", "plan": "pilot",
-     "moduler": (1, 2, 37),
+     "moduler": (1, 2, 16, 37),
      "neste": {"nb": "M-38 når kapasitet og købevis er grønt.",
                "en": "M-38 once capacity and queue evidence are green."}},
     {"id": "bjorkli", "navn": "Bjørkli Elektro", "plan": "pilot",
-     "moduler": (1, 2),
+     "moduler": (1, 2, 16),
      "neste": {"nb": "M-37 etter at unntaksrutinene er signert.",
                "en": "M-37 once the exception routines are signed."}},
     # Plattformens egen tenant (eiers innlogging, målt 24/8: raden
@@ -63,11 +63,11 @@ _UTRULLING: tuple[dict, ...] = (
     # i drift, M-37 under arbeid, M-56 i drift, M-57 bygges. Tabellen er
     # fortsatt statisk pilotdata — DB-bakket tildeling har eget issue.
     {"id": "disponit", "navn": "Disponit (plattform)", "plan": "internt",
-     "moduler": (1, 2, 37, 56, 57),
+     "moduler": (1, 2, 16, 37, 56, 57),
      "neste": {"nb": "M-57 utførelsesarm; deretter M-57-aksept.",
                "en": "M-57 execution arm; then the M-57 acceptance."}},
     {"id": "granmo", "navn": "Granmo Driftsselskap", "plan": "internt",
-     "moduler": (1, 2, 37, 38),
+     "moduler": (1, 2, 16, 37, 38),
      "neste": {"nb": "Brukes som kunde null for utrulling og intern drift.",
                "en": "Used as customer zero for rollout and internal "
                      "operations."}},
