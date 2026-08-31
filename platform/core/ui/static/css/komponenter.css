@@ -1180,6 +1180,12 @@ tr.rekrut-sjikt-neste > :first-child {
   overflow-wrap: anywhere; margin: 0; padding: var(--sp-3);
   color: var(--ink); font-size: 0.9rem; }
 
+/* Innstillingen (#149): tallfelt + to knapper under rangeringen. */
+.rekrut-innstilling { margin-top: var(--sp-4); }
+.rekrut-innstillingsvalg { display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: center; }
+.rekrut-innstillingsvalg input[type="number"] { width: 5rem; }
+
 /* Plassnummeret (eiers bestilling 30/8): rangeringen sies med tall, ikke
    bare som rekkefølge — dempet, tabulære sifre, fast luke til navnet. */
 .rekrut-plass { color: var(--muted); font-variant-numeric: tabular-nums;

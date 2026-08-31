@@ -1475,6 +1475,111 @@ def utsendingstekst_slett_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def liste_opprett_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/lister — innstiller en utsendingsliste fra
+    en fullført evaluering (#149/080). Manifestet (medlemmene) skrives i
+    samme transaksjon som listen, og `innhold_hash` UTLEDES av døren
+    over det sorterte medlemskapet — flaten sender aldri en hash, den
+    FÅR den, og det er nøyaktig den signataren senere ekkoer.
+
+    Idempotensen bor i serien: Idempotency-Key utleder `utkast_serie`
+    deterministisk, og `en_rot_per_serie`-indeksen gjør et dobbelklikk
+    til et gjenspill — samme medlemskap gir samme svar, annet innhold på
+    samme nøkkel er en konflikt (061-kontrakten, målt på MENGDEN)."""
+    import uuid as uuidlib
+
+    from .app import _KANDIDAT_NS, _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        from modules.m57_ats import maler
+
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       _SIGNERINGSSCOPE)
+        nokkel = _krev_idem(request, rid)
+        kropp = _kropp(request)
+        oppdrag_id = kropp.get("oppdrag_id")
+        listetype = kropp.get("listetype")
+        kandidater = kropp.get("kandidater")
+        if (not isinstance(oppdrag_id, int) or isinstance(oppdrag_id, bool)
+                or listetype not in maler.MALER
+                or not isinstance(kandidater, list) or not kandidater
+                or not all(isinstance(k, str) and k for k in kandidater)):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        malversjon = maler.MALER[listetype]["malversjon"]
+        # Fristen gjelder også innstillingen (CodeRabbit): en prosess
+        # med bestilt sletting eller passert frist innstilles aldri —
+        # samme predikat som signeringsveien og payloadvinduet dømmer
+        # etter (077), inlinet fordi runtime ikke har EXECUTE på
+        # `m57_payloadvindu`.
+        prad = conn.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s AND slettet_ts IS NULL"
+            "   AND slett_bestilt_ts IS NULL"
+            "   AND now() < coalesce(lukket_ts, opprettet)"
+            "       + slettefrist_dogn * interval '1 day'",
+            (tenant, oppdrag_id)).fetchone()
+        if prad is None:
+            raise _Avbrudd(_feil("ikke_funnet", rid, 404))
+        # Buntens kandidat-id → lagerets uuid: skrivedørens egen
+        # deterministiske form (samme navnerom og skilletegn som
+        # kandidatkortet og leseveien).
+        medlemmer = sorted({str(uuidlib.uuid5(
+            _KANDIDAT_NS, f"{tenant}\x1f{prad[0]}\x1f{k}"))
+            for k in kandidater})
+        serie = uuidlib.uuid5(
+            _KANDIDAT_NS, f"utkastserie\x1f{tenant}\x1f{nokkel}")
+        try:
+            rad = conn.execute(
+                "SELECT ut_liste_id, ut_innhold_hash FROM"
+                " opprett_utsendingsliste(%s,%s,NULL,%s,%s,%s,%s::uuid[])",
+                (tenant, serie, oppdrag_id, listetype, malversjon,
+                 medlemmer)).fetchone()
+        except psycopg.errors.InvalidParameterValue as e:
+            raise _Avbrudd(_feil("request_feilformet", rid)) from e
+        except psycopg.errors.UniqueViolation as e:
+            # Serien finnes alt — nøkkelen er brukt. Gjenspillet dømmes
+            # på INNHOLDET: samme oppdrag/type/medlemsmengde gir roten
+            # tilbake, alt annet er en konflikt.
+            conn.rollback()
+            from db.pg import sett_kontekst
+            sett_kontekst(conn, tenant, bid, rid)
+            rot = conn.execute(
+                "SELECT liste_id, innhold_hash, antall, listetype,"
+                "       oppdrag_id FROM utsendingsliste"
+                " WHERE tenant=%s AND utkast_serie=%s"
+                "   AND forrige_liste_id IS NULL",
+                (tenant, serie)).fetchone()
+            if rot is None:
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            lagret = {str(r[0]) for r in conn.execute(
+                "SELECT kandidat_id FROM utsendingsliste_medlem"
+                " WHERE tenant=%s AND liste_id=%s",
+                (tenant, rot[0])).fetchall()}
+            if (rot[3] != listetype or rot[4] != oppdrag_id
+                    or lagret != set(medlemmer)):
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            tjeneste.logg.hendelse("utsendingsliste_innstilt", rid,
+                                   tenant, liste_id=str(rot[0]),
+                                   gjenspill=True)
+            return _ok({"liste_id": str(rot[0]), "innhold_hash": rot[1],
+                        "antall": rot[2], "listetype": rot[3]}, rid, 200)
+        conn.commit()
+        tjeneste.logg.hendelse("utsendingsliste_innstilt", rid, tenant,
+                               liste_id=str(rad[0]), listetype=listetype,
+                               antall=len(medlemmer))
+        return _ok({"liste_id": str(rad[0]), "innhold_hash": rad[1],
+                    "antall": len(medlemmer), "listetype": listetype},
+                   rid, 201)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def hent_firmatekst(conn, tenant: str, tekst_id, versjon=None):
     """Resolveren (#160): oppslaget som konstruerer den ENESTE lovlige
     bæreren av kundens tone inn i `maler.flett`. Siste uskjulte versjon

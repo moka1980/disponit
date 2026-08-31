@@ -20,7 +20,7 @@ import { t } from "../i18n.js";
 import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          slettEvaluering, avbrytEvaluering, slettStillingsprofil,
          hentUtsendingstekster, lagreUtsendingstekst,
-         slettUtsendingstekst,
+         slettUtsendingstekst, opprettUtsendingsliste,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, hentKandidatdokument,
@@ -1898,12 +1898,91 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
     const vektFold = el("details", { class: "rekrut-vekterfold" },
       el("summary", { text: t("ui.rekruttering.vekter_tittel") }),
       vektFelt);
+    // INNSTILLINGEN (#149, eiermandat 31/8: kjeden gjøres ferdig).
+    // Utvalget er RANGERINGEN LESEREN SER: topp N av gjeldende
+    // sortering (vektene med) blir invitasjonslisten, resten blir
+    // avslagslisten. Kandidatvalg per rad er senere UX-arbeid —
+    // beslutningen «hvor går streken» er tallfeltet.
+    // Innstillingen er REVERSIBEL (en liste er et utkast til den
+    // signeres), så en fersk nøkkel per klikk er trygg — serveren gjør
+    // et dobbelklikk på samme nøkkel til gjenspill, og to serier er
+    // bare to utkast.
+    const innstilling = el("div", { class: "rekrut-innstilling" });
+    if (harScope(ctx, "bestilling:opprett") && radPar.length) {
+      const antallId = `innstill-antall-${svar.oppdrag_id}`;
+      const antallFelt = el("input", { id: antallId, type: "number",
+        min: "1", max: String(radPar.length),
+        value: String(Math.min(5, radPar.length)) });
+      const innstillUtfall = el("div", { role: "alert",
+        class: "rekrut-innstillingsutfall" });
+      const lagKnapp = (listetype, nokkel) => {
+        const knapp = el("button", { type: "button", class: "knapp",
+          text: t(`ui.rekruttering.innstill.${nokkel}`) });
+        knapp.addEventListener("click", async () => {
+          const n = Math.max(1, Math.min(radPar.length,
+            Number(antallFelt.value) || 0));
+          const rangertNaa = [...radPar].sort(etterPoeng)
+            .map((par) => par.rad.kandidat_id);
+          const valgte = listetype === "invitasjon"
+            ? rangertNaa.slice(0, n) : rangertNaa.slice(n);
+          if (!valgte.length) {
+            sett(innstillUtfall, el("p", {
+              text: t("ui.rekruttering.innstill.resten_tom") }));
+            return;
+          }
+          for (const b of innstilling.querySelectorAll("button")) {
+            b.disabled = true;
+          }
+          let liste;
+          try {
+            liste = await opprettUtsendingsliste(
+              svar.oppdrag_id, listetype, valgte);
+          } catch (e) {
+            if (e instanceof UautorisertFeil) {
+              ctx.paaUautorisert(); return;
+            }
+            for (const b of innstilling.querySelectorAll("button")) {
+              b.disabled = false;
+            }
+            sett(innstillUtfall, el("p", {
+              text: t("ui.rekruttering.innstill.feil") }));
+            return;
+          }
+          // Listen bor under «Innstilte lister» — prosessene hentes på
+          // nytt så signeringsflaten viser den med en gang.
+          okt.utfall = flett(t("ui.rekruttering.innstill.innstilt"),
+            { antall: liste.antall });
+          try {
+            const ferskt = await hentJson("/v1/rekruttering/prosesser");
+            if (hoved.isConnected) tegn(hoved, ctx, ferskt, okt);
+          } catch {
+            for (const b of innstilling.querySelectorAll("button")) {
+              b.disabled = false;
+            }
+            sett(innstillUtfall, el("p", {
+              text: flett(t("ui.rekruttering.innstill.innstilt"),
+                { antall: liste.antall }) }));
+          }
+        });
+        return knapp;
+      };
+      innstilling.append(
+        el("h4", { text: t("ui.rekruttering.innstill.tittel") }),
+        el("div", { class: "rekrut-innstillingsvalg" },
+          el("label", { for: antallId,
+            text: t("ui.rekruttering.innstill.antall") }),
+          antallFelt,
+          lagKnapp("invitasjon", "invitasjon_knapp"),
+          lagKnapp("avslag", "avslag_knapp")),
+        innstillUtfall);
+    }
     return { overskrift, noder: [
       rapporthode,
       hoppLenke,
       el("p", { text: t("ui.rekruttering.evalueringer.blindet") }),
       vektFold,
-      el("div", { class: "tablewrap" }, tabell)] };
+      el("div", { class: "tablewrap" }, tabell),
+      innstilling] };
   };
 
   const visRapport = async (oppdragId, { fokus = true } = {}) => {

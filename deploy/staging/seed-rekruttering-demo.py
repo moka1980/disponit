@@ -327,27 +327,16 @@ def main() -> int:
     # utsendelsen — og et avvik mellom listen og de seedede radene ville
     # aldri blitt oppdaget.
     #
-    # Representasjonen er JCS (RFC 8785, `policy_validator.jcs`) — husets
-    # egen kanonisering, den samme signerte bytes ellers regnes av. Ingen
-    # ny maskin: `json.dumps` ville gjort «kanonisk» til en påstand om
-    # flagg, og nøyaktig det er feilen 006 byttet bort. Mottakerne
-    # sorteres på kandidat-id så representasjonen er uavhengig av
-    # innsettingsrekkefølgen, og `antall` er nå LENGDEN av den samme
-    # listen — ikke et `max(…, 1)` som kunne love én mottaker det ikke
-    # fantes rad for.
-    from policy_validator import jcs
-    mottakere.sort(key=lambda mo: mo["kandidat_id"])
-    innhold_hash = hashlib.sha256(jcs.kanoniske_bytes({
-        "listetype": "invitasjon",
-        "malversjon": "invitasjon-v1",
-        "prosess_id": str(pid),
-        "mottakere": mottakere,
-    })).hexdigest()
-    lid = m.execute(
-        "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
-        "'invitasjon-v1',%s,%s)",
-        (tenant, uuid.uuid4(), oid, innhold_hash,
-         len(mottakere))).fetchone()[0]
+    # MANIFESTET BOR I BASEN (080/#149): døren tar MEDLEMMENE og utleder
+    # `innhold_hash` selv, over det sorterte medlemskapet — seedens egen
+    # JCS-hash er borte, for påstanden om innholdet er byttet med
+    # innholdet. Signaturen står dermed for nøyaktig de radene senderen
+    # senere leser.
+    lid, innhold_hash = m.execute(
+        "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','invitasjon-v1',%s::uuid[])",
+        (tenant, uuid.uuid4(), oid,
+         [mo["kandidat_id"] for mo in mottakere])).fetchone()
     m.commit()
     # SPA-SKALLET ER `/`, IKKE `/ui/` (Codex P2). `/ui/`-stien proxes
     # uendret (nginx `location /ui/`), og `ui_asset` slår opp på

@@ -85,6 +85,8 @@ APPEND_ONLY_TRIGGERE = (
     ("oppdrag", "oppdrag_ingen_delete"),
     # 056: kjeden er append-only mot både UPDATE og DELETE.
     ("utsendingsliste", "utsendingsliste_append_only"),
+    # 080 (#149): manifestet er append-only som listen selv.
+    ("utsendingsliste_medlem", "utsendingsliste_medlem_vakt"),
     ("utsendingssignatur", "utsendingssignatur_append_only"),
     ("utsendingsfrigivelse", "utsendingsfrigivelse_append_only"),
     # 057: kandidatlagrene reapes (payload til NULL), men rader slettes
@@ -177,7 +179,8 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # frigivelse→signatur→liste) — ut i avhengighetsrekkefølge
                  # FØR oppdragene.
                  "utsendingsfrigivelse", "utsendingssignatur",
-                 "utsendingsliste",
+                 # 080: manifestet peker på listen OG kandidatankeret.
+                 "utsendingsliste_medlem", "utsendingsliste",
                  # 057: kandidatlagrene peker på prosessen (og parset
                  # tekst på originaldokumentet), prosessen på oppdraget —
                  # barna først, ankeret sist, alt FØR oppdragene.

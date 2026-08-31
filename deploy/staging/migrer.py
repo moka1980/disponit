@@ -243,6 +243,7 @@ GRANT SELECT, UPDATE ON oppdrag TO {rolle};
 -- uten radene her overlever ikke migrasjonens grants neste kjøring
 -- (Cursor P1 på #140).
 GRANT SELECT ON utsendingsliste, utsendingssignatur, utsendingsfrigivelse TO {rolle};
+GRANT SELECT ON utsendingsliste_medlem TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON reparasjonsoperasjoner TO {rolle};
 GRANT SELECT ON verifikasjonsgenerasjon, verifikasjonsbevis, utforelsesklasser TO {rolle};
 GRANT SELECT ON verifikasjonskonflikt TO {rolle};
@@ -378,7 +379,7 @@ GRANT EXECUTE ON FUNCTION avvis_med_opplosning(TEXT, BIGINT, BIGINT[], TEXT, TEX
 -- 056: M-57s API-veier — listen opprettes og signeres av innloggede
 -- MENNESKER gjennom API-et (runtime alene; utsendingsveien — frigivelse
 -- og frigivelsesoppdrag — bor hos varsleren, se VARSLER_RETTIGHETER).
-GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT, TEXT, UUID[]) TO {rolle};
 GRANT EXECUTE ON FUNCTION signer_utsendingsliste(TEXT, UUID, TEXT, TEXT) TO {rolle};
 -- 057: kandidatprosessens to herdede veier. Migrasjonen navngir ikke
 -- runtime-rollen i det hele tatt lenger (Cursor P2, samme form som 056):
