@@ -6828,13 +6828,24 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
         { dokument_id: "d0000000-0000-5000-8000-000000000001",
           filnavn: "cv.pdf" },
         { dokument_id: "d0000000-0000-5000-8000-000000000002",
-          filnavn: "soknad.html" }] },
+          filnavn: "soknad.html" },
+        { dokument_id: "d0000000-0000-5000-8000-000000000003",
+          filnavn: "notat.txt" },
+        { dokument_id: "d0000000-0000-5000-8000-000000000004",
+          filnavn: "diger.html" }] },
     ["/v1/rekruttering/kandidatdokument/96/"
      + "d0000000-0000-5000-8000-000000000001"]:
       { __blob: "%PDF-1.4", __innholdstype: "application/pdf" },
     ["/v1/rekruttering/kandidatdokument/96/"
      + "d0000000-0000-5000-8000-000000000002"]:
-      { __blob: "<p>Hei</p>", __innholdstype: "text/html" },
+      { __blob: "<p>Hei fra søknaden</p>", __innholdstype: "text/html" },
+    ["/v1/rekruttering/kandidatdokument/96/"
+     + "d0000000-0000-5000-8000-000000000003"]:
+      { __blob: "Ren tekst <uten> markup", __innholdstype: "text/plain" },
+    ["/v1/rekruttering/kandidatdokument/96/"
+     + "d0000000-0000-5000-8000-000000000004"]:
+      { __blob: "x".repeat(2 * 1024 * 1024 + 1),
+        __innholdstype: "text/html" },
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
@@ -6865,11 +6876,13 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
   const tekst = seksjon().textContent;
   assert.match(tekst, /kari@eksempel\.no/);
   assert.match(tekst, /cv\.pdf/);
-  // Dokumentet VISES fra en blob FORELDEREN har hentet (eiers funn
-  // 31/8, runde 2): en sandboxet ramme har opak origin og får aldri
-  // øktcookien med — direkte `src` mot ruten ga 401 og blank side. Så
-  // porten måler BEGGE halvdeler: hentingen går som autentisert kall
-  // (ruten står i KALL), og rammens `src` er en blob, aldri API-ruten.
+  // Dokumentet hentes av FORELDEREN (eiers funn 31/8, runde 2 — en
+  // sandboxet ramme har opak origin og får aldri øktcookien med), og
+  // HTML rendres via SRCDOC, aldri via en URL (runde 3 — WebKit nekter
+  // en opak ramme å slå opp forelderens blob-er, og flatens CSP
+  // blokkerer enhver ramme-forespørsel; srcdoc har ingen). Porten
+  // måler alle tre: autentisert kall i KALL, srcdoc uten src, full
+  // sandkasse.
   const visHtml = [...kortEl().querySelectorAll("button")]
     .find((b) => b.textContent === "soknad.html");
   assert.ok(visHtml, "dokumentets Vis-knapp mangler");
@@ -6881,15 +6894,44 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
     + "d0000000-0000-5000-8000-000000000002"),
     "forelderen hentet aldri dokumentet selv");
   const ramme = panel.querySelector("iframe.rekrut-dokvisning");
-  assert.ok(ramme && ramme.getAttribute("src").startsWith("blob:"),
-    "rammen viser ikke en blob");
-  assert.ok(!ramme.getAttribute("src").includes("/v1/"),
-    "rammen peker på API-ruten — den forespørselen bærer ingen økt");
+  assert.ok(ramme, "HTML-rammen mangler");
+  assert.ok((ramme.getAttribute("srcdoc") || "").includes(
+    "Hei fra søknaden"), "srcdoc bærer ikke dokumentet");
+  assert.equal(ramme.getAttribute("src"), null,
+    "rammen har en src — den forespørselen blokkeres av CSP/WebKit");
   // Sandkassen er PÅ og TOM for HTML: ingen allow-scripts, ingen
   // allow-same-origin — opplastet HTML har null fullmakter.
   assert.equal(ramme.getAttribute("sandbox"), "",
     "rammen er ikke fullt sandboxet");
   panel.querySelector(".dialog-lukk").click();
+  // Ren tekst vises som TEKSTNODE — aldri en ramme, aldri markup.
+  const visTxt = [...kortEl().querySelectorAll("button")]
+    .find((b) => b.textContent === "notat.txt");
+  assert.ok(visTxt, "tekstdokumentets Vis-knapp mangler");
+  visTxt.click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "tekstpanelet åpnet ikke");
+  const tekstPanel = document.querySelector(".dialog.skuff");
+  const pre = tekstPanel.querySelector("pre.rekrut-dokvisning-tekst");
+  assert.ok(pre, "tekstvisningen mangler");
+  assert.equal(pre.textContent, "Ren tekst <uten> markup");
+  assert.equal(tekstPanel.querySelector("iframe"), null,
+    "ren tekst skal ikke ha en ramme");
+  tekstPanel.querySelector(".dialog-lukk").click();
+  // Et overdimensjonert dokument dekodes ALDRI inn i DOM-en — det
+  // faller til nedlastingslenken (CodeRabbit: grense foran inline).
+  const visDiger = [...kortEl().querySelectorAll("button")]
+    .find((b) => b.textContent === "diger.html");
+  assert.ok(visDiger, "det store dokumentets Vis-knapp mangler");
+  visDiger.click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "panelet for det store dokumentet åpnet ikke");
+  const digerPanel = document.querySelector(".dialog.skuff");
+  assert.equal(digerPanel.querySelector("iframe"), null,
+    "et overdimensjonert dokument fikk en ramme");
+  assert.ok(digerPanel.querySelector("a[download]"),
+    "nedlastingslenken mangler for det store dokumentet");
+  digerPanel.querySelector(".dialog-lukk").click();
   // PDF-en får egen ramme UTEN sandkasse-attributt: PDF-viseren er en
   // plugin nettlesere ikke kjører i sandboxede rammer (blank side), og
   // en blob typet application/pdf av serverens dom rendres aldri som
