@@ -98,28 +98,60 @@ function kandidatkortBoks(oppdragId, kandidatId) {
             return;
           }
           vis.disabled = false;
-          const url = URL.createObjectURL(dokument.blob);
-          let innhold;
-          if (["text/html", "application/xhtml+xml", "text/plain"]
-              .includes(dokument.innholdstype)) {
-            innhold = el("iframe", { class: "rekrut-dokvisning",
-              title: d.filnavn, sandbox: "", src: url });
-          } else if (dokument.innholdstype === "application/pdf") {
-            innhold = el("iframe", { class: "rekrut-dokvisning rekrut-dokvisning-pdf",
-              title: d.filnavn, src: url });
+          const type = dokument.innholdstype;
+          // Inline-visning DEKODER dokumentet inn i DOM-en (srcdoc/
+          // tekstnode) — en grense står foran (CodeRabbit): et
+          // overdimensjonert dokument fryser flaten, og faller i
+          // stedet til nedlastingslenken. PDF berøres ikke: blob-URL-en
+          // dekoder ingenting i flaten.
+          const kanInline = dokument.blob.size <= 2 * 1024 * 1024;
+          if (kanInline
+              && (type === "text/html" || type === "application/xhtml+xml")) {
+            // HTML rendres via `srcdoc`, aldri via en URL (runde 3):
+            // WebKit nekter en sandboxet (opak) ramme å slå opp
+            // forelderens blob-URL-er, og flatens CSP (`default-src
+            // 'none'`) blokkerer enhver ramme-FORESPØRSEL — `srcdoc`
+            // har ingen forespørsel å blokkere. Innholdet står som
+            // attributt (DOM-escapet), sandkassen er full (`sandbox=""`
+            // — ingen skript, ingen origin, ingen økt), og srcdoc-
+            // dokumentet arver i tillegg flatens strenge CSP.
+            const ramme = el("iframe", { class: "rekrut-dokvisning",
+              title: d.filnavn, sandbox: "" });
+            ramme.setAttribute("srcdoc", await dokument.blob.text());
+            Detaljpanel({ tittel: d.filnavn, innhold: ramme });
+          } else if (kanInline && type === "text/plain") {
+            // Ren tekst går inn som TEKSTNODE — den kan aldri bli
+            // markup og trenger verken ramme eller sandkasse.
+            Detaljpanel({ tittel: d.filnavn, innhold: el("pre", {
+              class: "rekrut-dokvisning rekrut-dokvisning-tekst",
+              text: await dokument.blob.text() }) });
+          } else if (type === "application/pdf") {
+            // PDF-viseren er en plugin nettlesere ikke kjører i
+            // sandboxede rammer — rammen står uten sandkasse-attributt,
+            // og en blob TYPET application/pdf av serverens egen dom
+            // rendres aldri som HTML, så den kan ikke bli DOM eller
+            // skript. Forespørselen tillates av flatens `frame-src
+            // blob:`. Blob-URL-en slippes når panelet lukkes.
+            const url = URL.createObjectURL(dokument.blob);
+            Detaljpanel({ tittel: d.filnavn,
+              innhold: el("iframe", {
+                class: "rekrut-dokvisning rekrut-dokvisning-pdf",
+                title: d.filnavn, src: url }),
+              paaLukk: () => URL.revokeObjectURL(url) });
           } else {
+            // Alt annet vises aldri — nedlastingslenke, som serverens
+            // attachment-fall.
+            const url = URL.createObjectURL(dokument.blob);
             const lenke = el("a", { class: "knapp",
               href: url, text: t("ui.rekruttering.kandidatkort.last_ned") });
             lenke.setAttribute("download", d.filnavn);
-            innhold = el("div", {},
-              el("p", { text: t(
-                "ui.rekruttering.kandidatkort.kan_ikke_vises") }),
-              lenke);
+            Detaljpanel({ tittel: d.filnavn,
+              innhold: el("div", {},
+                el("p", { text: t(
+                  "ui.rekruttering.kandidatkort.kan_ikke_vises") }),
+                lenke),
+              paaLukk: () => URL.revokeObjectURL(url) });
           }
-          // Blob-URL-en peker på minne og slippes når panelet lukkes —
-          // alle lukkeveiene ender i `paaLukk`.
-          Detaljpanel({ tittel: d.filnavn, innhold,
-            paaLukk: () => URL.revokeObjectURL(url) });
         });
         return el("li", {}, vis);
       });

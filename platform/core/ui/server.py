@@ -119,9 +119,16 @@ def bygg_ui_csp(idp_origins: str) -> str:
     kan aldri injisere en direktiv — kun validerte origins slipper gjennom."""
     origins = kanoniske_idp_origins(idp_origins)
     form_action = "form-action 'self'" + "".join(f" {o}" for o in origins)
+    # `frame-src blob:` (eiers funn 31/8, runde 3): kandidatkortets
+    # PDF-visning rammer inn en blob forelderen selv har hentet og
+    # typet — uten kilden blokkerte `default-src 'none'` rammen og
+    # panelet ble blankt. KUN blob: slipper inn — en ramme i flaten kan
+    # fortsatt aldri peke på nett eller på API-et. HTML-dokumenter går
+    # via `srcdoc` (ingen forespørsel) og trenger ingen kilde her.
     return (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; "
+        "connect-src 'self'; img-src 'self'; font-src 'self'; "
+        "frame-src blob:; object-src 'none'; "
         f"base-uri 'none'; frame-ancestors 'none'; {form_action}; "
         "manifest-src 'self'; upgrade-insecure-requests"
     )

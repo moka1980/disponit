@@ -259,14 +259,14 @@ server {
         limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;
         proxy_hide_header Content-Security-Policy;
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' ${DISPONIT_UI_IDP_ORIGINS}; manifest-src 'self'; upgrade-insecure-requests" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; frame-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' ${DISPONIT_UI_IDP_ORIGINS}; manifest-src 'self'; upgrade-insecure-requests" always;
         proxy_pass http://unix:/run/disponit/api.sock;
     }
     location /ui/ {
         limit_req zone=disponit_general burst=100 nodelay;
         limit_req_status 429;
         proxy_hide_header Content-Security-Policy;
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' ${DISPONIT_UI_IDP_ORIGINS}; manifest-src 'self'; upgrade-insecure-requests" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; frame-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' ${DISPONIT_UI_IDP_ORIGINS}; manifest-src 'self'; upgrade-insecure-requests" always;
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 

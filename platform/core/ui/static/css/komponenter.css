@@ -1174,6 +1174,11 @@ tr.rekrut-sjikt-neste > :first-child {
    bakgrunn tegner uansett sin egen). */
 .rekrut-dokvisning { width: 100%; height: 65vh; border: 1px solid
   var(--line); border-radius: var(--radius-sm); background: var(--card); }
+/* Ren tekst vises som tekstnode i panelet (aldri markup) — samme ramme-
+   utseende, men med egen scroll og brytning for lange linjer. */
+.rekrut-dokvisning-tekst { overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; margin: 0; padding: var(--sp-3);
+  color: var(--ink); font-size: 0.9rem; }
 
 /* Plassnummeret (eiers bestilling 30/8): rangeringen sies med tall, ikke
    bare som rekkefølge — dempet, tabulære sifre, fast luke til navnet. */
