@@ -541,3 +541,102 @@ test("Nøkkeltall: ingen absolutt bredde tvinger fram siderulling", () => {
     /overflow-wrap:\s*(anywhere|break-word)/,
     "et ubrytelig radnavn setter ellers tabellens minstebredde");
 });
+
+// PR-C: EGENDEFINERT INTERVALL. Velgeren viser kontrollene (to
+// datetime-local med label + hent-knapp) uten å hente noe — intervallet
+// finnes ikke før brukeren har angitt det. Hent sender paret `fra`/`til`
+// (lokaltid omskrevet til UTC, eksplisitt) og ALDRI `vindu`.
+test("Nøkkeltall: egendefinert intervall GET-er fra/til — aldri vindu", async () => {
+  const kall = [];
+  globalThis.fetch = async (url) => {
+    kall.push(url);
+    return { ok: true, status: 200, json: async () => SVARFORM };
+  };
+  try {
+    const h = nyHoved();
+    visNokkeltall(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+    assert.equal(kall.length, 1);
+
+    const velger = h.querySelector("select#nokkeltall-vindu");
+    const valg = [...velger.options].map((o) => o.value);
+    assert.ok(valg.includes("egendefinert"), "egendefinert mangler i velgeren");
+    velger.value = "egendefinert";
+    velger.dispatchEvent(new window.Event("change"));
+
+    const fra = h.querySelector("input#nokkeltall-intervall-fra");
+    const til = h.querySelector("input#nokkeltall-intervall-til");
+    assert.ok(fra && til, "intervallkontrollene mangler");
+    assert.equal(fra.type, "datetime-local");
+    assert.ok(h.querySelector('label[for="nokkeltall-intervall-fra"]'));
+    assert.ok(h.querySelector('label[for="nokkeltall-intervall-til"]'));
+    assert.ok(!fra.closest("div").hidden, "kontrollene er skjult");
+    // Ingen henting av at velgeren byttet: intervallet er ikke angitt.
+    assert.equal(kall.length, 1);
+    // …og forrige svar står fortsatt (det er sant, med egne grenser).
+    assert.ok(h.querySelectorAll("table").length >= 5);
+
+    fra.value = "2026-08-01T12:00";
+    til.value = "2026-08-02T12:00";
+    const knapp = [...h.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.nokkeltall.intervall_hent"));
+    assert.ok(knapp, "hent-knappen mangler");
+    knapp.click();
+    await vent(() => kall.length === 2);
+    const u = new URL(kall[1], "http://x");
+    assert.equal(u.searchParams.get("vindu"), null,
+      "egendefinert sendte vindu-parameteren");
+    // Lokaltid → UTC eksplisitt: nøyaktig toISOString av feltverdien,
+    // tolket i kjørerens egen sone — samme omskriving flaten gjør.
+    assert.equal(u.searchParams.get("fra"),
+      new Date("2026-08-01T12:00").toISOString());
+    assert.equal(u.searchParams.get("til"),
+      new Date("2026-08-02T12:00").toISOString());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  } finally {
+    globalThis.fetch = STANDARD_FETCH;
+  }
+});
+
+test("Nøkkeltall: 400 på egendefinert står ved kontrollene — aldri tom og stum flate", async () => {
+  const svarkoe = [{ ok: true, status: 200, json: async () => SVARFORM },
+                   { ok: false, status: 400,
+                     json: async () => ({ feil: "request_feilformet" }) }];
+  globalThis.fetch = async () => svarkoe.shift();
+  try {
+    const h = nyHoved();
+    visNokkeltall(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+
+    const velger = h.querySelector("select#nokkeltall-vindu");
+    velger.value = "egendefinert";
+    velger.dispatchEvent(new window.Event("change"));
+    const knapp = [...h.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.nokkeltall.intervall_hent"));
+
+    // Halvt utfylt: samme feiltekst, uten rundtur (svarkøen røres ikke).
+    h.querySelector("input#nokkeltall-intervall-fra").value =
+      "2026-08-01T12:00";
+    knapp.click();
+    assert.ok(h.textContent.includes(t("ui.nokkeltall.intervall_feil")),
+      "halvt par ga ingen feiltekst");
+    assert.equal(svarkoe.length, 1, "halvt par gikk til serveren");
+
+    // Fullt utfylt, serveren svarer 400: teksten står ved kontrollene
+    // (role=alert), og flaten viser verken den generelle feiltilstanden
+    // eller en løgnaktig «laster»-linje.
+    h.querySelector("input#nokkeltall-intervall-til").value =
+      "2026-08-02T12:00";
+    knapp.click();
+    await vent(() => svarkoe.length === 0);
+    await vent(() => h.querySelector('[role="alert"]').textContent
+      .includes(t("ui.nokkeltall.intervall_feil")));
+    assert.ok(!h.querySelector(".tilstand.feil"),
+      "400 rev flaten til den generelle feiltilstanden");
+    assert.ok(!h.textContent.includes(t("ui.laster")));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  } finally {
+    globalThis.fetch = STANDARD_FETCH;
+  }
+});

@@ -14,12 +14,19 @@
 // ledetekst — velgeren rører den ikke.
 import { el, sett } from "../dom.js";
 import { t, harNokkel } from "../i18n.js";
-import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
+import { hentJson, UautorisertFeil, IngenTilgangFeil, FeilformetFeil }
+  from "../api.js";
 import { Tidspunkt, Feiltilstand, TilgangsVakt } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode } from "./felles.js";
 
 const VINDUER = ["24t", "7d", "30d"];
+
+// Egendefinert intervall (PR-C): verdien er FLATENS eget velgervalg,
+// aldri en parameter — API-et kjenner bare `vindu`-nøklene over eller
+// paret `fra`/`til`. Navnet kolliderer derfor med vilje ikke med noen
+// API-verdi.
+const EGENDEFINERT = "egendefinert";
 
 // Én søylerad: tallet som TEKST først, bredden som visuell støtte.
 // Bredden er relativ til partisjonens største verdi — en presentasjons-
@@ -257,12 +264,39 @@ export function visNokkeltall(hoved, ctx) {
     velger.append(el("option", { value: v,
       text: t(`ui.nokkeltall.vindu.${v}`) }));
   }
+  velger.append(el("option", { value: EGENDEFINERT,
+    text: t("ui.nokkeltall.vindu.egendefinert") }));
   const kontroll = el("div", { class: "kpi-kontroll" },
     el("label", { for: velgerId, text: t("ui.nokkeltall.vindu_ledetekst") }),
     velger);
+  // EGENDEFINERT INTERVALL (PR-C): to datetime-local med hver sin
+  // <label> og en eksplisitt hent-knapp — intervallet sendes når
+  // brukeren sier fra, aldri på hvert tastetrykk. Lokaltid → UTC skjer
+  // EKSPLISITT her (toISOString): API-et avviser naive tidsstempler
+  // med 400, og flaten ber aldri serveren gjette sonen brukeren skrev
+  // i. `intervallValg` er de OMSKREVNE grensene siste hent ba om —
+  // input-feltene er kladd til knappen binder dem.
+  const fraId = "nokkeltall-intervall-fra";
+  const tilId = "nokkeltall-intervall-til";
+  const fraInput = el("input", { type: "datetime-local", id: fraId });
+  const tilInput = el("input", { type: "datetime-local", id: tilId });
+  const hentKnapp = el("button", { class: "knapp liten", type: "button",
+    text: t("ui.nokkeltall.intervall_hent") });
+  // Feilen bor VED kontrollene (role="alert" annonserer seg når teksten
+  // settes): en 400 er et svar til den som fylte ut feltene — flaten
+  // rives aldri til en tom eller generisk feilside for det.
+  const intervallFeil = el("p", { class: "kpi-intervall-feil",
+    role: "alert" });
+  const intervall = el("div", { class: "kpi-kontroll", hidden: true },
+    el("label", { for: fraId, text: t("ui.nokkeltall.intervall_fra") }),
+    fraInput,
+    el("label", { for: tilId, text: t("ui.nokkeltall.intervall_til") }),
+    tilInput,
+    hentKnapp);
+  let intervallValg = null;
   const meta = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
-  hoved.append(tilstand, kontroll, meta, kropp);
+  hoved.append(tilstand, kontroll, intervall, intervallFeil, meta, kropp);
 
   // Bare det SISTE vindusvalget får skrive til flaten. Uten dette lever
   // to kall side om side når velgeren endres mens et svar er underveis,
@@ -290,8 +324,14 @@ export function visNokkeltall(hoved, ctx) {
     const utdatert = () => min !== siste;
     sett(tilstand);
     sett(meta);
+    sett(intervallFeil);
     sett(kropp, el("p", { class: "muted", text: t("ui.laster") }));
-    hentJson("/v1/nokkeltall", { vindu }).then((d) => {
+    // Egendefinert sender PARET `fra`/`til` og aldri `vindu` — API-et
+    // avviser blandingen med 400, og velgerverdien er flatens egen.
+    const sok = vindu === EGENDEFINERT
+      ? { fra: intervallValg.fra, til: intervallValg.til }
+      : { vindu };
+    hentJson("/v1/nokkeltall", sok).then((d) => {
       if (utdatert()) return;
       sett(tilstand,
         el("b", { text: String(d.apne_naa) }),
@@ -355,10 +395,45 @@ export function visNokkeltall(hoved, ctx) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (utdatert()) return;
       if (e instanceof IngenTilgangFeil) { sett(kropp, TilgangsVakt({})); return; }
+      // 400 på et egendefinert intervall er svar til den som fylte ut
+      // feltene: teksten står VED kontrollene, og «laster»-linjen tas
+      // bort — den ville ellers lovet et svar som alt er avvist. Alle
+      // andre feil får den generelle feiltilstanden med prøv-igjen.
+      if (e instanceof FeilformetFeil && vindu === EGENDEFINERT) {
+        sett(intervallFeil, t("ui.nokkeltall.intervall_feil"));
+        sett(kropp);
+        return;
+      }
       sett(kropp, Feiltilstand({ paaProvIgjen: last }));
     });
   };
-  velger.addEventListener("change", () => { vindu = velger.value; last(); });
+  velger.addEventListener("change", () => {
+    vindu = velger.value;
+    if (vindu === EGENDEFINERT) {
+      // Kontrollene vises, men ingenting hentes før brukeren har angitt
+      // intervallet: et gjettet intervall ville vært et spørsmål flaten
+      // fant på selv. Forrige svar blir stående — det er fortsatt sant,
+      // og bærer sine egne grenser i klartekst (meta-linjen).
+      intervall.hidden = false;
+      return;
+    }
+    intervall.hidden = true;
+    intervallValg = null;
+    sett(intervallFeil);
+    last();
+  });
+  hentKnapp.addEventListener("click", () => {
+    // Halvt utfylt er samme feil som serverens 400 — sagt uten rundtur.
+    if (!fraInput.value || !tilInput.value) {
+      sett(intervallFeil, t("ui.nokkeltall.intervall_feil"));
+      return;
+    }
+    // datetime-local ER brukerens lokaltid; omskrivingen til UTC gjøres
+    // her, eksplisitt, før serveren ser verdiene (toISOString → Z).
+    intervallValg = { fra: new Date(fraInput.value).toISOString(),
+                      til: new Date(tilInput.value).toISOString() };
+    last();
+  });
   last();
 }
 

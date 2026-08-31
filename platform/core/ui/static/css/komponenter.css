@@ -1133,7 +1133,14 @@ html[data-visning="landing"] .skall-hoved {
   background:var(--card)}
 .kpi-tilstand b{font-size:var(--fs-ingress);margin-right:var(--sp-1)}
 .kpi-kontroll{display:flex;gap:var(--sp-2);align-items:center;
-  margin-bottom:var(--sp-2)}
+  margin-bottom:var(--sp-2);flex-wrap:wrap}
+/* PR-C: feilen ved intervallkontrollene. EGEN klasse, ikke
+   `.tilstand.feil`: den klassen er den GENERELLE feiltilstandens
+   kjennemerke (SideStatus/Feiltilstand), og en 400 ved kontrollene er
+   nettopp ikke den — et delt kjennemerke ville gjort de to umulige å
+   skille, i tester som i lesning. Fargen er varselstokenet; teksten
+   bærer opplysningen (role="alert" i markupen). */
+.kpi-intervall-feil{color:var(--danger)}
 
 /* M-57 trafikklys (klarsignalet §8). Kategorien STÅR som tekst i cellen —
    markupen er `<span class="trafikklys trafikklys-{status}">` med en
