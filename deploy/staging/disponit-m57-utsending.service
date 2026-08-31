@@ -1,0 +1,34 @@
+# M-57-utsendingen: de signerte listene blir e-post (081).
+#
+# Varselsender-formen, men for en IRREVERSIBEL handling: klaimet
+# committes FØR SMTP, og et klaim som dør mellom SMTP-aksept og
+# kvittering blir TERMINALT `uviss` — aldri auto-resend. Derfor er også
+# fristen senderens egen (FRIST_S i m57_utsender.py), og
+# TimeoutStartSec bare et sikkerhetsnett, som hos varselsenderen.
+#
+# Credentialen er SENDERENS DSN (`disponit_varselsender`) — samme rolle
+# og samme credential-katalog som varselsenderen: det ER plattformens
+# signerte utsendingsvei (§6), og SMTP-oppsettet deles. Rollen har null
+# tabellrettigheter; de fem 081-dørene og frigivelsesveien er alt.
+
+[Unit]
+Description=Disponit M-57-utsending (invitasjon/avslag)
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/varsel/DISPONIT_DATABASE_URL
+# SMTP-oppsettet er VALGFRITT (minus-tegnet): mangler filen, rapporterer
+# senderen `smtp_ikke_konfigurert`, rører ikke køen og avslutter med 0 —
+# varselsender-dommen, ordrett.
+EnvironmentFile=-/etc/disponit/varsel/smtp.env
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_m57_utsender
+# Fristen (4 min) + én påbegynt sending (fire sokkeloperasjoner à 20 s)
+# + margin — tallene hører sammen med m57_utsender.FRIST_S.
+TimeoutStartSec=6min
+
+[Install]
+WantedBy=multi-user.target

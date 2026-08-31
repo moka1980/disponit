@@ -58,7 +58,8 @@ disponit-evidensreaper.service disponit-evidensreaper.timer
 disponit-plan.service disponit-plan.timer
 disponit-wcag-audit.service
 disponit-domeneverifisering.service disponit-domeneverifisering.timer
-disponit-varselsender.service disponit-varselsender.timer"
+disponit-varselsender.service disponit-varselsender.timer
+disponit-m57-utsending.service disponit-m57-utsending.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -793,7 +794,8 @@ disponit-m37.service disponit-helse.timer disponit-varselsender.timer
 disponit-domenerevalidering.timer disponit-artefaktrydding.timer
 disponit-evidensreaper.timer disponit-plan.timer
 disponit-rydd-pending.timer disponit-backup.timer
-disponit-domeneverifisering.timer disponit-wcag-audit.service"
+disponit-domeneverifisering.timer disponit-wcag-audit.service
+disponit-m57-utsending.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1005,6 +1007,7 @@ echo "vedlikeholdsvindu: i drift før stopp —" \
 systemctl stop disponit-helse.timer disponit-helse.service \
     disponit-m37.service \
     disponit-api.service disponit-api.socket 2>/dev/null || true
+systemctl stop disponit-m57-utsending.timer disponit-m57-utsending.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1124,6 +1127,9 @@ systemctl enable --now disponit-domeneverifisering.timer
 # slo senderen av, permanent, og køen ville bare vokst. Timeren, ikke
 # tjenesten: oneshot-en er timerens å starte.
 systemctl enable --now disponit-varselsender.timer
+# 081: M-57-utsendingen — samme form og samme credential som
+# varselsenderen; uten smtp.env rører den ingenting.
+systemctl enable --now disponit-m57-utsending.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

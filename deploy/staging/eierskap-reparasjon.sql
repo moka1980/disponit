@@ -71,6 +71,12 @@ INSERT INTO _design VALUES
     -- familiens opphavsveier. Paritetstesten fanget at de manglet her —
     -- nøyaktig jobben dens.
     ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,uuid[])', 'disponit_m37_claimer'),
+    -- 081: senderbenens dører.
+    ('FUNCTION', 'm57_neste_sendinger(text,integer,integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm57_start_sending(text,uuid,uuid,uuid,integer)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm57_fullfor_sending(text,uuid,uuid,uuid,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm57_sendeklare_tenanter(integer,integer)', 'disponit_domene_eier'),
+    ('FUNCTION', 'm57_merk_uviss(interval)', 'disponit_domene_eier'),
     -- 056-signaturen står til 080 har droppet den (CodeRabbit critical):
     -- kjører reparasjonen på en base FØR 080, ville en manglende rad
     -- flyttet den claimer-eide døren til migrator — og 080s DROP (som
