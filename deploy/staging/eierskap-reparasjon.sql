@@ -70,7 +70,7 @@ INSERT INTO _design VALUES
     -- 056: M-57-utsendingskjedens funksjoner — samme eier som outbox-
     -- familiens opphavsveier. Paritetstesten fanget at de manglet her —
     -- nøyaktig jobben dens.
-    ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,uuid[])', 'disponit_m37_claimer'),
+    ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,uuid[],uuid,integer)', 'disponit_m37_claimer'),
     -- 081: senderbenens dører.
     ('FUNCTION', 'm57_neste_sendinger(text,integer,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm57_start_sending(text,uuid,uuid,uuid,integer)', 'disponit_m37_claimer'),

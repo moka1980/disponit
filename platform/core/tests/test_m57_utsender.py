@@ -276,3 +276,73 @@ def test_runtime_naar_ikke_senderdorene(migrator):
             _sett_kontekst(rt, TENANT)
     finally:
         rt.close()
+
+
+@pg
+def test_firmateksten_baerer_tonen_ut_i_eposten(migrator, monkeypatch):
+    """083/#160 siste ledd: listen bærer kundens firmatekst-referanse,
+    signaturen dekker den (hashen endres med tonen), og e-posten
+    flettes med den eksakte versjonen. Skjult tekst kan aldri
+    innstilles; versjonen pinnes av døren."""
+    import uuid as uuidmod
+    monkeypatch.setenv("DISPONIT_HOST", "kunde.example")
+    oid, pid, kids, _ = _prosess_med_kandidater(migrator, 1)
+    _utsendingsdata(migrator, pid, kids)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_domene_eier")
+    tid, v1 = migrator.execute(
+        "SELECT ut_tekst_id, ut_versjon FROM"
+        " opprett_utsendingstekst_versjon(%s,NULL,'Tonen',"
+        "'Med vennlig hilsen Demo AS','forf',%s)",
+        (TENANT, "t-" + secrets.token_hex(4))).fetchone()
+    migrator.execute("RESET ROLE")
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    # Uten tone og med tone gir ULIK hash — signaturen dekker tonen.
+    _lid0, h0 = migrator.execute(
+        "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','invitasjon-v1',%s::uuid[])",
+        (TENANT, uuidmod.uuid4(), oid, kids)).fetchone()
+    lid, h1 = migrator.execute(
+        "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','invitasjon-v1',%s::uuid[],%s,NULL)",
+        (TENANT, uuidmod.uuid4(), oid, kids, tid)).fetchone()
+    assert h0 != h1, "hashen dekker ikke tonen"
+    rad = migrator.execute(
+        "SELECT firmatekst_ref, firmatekst_versjon FROM utsendingsliste"
+        " WHERE tenant=%s AND liste_id=%s", (TENANT, lid)).fetchone()
+    assert str(rad[0]) == str(tid) and rad[1] == v1, \
+        "versjonen ble ikke pinnet av døren"
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    bid = _signatar(migrator)
+    _sett_kontekst(migrator, TENANT)
+    serie = migrator.execute(
+        "SELECT utkast_serie FROM utsendingsliste WHERE tenant=%s"
+        " AND liste_id=%s", (TENANT, lid)).fetchone()[0]
+    migrator.rollback()
+    _signer(migrator, (lid, serie, h1), bid)
+    sendte = []
+    snd = _sender()
+    try:
+        res = m57_utsender.kjor(
+            snd, send=lambda til, emne, tekst: sendte.append(tekst))
+    finally:
+        snd.close()
+    # Den usignerte tonefrie listen sendes ikke; den signerte bærer tonen.
+    assert res["sendt"] == 1, res
+    assert "Med vennlig hilsen Demo AS" in sendte[0], \
+        "kundens tone nådde aldri e-posten"
+    # Skjult tekst kan aldri innstilles.
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_domene_eier")
+    migrator.execute("SELECT skjul_utsendingstekst(%s,%s)", (TENANT, tid))
+    migrator.execute("RESET ROLE")
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+            "'invitasjon','invitasjon-v1',%s::uuid[],%s,NULL)",
+            (TENANT, uuidmod.uuid4(), oid, kids, tid))
+    migrator.rollback()

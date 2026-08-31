@@ -7087,6 +7087,11 @@ test("Rapporten: innstillingen sender topp N av GJELDENDE rangering (#149)", asy
       return { liste_id: "l-1", innhold_hash: "h".repeat(64),
                antall: 1, listetype: "invitasjon" };
     }
+    if (sti === "/v1/rekruttering/utsendingstekster") {
+      return { tekster: [{ tekst_id: "t-1", versjon: 2,
+                           navn: "Standardhilsen",
+                           tekst: "Mvh oss" }] };
+    }
     return {
       "/v1/rekruttering/prosesser": prosess(),
       "/v1/rekruttering/stillingsprofiler": profiler(),
@@ -7122,6 +7127,11 @@ test("Rapporten: innstillingen sender topp N av GJELDENDE rangering (#149)", asy
   const flate = seksjon().querySelector(".rekrut-innstilling");
   const antall = flate.querySelector("input[type=number]");
   antall.value = "1";
+  const tone = flate.querySelector("select");
+  assert.ok(tone, "tonevelgeren mangler");
+  assert.ok(await vent(() => tone.options.length === 2),
+    "kundens tekster kom aldri i velgeren");
+  tone.value = "t-1";
   const knapp = [...flate.querySelectorAll("button")].find((b) =>
     b.textContent === t("ui.rekruttering.innstill.invitasjon_knapp"));
   assert.ok(knapp, "invitasjonsknappen mangler");
@@ -7133,6 +7143,9 @@ test("Rapporten: innstillingen sender topp N av GJELDENDE rangering (#149)", asy
   // Utvalget er GJELDENDE rangering: kandidat-02 har høyest poeng og er
   // topp 1 — aldri råbuntens rekkefølge.
   assert.deepEqual(kall.kropp.kandidater, ["kandidat-02"]);
+  // Tonen (#160/083): valgt tekst bæres i kroppen; døren pinner
+  // versjonen serverside.
+  assert.equal(kall.kropp.firmatekst, "t-1");
   assert.equal(kall.kropp.listetype, "invitasjon");
   assert.equal(kall.kropp.oppdrag_id, 97);
   assert.ok(Object.keys(kall.hoder).some((h) =>

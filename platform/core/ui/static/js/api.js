@@ -257,9 +257,10 @@ export const simulerPolicyutkast = (utkastId, hendelse, rolle) =>
          "POST", { hendelse, rolle });
 
 export const opprettUtsendingsliste = (oppdragId, listetype, kandidater,
-                                       idem) =>
+                                       idem, firmatekst) =>
   _muter("/v1/rekruttering/lister", "POST",
-    { oppdrag_id: oppdragId, listetype, kandidater },
+    { oppdrag_id: oppdragId, listetype, kandidater,
+      ...(firmatekst ? { firmatekst } : {}) },
     idem || nyIdempotensnokkel());
 
 // M-8 (082): kundens tidsvalg-administrasjon. Kandidatsiden bruker

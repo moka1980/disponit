@@ -1915,6 +1915,19 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
       const antallFelt = el("input", { id: antallId, type: "number",
         min: "1", max: String(radPar.length),
         value: String(Math.min(5, radPar.length)) });
+      // Tonen (#160/083): kundens forfattede tekst velges HER, ved
+      // innstilling — signataren autoriserer den eksakte versjonen
+      // (døren pinner den), og e-posten bærer den. Tom = ingen tone.
+      const toneId = `innstill-tone-${svar.oppdrag_id}`;
+      const toneVelger = el("select", { id: toneId },
+        el("option", { value: "",
+          text: t("ui.rekruttering.innstill.tone_ingen") }));
+      hentUtsendingstekster().then((d) => {
+        for (const tekst of (d && d.tekster) || []) {
+          toneVelger.append(el("option", { value: tekst.tekst_id,
+            text: tekst.navn }));
+        }
+      }).catch(() => {});   // tom velger er en ærlig reserve
       const innstillUtfall = el("div", { role: "alert",
         class: "rekrut-innstillingsutfall" });
       const lagKnapp = (listetype, nokkel) => {
@@ -1938,7 +1951,8 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           let liste;
           try {
             liste = await opprettUtsendingsliste(
-              svar.oppdrag_id, listetype, valgte);
+              svar.oppdrag_id, listetype, valgte, null,
+              toneVelger.value || null);
           } catch (e) {
             if (e instanceof UautorisertFeil) {
               ctx.paaUautorisert(); return;
@@ -1979,6 +1993,9 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
           el("label", { for: antallId,
             text: t("ui.rekruttering.innstill.antall") }),
           antallFelt,
+          el("label", { for: toneId,
+            text: t("ui.rekruttering.innstill.tone") }),
+          toneVelger,
           lagKnapp("invitasjon", "invitasjon_knapp"),
           lagKnapp("avslag", "avslag_knapp")),
         innstillUtfall);

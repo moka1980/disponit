@@ -1161,6 +1161,8 @@
   "ui.rekruttering.innstill.resten_tom": "Ingen kandidater i utvalget — juster antallet.",
   "ui.rekruttering.innstill.tidsvalg_mangler": "Invitasjonslisten kan ikke innstilles ennå: prosessen har ingen aktive intervjutider. Legg til minst én tid under Tidsvalg først.",
   "ui.rekruttering.innstill.tittel": "Innstill utsendingsliste",
+  "ui.rekruttering.innstill.tone": "Firmatekst (kundens tone)",
+  "ui.rekruttering.innstill.tone_ingen": "Ingen firmatekst",
   "ui.rekruttering.kandidat": "Kandidat",
   "ui.rekruttering.kandidatkort.dokument_feilet": "Dokumentet kunne ikke hentes nå — prøv igjen.",
   "ui.rekruttering.kandidatkort.dokumenter": "Søknadsdokumenter",

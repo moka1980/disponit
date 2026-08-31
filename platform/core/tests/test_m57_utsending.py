@@ -1792,7 +1792,7 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
     assert ("GRANT SELECT ON utsendingsliste, utsendingssignatur,"
             " utsendingsfrigivelse TO {rolle};") in tekst
     for fn in ("opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT,"
-               " TEXT, UUID[])",
+               " TEXT, UUID[], UUID, INT)",
                "signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)",
                "frigi_utsendelse(TEXT, UUID, TEXT)",
                "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
