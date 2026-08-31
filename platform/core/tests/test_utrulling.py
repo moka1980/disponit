@@ -22,7 +22,7 @@ def test_kundeokt_far_bare_sin_egen_rad():
     svar = svar_for("bjorkli", KUNDESCOPES)
     assert svar["plattformdrift"] is False
     assert [r["id"] for r in svar["tenanter"]] == ["bjorkli"]
-    assert svar["moduler"] == [1, 2]
+    assert svar["moduler"] == [1, 2, 16]
 
 
 def test_security_read_er_ikke_plattformautoritet():
