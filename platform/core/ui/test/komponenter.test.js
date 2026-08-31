@@ -837,7 +837,9 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     "rekruttering har ingen inngang i det hele tatt for en ekte tenant");
   // Tildelingen står ved siden av, som før — unionen er ikke katalogen
   // tilbake.
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 5,
+  assert.ok(kortene(nordvik.rot).includes("#/nokkeltall"),
+    "nøkkeltall har ingen inngang etter eiervedtaket 31/8 (topp → venstre)");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 6,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -847,7 +849,7 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
-    ["#/rekruttering", "#/wcagkontroll"],
+    ["#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),
