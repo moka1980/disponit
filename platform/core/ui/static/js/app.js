@@ -21,6 +21,7 @@ import { visRekruttering } from "./flater/rekruttering.js";
 import { visAdjudikator } from "./flater/adjudikator.js";
 import { visNokkeltall } from "./flater/nokkeltall.js";
 import { visModellstyring } from "./flater/modellstyring.js";
+import { visEpost } from "./flater/epost.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -39,6 +40,9 @@ const FLATER = {
   // M-31: basisrute bak `security:read` (sitekart.js) — scope-gaten
   // bor der, som for de andre flatene.
   modellstyring: visModellstyring,
+  // M-6 PR-B: kildeflaten — scope-gaten (`epost:read`) bor i
+  // sitekart.js som for de andre.
+  epost: visEpost,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

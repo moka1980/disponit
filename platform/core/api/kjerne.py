@@ -383,7 +383,12 @@ def _krev_kapabilitet(conn: psycopg.Connection, kap, event: dict,
 #: uforfalskbar — finnes ikke uten en hemmelighet, fordi gjenopprettingen må
 #: kunne utlede nøkkelen på nytt i en HELT ANNEN prosess av bare det
 #: forespørselen selv bærer.
-RESERVERTE_NOKKELROM: tuple[str, ...] = ("bestilling:", "domeneovertakelse:")
+#:   * `m365kilde:` — `api.epost_kilde.NOKKELROM`; OAuth-callbacken
+#:     konsumerer statens jti ENGANGS i dette rommet, og en planta rad
+#:     ville latt en kaller avvise (eller «forbruke») en annens flyt.
+RESERVERTE_NOKKELROM: tuple[str, ...] = ("bestilling:",
+                                         "domeneovertakelse:",
+                                         "m365kilde:")
 
 
 def er_reservert_nokkel(idempotency_key: str) -> bool:

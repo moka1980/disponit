@@ -252,24 +252,62 @@ def test_port2_credentials_er_ciphertext_aldri_klartekst(migrator):
 
 
 @pg
-def test_port2b_runtime_kan_ikke_skrive_kilden(migrator):
-    """PR-A gir runtime KUN SELECT: ingen dører finnes, så heller ingen
-    tabellrettigheter å gå utenom dem med (dørene kommer i PR-B/C)."""
-    _kilde(migrator)
+def test_port2b_runtime_skriver_kilden_men_bare_der_pr_b_apnet(migrator):
+    """PR-B FØDER kildens skrivevei — og bare den. OAuth-callbacken
+    trenger å skrive credential-trioen og flippe `status`; alt annet er
+    fortsatt stengt for web-API-rollen:
+
+      * INSERT/UPDATE på trioen + status GÅR (ellers finnes ingen
+        tilkobling og ingen deaktivering),
+      * men rollen får den fortsatt ALDRI TILBAKE (port 2 måler
+        SELECT-nektet — en skrivevei uten lesevei),
+      * hentemerkene (`sist_hentet_ts`, `delta_token`) er innhenterens
+        (PR-C) og står ugrantet,
+      * DELETE finnes ikke: `deaktivert` er avviklingsformen, og
+        088-vakten er andre lag.
+    """
+    kid, key_id, _dek_ = _kilde(migrator)
     migrator.commit()
     rt = _rt()
     try:
+        # Callbackens rekobling: trioen roteres og status settes aktiv.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "UPDATE epost_kilde SET auth_kryptert=%s, nonce=%s, key_id=%s,"
+            " status='aktiv' WHERE tenant=%s AND kilde_id=%s",
+            (b"\x00" * 16, b"\x00" * 12, key_id, TENANT, kid))
+        rt.commit()
+        # Deaktiveringen.
+        _sett_kontekst(rt, TENANT)
+        rt.execute("UPDATE epost_kilde SET status='deaktivert'"
+                   " WHERE tenant=%s AND kilde_id=%s", (TENANT, kid))
+        rt.commit()
+        # Førstegangs tilkobling: INSERT av identitet + trio.
+        _sett_kontekst(rt, TENANT)
+        rt.execute(
+            "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
+            " auth_kryptert, nonce, key_id) VALUES (%s,'m365',%s,%s,%s,%s)",
+            (TENANT, f"ny-{secrets.token_hex(4)}@example.org",
+             b"\x00" * 16, b"\x00" * 12, key_id))
+        rt.commit()
+        # Hentemerkene er IKKE grantet — de er innhenterens.
+        for kol in ("sist_hentet_ts = now()", "delta_token = 'd'"):
+            _sett_kontekst(rt, TENANT)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                rt.execute(f"UPDATE epost_kilde SET {kol}"
+                           " WHERE tenant=%s AND kilde_id=%s", (TENANT, kid))
+            rt.rollback()
+        # Identiteten er ugrantet i tillegg til å være vaktet.
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute(
-                "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
-                " auth_kryptert, nonce, key_id) VALUES"
-                " (%s,'m365','x@example.org','\\x00'::bytea,"
-                " '\\x000000000000000000000000'::bytea,'k')", (TENANT,))
+            rt.execute("UPDATE epost_kilde SET postboks='kapret@example.org'"
+                       " WHERE tenant=%s AND kilde_id=%s", (TENANT, kid))
         rt.rollback()
+        # DELETE finnes ikke for runtime.
+        _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            rt.execute("UPDATE epost_kilde SET status='deaktivert'"
-                       " WHERE tenant=%s", (TENANT,))
+            rt.execute("DELETE FROM epost_kilde WHERE tenant=%s"
+                       " AND kilde_id=%s", (TENANT, kid))
         rt.rollback()
     finally:
         rt.close()
@@ -827,9 +865,12 @@ def test_163_forfalsket_markortabell_feller_skrivet_m6(migrator):
 
 
 def test_kjoreren_speiler_088_rettighetene():
-    """Tabellspeilet i `migrer.py` (057-portformen): runtime får KUN
-    SELECT på alle seks tabellene i PR-A — ingen INSERT (innhenteren er
-    PR-C) — og kryss-tenant-reaperen lekker aldri til en parameterisert
+    """Tabellspeilet i `migrer.py` (057-portformen): runtime leser alle
+    seks tabellene (kilden kolonnebegrenset), og etter PR-B har KILDEN
+    — og bare kilden — en fødd skrivevei: kolonne-INSERT/-UPDATE for
+    OAuth-callbacken og deaktiveringen, fortsatt uten SELECT på
+    credential-trioen. Payload-lagrene er urørte til innhenteren (PR-C),
+    og kryss-tenant-reaperen lekker aldri til en parameterisert
     rolle."""
     kjorer = (ROT / "deploy" / "staging" / "migrer.py").read_text(
         encoding="utf-8")
@@ -848,7 +889,16 @@ def test_kjoreren_speiler_088_rettighetene():
             f"credential-kolonnen {kol} har sneket seg inn i kildegranten"
     assert "GRANT EXECUTE ON FUNCTION reap_epostdata" not in kjorer, \
         "kryss-tenant-reaperen lekker til en parameterisert rolle"
-    for tabell in ("epost_kilde", "epost_melding", "epost_klassifisering",
+    # PR-B: kildens skrivevei er født — og den er KOLONNEGRANT begge
+    # veier. INSERT bærer aldri status/sist_hentet_ts/delta_token
+    # (defaults og innhenterens merker), UPDATE bærer aldri identitet
+    # (088-vakten stopper den uansett — granten skal ikke love mer enn
+    # vakten tillater).
+    assert ("GRANT INSERT (tenant, leverandor, postboks, auth_kryptert,"
+            " nonce, key_id)\n    ON epost_kilde TO {rolle};") in kjorer
+    assert ("GRANT UPDATE (auth_kryptert, nonce, key_id, status)\n"
+            "    ON epost_kilde TO {rolle};") in kjorer
+    for tabell in ("epost_melding", "epost_klassifisering",
                    "epost_utkast", "epost_vedlegg", "epost_oppfolging"):
         assert f"INSERT ON {tabell}" not in kjorer, \
             f"runtime har fått INSERT på {tabell} før noen skrivevei" \

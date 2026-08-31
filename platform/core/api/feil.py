@@ -299,6 +299,19 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " kropp er derimot en 201 med det opprinnelige svaret — skillet går"
         " på `innhold_sha256`, som i 017. Aggregert: en klient som retryer"
         " en muterende kropp gjør det i serie.")),
+    # --- M-6 PR-B: kilderegistrering med M365-OAuth ----------------------
+    Feilvei("m365_ikke_konfigurert", 503, ("drift",), None, notat=(
+        "M365-integrasjonen er VALGFRITT konfigurert"
+        " (DISPONIT_M365_CLIENT_ID/SECRET). Mangler credentialene — eller"
+        " er tenantsegmentet ugyldig — svarer /start denne ÆRLIGE koden i"
+        " stedet for å utstede en state ingen callback kan fullføre."
+        " Drift: det er en konfigurasjonsmangel, aldri kallerens feil.")),
+    Feilvei("m365_tilkobling_feilet", 400, ("sikkerhet",), None,
+            aggregert=True, notat=(
+        "Generisk callback-feilside for kildetilkoblingen (v5 §6-formen"
+        " fra `innlogging_feilet`): ugyldig/utløpt/replayet state, brutt"
+        " browserbinding eller feilet kodeveksling gir NØYAKTIG samme"
+        " svar, og URL-parametere gjengis ALDRI.")),
 )
 
 FEIL: dict[str, Feilvei] = {f.kode: f for f in FEILVEIER}
