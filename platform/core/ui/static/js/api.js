@@ -362,6 +362,15 @@ export const hentRapport = (oppdragId) => hentJson(`/v1/rapport/${oppdragId}`);
 // 039: selvbetjent domeneverifisering. Utstedelsen er muterende (CSRF);
 // nøkkelen er engangs — TXT-verdien i svaret finnes aldri igjen.
 export const hentDomener = () => hentJson("/v1/domener");
+// M-6 PR-B: kildeforvaltningen. /start KREVER Idempotency-Key (flaten
+// holder nøkkelen stabil til skjemaet endres — replay gir samme
+// authorize-URL); deaktivering er naturlig idempotent (enveis) og
+// bærer ingen nøkkel, som slett-rutene.
+export const hentEpostKilder = () => hentJson("/v1/epost/kilder");
+export const startEpostKilde = (postboks, idempotensnokkel) =>
+  _muter("/v1/epost/kilder/start", "POST", { postboks }, idempotensnokkel);
+export const deaktiverEpostKilde = (kildeId) =>
+  _muter(`/v1/epost/kilder/${kildeId}/deaktiver`, "POST", {});
 export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 

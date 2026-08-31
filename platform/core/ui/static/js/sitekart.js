@@ -151,6 +151,13 @@ const BASISRUTER = [
   // serveren svarer 403 på. En ren `platform:admin`-økt har ikke
   // lesescopet og får derfor heller ikke ruten.
   { nokkel: "modellstyring", scope: "security:read" },
+  // M-6 PR-B: e-postagentens kildeflate. Scopet er flatens SVAKESTE
+  // ledd (wcagkontroll-regelen): lista bak ruten krever `epost:read`;
+  // koble-til/deaktiver muterer og avgjøres INNE på flaten (og av
+  // serveren) med `epost:kilde:administrer`. Basisrute uten modulflate
+  // i PR-B — klassifiserings-/utkastsflaten og en eventuell
+  // modulkort-inngang er PR-D.
+  { nokkel: "epost", scope: "epost:read" },
   // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
   // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
   // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger

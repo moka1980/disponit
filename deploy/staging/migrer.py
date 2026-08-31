@@ -130,6 +130,20 @@ GRANT EXECUTE ON FUNCTION m8_velg_slot(TEXT, TEXT, UUID) TO {rolle};
 -- eksfiltrere ciphertext.
 GRANT SELECT (tenant, kilde_id, leverandor, postboks, status,
     sist_hentet_ts, opprettet) ON epost_kilde TO {rolle};
+-- M-6 PR-B: kildens skrivevei FØDES her — OAuth-callbacken skriver
+-- credential-trioen (kryptert i API-laget FØR den når basen), rekobling
+-- av samme postboks roterer den, og deaktivering flipper status.
+-- KOLONNEGRANT som leseflaten over: fortsatt INGEN SELECT på
+-- credential-trioen (callbacken SETTER den med parametre, aldri
+-- EXCLUDED — et upsert-uttrykk som LESER kolonnen ville krevd SELECT),
+-- og ingen DELETE — `deaktivert` er avviklingsformen (088-vakten).
+-- Innhenterens lesing av trioen (PR-C) er sin egen vei med sin egen
+-- rolleavgjørelse; web-API-rollen kan skrive ciphertext den aldri får
+-- lese tilbake.
+GRANT INSERT (tenant, leverandor, postboks, auth_kryptert, nonce, key_id)
+    ON epost_kilde TO {rolle};
+GRANT UPDATE (auth_kryptert, nonce, key_id, status)
+    ON epost_kilde TO {rolle};
 GRANT SELECT ON epost_melding, epost_klassifisering,
     epost_utkast, epost_oppfolging, epost_vedlegg TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen

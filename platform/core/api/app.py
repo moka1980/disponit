@@ -1165,6 +1165,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def tidsvalg_side(request: Request) -> Response:
         return uiserver.tidsvalg_side(request)
 
+    # M-6 PR-B: kilderegistrering med M365-OAuth.
+    from . import epost_kilde as epostkildemodul
+
+    def epost_kilder(request: Request) -> Response:
+        return epostkildemodul.liste_endepunkt(tjeneste, request)
+
+    def epost_kilde_start(request: Request) -> Response:
+        return epostkildemodul.start_endepunkt(tjeneste, request)
+
+    def epost_kilde_callback(request: Request) -> Response:
+        return epostkildemodul.callback_endepunkt(tjeneste, request)
+
+    def epost_kilde_deaktiver(request: Request) -> Response:
+        return epostkildemodul.deaktiver_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -1435,6 +1450,16 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/rekruttering/tidsvalg/slot/{slot_id}/deaktiver",
               rekruttering_tidsvalg_deaktiver, methods=["POST"]),
+        # M-6 PR-B: de statiske kilderutene FØR mønsterruten, så
+        # {kilde_id:uuid} aldri slukter "start"/"callback" (uuid-
+        # konverteren avviser dem uansett — rekkefølgen sier intensjonen).
+        Route("/v1/epost/kilder", epost_kilder, methods=["GET"]),
+        Route("/v1/epost/kilder/start", epost_kilde_start,
+              methods=["POST"]),
+        Route("/v1/epost/kilder/callback", epost_kilde_callback,
+              methods=["GET"]),
+        Route("/v1/epost/kilder/{kilde_id:uuid}/deaktiver",
+              epost_kilde_deaktiver, methods=["POST"]),
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
@@ -2008,6 +2033,16 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # PR-010: OIDC-sesjon. /start og /callback er uautentiserte (de
     # ETABLERER sesjonen); /v1/sesjon GET/DELETE gjelder sesjonen selv og
     # scope-gates ikke — de er sesjonshåndtering, ikke lese-data.
+    # M-6 PR-B: kildeforvaltningen. Lista er `epost:read` (flatens
+    # leseflate); mutasjonene bærer `epost:kilde:administrer` (browser-
+    # sesjon + CSRF). Callbacken er en NAVIGASJON fra Microsoft og
+    # dermed uautentisert som OIDC-callbacken: credentialet er den
+    # MAC-ede engangsstaten + browserbindingen, aldri en sesjon.
+    ("GET",  "/v1/epost/kilder"):            "epost:read",
+    ("POST", "/v1/epost/kilder/start"):      "epost:kilde:administrer",
+    ("GET",  "/v1/epost/kilder/callback"):   None,
+    ("POST", "/v1/epost/kilder/{kilde_id:uuid}/deaktiver"):
+        "epost:kilde:administrer",
     ("POST", "/v1/oidc/start"):              None,
     ("GET",  "/v1/oidc/callback"):           None,
     ("GET",  "/v1/sesjon"):                  None,

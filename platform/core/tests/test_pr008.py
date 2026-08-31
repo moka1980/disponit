@@ -1059,10 +1059,14 @@ def test_rutescope_registeret_dekker_alle_ruter():
     # kapabilitetstokenet i kroppen er credentialet, verifisert
     # konstanttid i den authenticator-eide defineren; /tidsvalg er
     # kandidatsidens statiske skall.
+    # M-6 PR-B: M365-callbacken er den TREDJE uautentiserte klassen —
+    # en toppnivå-NAVIGASJON fra Microsoft, som OIDC-callbacken:
+    # credentialet er den MAC-ede engangsstaten + browserbindingen
+    # (api/epost_kilde.py), aldri en sesjon.
     UAUTENTISERT_OK = {"/live", "/ready", "/v1/oidc/start",
                        "/v1/oidc/callback", "/v1/sesjon",
                        "/v1/tidsvalg/oppslag", "/v1/tidsvalg/velg",
-                       "/tidsvalg"}
+                       "/tidsvalg", "/v1/epost/kilder/callback"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
             assert sti in UAUTENTISERT_OK, \
