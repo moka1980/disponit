@@ -73,8 +73,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,uuid[])', 'disponit_m37_claimer'),
     -- 056-signaturen står til 080 har droppet den (CodeRabbit critical):
     -- kjører reparasjonen på en base FØR 080, ville en manglende rad
-    -- flyttet den claimer-eide døren til migrator — og 080s
-    -- `SET LOCAL ROLE claimer; DROP FUNCTION` dødd på eierskap.
+    -- flyttet den claimer-eide døren til migrator — og 080s DROP (som
+    -- claimer) dødd på eierskap. (Merk: aldri semikolon i kommentarene
+    -- her — VALUES-blokken parses på setningsskilletegnet.)
     ('FUNCTION', 'opprett_utsendingsliste(text,uuid,uuid,bigint,text,text,text,integer)', 'disponit_m37_claimer'),
     ('FUNCTION', 'signer_utsendingsliste(text,uuid,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'frigi_utsendelse(text,uuid,text)', 'disponit_m37_claimer'),
