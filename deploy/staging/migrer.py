@@ -106,6 +106,16 @@ GRANT SELECT, INSERT ON kandidat_originaldokument,
 -- 058: inndata-artefaktet — runtime leser metadata (RLS-gated);
 -- skrivingene går KUN gjennom domene_eier-dørene (EXECUTE i 058).
 GRANT SELECT ON inndata_artefakt TO {rolle};
+-- 082 (M-8): kundens tidsvalg-leseflate går rett på tabellene
+-- (RLS-gated); all skriving eies av definer-dørene. `m8_tidsvalgtoken`
+-- står bevisst IKKE her (api_tokener-formen): runtime når kapabiliteten
+-- KUN gjennom de authenticator-eide dørene under.
+GRANT SELECT ON m8_slot, m8_slotvalg TO {rolle};
+-- De to offentlige tidsvalg-dørene er authenticator-eide og grantes som
+-- verifiser_token: migrator arver authenticator (fullt INHERIT, i
+-- motsetning til claimer-medlemskapet), så granten gis direkte her.
+GRANT EXECUTE ON FUNCTION m8_tidsvalg_oppslag(TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m8_velg_slot(TEXT, TEXT, UUID) TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
@@ -401,6 +411,13 @@ GRANT EXECUTE ON FUNCTION opprett_rekrutteringsprosess(TEXT, BIGINT, INT) TO {ro
 GRANT EXECUTE ON FUNCTION opprett_kandidat(TEXT, UUID, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION lukk_rekrutteringsprosess(TEXT, UUID, TIMESTAMPTZ) TO {rolle};
 GRANT EXECUTE ON FUNCTION bestill_tidligsletting(TEXT, UUID) TO {rolle};
+-- 082 (M-8): kundens slot-administrasjon — innloggede mennesker gjennom
+-- API-et, samme vindu og samme eier som 057-dørene over. Utsteder-
+-- døren står bevisst IKKE her: den hører senderen til
+-- (VARSLER_RETTIGHETER) — web-API-rollen skal aldri kunne mynte en
+-- kandidatkapabilitet selv.
+GRANT EXECUTE ON FUNCTION m8_opprett_slot(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m8_deaktiver_slot(TEXT, UUID) TO {rolle};
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
 -- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi
@@ -468,6 +485,9 @@ SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION m57_neste_sendinger(TEXT, INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m57_start_sending(TEXT, UUID, UUID, UUID, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m57_fullfor_sending(TEXT, UUID, UUID, UUID, TEXT, TEXT) TO {rolle};
+-- 082 (M-8): tidsvalg-kapabiliteten myntes av UTSENDEREN — tokenet
+-- committes FØR send(), så en e-post med død lenke er urepresenterbar.
+GRANT EXECUTE ON FUNCTION m8_utsted_tidsvalgtoken(TEXT, UUID, UUID, TEXT, TEXT, INT) TO {rolle};
 RESET ROLE;
 SET LOCAL ROLE disponit_domene_eier;
 GRANT EXECUTE ON FUNCTION m57_sendeklare_tenanter(INT, INT) TO {rolle};

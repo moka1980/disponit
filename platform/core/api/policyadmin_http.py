@@ -67,6 +67,10 @@ _FEIL_HTTP = {
     # å forkorte id-en (Codex P3).
     "policy_id_for_stor": 400,
     "dokument_avvik": 409,
+    # 082 (M-8): innstilling av en invitasjonsliste uten aktiv slot er
+    # en TILSTANDSkonflikt (DOM 2) — kunden legger inn tider og prøver
+    # igjen. Deaktivering av en slot med bekreftet valg likeså (DOM 3).
+    "tidsvalg_slot_mangler": 409, "tidsvalg_slot_har_valg": 409,
     "idempotenskonflikt": 409, "sikkerhet": 409,
     "scope_mangler": 403, "mangler_medlemskap": 403,
     "token_ugyldig": 401, "rate_grense": 429,

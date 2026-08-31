@@ -177,6 +177,42 @@ def _les_trygt(basis: Path, kandidat: Path) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
+# GET /tidsvalg — kandidatsidens skall (M-8, 082). FRITTSTÅENDE flate
+# utenfor SPA-skallet: ingen innlogging, ingen nav, ingen cookies.
+# Tokenet bor i URL-FRAGMENTET og forlater aldri klienten; siden leser
+# location.hash og POSTer tokenet i kroppen (api/tidsvalg.py).
+#
+# EGEN CSP, strammere enn UI-ets (planen §3): ingen bilder, ingen
+# fonter, ingen rammer, form-action kun 'self' (ingen IdP — det finnes
+# ingen innlogging her). nginx re-setter NØYAKTIG samme streng på
+# `location = /tidsvalg` (proxy_hide_header-formen); paritetstesten i
+# test_ui_serving binder de to.
+# ---------------------------------------------------------------------------
+
+TIDSVALG_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; "
+    "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+    "form-action 'self'"
+)
+
+_TIDSVALG_SIKKERHET = {
+    "Content-Security-Policy": TIDSVALG_CSP,
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Cache-Control": "no-store",
+}
+
+
+def tidsvalg_side(request: Request) -> Response:
+    data = _les_trygt(STATISK, STATISK / "tidsvalg.html")
+    if data is None:                  # byggefeil, ikke en brukervei
+        return Response("Not Found", status_code=404)
+    return Response(content=data, media_type=_CT[".html"],
+                    headers=dict(_TIDSVALG_SIKKERHET))
+
+
+# ---------------------------------------------------------------------------
 # GET / — SPA-skallet. Hash-ruting skjer i klienten, så ÉN skall-rute holder.
 # ---------------------------------------------------------------------------
 

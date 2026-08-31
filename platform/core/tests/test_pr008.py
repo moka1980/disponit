@@ -1055,8 +1055,14 @@ def test_rutescope_registeret_dekker_alle_ruter():
     # de to første etablerer en sesjon (kan ikke kreve en), og /v1/sesjon
     # er sesjonshåndtering (GET hvem / DELETE logout), ikke scope-gatet
     # lese-data. Alt annet UTEN scope ville vært en åpen dør.
+    # M-8 (082): tidsvalg-rutene er den ANDRE uautentiserte klassen —
+    # kapabilitetstokenet i kroppen er credentialet, verifisert
+    # konstanttid i den authenticator-eide defineren; /tidsvalg er
+    # kandidatsidens statiske skall.
     UAUTENTISERT_OK = {"/live", "/ready", "/v1/oidc/start",
-                       "/v1/oidc/callback", "/v1/sesjon"}
+                       "/v1/oidc/callback", "/v1/sesjon",
+                       "/v1/tidsvalg/oppslag", "/v1/tidsvalg/velg",
+                       "/tidsvalg"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
             assert sti in UAUTENTISERT_OK, \

@@ -107,6 +107,18 @@ INSERT INTO _design VALUES
     -- 076 (#163): markøren som armerer samlet-porten — claimer-eid
     -- definer av samme grunn som lagervaktene.
     ('FUNCTION', 'm57_marker_beroert_prosess()', 'disponit_m37_claimer'),
+    -- 082 (M-8): kunde-/utstederdørene gaar gjennom
+    -- krev_tenantkontekst-porten — samme vindu, samme eier som
+    -- 057-doerene.
+    ('FUNCTION', 'm8_opprett_slot(text,uuid,timestamp with time zone,timestamp with time zone,integer,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm8_deaktiver_slot(text,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm8_utsted_tidsvalgtoken(text,uuid,uuid,text,text,integer)', 'disponit_m37_claimer'),
+    -- 082 (M-8): kapabilitetstabellen og de to offentlige doerene eies
+    -- av authenticator (004-presedensen — konstanttiden bor i defineren,
+    -- og oppslaget paa token_id alene gaar gjennom eierpolicyen).
+    ('TABLE',    'm8_tidsvalgtoken', 'disponit_authenticator'),
+    ('FUNCTION', 'm8_tidsvalg_oppslag(text,text)', 'disponit_authenticator'),
+    ('FUNCTION', 'm8_velg_slot(text,text,uuid)', 'disponit_authenticator'),
     -- 078 (#156): pseudonymfunksjonen — nøkkelen forlater aldri basen.
     ('FUNCTION', 'm57_pseudonym(text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'lukk_rekrutteringsprosess(text,uuid,timestamp with time zone)', 'disponit_m37_claimer'),

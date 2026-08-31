@@ -98,6 +98,11 @@ APPEND_ONLY_TRIGGERE = (
     ("kandidat_intervjusporsmal", "kandidat_intervjusporsmal_vakt"),
     ("kandidat_utsendingsdata", "kandidat_utsendingsdata_vakt"),
     ("kandidat_avmaskering", "kandidat_avmaskering_vakt"),
+    # 082 (M-8): valget reapes som lagrene (payload til NULL, aldri
+    # DELETE), og sloten deaktiveres — begge vaktene nekter DELETE, som
+    # de skal, så oppryddingen må skru dem av.
+    ("m8_slotvalg", "m8_slotvalg_vakt"),
+    ("m8_slot", "m8_slot_vakt"),
     # 058: inndata-artefaktet nekter DELETE på samme måte (vakten avviser
     # alt som ikke er UPDATE). Uten linjen her velter oppryddingen på
     # DELETE av `oppdrag`/`tenant_nokler`, som tabellen har FK til — den
@@ -178,6 +183,10 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # 056: utsendingskjeden peker på oppdrag (og innbyrdes
                  # frigivelse→signatur→liste) — ut i avhengighetsrekkefølge
                  # FØR oppdragene.
+                 # 082 (M-8): tokenet peker på manifestmedlemmet OG
+                 # kandidaten; valget på kandidaten OG sloten — begge ut
+                 # FØR alle fire målene.
+                 "m8_tidsvalgtoken", "m8_slotvalg",
                  # 081: kvitteringen peker på frigivelsen OG medlemmet.
                  "m57_utsendingskvittering",
                  "utsendingsfrigivelse", "utsendingssignatur",
@@ -191,6 +200,9 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  "kandidat_utsendingsdata", "kandidat_avmaskering",
                  # 075 (#157): ankeret mellom lagrene og prosessen.
                  "kandidat",
+                 # 082 (M-8): sloten peker på prosessen (valgene er alt
+                 # ute over).
+                 "m8_slot",
                  "rekrutteringsprosess",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det

@@ -124,6 +124,8 @@ KANDIDATDOK_RUTE = "/v1/rekruttering/kandidatdokument"
 MAKS_KANDIDATARTEFAKT_KROPP = (
     JSON_ESKAPEFAKTOR * _KANDIDAT_ARTEFAKT_MAKS + _KANDIDAT_KONVOLUTT)
 KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
+#: M-8 (082): kroppstaket for de uautentiserte tidsvalg-rutene (§3).
+MAKS_TIDSVALG_KROPP = 4 * 1024
 #: Rutene med eget kroppstak. Oppslag, ikke en voksende kjede av
 #: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
 #: er nettopp fallet dette funnet handlet om — da skal det være ÉN
@@ -131,6 +133,11 @@ KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
 RUTEKROPPSGRENSER = {
     KANDIDATDOK_RUTE: MAKS_KANDIDATDOK_KROPP,
     KANDIDATARTEFAKT_RUTE: MAKS_KANDIDATARTEFAKT_KROPP,
+    # M-8 (082): de offentlige tidsvalg-dørene bærer et token og en
+    # slot-id — 4 KiB er romslig, og et mindre tak på en uautentisert
+    # rute er billig forsvar i dybden.
+    "/v1/tidsvalg/oppslag": MAKS_TIDSVALG_KROPP,
+    "/v1/tidsvalg/velg": MAKS_TIDSVALG_KROPP,
 }
 #: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
 #: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
@@ -1131,6 +1138,30 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def rekruttering_liste_opprett(request: Request) -> Response:
         return rekruttering_http.liste_opprett_endepunkt(tjeneste, request)
 
+    # M-8 tidsvalg (082): kundens slot-administrasjon ...
+    def rekruttering_tidsvalg(request: Request) -> Response:
+        return rekruttering_http.tidsvalg_endepunkt(tjeneste, request)
+
+    def rekruttering_tidsvalg_slots(request: Request) -> Response:
+        return rekruttering_http.tidsvalg_slots_endepunkt(tjeneste, request)
+
+    def rekruttering_tidsvalg_deaktiver(request: Request) -> Response:
+        return rekruttering_http.tidsvalg_slot_deaktiver_endepunkt(
+            tjeneste, request)
+
+    # ... og kandidatens offentlige dører (NY ruteklasse — uautentisert
+    # utenom OIDC: kapabiliteten ER credentialet, se api/tidsvalg.py).
+    from . import tidsvalg as tidsvalgmodul
+
+    def tidsvalg_oppslag(request: Request) -> Response:
+        return tidsvalgmodul.oppslag_endepunkt(tjeneste, request)
+
+    def tidsvalg_velg(request: Request) -> Response:
+        return tidsvalgmodul.velg_endepunkt(tjeneste, request)
+
+    def tidsvalg_side(request: Request) -> Response:
+        return uiserver.tidsvalg_side(request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -1394,6 +1425,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               rekruttering_liste_opprett, methods=["POST"]),
         Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
               rekruttering_signer, methods=["POST"]),
+        Route("/v1/rekruttering/tidsvalg", rekruttering_tidsvalg,
+              methods=["GET"]),
+        Route("/v1/rekruttering/tidsvalg/slots", rekruttering_tidsvalg_slots,
+              methods=["POST"]),
+        Route("/v1/rekruttering/tidsvalg/slot/{slot_id}/deaktiver",
+              rekruttering_tidsvalg_deaktiver, methods=["POST"]),
+        Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
+        Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
+        Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
@@ -1874,6 +1914,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/rekruttering/lister"): "bestilling:opprett",
     ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):
         "bestilling:opprett",
+    # M-8 (082): kundens tidsvalg-administrasjon — lesing bak flatens
+    # scope, mutasjon bak bestillingsmyndigheten (som resten av
+    # rekrutteringsflaten).
+    ("GET",  "/v1/rekruttering/tidsvalg"):   "decisions:read",
+    ("POST", "/v1/rekruttering/tidsvalg/slots"): "bestilling:opprett",
+    ("POST", "/v1/rekruttering/tidsvalg/slot/{slot_id}/deaktiver"):
+        "bestilling:opprett",
+    # M-8 (082): kandidatens offentlige dører — NY ruteklasse,
+    # uautentisert utenom OIDC. Kapabiliteten i kroppen ER credentialet
+    # (konstanttids MAC i den authenticator-eide defineren); ingen
+    # cookie, ingen sesjon, ingen CSRF. Siden /tidsvalg er skallet.
+    ("POST", "/v1/tidsvalg/oppslag"):        None,
+    ("POST", "/v1/tidsvalg/velg"):           None,
+    ("GET",  "/tidsvalg"):                   None,
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en

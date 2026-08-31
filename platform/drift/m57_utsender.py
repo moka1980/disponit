@@ -29,7 +29,10 @@ bor INNE i domene-eide definer-dører (027-formen).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+import secrets
 import time
 import uuid
 
@@ -42,6 +45,11 @@ MAKS_FORSOK = int(os.environ.get("DISPONIT_M57_UTSENDER_MAKS_FORSOK", "3"))
 FRIST_S = int(os.environ.get("DISPONIT_M57_UTSENDER_FRIST_S", "240"))
 LEASE_MIN = int(os.environ.get("DISPONIT_M57_UTSENDER_LEASE_MIN", "30"))
 SPRAK = os.environ.get("DISPONIT_VARSEL_SPRAK", "nb")
+#: M-8 (082, DOM 5): tokenlevetiden — døren tar selv least(now() +
+#: levetid, payloadvinduets slutt), så tallet her er TAKET, aldri en
+#: forlengelse av kundens frist.
+TIDSVALG_LEVETID_DOGN = int(os.environ.get(
+    "DISPONIT_M8_TIDSVALG_LEVETID_DOGN", "30"))
 
 #: Unntak som BEVISER at ingen e-post ble akseptert: fletting skjer før
 #: nettet, og disse SMTP-klassene reises før serveren har tatt imot
@@ -56,6 +64,27 @@ _FEIL_FOER_AKSEPT = (smtplib.SMTPRecipientsRefused,
 #: Emnenøklene per listetype — tekst bor i locales/, aldri her.
 _EMNE = {"invitasjon": "rekruttering.utsending.emne.invitasjon",
          "avslag": "rekruttering.utsending.emne.avslag"}
+
+
+def _mac(pepper: str, secret: str) -> str:
+    """modulonboarding._mac-formen (api.app._mac, speilet — drift
+    importerer aldri app-modulen): serversiden lagrer kun MAC-en,
+    pepperet bor i prosessen (LoadCredential) og aldri i basen."""
+    return hmac.new(pepper.encode("utf-8"), secret.encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def _tidsvalg_oppsett() -> tuple[str, str] | None:
+    """(pepper, host) når tidsvalg-lenker kan myntes, ellers None.
+
+    Manglende pepper/host er en DRIFTSTILSTAND (smtp_ikke_konfigurert-
+    dommen): invitasjonsrader RØRES ikke — et klaim uten token ville
+    enten sendt en død lenke eller brent forsøkstelleren på config."""
+    pepper = os.environ.get("DISPONIT_TOKEN_PEPPER", "")
+    host = os.environ.get("DISPONIT_HOST", "")
+    if len(pepper) < 32 or not host:
+        return None
+    return pepper, host
 
 
 def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
@@ -85,6 +114,7 @@ def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
 
     from modules.m57_ats import maler
 
+    tidsvalg = _tidsvalg_oppsett()
     tenanter = [r[0] for r in conn.execute(
         "SELECT m57_sendeklare_tenanter(%s, %s)",
         (GRENSE, MAKS_FORSOK)).fetchall()]
@@ -106,6 +136,13 @@ def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
             if time.monotonic() - fra > FRIST_S:
                 utfall["stanset"] = "frist"
                 return utfall
+            # M-8 (082): en invitasjon UTEN mulig tidsvalg-lenke klaimes
+            # aldri — manglende pepper/host er en driftstilstand, ikke
+            # en feilet rad (raden står sendeklar til config er på plass).
+            if listetype == "invitasjon" and tidsvalg is None:
+                utfall["tidsvalg_stanset"] = utfall.get(
+                    "tidsvalg_stanset", 0) + 1
+                continue
             klaim = uuid.uuid4()
             conn.execute(
                 "SELECT set_config('disponit.tenant', %s, true),"
@@ -122,12 +159,69 @@ def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
             if rad is None:
                 continue                      # noens klaim / reapet
             _frig, mottaker = rad
+            # M-8 (082, §5): lenken flyttes fra lager til UTSTEDELSE —
+            # tokenet myntes lokalt og committes i EGEN transaksjon FØR
+            # send(): en e-post med død lenke er urepresenterbar
+            # (rekkefølgeporten). Døren setter ev. eksisterende aktiv
+            # token `erstattet`, så et nytt forsøk etter `feilet` aldri
+            # etterlater to levende kapabiliteter; ved `uviss` kvitteres
+            # ingenting og tokenet står aktivt (e-posten KAN være ute).
+            tidsvalg_lenke = None
+            if listetype == "invitasjon":
+                pepper, host = tidsvalg
+                token_id = secrets.token_hex(16)
+                hemmelighet = secrets.token_hex(32)
+                try:
+                    conn.execute(
+                        "SELECT set_config('disponit.tenant', %s, true),"
+                        "       set_config('disponit.aktor',"
+                        "                  'm57-utsender', true),"
+                        "       set_config('disponit.request_id', %s,"
+                        "                  true)",
+                        (tenant, uuid.uuid4().hex[:12]))
+                    conn.execute(
+                        "SELECT m8_utsted_tidsvalgtoken(%s,%s,%s,%s,%s,"
+                        "%s)",
+                        (tenant, liste_id, kandidat_id, token_id,
+                         _mac(pepper, hemmelighet),
+                         TIDSVALG_LEVETID_DOGN))
+                    conn.commit()             # tokenet står FØR SMTP
+                except Exception as e:        # noqa: BLE001
+                    # Beviselig FØR aksept: ingen e-post er sendt, så
+                    # raden kvitteres `feilet` og prøves igjen (nytt
+                    # forsøk minter nytt token).
+                    conn.rollback()
+                    conn.execute(
+                        "SELECT set_config('disponit.tenant', %s, true),"
+                        "       set_config('disponit.aktor',"
+                        "                  'm57-utsender', true),"
+                        "       set_config('disponit.request_id', %s,"
+                        "                  true)",
+                        (tenant, uuid.uuid4().hex[:12]))
+                    conn.execute(
+                        "SELECT m57_fullfor_sending(%s,%s,%s,%s,"
+                        "'feilet',%s)",
+                        (tenant, liste_id, kandidat_id, klaim,
+                         f"tidsvalg_token_feilet: {type(e).__name__}"))
+                    conn.commit()
+                    utfall["feilet"] += 1
+                    continue
+                # Fragmentet (#) forlater aldri klienten — lenken kan
+                # logges hos mottakerens e-posttjener, men serverloggen
+                # vår ser aldri tokenet.
+                tidsvalg_lenke = (f"https://{host}/tidsvalg"
+                                  f"#tid_{token_id}.{hemmelighet}")
             try:
                 # Lagerets flettefelt kan bære felter for BEGGE maltyper
                 # (seedens form); malen får nøyaktig sine egne — et
                 # manglende felt er fortsatt en ærlig Malfeil (port 14).
                 mine = {k: v for k, v in dict(felter or {}).items()
                         if k in maler.MALER[listetype]["felter"]}
+                if tidsvalg_lenke is not None:
+                    # OVERSKRIV, aldri setdefault (§5): lagerets felt er
+                    # historikk — lenken er UTSTEDELSENS, og bare den
+                    # peker på et token som faktisk finnes.
+                    mine["tidsvalg_lenke"] = tidsvalg_lenke
                 flettet = maler.flett(listetype, mine, firmatekst=None)
                 emne = rendre(tekster, _EMNE[listetype],
                               {"stilling": (felter or {}).get(

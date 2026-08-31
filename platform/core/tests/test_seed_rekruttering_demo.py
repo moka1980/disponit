@@ -250,16 +250,23 @@ def _flettefeltene() -> set[str]:
     raise AssertionError("fant ingen `flettefelt` i seeden")
 
 
-def test_flettefeltene_er_noyaktig_invitasjonsmalens():
-    """Drepende mutasjon: fjern `tidsvalg_lenke` fra seedens dict.
+def test_flettefeltene_er_malens_minus_utstedelsens():
+    """M-8 (082, §5): `tidsvalg_lenke` er flyttet fra LAGER til
+    UTSTEDELSE — utsenderen minter tokenet og OVERSKRIVER feltet i
+    sendeøyeblikket, så seedens lagrede felt er malens MINUS lenken.
+    En placeholder i lageret ville vært en død lenke i venteposisjon.
 
-    `maler.flett` avviser et manglende felt (`flettefelt_mangler`) like
-    hardt som et fremmed, så en liste seedet med et utvalg kan SIGNERES
-    uten at en eneste invitasjon kan rendres — og seriens append-only
-    signaturslot er da brukt på en utsendelse som ikke går.
+    Porten fra før består i sin nye form: `maler.flett` avviser
+    fortsatt et manglende felt, og seedens flett-kall bærer lenken
+    TRANSIENT (som utsenderen) — fjernes den derfra, dør seeden på
+    `flettefelt_mangler` før noe signeres.
     """
     from modules.m57_ats import maler
-    assert _flettefeltene() == set(maler.MALER["invitasjon"]["felter"])
+    assert _flettefeltene() == \
+        set(maler.MALER["invitasjon"]["felter"]) - {"tidsvalg_lenke"}
+    kilde = KILDE.read_text(encoding="utf-8")
+    assert '"tidsvalg_lenke": "https://ikke-lagret.invalid' in kilde, \
+        "seedens flett-kall skal bære lenken transient (port 14)"
 
 
 def test_seeden_lukker_prosessen_i_utfort_transaksjonen():

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="nb" data-sprak="nb">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Disponit</title>
+  <!-- Kandidatens tidsvalg (M-8, 082): FRITTSTÅENDE flate utenfor
+       SPA-skallet — ingen innlogging, ingen nav, ingen cookies.
+       Tokenet bor i URL-FRAGMENTET og forlater aldri klienten.
+       Én tokenkilde + base/komponenter; ingen inline stil eller script
+       (TIDSVALG_CSP: script-src/style-src 'self'). -->
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/css/base.css">
+  <link rel="stylesheet" href="/ui/css/komponenter.css">
+</head>
+<body>
+  <main id="tidsvalg-rot" aria-busy="true"></main>
+
+  <noscript>
+    <p class="noscript">Disponit krever JavaScript for å vise tidsvalget.</p>
+  </noscript>
+
+  <script type="module" src="/ui/js/flater/tidsvalg.js"></script>
+</body>
+</html>

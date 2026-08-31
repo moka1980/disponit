@@ -1526,6 +1526,18 @@ def liste_opprett_endepunkt(tjeneste, request):
             (tenant, oppdrag_id)).fetchone()
         if prad is None:
             raise _Avbrudd(_feil("ikke_funnet", rid, 404))
+        # M-8 (DOM 2): en invitasjonsliste uten en eneste aktiv slot er
+        # en invitasjon til å velge blant ingenting — tidsvalg-lenken i
+        # malen ville pekt på en tom side. Innstillingen BLOKKERES til
+        # kunden har lagt inn minst én aktiv tid; egen kode så flaten
+        # kan si nøyaktig hva som mangler.
+        if listetype == "invitasjon":
+            har_slot = conn.execute(
+                "SELECT 1 FROM m8_slot WHERE tenant=%s AND prosess_id=%s"
+                "   AND status='aktiv' LIMIT 1",
+                (tenant, prad[0])).fetchone()
+            if har_slot is None:
+                raise _Avbrudd(_feil("tidsvalg_slot_mangler", rid))
         # Buntens kandidat-id → lagerets uuid: skrivedørens egen
         # deterministiske form (samme navnerom og skilletegn som
         # kandidatkortet og leseveien).
@@ -1724,5 +1736,194 @@ def stillingsprofil_lagre_endepunkt(tjeneste, request):
         conn.commit()
         return _ok({"profil_id": str(rad[0]), "versjon": rad[1]},
                    rid, 201)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+# ------------------------------------------------------------------
+# M-8 tidsvalg (082): kundens slot-administrasjon. Modulen er
+# m08_kalender (DOM 1) — rollback-kontrakten gjelder DEN, med samme
+# mekanikk som `_modul_inaktiv` for M-57: deaktivering av M-8 skal
+# stanse M-8s ruter, aldri M-57s.
+# ------------------------------------------------------------------
+
+TIDSVALGMODUL = "m08_kalender"
+
+
+def _m8_inaktiv(tjeneste, rid):
+    """Er M-8 slått av? -> ferdig 503-svar, ellers None (formen fra
+    `_modul_inaktiv`, ordrett for den andre modulen)."""
+    from .app import _feilsvar
+    if TIDSVALGMODUL not in tjeneste.inaktive_moduler:
+        return None
+    tjeneste.logg.hendelse("modul_inaktiv", rid, art="drift",
+                           modul=TIDSVALGMODUL)
+    return _feilsvar("modul_inaktiv", rid)
+
+
+def tidsvalg_endepunkt(tjeneste, request):
+    """GET /v1/rekruttering/tidsvalg?prosess_id= (decisions:read) —
+    kundens egne slots med antall valgt/kapasitet og kandidat_id-ene
+    som valgte. Kunden ser tellerne og hvem; det er KANDIDATSIDEN som
+    kun ser binært ledig/fullt (DOM 4)."""
+    import uuid as uuidlib
+
+    from .app import _rid
+    from .policyadmin_http import _med_conn, _ok, _feil
+    rid = _rid(request)
+    av = _m8_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        pid = uuidlib.UUID(str(request.query_params.get("prosess_id")))
+    except (ValueError, TypeError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
+        finnes = conn.execute(
+            "SELECT 1 FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND prosess_id=%s", (tenant, pid)).fetchone()
+        if finnes is None:
+            return _feil("ikke_funnet", rid, 404)
+        slots = []
+        for sid, start, slutt, kap, status, valgt_av in conn.execute(
+                "SELECT s.slot_id, s.start_ts, s.slutt_ts, s.kapasitet,"
+                "       s.status,"
+                "       coalesce((SELECT array_agg(v.kandidat_id"
+                "                                  ORDER BY v.opprettet)"
+                "          FROM m8_slotvalg v"
+                "         WHERE v.tenant=s.tenant AND v.slot_id=s.slot_id"
+                "           AND v.slettet_ts IS NULL), '{}')"
+                "  FROM m8_slot s"
+                " WHERE s.tenant=%s AND s.prosess_id=%s"
+                " ORDER BY s.start_ts, s.slot_id", (tenant, pid)).fetchall():
+            slots.append({
+                "slot_id": str(sid), "start": start.isoformat(),
+                "slutt": slutt.isoformat(), "kapasitet": kap,
+                "status": status, "antall_valgt": len(valgt_av),
+                "valgt_av": [str(k) for k in valgt_av],
+            })
+        return _ok({"slots": slots}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def tidsvalg_slots_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/tidsvalg/slots (bestilling:opprett, idem) —
+    opprett slot(s). SP-2: slot_id utledes deterministisk av
+    Idempotency-Key + posisjon, så et gjenspill er et stille ja i døren
+    (056-materialitetsformen) — samme medlemsliste gir samme id-er."""
+    import uuid as uuidlib
+    from datetime import datetime
+
+    from .app import _KANDIDAT_NS, _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _m8_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def _tid(verdi):
+        try:
+            t_ = datetime.fromisoformat(str(verdi))
+        except (ValueError, TypeError):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        if t_.tzinfo is None:
+            # datetime-local er sonefri — klienten konverterer til ISO
+            # med sone (toISOString) før den poster; en sonefri tid er
+            # en tvetydig tid og avvises.
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        return t_
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        _SIGNERINGSSCOPE)
+        nokkel = _krev_idem(request, rid)
+        kropp = _kropp(request)
+        try:
+            pid = uuidlib.UUID(str(kropp.get("prosess_id")))
+        except (ValueError, TypeError):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        slots = kropp.get("slots")
+        if not isinstance(slots, list) or not slots or len(slots) > 50 \
+                or not all(isinstance(s, dict) for s in slots):
+            raise _Avbrudd(_feil("request_feilformet", rid))
+        # SP-2 gjelder BUNTEN, ikke bare hver rad (CodeRabbit): samme
+        # nøkkel med en ANNEN bunt skal være en konflikt — også når den
+        # nye bunten er lengre (delvis treff på de utledede id-ene) eller
+        # kortere (id-en for posisjonen BAK vår siste finnes alt). Innhold
+        # per posisjon dømmes av døren (056-materialitetsformen).
+        sids = [uuidlib.uuid5(
+            _KANDIDAT_NS, f"m8slot\x1f{tenant}\x1f{nokkel}\x1f{i}")
+            for i in range(len(slots) + 1)]
+        finnes = {r[0] for r in conn.execute(
+            "SELECT slot_id FROM m8_slot WHERE tenant=%s"
+            " AND slot_id = ANY(%s)", (tenant, sids)).fetchall()}
+        if finnes and finnes != set(sids[:-1]):
+            raise _Avbrudd(_feil("idempotenskonflikt", rid))
+        ut = []
+        for i, s in enumerate(slots):
+            start, slutt = _tid(s.get("start")), _tid(s.get("slutt"))
+            kap = s.get("kapasitet", 1)
+            if not isinstance(kap, int) or isinstance(kap, bool) \
+                    or not 1 <= kap <= 50 or slutt <= start:
+                raise _Avbrudd(_feil("request_feilformet", rid))
+            sid = sids[i]
+            try:
+                rad = conn.execute(
+                    "SELECT m8_opprett_slot(%s,%s,%s,%s,%s,%s)",
+                    (tenant, pid, start, slutt, kap, sid)).fetchone()
+            except psycopg.errors.UniqueViolation as e:
+                # Materiell konflikt: samme nøkkel, annet innhold.
+                raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
+            except psycopg.errors.NoDataFound as e:
+                raise _Avbrudd(_feil("ikke_funnet", rid, 404)) from e
+            except psycopg.errors.InsufficientPrivilege as e:
+                # Payloadvinduet er lukket: prosessen tilbyr ingen tider.
+                raise _Avbrudd(_feil("ikke_funnet", rid, 404)) from e
+            except psycopg.errors.CheckViolation as e:
+                raise _Avbrudd(_feil("request_feilformet", rid)) from e
+            ut.append(str(rad[0]))
+        conn.commit()
+        tjeneste.logg.hendelse("tidsvalg_slots_opprettet", rid, tenant,
+                               art="drift", antall=len(ut))
+        return _ok({"slot_ids": ut}, rid, 201)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def tidsvalg_slot_deaktiver_endepunkt(tjeneste, request):
+    """POST /v1/rekruttering/tidsvalg/slot/{slot_id}/deaktiver
+    (bestilling:opprett) — 409 hvis et bekreftet valg peker på sloten
+    (DOM 3: valget er endelig). Flytting = deaktiver + ny rad."""
+    import uuid as uuidlib
+
+    from .app import _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _med_conn, _ok)
+    rid = _rid(request)
+    av = _m8_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    try:
+        sid = uuidlib.UUID(str(request.path_params["slot_id"]))
+    except (KeyError, ValueError):
+        return _feil("request_feilformet", rid, 400)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        _SIGNERINGSSCOPE)
+        try:
+            conn.execute("SELECT m8_deaktiver_slot(%s,%s)", (tenant, sid))
+        except psycopg.errors.NoDataFound as e:
+            raise _Avbrudd(_feil("ikke_funnet", rid, 404)) from e
+        except psycopg.errors.IntegrityConstraintViolation as e:
+            raise _Avbrudd(_feil("tidsvalg_slot_har_valg", rid)) from e
+        conn.commit()
+        tjeneste.logg.hendelse("tidsvalg_slot_deaktivert", rid, tenant,
+                               art="drift", slot=str(sid))
+        return _ok({"deaktivert": True}, rid)
 
     return _med_conn(tjeneste, rid, kjor)

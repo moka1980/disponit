@@ -2405,6 +2405,12 @@ def test_165_listen_innstilles_fra_rapporten_med_manifest(klient):
                     "SELECT opprett_kandidat(%s,%s,%s)",
                     (TEN, pid, uuidmod.uuid5(
                         _KANDIDAT_NS, f"{TEN}\x1f{pid}\x1f{bunt_kid}")))
+            # M-8 (DOM 2): en invitasjonsliste krever minst én aktiv
+            # slot — porten måles for seg i test_m8_tidsvalg; her er
+            # sloten en forutsetning for kjeden testen faktisk måler.
+            rt.execute(
+                "SELECT m8_opprett_slot(%s,%s, now() + interval '1 day',"
+                " now() + interval '1 day 1 hour', 5)", (TEN, pid))
             rt.commit()
         finally:
             rt.close()
@@ -2449,3 +2455,89 @@ def test_165_listen_innstilles_fra_rapporten_med_manifest(klient):
                {"oppdrag_id": oid, "listetype": "invitasjon",
                 "kandidater": ["kandidat-01"]}, idem=nokkel)
     assert r3.status_code == 409, r3.text
+
+
+@pg
+def test_m8_invitasjonsliste_krever_aktiv_slot(klient):
+    """M-8 DOM 2: innstilling av en INVITASJONSLISTE blokkeres når
+    prosessen mangler en aktiv slot — egen kode
+    (`tidsvalg_slot_mangler`, 409), så flaten kan si nøyaktig hva som
+    mangler. En AVSLAGSLISTE er urørt av porten, og med en aktiv slot
+    på plass går invitasjonen gjennom."""
+    import uuid as uuidmod
+
+    from api.app import _KANDIDAT_NS
+    from db import kryptering
+    m = _migrator()
+    try:
+        logg = m.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            "'[]',%s) RETURNING id",
+            (TEN, secrets.token_hex(8))).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, TEN)
+        ct, nonce = kryptering.krypter(dek, {"m8": True}, TEN, key_id)
+        oid = m.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            "'rekruttering.evaluering','m57_ats',%s,%s,%s,"
+            " now()+interval '1 hour', now()+interval '1 day','KOBLET')"
+            " RETURNING id", (TEN, logg, ct, key_id, nonce)).fetchone()[0]
+        m.execute("UPDATE oppdrag SET status='plukket' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
+        from db.pg import koble, sett_kontekst
+        rt = koble(DSN)
+        try:
+            sett_kontekst(rt, TEN, "test", "rm8")
+            pid = rt.execute(
+                "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                (TEN, oid)).fetchone()[0]
+            rt.execute(
+                "SELECT opprett_kandidat(%s,%s,%s)",
+                (TEN, pid, uuidmod.uuid5(
+                    _KANDIDAT_NS, f"{TEN}\x1f{pid}\x1fkandidat-01")))
+            rt.commit()
+        finally:
+            rt.close()
+        sett_kontekst(m, TEN, "test", "rm8b")
+        m.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
+    finally:
+        m.close()
+    sjef = _bruker("m8-innstiller", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    # Uten aktiv slot: invitasjonen BLOKKERES med egen kode ...
+    r = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+              {"oppdrag_id": oid, "listetype": "invitasjon",
+               "kandidater": ["kandidat-01"]})
+    assert r.status_code == 409, r.text
+    assert r.json()["feil"] == "tidsvalg_slot_mangler"
+    # ... mens avslag er urørt av porten.
+    r2 = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+               {"oppdrag_id": oid, "listetype": "avslag",
+                "kandidater": ["kandidat-01"]})
+    assert r2.status_code == 201, r2.text
+    # Med en aktiv slot går invitasjonen gjennom.
+    from db.pg import koble, sett_kontekst
+    rt = koble(DSN)
+    try:
+        sett_kontekst(rt, TEN, "test", "rm8c")
+        pid2 = rt.execute(
+            "SELECT prosess_id FROM rekrutteringsprosess"
+            " WHERE tenant=%s AND oppdrag_id=%s", (TEN, oid)).fetchone()[0]
+        rt.execute(
+            "SELECT m8_opprett_slot(%s,%s, now() + interval '1 day',"
+            " now() + interval '25 hours', 3)", (TEN, pid2))
+        rt.commit()
+    finally:
+        rt.close()
+    r3 = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+               {"oppdrag_id": oid, "listetype": "invitasjon",
+                "kandidater": ["kandidat-01"]})
+    assert r3.status_code == 201, r3.text

@@ -2542,10 +2542,17 @@ test("Evalueringer: seksjonen er SAMME node etter prosessbyttet — "
   // måler. Påstanden skjerpes derfor i stedet for å slakkes: nøyaktig
   // ETT nytt kall, og det er prosesshentingen — evalueringsseksjonen
   // henter fortsatt ingenting.
+  // M-8 (082): tidsvalgseksjonen er PROSESSBUNDET og hører til
+  // byttets egen henting — den nye prosessens slots må hentes, som
+  // prosessdataene selv. Det tenant-globale (evalueringene, rapporten,
+  // profilene, tekstene) hentes fortsatt ALDRI av et bytte.
   const nye = KALL.slice(kallFoer);
-  assert.deepEqual(nye.map((k) => k.sti), ["/v1/rekruttering/prosesser"],
-    "prosessbyttet utløste andre nettverkskall enn selve prosesshentingen"
-    + ` — evalueringsseksjonen skal ikke hente: ${JSON.stringify(nye)}`);
+  assert.deepEqual(nye.map((k) => k.sti).sort(),
+    ["/v1/rekruttering/prosesser", "/v1/rekruttering/tidsvalg"],
+    "prosessbyttet utløste andre nettverkskall enn byttets egne"
+    + ` — det tenant-globale skal ikke hente: ${JSON.stringify(nye)}`);
+  assert.ok(nye.every((k) => k.url.includes("prosess_id=p-2")),
+    "byttets hentinger skal gjelde den NYE prosessen");
   assert.ok(etter.textContent.includes("kandidat-01"),
     "rapporten forsvant fra den gjenbrukte noden");
 });
@@ -7134,4 +7141,162 @@ test("Rapporten: innstillingen sender topp N av GJELDENDE rangering (#149)", asy
   assert.ok(await vent(() => KALL.filter((k) =>
     k.sti === "/v1/rekruttering/prosesser").length >= 2),
     "prosessene ble aldri hentet på nytt");
+});
+
+
+// ---------------------------------------------------------------------------
+// M-8 tidsvalg (082, planen §4): kundens slot-administrasjon i
+// prosessdetaljen — tabellform, label-bundet skjema, deaktivering bak
+// bekreftelsesdialog, DOM 3-teksten på 409, og axe rent.
+// ---------------------------------------------------------------------------
+
+function tidsvalgSvar() {
+  return { slots: [
+    { slot_id: "S-1", start: "2026-09-10T09:00:00+00:00",
+      slutt: "2026-09-10T10:00:00+00:00", kapasitet: 2, status: "aktiv",
+      antall_valgt: 1, valgt_av: ["aaaabbbb-0000-0000-0000-000000000001"] },
+    { slot_id: "S-2", start: "2026-09-11T09:00:00+00:00",
+      slutt: "2026-09-11T10:00:00+00:00", kapasitet: 1,
+      status: "deaktivert", antall_valgt: 0, valgt_av: [] },
+  ] };
+}
+
+async function tidsvalgTegnet() {
+  KALL = [];
+  SVAR = { "/v1/rekruttering/prosesser": prosess(),
+           "/v1/rekruttering/tidsvalg": tidsvalgSvar() };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  assert.ok(await vent(() =>
+    hoved.querySelector(".rekrut-tidsvalg table")),
+    "tidsvalg-tabellen kom aldri");
+  return hoved;
+}
+
+test("M-8 tidsvalg: tabell med caption/scope, label-bundet skjema — og axe rent", async () => {
+  const hoved = await tidsvalgTegnet();
+  const seksjon = hoved.querySelector(".rekrut-tidsvalg");
+  const tabell = seksjon.querySelector("table");
+  assert.ok(tabell.querySelector("caption").textContent.length > 0);
+  for (const th of tabell.querySelectorAll("th")) {
+    assert.equal(th.getAttribute("scope"), "col");
+  }
+  // Valgt/kapasitet og status som TEKST i cellene.
+  const rader = [...tabell.querySelectorAll("tbody tr")];
+  assert.equal(rader.length, 2);
+  assert.ok(rader[0].textContent.includes("1/2"));
+  assert.ok(rader[0].textContent.includes(
+    t("ui.rekruttering.tidsvalg.status.aktiv")));
+  assert.ok(rader[1].textContent.includes(
+    t("ui.rekruttering.tidsvalg.status.deaktivert")));
+  // Kun den AKTIVE raden bærer en deaktiveringsknapp, med tiden i navnet.
+  const knapper = [...tabell.querySelectorAll("button")];
+  assert.equal(knapper.length, 1);
+  assert.ok(knapper[0].getAttribute("aria-label").includes(
+    t("ui.rekruttering.tidsvalg.deaktiver")));
+  // Skjemaet er label-bundet: hvert felt har en <label for>.
+  for (const id of ["tidsvalg-start", "tidsvalg-slutt", "tidsvalg-kap"]) {
+    assert.ok(seksjon.querySelector(`label[for="${id}"]`),
+      `label mangler for ${id}`);
+    assert.ok(seksjon.querySelector(`#${id}`), `feltet ${id} mangler`);
+  }
+  // Utfallsområdet er role=alert.
+  assert.ok(seksjon.querySelector('[role="alert"]'));
+  const brudd = await alvorligeBrudd(hoved);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("M-8 tidsvalg: deaktivering bak bekreftelsesdialog — og DOM 3-teksten på 409", async () => {
+  const hoved = await tidsvalgTegnet();
+  const seksjon = hoved.querySelector(".rekrut-tidsvalg");
+  const knapp = [...seksjon.querySelectorAll("table button")][0];
+  knapp.click();
+  const dialog = document.querySelector(
+    '[role="dialog"], [role="alertdialog"]');
+  assert.ok(dialog, "deaktivering uten bekreftelsesdialog");
+  assert.ok(dialog.textContent.includes(
+    t("ui.rekruttering.tidsvalg.deaktiver_tittel")));
+  // Serveren svarer 409 tidsvalg_slot_har_valg (DOM 3): flaten sier at
+  // VALGET står i veien — aldri en generisk feil.
+  SVAR["/v1/rekruttering/tidsvalg/slot/S-1/deaktiver"] =
+    { __status: 409, __kropp: { feil: "tidsvalg_slot_har_valg" } };
+  [...dialog.querySelectorAll("button")]
+    .find((b) => b.textContent === t("ui.rekruttering.tidsvalg.deaktiver"))
+    .click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/tidsvalg/slot/S-1/deaktiver")),
+    "POST kom aldri");
+  assert.ok(await vent(() => seksjon.querySelector('[role="alert"]')
+    .textContent === t("ui.rekruttering.tidsvalg.har_valg")),
+    "DOM 3-teksten kom aldri i role=alert");
+});
+
+test("M-8 tidsvalg: ny slot postes med sone-ISO og SP-2-nøkkel", async () => {
+  const hoved = await tidsvalgTegnet();
+  const seksjon = hoved.querySelector(".rekrut-tidsvalg");
+  seksjon.querySelector("#tidsvalg-start").value = "2026-09-20T09:00";
+  seksjon.querySelector("#tidsvalg-slutt").value = "2026-09-20T10:00";
+  seksjon.querySelector("#tidsvalg-kap").value = "3";
+  SVAR["/v1/rekruttering/tidsvalg/slots"] = { slot_ids: ["S-9"] };
+  seksjon.querySelector("form button[type=submit]").click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/tidsvalg/slots")), "POST kom aldri");
+  const kall = KALL.find((k) => k.sti === "/v1/rekruttering/tidsvalg/slots");
+  assert.equal(kall.kropp.prosess_id, "p-1");
+  assert.equal(kall.kropp.slots.length, 1);
+  // datetime-local er sonefri — kroppen bærer ISO MED sone (Z).
+  assert.ok(/Z$|[+-]\d\d:\d\d$/.test(kall.kropp.slots[0].start),
+    `start uten sone: ${kall.kropp.slots[0].start}`);
+  assert.equal(kall.kropp.slots[0].kapasitet, 3);
+  assert.ok(Object.keys(kall.hoder).some((h) =>
+    h.toLowerCase() === "idempotency-key"), "SP-2-nøkkelen mangler");
+  assert.ok(await vent(() => seksjon.querySelector('[role="alert"]')
+    .textContent === t("ui.rekruttering.tidsvalg.lagret")));
+});
+
+test("M-8 tidsvalg (DOM 2): blokkert innstilling får sin egen flatetekst", async () => {
+  KALL = [];
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/lister" && opts.method === "POST") {
+      return { __status: 409, __kropp: { feil: "tidsvalg_slot_mangler" } };
+    }
+    return {
+      "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/tidsvalg": { slots: [] },
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/evalueringer": { evalueringer: [
+        { oppdrag_id: 97, status: "utfort",
+          opprettet: "2026-08-28T00:40:00+00:00", rapport_klar: true }] },
+      "/v1/rekruttering/rapport/97": { oppdrag_id: 97, rapport: {
+        rapporttype: "rekruttering.evaluering.rapport", versjon: 2,
+        profil: { profil_id: "p-1", versjon: 1, navn: "Driftskonsulent",
+          krav: [{ kravnavn: "drift", vekt: 3 }] },
+        antall_soknader: 1,
+        rangering: [
+          { kandidat_id: "kandidat-01", poeng: 1,
+            nedbrytning: { drift: 1 } }],
+        kandidater: { "kandidat-01": { funn: [] } },
+        fremdrift: { filer_lest: 1, filer_totalt: 1, byte_lest: 90 },
+      } },
+    }[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon() && [...seksjon()
+    .querySelectorAll(".rekrut-kortliste button")]
+    .some((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))));
+  [...seksjon().querySelectorAll(".rekrut-kortliste button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
+    .click();
+  assert.ok(await vent(() => seksjon().querySelector(".rekrut-innstilling")));
+  const flate = seksjon().querySelector(".rekrut-innstilling");
+  [...flate.querySelectorAll("button")].find((b) =>
+    b.textContent === t("ui.rekruttering.innstill.invitasjon_knapp"))
+    .click();
+  assert.ok(await vent(() =>
+    flate.querySelector(".rekrut-innstillingsutfall").textContent
+      === t("ui.rekruttering.innstill.tidsvalg_mangler")),
+    "DOM 2-teksten kom aldri — kunden vet ikke hva som mangler");
 });
