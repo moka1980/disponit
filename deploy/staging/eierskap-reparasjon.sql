@@ -360,6 +360,14 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'pensjoner_release(text,text,text,text)',            'disponit_modul_eier'),
     ('FUNCTION', 'noddeaktiver_modul(text,text,text)',               'disponit_modul_eier'),
     ('FUNCTION', 'reaktiver_modul(text,bigint,text)',                'disponit_modul_eier'),
+    -- 086 (M-31): modellstyringsdørene — golden-sett-lageret, kravsettet
+    -- og kjøringsregistreringen eies av modul_eier som resten av
+    -- registerdørene (runtime har KUN SELECT på tabellene, all skriving
+    -- går gjennom definerne). bytt_release-raden over dekker også
+    -- 086-REPLACEen (samme signatur, samme eier)
+    ('FUNCTION', 'registrer_golden_sett(text,text,integer,text,integer,text,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'sett_evalueringskrav(text,text,integer,text,numeric,integer,integer,text)', 'disponit_modul_eier'),
+    ('FUNCTION', 'registrer_evalueringskjoring(text,uuid,text,text,integer,text,integer,integer,integer,integer,integer,numeric,text,text,timestamp with time zone,timestamp with time zone,text)', 'disponit_modul_eier'),
     ('FUNCTION', 'ta_deployreservasjon(text,text,text,text,interval)', 'disponit_modul_eier'),
     ('FUNCTION', 'forleng_deployreservasjon(text,text,text,interval)', 'disponit_modul_eier'),
     ('FUNCTION', 'frigi_deployreservasjon(text,text,text)',          'disponit_modul_eier'),

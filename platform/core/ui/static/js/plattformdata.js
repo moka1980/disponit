@@ -40,6 +40,10 @@ export const MODULSTATUS = {
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
   16: "bygges",
+  // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
+  // 31/8 sammen med golden-sett-porten (086). Flippes av en
+  // M-31-aksept, aldri av en byggemilepæl.
+  31: "bygges",
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
@@ -84,6 +88,15 @@ const MODULER = [
     navn_nokkel: "site.modul.m16.navn",
     fase_nokkel: "site.fase.operasjoner",
     tekst_nokkel: "site.modul.m16.tekst",
+  },
+  {
+    // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,
+    // fase: 3) — altså `site.fase.autopiloter`, samme kilde som
+    // `katalog.js` (m16-regelen).
+    id: 31,
+    navn_nokkel: "site.modul.m31.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m31.tekst",
   },
   {
     id: 37,

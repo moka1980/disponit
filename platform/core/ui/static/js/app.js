@@ -20,6 +20,7 @@ import { visWcagKontroll } from "./flater/wcagkontroll.js";
 import { visRekruttering } from "./flater/rekruttering.js";
 import { visAdjudikator } from "./flater/adjudikator.js";
 import { visNokkeltall } from "./flater/nokkeltall.js";
+import { visModellstyring } from "./flater/modellstyring.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -35,6 +36,9 @@ const FLATER = {
   // fikk, så scope-gaten bor ett sted.
   rekruttering: visRekruttering,
   adjudikator: visAdjudikator,
+  // M-31: basisrute bak `security:read` (sitekart.js) — scope-gaten
+  // bor der, som for de andre flatene.
+  modellstyring: visModellstyring,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).
