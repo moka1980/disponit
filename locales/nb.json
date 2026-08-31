@@ -263,6 +263,8 @@
   "site.modul.m1.tekst": "Styrer hva agentene faktisk har lov til å gjøre.",
   "site.modul.m2.navn": "Revisjonslogg og evidens",
   "site.modul.m2.tekst": "Gjør hver automatisert handling sporbar og etterprøvbar.",
+  "site.modul.m16.navn": "Rapporterings- og KPI-agent",
+  "site.modul.m16.tekst": "Nøkkeltall regnet fra faktiske beslutninger — ren leseflate, ingenting glattes eller framskrives.",
   "site.modul.m37.navn": "Unntaks- og feilhåndteringsagent",
   "site.modul.m37.tekst": "Samler alt som stoppes av policy i én kontrollert kø.",
   "site.modul.m38.navn": "Kapasitets-, kø- og modellruter",
