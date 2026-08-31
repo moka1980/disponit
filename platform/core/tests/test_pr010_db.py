@@ -278,11 +278,15 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # 038 §6 + 044 §6: admin BESTILLER kontroller og forvalter PLANENE
     # for dem — planen er stående intensjon, ikke stående fullmakt, så
     # også plan-scopene fører bare til policyvurderte bestillinger.
+    # M-6 PR-A: kildeforvaltningen og utkastdommen er admin-handlinger i
+    # flaten (PR-B/D) — muterende scopes, samme klasse som bestillingen.
     assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
-        "plan:gjenoppta"}
+        "plan:gjenoppta", "epost:kilde:administrer",
+        "epost:utkast:behandle"}
     assert scopes_for_roller(["leser"]) == {"decisions:read",
-                                            "exceptions:read", "policy:read"}
+                                            "exceptions:read", "policy:read",
+                                            "epost:read"}
     assert "security:read" not in scopes_for_roller(["leser"])
     assert "security:read" in scopes_for_roller(["sikkerhet"])
     # Ukjent rolle → ingen scopes (default-deny).

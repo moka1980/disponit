@@ -533,6 +533,49 @@ KRAVGRENSER["m31-v1"] = {
     "punktbinding": {},
 }
 
+#: M-6 (planen §7 / dommene 31/8): invariantene pinnet FØR bygging
+#: (§0-regelen) — PR-A registrerer grensen, utførelsesarmen (PR-C) og
+#: flaten (PR-D) produserer målingene. Parformen er m57s: hver invariant
+#: måles som (forsøk, brudd), og null brudd uten forsøk er en port som
+#: aldri kjørte.
+M6_INVARIANTER: tuple[str, ...] = (
+    # Innhentingsidempotensen: samme leverandørmelding sett to ganger
+    # er ÉN rad (088 `melding_en_per_leverandormelding`).
+    "innhenting_duplikatmelding",
+    # Retensjonen: etter reaping finnes persondata i NULL av
+    # payload-lagrene (kropp, sammendrag, utkast-tekst, vedleggsnavn).
+    "ttl_persondata_funnet_etter_reaping",
+    # Credentials er alltid ciphertext i basen — aldri en
+    # klartekst-kolonne (088 `auth_kryptert`/nonce/key_id, 058-formen).
+    "kilde_credentials_ukryptert",
+    # Blinding: maskerte felter når aldri modellinput (m57s
+    # blinding-invariant, M-6s klassifiseringsvei).
+    "modellinput_maskert_felt",
+    # Klassifiseringen er et LUKKET sett (prioritet/handlingstype) — en
+    # modellrespons utenfor settet er en feil, aldri en ny kategori.
+    "klassifisering_utenfor_lukket_sett",
+    # Dommen pkt. 2: v1 er kun lesende — ingen sendevei finnes i
+    # modulen (den statiske porten i test_m6_epost.py måler fraværet).
+    "modul_sendevei_finnes",
+    # Flaten (PR-D): ingen alvorlige axe-brudd (m57s ui-invariant).
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m6-v1"] = {
+    # Settet er PINNET her, ikke avledet av artefaktet (m57-formen):
+    # et artefakt som utelater en invariant felles på fraværet.
+    "invarianter": M6_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: migrasjonen er grønn både fra tom base (CI) og mot
+    # bebodd tilstand — bokstavelig `true`, alt annet er nei.
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    # PUNKTBINDING: TOM MED VILJE (m57s form og m57s grunn) — ingen av
+    # sjekklistepunktene kan flippes før målingene finnes (PR-C/D).
+    # Hvert punkt som får sin måling, får sin linje her, pinnet før
+    # bygging.
+    "punktbinding": {},
+}
+
 
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
@@ -845,6 +888,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m57(grense, art)
     if krav_id == "m31-v1":
         return feil + _grenser_m31(grense, art)
+    if krav_id == "m6-v1":
+        return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1774,6 +1819,38 @@ def _grenser_m31(grense: dict, art: dict) -> list[str]:
     invariant er et par (forsøk, brudd), settet er grensens — og uten
     denne grenen ville et `m31-v1`-artefakt falt i den generiske
     perf-lesningen og feilet på et skjema det aldri har lovet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for navn in grense["invarianter"]:
+        forsok, f1 = _teller(m, f"{navn}_forsok", f"{navn}_forsok")
+        brudd, f2 = _teller(m, f"{navn}_brudd", f"{navn}_brudd")
+        for melding in (f1, f2):
+            if melding:
+                feil.append(melding)
+        if f1 or f2:
+            continue
+        if forsok < grense["min_forsok"]:
+            feil.append(f"{navn}_forsok={forsok}, krever >="
+                        f" {grense['min_forsok']} — en port som aldri"
+                        " kjørte har ikke målt noe")
+        if brudd > grense["maks_brudd"]:
+            feil.append(f"{navn}_brudd={brudd}, krever <="
+                        f" {grense['maks_brudd']}")
+    for navn in grense["krav_ja"]:
+        if m.get(navn) is not True:
+            feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
+                        " — et punkt uten målbar grense regnes som nei")
+    return feil
+
+
+def _grenser_m6(grense: dict, art: dict) -> list[str]:
+    """`m6-v1` — M-6-planens §7-invarianter i m57s parform: hver
+    invariant er (forsøk, brudd), null brudd uten forsøk er rødt, og
+    ja-punktet krever bokstavelig `true`. Ingen ytelses- eller biasarm
+    ennå — de pinnes når utførelsesarmen (PR-C) gir dem tall, FØR
+    målingen kjøres (§0)."""
     feil: list[str] = []
     m = art.get("maalt")
     if not isinstance(m, dict):

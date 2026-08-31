@@ -116,6 +116,22 @@ GRANT SELECT ON m8_slot, m8_slotvalg TO {rolle};
 -- motsetning til claimer-medlemskapet), så granten gis direkte her.
 GRANT EXECUTE ON FUNCTION m8_tidsvalg_oppslag(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m8_velg_slot(TEXT, TEXT, UUID) TO {rolle};
+-- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
+-- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
+-- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
+-- med M-6 PR-C og får sine INSERT-grants der; den eneste mutasjonen er
+-- reap-overgangen, og den bor i `reap_epostdata` (kryss-tenant,
+-- betinget blokk i 088 — timerrollens, aldri en parameterisert rolles).
+-- KILDEN får KOLONNEGRANT (CodeRabbit på PR-A): web-API-rollen har
+-- ingenting å gjøre med credential-trioen (auth_kryptert/nonce/key_id)
+-- eller leverandørcursoren — flaten lister postbokser og status, og
+-- innhenterens credential-lesing (PR-C) er sin egen vei med sin egen
+-- rolleavgjørelse. Et kompromittert web-API skal ikke engang kunne
+-- eksfiltrere ciphertext.
+GRANT SELECT (tenant, kilde_id, leverandor, postboks, status,
+    sist_hentet_ts, opprettet) ON epost_kilde TO {rolle};
+GRANT SELECT ON epost_melding, epost_klassifisering,
+    epost_utkast, epost_oppfolging, epost_vedlegg TO {rolle};
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
