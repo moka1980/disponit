@@ -1318,3 +1318,39 @@ def test_aktivert_revisjon_er_server_utledet():
     finally:
         m.rollback()
         m.close()
+
+
+@pg
+def test_m38_sletting_gir_policyukjent_intet_gjenferd_fra_memoiseringen():
+    """M-38 port (c): slettet policy er BORTE — cachen holder ingen i live.
+
+    `hent_aktiv` varmes med en gyldig policy, så slettes den (aktiv, aldri
+    brukt). Neste lasting skal gi `PolicyUkjent` fra radlesningen — som
+    kjøres FØR memoiseringen i det hele tatt spørres. Ingen invalidering
+    finnes, og ingen trengs: en fjernet rad har ikke noe innhold å slå opp.
+    """
+    from db.pg import sett_kontekst
+    from .test_bootstrap_ankerrad import _policy
+    pid = "p-" + secrets.token_hex(3)
+    innhold = _policy("1.0.0", policy_id=pid)
+    m = _mig()
+    rt = _rt()
+    try:
+        pr.registrer(m, TEN, innhold, "produksjon")
+        m.commit()
+
+        pr.hent_aktiv(rt, TEN, pid)                 # varmer memoiseringen
+        rt.rollback()                               # slipper den delte låsen
+
+        sett_kontekst(rt, TEN, "test", "r2")
+        assert _slett(rt, pid,
+                      innholds_hash=pr.innholds_hash(innhold)) == 1
+        rt.commit()
+
+        sett_kontekst(rt, TEN, "test", "r3")
+        with pytest.raises(pr.PolicyUkjent):
+            pr.hent_aktiv(rt, TEN, pid)
+    finally:
+        rt.rollback()
+        rt.close()
+        m.close()

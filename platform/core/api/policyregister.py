@@ -1,8 +1,10 @@
 """Policyregisteret (v2 Del 1.5) — lasting med revalidering.
 
-Ingen cache i PR-005: policyen leses fra databasen per forespørsel. Det er
-et bevisst valg fra spesifikasjonen — cache-invalidering er et helt eget
-problem, og på dagens skala kjøper den ingenting. Cache er M-38-scope.
+Policyen leses fortsatt fra databasen per forespørsel — det sto i PR-005,
+og det står. M-38 la til nøyaktig én ting: skjemavandringen i `hent_aktiv`
+memoiseres i `m38.policycache`, nøklet på den REKOMPUTERTE innholds-hashen.
+Ingen tilstand kopieres ut av databasen, og derfor finnes ingen
+invalidering — se den modulens docstring for hva som spares og ikke.
 """
 from __future__ import annotations
 
@@ -90,10 +92,20 @@ def hent_aktiv(conn: psycopg.Connection, tenant: str,
             [f"innholds_hash stemmer ikke: lagret {lagret_hash[:12]}…,"
              f" faktisk {faktisk[:12]}…"], innhold)
 
-    from policy_validator.schema import valider_policy
-    feil = valider_policy(innhold)
-    if feil:
-        raise PolicyKorrupt(feil, innhold)
+    # M-38: innholdsadressert valideringsmemoisering. Nøkkelen er `faktisk`
+    # — hashen vi NETTOPP rekomputerte fra innholdet vi leste, aldri
+    # kolonnen — så et treff beviser at identiske bytes har bestått
+    # skjemavandringen før. Alt annet i lastekontrakten (låsen,
+    # radlesningen, rekomputeringen over, kryssjekkene under) kjøres
+    # alltid; kun bestått resultat legges inn, så en feilende policy
+    # re-måles ved hver lasting.
+    from m38.policycache import er_validert, merk_validert
+    if not er_validert(faktisk):
+        from policy_validator.schema import valider_policy
+        feil = valider_policy(innhold)
+        if feil:
+            raise PolicyKorrupt(feil, innhold)
+        merk_validert(faktisk)
 
     tillatt = tillatte_statuser()
     if status not in tillatt:
