@@ -73,6 +73,15 @@ globalThis.fetch = async (url, opts = {}) => {
   // sier bare statusen, og flaten skiller på KODEN. En 409
   // `idempotenskonflikt` fra bestillingen betyr «nøkkelen er opptatt av et
   // forsøk som fortsatt går», og det er en annen sak enn en 409 uten kode.
+  // `__blob`/`__innholdstype` — dokumenthentingens form: svaret er rå
+  // bytes med serverens normaliserte type i Content-Type, aldri JSON.
+  if (svar && svar.__blob !== undefined) {
+    return { ok: true, status: 200,
+      headers: { get: (n) => (n.toLowerCase() === "content-type"
+        ? svar.__innholdstype : null) },
+      blob: async () => new Blob([svar.__blob],
+        { type: svar.__innholdstype }) };
+  }
   if (svar && svar.__status) {
     const kropp = svar.__kropp !== undefined ? svar.__kropp : svar;
     return { ok: svar.__status < 400, status: svar.__status,
@@ -6815,8 +6824,17 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
       kandidat_id: "kandidat-01",
       felter: { "[NAVN-1]": "Kari Nordmann",
                 "[KONTAKT-1]": "kari@eksempel.no" },
-      dokumenter: [{ dokument_id: "d0000000-0000-5000-8000-000000000001",
-                     filnavn: "cv.pdf" }] },
+      dokumenter: [
+        { dokument_id: "d0000000-0000-5000-8000-000000000001",
+          filnavn: "cv.pdf" },
+        { dokument_id: "d0000000-0000-5000-8000-000000000002",
+          filnavn: "soknad.html" }] },
+    ["/v1/rekruttering/kandidatdokument/96/"
+     + "d0000000-0000-5000-8000-000000000001"]:
+      { __blob: "%PDF-1.4", __innholdstype: "application/pdf" },
+    ["/v1/rekruttering/kandidatdokument/96/"
+     + "d0000000-0000-5000-8000-000000000002"]:
+      { __blob: "<p>Hei</p>", __innholdstype: "text/html" },
   })[sti] ?? 500;
   const hoved = nyHoved();
   visRekruttering(hoved, ctx());
@@ -6847,22 +6865,48 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
   const tekst = seksjon().textContent;
   assert.match(tekst, /kari@eksempel\.no/);
   assert.match(tekst, /cv\.pdf/);
-  // Dokumentet VISES i en sandboxet ramme (eiers funn 31/8) — aldri
-  // rendring av kundeopplastet innhold med appens fullmakter.
-  const visKnapp = [...kortEl().querySelectorAll("button")]
-    .find((b) => b.textContent === "cv.pdf");
-  assert.ok(visKnapp, "dokumentets Vis-knapp mangler");
-  visKnapp.click();
+  // Dokumentet VISES fra en blob FORELDEREN har hentet (eiers funn
+  // 31/8, runde 2): en sandboxet ramme har opak origin og får aldri
+  // øktcookien med — direkte `src` mot ruten ga 401 og blank side. Så
+  // porten måler BEGGE halvdeler: hentingen går som autentisert kall
+  // (ruten står i KALL), og rammens `src` er en blob, aldri API-ruten.
+  const visHtml = [...kortEl().querySelectorAll("button")]
+    .find((b) => b.textContent === "soknad.html");
+  assert.ok(visHtml, "dokumentets Vis-knapp mangler");
+  visHtml.click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "dokumentpanelet åpnet ikke");
   const panel = document.querySelector(".dialog.skuff");
-  assert.ok(panel, "dokumentpanelet åpnet ikke");
+  assert.ok(KALL.some((k) => k.sti === "/v1/rekruttering/kandidatdokument/96/"
+    + "d0000000-0000-5000-8000-000000000002"),
+    "forelderen hentet aldri dokumentet selv");
   const ramme = panel.querySelector("iframe.rekrut-dokvisning");
-  assert.ok(ramme && ramme.getAttribute("src").includes(
-    "/v1/rekruttering/kandidatdokument/96/"), "rammen mangler ruten");
-  // Sandkassen er PÅ og TOM: ingen allow-scripts, ingen
+  assert.ok(ramme && ramme.getAttribute("src").startsWith("blob:"),
+    "rammen viser ikke en blob");
+  assert.ok(!ramme.getAttribute("src").includes("/v1/"),
+    "rammen peker på API-ruten — den forespørselen bærer ingen økt");
+  // Sandkassen er PÅ og TOM for HTML: ingen allow-scripts, ingen
   // allow-same-origin — opplastet HTML har null fullmakter.
   assert.equal(ramme.getAttribute("sandbox"), "",
     "rammen er ikke fullt sandboxet");
   panel.querySelector(".dialog-lukk").click();
+  // PDF-en får egen ramme UTEN sandkasse-attributt: PDF-viseren er en
+  // plugin nettlesere ikke kjører i sandboxede rammer (blank side), og
+  // en blob typet application/pdf av serverens dom rendres aldri som
+  // HTML — den kan ikke bli DOM eller skript.
+  const visPdf = [...kortEl().querySelectorAll("button")]
+    .find((b) => b.textContent === "cv.pdf");
+  assert.ok(visPdf, "PDF-ens Vis-knapp mangler");
+  visPdf.click();
+  assert.ok(await vent(() => document.querySelector(".dialog.skuff")),
+    "PDF-panelet åpnet ikke");
+  const pdfRamme = document.querySelector(".dialog.skuff")
+    .querySelector("iframe.rekrut-dokvisning");
+  assert.ok(pdfRamme && pdfRamme.getAttribute("src").startsWith("blob:"),
+    "PDF-rammen viser ikke en blob");
+  assert.equal(pdfRamme.getAttribute("sandbox"), null,
+    "PDF-rammen er sandboxet — da er viseren blank");
+  document.querySelector(".dialog.skuff .dialog-lukk").click();
   // Etikettene er locale-tekster utledet av tokenet — aldri rå tokener.
   // (Målt på KORTET: flatens blinding-forklaring nevner selv [NAVN-1]
   // som eksempel, så hele seksjonen kan ikke bære negativen.)

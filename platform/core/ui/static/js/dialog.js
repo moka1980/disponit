@@ -4,9 +4,13 @@
 import { el } from "./dom.js";
 import { t } from "./i18n.js";
 
+// `iframe` er med (CodeRabbit på dokumentvisningen): rammene er
+// fokuserbare i nettleseren, og sto de utenfor selektoren gikk
+// Tab-fella i dokumentpanelet UTENOM selve dokumentet.
 const FOKUSERBAR =
   'a[href],button:not([disabled]),input:not([disabled]),' +
-  'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  'select:not([disabled]),textarea:not([disabled]),iframe,' +
+  '[tabindex]:not([tabindex="-1"])';
 
 function fokuserbare(rot) {
   // Dialogen inneholder kun synlige fokuserbare; vi filtrerer ikke på
@@ -23,7 +27,8 @@ let _dlgTeller = 0;
 
 // Generisk modal. `innhold` er en node; `handlinger` er valgfrie knapper.
 export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [],
-                             rolle = "dialog", beskrivelseId = null }) {
+                             rolle = "dialog", beskrivelseId = null,
+                             paaLukk = null }) {
   const aapner = document.activeElement;
   const bakgrunn = bakgrunnsnode();
   const tittelId = `dlg-tittel-${++_dlgTeller}`;
@@ -62,6 +67,11 @@ export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [],
     overlegg.remove();
     bakgrunn.removeAttribute("inert");
     if (aapner && typeof aapner.focus === "function") aapner.focus();
+    // Opprydding ETTER at dialogen er borte fra DOM — alle lukkeveier
+    // (knapp, ESC, overlegg, ctrl.lukk) ender her, så en kaller som
+    // holder en ressurs for innholdet (f.eks. en blob-URL) har nøyaktig
+    // ett sted å slippe den.
+    if (typeof paaLukk === "function") paaLukk();
   }
 
   lukkeknapp.addEventListener("click", lukk);
@@ -77,8 +87,8 @@ export function aapneDialog({ tittel, innhold, klasse = "", handlinger = [],
 }
 
 // Detaljpanel: skuff-varianten (beslutnings-/unntaksdetalj).
-export function Detaljpanel({ tittel, innhold }) {
-  return aapneDialog({ tittel, innhold, klasse: "skuff" });
+export function Detaljpanel({ tittel, innhold, paaLukk = null }) {
+  return aapneDialog({ tittel, innhold, klasse: "skuff", paaLukk });
 }
 
 // Bekreftelsesdialog: beskriver konsekvens; primær/avbryt; ESC + fokusretur.

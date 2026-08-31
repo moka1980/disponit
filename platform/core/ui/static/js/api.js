@@ -67,6 +67,39 @@ export async function hentJson(sti, sok = null) {
   return kropp;
 }
 
+// Kandidatdokumentet hentes av FORELDEREN, aldri av visningsrammen selv
+// (eiers funn 31/8, runde 2): en `<iframe sandbox="">` har OPAK origin,
+// og nettleseren sender ikke øktcookien med rammens dokumentforespørsel
+// (SameSite/ITP behandler den som tredjepart) — direkte `src` mot ruten
+// ga derfor 401 og en blank side. Her går kallet same-origin med
+// credentials som alle andre, og kalleren viser innholdet fra en blob i
+// sandkassen — autentiseringen skjer i appens kontekst, rendringen i en
+// kontekst uten fullmakter.
+export async function hentKandidatdokument(oppdragId, dokumentId) {
+  let r;
+  try {
+    r = await fetch("/v1/rekruttering/kandidatdokument/"
+      + `${oppdragId}/${encodeURIComponent(dokumentId)}`, {
+      credentials: "same-origin",
+      redirect: "error",
+    });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  if (!r.ok) {
+    let kropp = null;
+    try { kropp = await r.json(); } catch { kropp = null; }
+    _kast(r.status, kropp && kropp.feil);
+  }
+  // Typen er SERVERENS normaliserte dom (samme verdi som styrer inline/
+  // attachment der) — visningsvalget i flaten bygger på den, aldri på
+  // filnavnet.
+  const innholdstype = ((r.headers && r.headers.get
+    && r.headers.get("content-type")) || "")
+    .split(";")[0].trim().toLowerCase();
+  return { blob: await r.blob(), innholdstype };
+}
+
 // Utrullingsplanen for ØKTEN. Den kan ikke ligge i klientpakken: `/ui/{sti}`
 // serveres uten sesjonssjekk. Serveren returnerer bare radene økten har rett
 // til — egen tenant, eller alle med `platform:admin` — så klienten filtrerer
