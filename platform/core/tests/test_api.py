@@ -178,6 +178,8 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # 056: utsendingskjeden peker på oppdrag (og innbyrdes
                  # frigivelse→signatur→liste) — ut i avhengighetsrekkefølge
                  # FØR oppdragene.
+                 # 081: kvitteringen peker på frigivelsen OG medlemmet.
+                 "m57_utsendingskvittering",
                  "utsendingsfrigivelse", "utsendingssignatur",
                  # 080: manifestet peker på listen OG kandidatankeret.
                  "utsendingsliste_medlem", "utsendingsliste",

@@ -141,6 +141,15 @@ RESET ROLE;
 SET LOCAL ROLE disponit_m37_claimer;
 REVOKE ALL ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) FROM {rolle};
 REVOKE ALL ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) FROM {rolle};
+REVOKE ALL ON FUNCTION m57_neste_sendinger(TEXT, INT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m57_start_sending(TEXT, UUID, UUID, UUID, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m57_fullfor_sending(TEXT, UUID, UUID, UUID, TEXT, TEXT) FROM {rolle};
+RESET ROLE;
+-- 081: kryss-tenant-dørene eies av domene-eieren (027-formen) — REVOKE
+-- må gis av eieren, i eierens egen blokk.
+SET LOCAL ROLE disponit_domene_eier;
+REVOKE ALL ON FUNCTION m57_sendeklare_tenanter(INT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m57_merk_uviss(INTERVAL) FROM {rolle};
 RESET ROLE;
 GRANT SELECT, INSERT, UPDATE ON varselvalg TO {rolle};
 -- PR-014a: modulregisteret. Runtime LESER det (default-deny, GRANT-modell §4) —
@@ -452,6 +461,17 @@ RESET ROLE;
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION frigi_utsendelse(TEXT, UUID, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
+RESET ROLE;
+-- 081: senderbenen — sendeklar-lesing, klaim og kvittering (claimer-eid),
+-- tenantsveip og uviss-merking (domene-eid, kryss-tenant).
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION m57_neste_sendinger(TEXT, INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m57_start_sending(TEXT, UUID, UUID, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m57_fullfor_sending(TEXT, UUID, UUID, UUID, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+SET LOCAL ROLE disponit_domene_eier;
+GRANT EXECUTE ON FUNCTION m57_sendeklare_tenanter(INT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m57_merk_uviss(INTERVAL) TO {rolle};
 RESET ROLE;
 """
 

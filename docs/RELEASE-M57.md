@@ -110,3 +110,13 @@ Det som gjensto etter BESLUTNING-168-kjeden (#288–#290) ble kjørt 30/8:
 - Lærdom skrevet inn i skriptet: en re-kjøring etter at v1-skjemaet har
   utviklet seg i treet felte `registrer_artefakttype` på 'er immutable' —
   skriptet hopper nå over v1-halvdelen når typen alt finnes.
+
+## Senderbenen (081, 31/8)
+
+Signerte lister blir e-post: `disponit-m57-utsending.timer` (hvert 5.
+minutt, samme credential og SMTP-oppsett som varselsenderen —
+`/etc/disponit/varsel/`). Kvitteringstabellen `m57_utsendingskvittering`
+er transportidempotensen: klaim committes før SMTP, døde klaim blir
+TERMINALT `uviss` (aldri auto-resend), `feilet` prøves opp til 3 ganger.
+Uten `smtp.env` rapporterer jobben `smtp_ikke_konfigurert` og rører
+ingenting. Nye units rulles av `opp.sh` (UNITS-listen) ved neste deploy.

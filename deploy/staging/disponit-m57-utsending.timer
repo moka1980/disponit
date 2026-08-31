@@ -1,0 +1,13 @@
+# Hvert 5. minutt — kandidaten venter på et svar et menneske alt har
+# signert; minutter er riktig oppløsning, sekunder er støy mot SMTP.
+
+[Unit]
+Description=Disponit M-57-utsendingstimer
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
