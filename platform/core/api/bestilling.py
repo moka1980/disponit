@@ -164,6 +164,22 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
                               "omfang", "slettefrist_dogn"}),
         intensjonsfelt=("tenant", "bestillingstype", "kilde_id",
                         "omfang", "slettefrist_dogn")),
+    # 089 (M-35): kontinuitetsøvelsen. Kroppen er den minste i registeret
+    # — øvelsen tar ingen mål, ingen referanser og ingen persondata:
+    # HVA som måles (statusfilen, /live, kartferskhet, kontaktdekning)
+    # er øvelseslogikkens lukkede kontrakt, aldri bestillerens valg.
+    # Fristen står i `oppdragskontrakt.UTFORELSESFRIST_VALG` (én kilde,
+    # Codex P1-regelen over). Arbeider-/plan-koblingen er PR-B; typen
+    # registreres nå fordi kontrakten er identiteten resten (frist,
+    # eiermodul, artefakttype) bindes mot.
+    "kontinuitet.ovelse": Bestillingstype(
+        handling="kontinuitet.ovelse",
+        oppdragstype="kontinuitet.ovelse",
+        eiermodul="m35_kontinuitet",
+        kravsett=(),
+        omfang=("full",),
+        skjemafelt=frozenset({"bestillingstype", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "omfang")),
 }
 
 _INNDATA_REF = re.compile(
@@ -214,6 +230,13 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_rekruttering(tenant, bt, data)
     if bt.oppdragstype == "epost.behandling":
         return _normaliser_epost(tenant, bt, data)
+    if bt.oppdragstype == "kontinuitet.ovelse":
+        # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
+        # eies av øvelseslogikken selv.
+        if data.get("omfang") not in bt.omfang:
+            raise Bestillingsfeil("request_feilformet")
+        return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+                "omfang": data["omfang"]}
     host = data.get("hostname")
     if not isinstance(host, str) or "@" in host or ":" in host \
             or "/" in host or not _HOSTNAME.fullmatch(host.lower()) \
@@ -586,7 +609,28 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                        rid, tenant, art="sikkerhet",
                                        hostname=hostname)
                 return ("feil", "bestilling_hostname_uverifisert")
-        else:
+        elif bt.oppdragstype == "rekruttering.evaluering":
+            # GRENEN ER NAVNGITT, IKKE ET `else` (CodeRabbit på 089).
+            # Den sto som «alt som ikke er WCAG-formen» og leste
+            # `inndata_id`/`stillingsprofil_ref` rett ut av den
+            # normaliserte kroppen. Det var sant så lenge registeret
+            # BARE hadde de to formene — men `epost.behandling` (088)
+            # og `kontinuitet.ovelse` (089) har ingen av de feltene, og
+            # forgreningen står FØR `bestillingstype_utilgjengelig`-
+            # porten under. En bestilling på en av de nye typene ville
+            # altså truffet en KeyError her og blitt en 500, i stedet
+            # for det ærlige «typen er ikke claimbar ennå» porten
+            # under er skrevet for å svare.
+            #
+            # Rettelsen er å si hvilken form portene GJELDER, ikke å
+            # bygge en forhåndsport for typer som ennå ikke har en
+            # arbeider: de nye typene faller nå gjennom til
+            # tilgjengelighetsporten og får sitt riktige nei der. Når
+            # M-6/M-35 får sine utførelsesarmer, legges deres egne
+            # målporter til som en NAVNGITT gren ved siden av denne —
+            # og porten i `test_m35_kontinuitet.py` går rød hvis en type
+            # registreres uten at grenen finnes.
+            #
             # REKRUTTERINGSFORMENS MÅLPORTER (#162 PR-3): referansene må
             # peke på noe tenanten faktisk EIER, målt før beslutningen
             # brenner kvote — samme økonomi som hostname-porten. Dørene

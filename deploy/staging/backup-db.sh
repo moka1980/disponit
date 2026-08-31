@@ -44,6 +44,12 @@ command -v age >/dev/null || { echo "AVBRUTT: age er ikke installert" >&2; exit 
 LAGER=/var/lib/disponit-inndata
 install -d -m 700 "$KATALOG"
 STEMPEL=$(date -u +%Y%m%dT%H%M%S)
+# 089 (M-35): epoch-tvillingen til stempelet — backupens fødselstid slik
+# statusfilen (siste-verifisering.json) bærer den. Samme øyeblikk som
+# `$STEMPEL`, aldri et nytt `date`-kall senere: RPO-målingen (now −
+# backup_ts) skal regne fra når dataene ble lest, ikke fra når
+# verifiseringen ble ferdig.
+BACKUP_TS_EPOCH=$(date -u +%s)
 FIL="$KATALOG/disponit-$STEMPEL.dump.age"
 # PARET ER ATOMISK (#191). Dumpen og arkivet deler stempel og er ÉN
 # gjenopprettingsenhet: DEK-ene som dekrypterer buntene i arkivet ligger i
@@ -170,6 +176,10 @@ PAR_KLAR=""
 LISTE="$RAA_KAT/medlemmer"
 opprydd() {
   rm -f "$DELVIS" "$ARKIV_DELVIS"
+  # 089 (M-35): en halvskrevet statusfil er aldri evidens — bort med
+  # arbeidsnavnet; det ferdige navnet røres ALDRI her (forrige kjørings
+  # suksess består som ærlig foreldet alder).
+  rm -f "$KATALOG/siste-verifisering.json.delvis"
   # `$RAA_KAT` tar mellomfila OG de tre listene med seg — de bor alle der
   # nå. `rm -rf` på katalogen er derfor hele oppryddingen etter dem.
   [ -z "$RAA_KAT" ] || rm -rf "$RAA_KAT"
@@ -454,10 +464,21 @@ mkfifo -m 600 "$DUMPROR"
 chmod 600 "$DELVIS"
 age -R "$MOTTAKER" < "$DUMPROR" > "$DELVIS" &
 AGE_PID=$!
+# 089 (M-35): restore-varigheten MÅLES her — rundt selve passeringen som
+# gjenoppretter den isolerte verifiseringsbasen. Tallet er M-35s
+# RTO-PROXY (dom 5: restore-til-isolert-base, aldri en påstand om full
+# tjeneste-RTO), og statusfilen er ENESTE kilde til det (dom 4 — aldri
+# journal-parsing, aldri en egen restore). Millisekundoppløsning fordi
+# en liten base kan restores på under et sekund, og «0 s» ville lest
+# som «aldri målt» hos konsumenten.
+RESTORE_MS0=$(date +%s%3N)
 sudo -u postgres pg_dump --format=custom --dbname=disponit \
   | tee "$DUMPROR" \
   | sudo -u postgres pg_restore --dbname="$VERIF" --no-owner \
       --role=postgres
+RESTORE_MS1=$(date +%s%3N)
+RESTORE_VARIGHET_S=$(awk -v a="$RESTORE_MS0" -v b="$RESTORE_MS1" \
+  'BEGIN{printf "%.3f", (b-a)/1000}')
 wait "$AGE_PID" || {
   echo "AVBRUTT: age feilet på dumpstrømmen — den krypterte filen kan" \
        "ikke stoles på, uansett hva restoren sa" >&2
@@ -764,6 +785,29 @@ if ! sync "$KATALOG"; then
   exit 1
 fi
 PAR_KLAR=1
+
+# 089 (M-35): statusfilen — KUN VED SUKSESS, og først NÅ (dom 4). Hver
+# port over har svart, paret står med endelige navn og er fsynket: det
+# som skrives her er evidens om en verifisering som faktisk holdt, aldri
+# en påstand underveis. Feiler noe FØR dette punktet, står forrige
+# kjørings fil urørt — og konsumenten (kjor-m35-ovelse.py) leser da en
+# ÆRLIG foreldet alder i stedet for en fersk løgn.
+#
+# Atomisk på parets egen form: innhold → sync av fila → mv (navnet) →
+# sync av katalogen. 0640 (root:root): øvelsen leser den via sudo-fri
+# kopi i drift eller som injisert sti i test; verden har ingenting her.
+# Feltene er epoch-sekunder (ts, backup_ts) og desimalsekunder
+# (restore_varighet_s) — aritmetikk-klare, ingen datoparsing hos
+# konsumenten.
+STATUSFIL="$KATALOG/siste-verifisering.json"
+STATUS_TMP="$STATUSFIL.delvis"
+printf '{"ts": %s, "backup_ts": %s, "restore_varighet_s": %s, "tabeller": %s, "storrelse_b": %s}\n' \
+  "$(date -u +%s)" "$BACKUP_TS_EPOCH" "$RESTORE_VARIGHET_S" \
+  "$TABELLER" "$STORRELSE" > "$STATUS_TMP"
+chmod 0640 "$STATUS_TMP"
+sync "$STATUS_TMP"
+mv "$STATUS_TMP" "$STATUSFIL"
+sync "$KATALOG"
 
 # DEN SPARTE TAS NÅ. Det nye paret står med sine endelige navn og er
 # fsynket, så det finnes et gjenopprettingspunkt — og først da er det

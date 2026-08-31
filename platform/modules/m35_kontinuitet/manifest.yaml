@@ -1,0 +1,101 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# M-35 registreres VED FØDSELEN (v1 = PR-A, dommene 31/8): fundamentet er
+# migrasjon 089 (tjenestekart, beredskapskontakter, hendelseshode og den
+# append-only tidslinjen, med claimer-eide dører bak
+# krev_tenantkontekst), bestillingstypen `kontinuitet.ovelse`,
+# øvelseslogikken (`platform/modules/m35_kontinuitet/ovelse.py` +
+# CLI-bindingen `deploy/staging/kjor-m35-ovelse.py`), statusfilen fra
+# backup-db.sh og evidensgrensen `m35-v1` i manifestskjema.KRAVGRENSER —
+# grensen registrert FØR bygging (§0-regelen, m57).
+# Arbeider-/plan-koblingen (øvelsen som claimet oppdrag på 044-rytmen)
+# er PR-B; den finnes IKKE ennå, og ingenting her later som den gjør.
+#
+# TO AKSER, ÆRLIG LEST (m16/m38-formen): `status` er GODKJENT-aksen —
+# ingen aksepthendelse finnes, og ingen sjekklistepunkter er målt.
+# `driftstilstand: ikke_i_drift` er bokstavelig: ingen release, ingen
+# deploymentrad, ingen arbeider — bare datamodellen, målelogikken og
+# flaten skipper med kjernen.
+#
+# V1-GRENSENE ER DOMMER, ikke mangler (31/8):
+#   * Dom 3: playbook-godkjenning er GIT-MERGE (repo-YAML, sha-bundet,
+#     deployporten verifiserer). Fire-øyne-aktivering er v2.
+#   * Dom 4: backupskriptets statusfil er ENESTE kilde til RTO/RPO-
+#     evidensen — aldri journal-parsing, aldri en egen restore.
+#   * Dom 5: RTO-tallet er restore-til-ISOLERT-BASE-proxyen. Full
+#     tjeneste-RTO krever en selvrevers-øvelse og er v2. Flaten navngir
+#     tallene deretter («målt restore-tid», «målt backupalder») — den
+#     sier aldri «RTO» om et tall som ikke er det.
+id: m35_kontinuitet
+navn: Krise- og kontinuitetsagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
+# derfor ærlig oppgir ingen: M-35 BESTILLER gjennom policyporten
+# (`kontinuitet.ovelse` er en bestillingstype, hver øvelse policyvurderes
+# som enhver annen bestilling — m01), og hver beslutning bokføres i
+# evidenskjeden (m02). Uten de to finnes ikke M-35s vei til et oppdrag.
+avhengigheter:
+  - m01_policy                 # bestillingsveien policyvurderer hver øvelse
+  - m02_revisjonslogg          # beslutningene bokføres i evidenskjeden
+kjerne: platform/modules/m35_kontinuitet
+i18n_prefiks: kontinuitet
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json). Punktene står `nei`
+# fordi ingen av dem er MÅLT for M-35 ennå: grensen `m35-v1` er
+# registrert i KRAVGRENSER (§0), men målingene den skal lese kommer
+# først med arbeider-/plan-koblingen (PR-B) og en faktisk øvelseskjøring
+# på staging. «Et manifest skal aldri lese sterkere enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet (m02-suite-formen). v1-portene
+      (test_m35_kontinuitet.py: append-only tidslinje, lukking uten
+      etteranalyse, SP-1 kryss-tenant, SP-2-replay, statusfilens
+      fravær/foreldelse, skjemaavvisning, begge DDL-kjøringer) kjører i
+      CI, men det er ikke denne portens måling.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et syntetisk tjenestekart med fasit-funn målt både lokalt
+      og på staging, med begge datasett-identitetene bundet
+      (wcag-kontroll-v2-formen). Kartet bygges når arbeider-/plan-
+      koblingen (PR-B) kjører øvelsen av seg selv; ingen måling finnes.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      M-35s skrivevei til evidenskjeden er bestillingsveiens (m01/m02) —
+      modulen selv skriver aldri revisjonslogg direkte. Hendelsens
+      tidslinje er modulens EGEN append-only evidens og er noe annet
+      enn revisjonsloggen; punktet flippes når PR-B har målt kjeden
+      bestilling → oppdrag → artefakt ende til ende.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: arbeider og kø å injisere feil i — de kommer med PR-B.
+      Feilveiene (statusfil fraværende/foreldet, /live nede, referent
+      borte, kontaktrolle udekket) er ALT målt som røde funn i
+      øvelseslogikken, men et rødt funn i en CLI-rapport er ikke det
+      samme som en unntakskø-føring, og porten måler det siste.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring mot
+      den. m35-v1 bærer invariantparene, de to ja-punktene og de tre
+      MÅLINGENE (restore-proxy, backupalder, øvelsesalder) — men de
+      måler beredskapen, ikke øvelsens eget tidsforbruk. Et
+      ytelsestall pinnes når PR-B gir øvelsen en arbeidsprofil, FØR
+      målingen kjøres.
+  rollback_testet:
+    status: nei
+    notat: >-
+      M-35 har ingen egen release å rulle tilbake ennå — v1 skipper med
+      kjernen (089 er en migrasjon i kjernens kjede). Punktet får
+      mening når modulen får release/arbeider (PR-B) og drilles da på
+      rollback-m56-formen. Merk ærligheten: at MODULEN ikke er
+      rollback-drillet er noe helt annet enn at PLATTFORMEN har en
+      verifisert backup — det siste er nettopp det m35-v1 måler.

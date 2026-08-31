@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m35artefakt-v1.json",
+  "title": "M-35 ovelsesartefakt (m35-v1)",
+  "comment": "M-35-planen paragraf 6. Hver invariant er et par (forsok, brudd) - null brudd uten minst ett forsok er en port som aldri kjorte. Feltsettet er generert fra manifestskjema.M35_INVARIANTER, aldri for haand; grensene staar i KRAVGRENSER. maalt_restoretid_s er restore-til-isolert-base-PROXYEN fra backupskriptets egen verifisering (dom 5) og maalt_backupalder_s avstanden fra siste verifiserte backup (dom 4) - begge er MALINGER, aldri ja-punkter, og en rapport uten dem er skjemaavvist.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "funn"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m35-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "commit",
+        "vert",
+        "tenant"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m35_kontinuitet"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notat": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kart_kritisk_uten_referent_forsok",
+        "kart_kritisk_uten_referent_brudd",
+        "kontakt_kritisk_rolle_ubekreftet_90d_forsok",
+        "kontakt_kritisk_rolle_ubekreftet_90d_brudd",
+        "hendelse_tidslinjepost_endret_forsok",
+        "hendelse_tidslinjepost_endret_brudd",
+        "hendelse_lukket_uten_etteranalyse_forsok",
+        "hendelse_lukket_uten_etteranalyse_brudd",
+        "ui_axe_alvorlige_brudd_forsok",
+        "ui_axe_alvorlige_brudd_brudd",
+        "restore_verifisert",
+        "ddl_begge_kjoringer_gronne",
+        "maalt_restoretid_s",
+        "maalt_backupalder_s",
+        "siste_gronne_alder_dogn",
+        "live_helse_ok"
+      ],
+      "properties": {
+        "kart_kritisk_uten_referent_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kart_kritisk_uten_referent_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kontakt_kritisk_rolle_ubekreftet_90d_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kontakt_kritisk_rolle_ubekreftet_90d_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hendelse_tidslinjepost_endret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hendelse_tidslinjepost_endret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hendelse_lukket_uten_etteranalyse_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hendelse_lukket_uten_etteranalyse_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ui_axe_alvorlige_brudd_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ui_axe_alvorlige_brudd_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "restore_verifisert": {
+          "type": "boolean",
+          "description": "Backupskriptets egen dom (dom 4): true KUN naar statusfilen fantes, var fersk og ble skrevet av en suksessfull verifisering. Aldri grontt uten evidens."
+        },
+        "ddl_begge_kjoringer_gronne": {
+          "type": "boolean"
+        },
+        "maalt_restoretid_s": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "restore_varighet_s fra statusfilen - restore-til-isolert-base-proxyen (dom 5), aldri en paastand om full tjeneste-RTO. null = ingen evidens (statusfil fraværende/foreldet) - da er restore_verifisert false og kjoringen rod; FELTET er likevel required: en rapport uten det er skjemaavvist, og grensesjekken (m35-v1) feller null."
+        },
+        "maalt_backupalder_s": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "now minus backup_ts fra statusfilen. null = ingen evidens (rod kjoring); required som over."
+        },
+        "siste_gronne_alder_dogn": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Alder paa siste GRONNE ovelse (0 = denne). null = ingen tidligere gronn kjent - aldri grontt i grensesjekken."
+        },
+        "live_helse_ok": {
+          "type": "boolean",
+          "description": "GET /live svarte 200 i ovelsesoyeblikket."
+        }
+      }
+    },
+    "funn": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alvor",
+          "tekstnokkel"
+        ],
+        "properties": {
+          "alvor": {
+            "enum": [
+              "rodt",
+              "gult"
+            ]
+          },
+          "tekstnokkel": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "detalj": {
+            "type": "object"
+          }
+        }
+      },
+      "description": "Funnene som tekstnokler + parametre (aldri fritekst-PII) - flaten oversetter via locale, samme regel som hendelseshodet."
+    }
+  }
+}

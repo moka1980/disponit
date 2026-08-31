@@ -467,3 +467,26 @@ export async function postHandling(uid, operatorhandling, saksversjon,
   }
   return kropp;
 }
+
+// 089 (M-35): kontinuitetsflatens tre skriveveier. Hver av dem er ETT
+// kall mot en claimer-eid dør i basen — klienten håndhever ingenting
+// selv, og skal ikke: etteranalyse-kravet på lukkingen bor i døren, og
+// en klient som «hjalp til» ved å skjule knappen ville vært en andre
+// sannhet det gikk an å omgå med curl. Knappen skjules likevel bak
+// write-scopet, men det er ERGONOMI, ikke sikkerhet.
+//
+// `idem` er kallerens: en tapt respons + nytt klikk skal GJENSPILLE
+// (SP-2 — serveren utleder id-en av nøkkelen), aldri føde en ny
+// hendelse eller en dobbel tidslinjepost.
+export const apneKontinuitetshendelse = (tekstnokkel, alvor, parametre, idem) =>
+  _muter("/v1/kontinuitet/hendelser", "POST",
+         { tekstnokkel, alvor, parametre: parametre || {} },
+         idem || nyIdempotensnokkel());
+
+export const leggKontinuitetspost = (hendelseId, posttype, tekst, idem) =>
+  _muter(`/v1/kontinuitet/hendelse/${encodeURIComponent(hendelseId)}/post`,
+         "POST", { posttype, tekst }, idem || nyIdempotensnokkel());
+
+export const lukkKontinuitetshendelse = (hendelseId, tekst, idem) =>
+  _muter(`/v1/kontinuitet/hendelse/${encodeURIComponent(hendelseId)}/lukk`,
+         "POST", { tekst }, idem || nyIdempotensnokkel());

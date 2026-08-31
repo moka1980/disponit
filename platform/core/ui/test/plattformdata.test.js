@@ -35,6 +35,10 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // avlesningens kilde — PR-A (088-datamodellen + retensjonen) er
   // fundamentet, aksepten kommer etter PR-D.
   assert.equal(modulStatus(6), "bygges");
+  // 35 flippet planlagt → bygges 31/8: manifestet (m35_kontinuitet) er
+  // avlesningens kilde — 089-registeret, øvelseslogikken og
+  // m35-v1-grensen er v1; aksepten krever en målt øvelse (PR-B).
+  assert.equal(modulStatus(35), "bygges");
   // 38 flippet planlagt → bygges 31/8: manifestet (m38_ruter) er
   // avlesningens kilde, og fairness/cachen er levert (#314/#316).
   assert.equal(modulStatus(38), "bygges");
@@ -164,17 +168,20 @@ test("FASEOVERSIKT: ingen fase står planlagt med en påbegynt modul i seg", () 
       `${fase.navn_nokkel} står ${fase.status} med ${paabegynte.length}` +
       " påbegynte moduler i seg");
   }
-  // Slik plattformen faktisk står: fasene med påbegynte moduler er
-  // aktive — operasjoner kom til 2026-08-31 da M-16 ble etterregistrert
-  // (`bygges` er avlesningen av manifestets under_utvikling/
-  // ikke_i_drift, se MODULSTATUS) — og fasen uten en eneste modul er
-  // det ikke.
+  // Slik plattformen faktisk står: ALLE fire fasene har nå minst én
+  // påbegynt modul. Operasjoner kom til 2026-08-31 da M-16 ble
+  // etterregistrert; global kom til samme dag med M-35
+  // (kontinuitetsagenten er katalogens fase 4), og `bygges` er
+  // avlesningen av manifestets under_utvikling/ikke_i_drift — se
+  // MODULSTATUS. At ingen fase lenger står `planlagt` er en avledning,
+  // ikke en påstand: regelløkken over eier dommen, og disse fire
+  // linjene er bare dagens fasit ved siden av den.
   const status = Object.fromEntries(
     FASEOVERSIKT.map((f) => [f.navn_nokkel, f.status]));
   assert.equal(status["site.fase.autopiloter"], "aktiv");
   assert.equal(status["site.fase.fundament"], "aktiv");
   assert.equal(status["site.fase.operasjoner"], "aktiv");
-  assert.equal(status["site.fase.global"], "planlagt");
+  assert.equal(status["site.fase.global"], "aktiv");
   // Etiketten må finnes på begge språk, ellers rendres nøkkelen som merke.
   for (const [sprak, sett] of LOKALER) {
     for (const verdi of ["aktiv", "planlagt"]) {

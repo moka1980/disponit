@@ -577,6 +577,53 @@ KRAVGRENSER["m6-v1"] = {
 }
 
 
+#: M-35-planen §6, registrert FØR bygging (§0-regelen, som `m57-v1`):
+#: hver numerisk invariant måles som PARET `<navn>_forsok`/`<navn>_brudd`
+#: (m57-formen) — null brudd beviser ingenting uten minst ett forsøk.
+M35_INVARIANTER: tuple[str, ...] = (
+    # Kartferskheten: en KRITISK rad hvis referent ikke lenger finnes
+    # (unit-fil borte, modul avregistrert) er et kart som lyver.
+    "kart_kritisk_uten_referent",
+    # Kontaktdekningen: en kritisk tjenestes kontaktrolle uten en
+    # bekreftelse ferskere enn 90 døgn er en kontakt ingen har prøvd.
+    "kontakt_kritisk_rolle_ubekreftet_90d",
+    # Tidslinjens append-only: en endret/slettet post er et brudd på
+    # selve evidensformen (direkte DML skal vaktavvises).
+    "hendelse_tidslinjepost_endret",
+    # Lukkedørens dom: en lukking uten etteranalyse-post skal ikke ha
+    # noen vei inn.
+    "hendelse_lukket_uten_etteranalyse",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m35-v1"] = {
+    # Settet er PINNET her, ikke avledet av artefaktet (m57-regelen):
+    # et artefakt som utelater en invariant felles på fraværet.
+    "invarianter": M35_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # De to ja-punktene: bokstavelig `true`, alt annet er nei.
+    # `restore_verifisert` er backupskriptets egen dom (statusfilen
+    # skrives KUN ved suksessfull gjenopprettingsverifisering, dom 4) —
+    # aldri grønt uten evidens.
+    "krav_ja": ("restore_verifisert", "ddl_begge_kjoringer_gronne"),
+    # RTO/RPO ER MÅLINGER, IKKE JA-PUNKTER (m57-ytelsesregelen): tallet
+    # og navnet dets er ærlige — `maalt_restoretid_s` er restore-til-
+    # isolert-base-PROXYEN (dom 5: full tjeneste-RTO er v2), og
+    # `maalt_backupalder_s` er avstanden fra siste verifiserte backup.
+    # 172800 s = 2 døgn: eldre evidens enn to nattlige kjøringer betyr
+    # at minst én kjøring har feilet — det er et funn, aldri grønt.
+    "rto_min_restoretid_s": 0,          # eksklusiv: > 0, målt — aldri 0
+    "rpo_maks_backupalder_s": 172800,
+    # Øvelsesrytmen er månedlig (dom 2); 92 døgn er kvartalsgulvet med
+    # margin — en modul hvis siste grønne øvelse er eldre, har mistet
+    # rytmen sin.
+    "ovelse_maks_gronn_alder_dogn": 92,
+    # PUNKTBINDING (#166): TOM MED VILJE, som `m57-v1`/`m31-v1` —
+    # punktene er UFLIPPBARE til målingene finnes.
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -645,6 +692,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m02-fordeling-v1": "artefakt-m02-fordeling-skjema.json",
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
     "m57-v1": "artefakt-m57-skjema.json",
+    "m35-v1": "artefakt-m35-skjema.json",
 }
 
 
@@ -890,6 +938,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m31(grense, art)
     if krav_id == "m6-v1":
         return feil + _grenser_m6(grense, art)
+    if krav_id == "m35-v1":
+        return feil + _grenser_m35(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1874,6 +1924,70 @@ def _grenser_m6(grense: dict, art: dict) -> list[str]:
         if m.get(navn) is not True:
             feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
                         " — et punkt uten målbar grense regnes som nei")
+    return feil
+
+
+def _grenser_m35(grense: dict, art: dict) -> list[str]:
+    """`m35-v1` — M-35-planen §6. Invariantparene er m57-formen; i
+    tillegg tre målinger og to ja-punkter. Uten denne grenen ville et
+    `m35-v1`-artefakt falt i den generiske perf-lesningen.
+
+    Tallene er ÆRLIG NAVNGITT (dom 5): `maalt_restoretid_s` er
+    restore-til-isolert-base-proxyen fra backupskriptets egen
+    verifisering — aldri en påstand om full tjeneste-RTO."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for navn in grense["invarianter"]:
+        forsok, f1 = _teller(m, f"{navn}_forsok", f"{navn}_forsok")
+        brudd, f2 = _teller(m, f"{navn}_brudd", f"{navn}_brudd")
+        for melding in (f1, f2):
+            if melding:
+                feil.append(melding)
+        if f1 or f2:
+            continue
+        if forsok < grense["min_forsok"]:
+            feil.append(f"{navn}_forsok={forsok}, krever >="
+                        f" {grense['min_forsok']} — en port som aldri"
+                        " kjørte har ikke målt noe")
+        if brudd > grense["maks_brudd"]:
+            feil.append(f"{navn}_brudd={brudd}, krever <="
+                        f" {grense['maks_brudd']}")
+    for navn in grense["krav_ja"]:
+        if m.get(navn) is not True:
+            feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
+                        " — et punkt uten målbar grense regnes som nei")
+    # RTO-proxyen: et positivt, målt tall — 0 eller fravær er «aldri
+    # målt», og en rapport uten målingen er skjemaavvist uansett.
+    rto, f_rto = _positiv(m, "maalt.maalt_restoretid_s",
+                          "maalt_restoretid_s")
+    if f_rto:
+        feil.append(f_rto)
+    elif rto <= grense["rto_min_restoretid_s"]:
+        feil.append(f"maalt_restoretid_s={rto:g}, krever >"
+                    f" {grense['rto_min_restoretid_s']} — en restore"
+                    " som aldri ble målt er ingen evidens")
+    # RPO: avstanden fra siste VERIFISERTE backup. Eldre enn 2 døgn
+    # betyr minst én feilet nattkjøring — rødt, aldri grønt.
+    alder, f_alder = _tall(m, "maalt.maalt_backupalder_s",
+                           "maalt_backupalder_s")
+    if f_alder:
+        feil.append(f_alder)
+    elif alder < 0 or alder > grense["rpo_maks_backupalder_s"]:
+        feil.append(f"maalt_backupalder_s={alder:g}, krever 0..="
+                    f" {grense['rpo_maks_backupalder_s']} —"
+                    " backup-evidensen er foreldet (eller fra"
+                    " fremtiden)")
+    # Rytmen (dom 2): siste grønne øvelse innenfor kvartalsgulvet.
+    gronn, f_gronn = _tall(m, "maalt.siste_gronne_alder_dogn",
+                           "siste_gronne_alder_dogn")
+    if f_gronn:
+        feil.append(f_gronn)
+    elif gronn < 0 or gronn > grense["ovelse_maks_gronn_alder_dogn"]:
+        feil.append(f"siste_gronne_alder_dogn={gronn:g}, krever 0..="
+                    f" {grense['ovelse_maks_gronn_alder_dogn']} —"
+                    " øvelsesrytmen er månedlig (dom 2)")
     return feil
 
 

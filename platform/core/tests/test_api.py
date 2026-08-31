@@ -117,6 +117,16 @@ APPEND_ONLY_TRIGGERE = (
     ("epost_utkast", "epost_utkast_vakt"),
     ("epost_vedlegg", "epost_vedlegg_vakt"),
     ("epost_oppfolging", "epost_oppfolging_vakt"),
+    # 089 (M-35): alle fire vaktene nekter DELETE — kartinnslag
+    # oppdateres, kontakter erstattes av nye rader, hendelser lukkes og
+    # tidslinjen er append-only mot BÅDE UPDATE og DELETE. Nettopp
+    # derfor må oppryddingen skru dem av: at den må det, er selv et
+    # bevis på at ingen rolle — heller ikke eieren — kan viske ut en
+    # krisehåndtering i ettertid.
+    ("kontinuitetshendelse_post", "m35_post_vakt"),
+    ("kontinuitetshendelse", "m35_hendelse_vakt"),
+    ("beredskapskontakt", "m35_kontakt_vakt"),
+    ("kontinuitet_tjeneste", "m35_tjeneste_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -220,6 +230,14 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # men hører til familien.
                  "epost_vedlegg", "epost_klassifisering", "epost_utkast",
                  "epost_melding", "epost_oppfolging", "epost_kilde",
+                 # 089 (M-35): tidslinjeposten peker på hendelsen —
+                 # posten først, hodet etter. Kartet og kontaktene peker
+                 # ikke ut av seg selv (kontaktens `bruker_id` går til
+                 # den GLOBALE `brukeridentitet`, som ikke ryddes
+                 # herfra — 068-formen over), så plassen deres er fri;
+                 # de står her fordi de hører til samme familie.
+                 "kontinuitetshendelse_post", "kontinuitetshendelse",
+                 "beredskapskontakt", "kontinuitet_tjeneste",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

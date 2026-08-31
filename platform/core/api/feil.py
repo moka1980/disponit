@@ -50,6 +50,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # 044: planovergang i ulovlig tilstand (aktivere en aktiv, gjenoppta
     # en stanset) — tilstandskonflikt, ikke valideringsfeil.
     Feilvei("plan_ulovlig_tilstand", 409, ("avvis",), None),
+    # 089 (M-35): kontinuitetsregisterets doerer nekter en overgang
+    # tilstanden ikke tillater — lukking uten etteranalyse-post, en post
+    # paa en alt lukket hendelse, en vakt som avviser. 409, ikke 400:
+    # kroppen ER velformet; det er TILSTANDEN som sier nei, og
+    # forskjellen er hele forklaringen mennesket i flaten trenger.
+    Feilvei("kontinuitet_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

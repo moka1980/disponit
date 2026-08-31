@@ -158,6 +158,13 @@ const BASISRUTER = [
   // i PR-B — klassifiserings-/utkastsflaten og en eventuell
   // modulkort-inngang er PR-D.
   { nokkel: "epost", scope: "epost:read" },
+  // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
+  // UTEN modulflate, samme #315-presedens som modellstyring: ruten bor
+  // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er
+  // plattformens tilstand og ikke en modul kunden har kjøpt. Scopet er
+  // API-ets (`GET /v1/kontinuitet` i RUTESCOPE), så menyen lover aldri
+  // en flate serveren svarer 403 på.
+  { nokkel: "kontinuitet", scope: "kontinuitet:read" },
   // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
   // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
   // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger
