@@ -143,6 +143,14 @@ const BASISRUTER = [
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
+  // M-31 (086): modellstyring er en BASISRUTE bak admin-lesescopet —
+  // eiervedtaket (#315-presedensen): INGEN modulflate-flipp, så ruten
+  // bor i toppnavigasjonen, ikke bak et modulkort. Scopet er API-ets
+  // (`GET /v1/modellstyring` krever `security:read` i RUTESCOPE) —
+  // samme regel som resten av tabellen: menyen lover aldri en flate
+  // serveren svarer 403 på. En ren `platform:admin`-økt har ikke
+  // lesescopet og får derfor heller ikke ruten.
+  { nokkel: "modellstyring", scope: "security:read" },
   // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
   // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
   // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger

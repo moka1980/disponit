@@ -1080,6 +1080,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def utrulling(request: Request) -> Response:
         return lesing.utrulling(tjeneste, request)
 
+    def modellstyring(request: Request) -> Response:
+        return lesing.modellstyring(tjeneste, request)
+
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
     # de refereres direkte i rutelisten.
@@ -1395,6 +1398,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/modellstyring", modellstyring, methods=["GET"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -1933,6 +1937,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en
     # utvidelse av svaret, ikke en annen inngang.
     ("GET",  "/v1/utrulling"):               "decisions:read",
+    # M-31 (086): model card — plattformregisterets globale m31-rader bak
+    # admin-lesescopet. Ingen tenantdata i svaret (registeret er
+    # tenant-løst); mutasjonene finnes ikke som HTTP — de er
+    # deploy-dører (registrer_golden_sett/sett_evalueringskrav/
+    # registrer_evalueringskjoring, modules_admin).
+    ("GET",  "/v1/modellstyring"):           "security:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

@@ -1757,3 +1757,21 @@ def utrulling(tjeneste, request: Request) -> Response:
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/modellstyring — scope security:read (M-31, 086)
+# ---------------------------------------------------------------------------
+
+def modellstyring(tjeneste, request: Request) -> Response:
+    """Model card per modul — AVLEDET av registeret i lesetransaksjonen
+    (dom 4: aldri lagret, aldri stale). Dataene er plattformregisterets
+    (globale, tenant-løse); scopet er admin-lesescopet `security:read`,
+    samme klasse som admin-flaten ruten hører hjemme på."""
+    from . import modellstyring as modellstyringsmodul
+
+    def _fn(conn, auth, rid):
+        svar = modellstyringsmodul.svar_for(conn)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "security:read", _fn)

@@ -497,6 +497,43 @@ KRAVGRENSER["m57-v1"] = {
     "punktbinding": {},
 }
 
+#: M-31-planen §8, registrert FØR bygging (§0-regelen, som `m57-v1`).
+#: Hver numerisk invariant måles som PARET `<navn>_forsok`/`<navn>_brudd`
+#: (m57-formen): null brudd beviser ingenting uten minst ett forsøk.
+M31_INVARIANTER: tuple[str, ...] = (
+    # Porten i bytt_release: et bytte under gjeldende krav uten en
+    # bestått kjøring for EKSAKT kravversjon og kandidatens digest.
+    "port_bytte_uten_bestatt_kjoring",
+    # Dørens dom: `bestatt` finnes ikke som kaller-parameter, og et
+    # forsøk på å påstå den skal ikke ha noen vei inn.
+    "kjoring_bestatt_pastatt_av_kaller",
+    # Delvis kjøring (færre eksempler enn settets) er uregistrerbar.
+    "kjoring_delvis_registrert",
+    # Et sett-hash-avvik (fil ≠ registrert hode) aksepteres aldri —
+    # verken av døren eller av CLI-en før første modellkall.
+    "sett_hash_avvik_akseptert",
+    # Den partielle indeksen: to gjeldende krav per modul er umulig.
+    "krav_to_gjeldende",
+    # Dom 1: golden-eksemplene er SYNTETISKE — persondata i et sett er
+    # et brudd, aldri en datakvalitetssak.
+    "sett_persondata_i_eksempler",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m31-v1"] = {
+    # Settet er PINNET her, ikke avledet av artefaktet (m57-regelen):
+    # et artefakt som utelater en invariant felles på fraværet.
+    "invarianter": M31_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: bokstavelig `true`, alt annet er nei.
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    # PUNKTBINDING (#166): TOM MED VILJE, som `m57-v1` — punktene er
+    # UFLIPPBARE til målingene finnes. Hvert punkt som får sin måling,
+    # får sin linje her, pinnet før flippen.
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -806,6 +843,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_rollback_m56(grense, art)
     if krav_id == "m57-v1":
         return feil + _grenser_m57(grense, art)
+    if krav_id == "m31-v1":
+        return feil + _grenser_m31(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1727,6 +1766,37 @@ def _grenser_m57(grense: dict, art: dict) -> list[str]:
         feil.append(
             f"ytelse_full_bunt_minutter={minutter:g}, krever <="
             f" {grense['ytelse_maks_minutter']} (§4s utførelsesfrist)")
+    return feil
+
+
+def _grenser_m31(grense: dict, art: dict) -> list[str]:
+    """`m31-v1` — M-31-planen §8. Samme form som `_grenser_m57`: hver
+    invariant er et par (forsøk, brudd), settet er grensens — og uten
+    denne grenen ville et `m31-v1`-artefakt falt i den generiske
+    perf-lesningen og feilet på et skjema det aldri har lovet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for navn in grense["invarianter"]:
+        forsok, f1 = _teller(m, f"{navn}_forsok", f"{navn}_forsok")
+        brudd, f2 = _teller(m, f"{navn}_brudd", f"{navn}_brudd")
+        for melding in (f1, f2):
+            if melding:
+                feil.append(melding)
+        if f1 or f2:
+            continue
+        if forsok < grense["min_forsok"]:
+            feil.append(f"{navn}_forsok={forsok}, krever >="
+                        f" {grense['min_forsok']} — en port som aldri"
+                        " kjørte har ikke målt noe")
+        if brudd > grense["maks_brudd"]:
+            feil.append(f"{navn}_brudd={brudd}, krever <="
+                        f" {grense['maks_brudd']}")
+    for navn in grense["krav_ja"]:
+        if m.get(navn) is not True:
+            feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
+                        " — et punkt uten målbar grense regnes som nei")
     return feil
 
 

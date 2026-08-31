@@ -1,0 +1,90 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# M-31 v1 (086) er golden-sett-BENA oppå det eksisterende maskineriet:
+# golden-sett-lageret (hash-pinnede hoder, eksemplene bor på disk),
+# evalueringskjøringer målt FØR bytt_release, terskelporten INNE i
+# bytt_release (eksakt kravversjon-binding, dom 3), og model card som
+# AVLEDET leseflate (GET /v1/modellstyring — aldri lagret, aldri
+# stale). Drift/canary er v2; kill-switchen finnes alt
+# (noddeaktiver_modul). Modul uten krav-rad er uberørt (opt-in).
+#
+# TO AKSER, ÆRLIG LEST (m16/m38-formen fra #309/#317): `status` er
+# GODKJENT-aksen — ingen aksepthendelse finnes; `m31-v1`-grensen er
+# registrert i manifestskjema.KRAVGRENSER FØR byggingen (§0-regelen),
+# men ingen måling er gjort. `driftstilstand: ikke_i_drift` leses om
+# MODULEN som registerobjekt: ingen egen release, ingen deploymentrad,
+# ingen arbeider — porten og leseflaten skipper med kjernen og følger
+# kjernens deploy.
+#
+# INGEN modulflate-flipp (eiervedtak, #315-presedensen): ruten
+# `modellstyring` er en BASISRUTE bak admin-lesescopet
+# (security:read), uten modulflate i venstremenyen.
+id: m31_modellstyring
+navn: Agentkvalitet og modellstyring
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i registerets forstand (m16/m38-begrunnelsen):
+# v1-krokene bor i KJERNENS egne veier — porten er en REPLACE av
+# 014-kroppen i kjernens migrasjonskjede (086), leseflaten er kjernens
+# API. En oppført avhengighet ville vært lånt, ikke målt. Revurderes
+# når M-31 får drift-/canary-armen (v2).
+avhengigheter: []
+# Koden bor i KJERNEN (m37/m38-formen: `kjerne` peker dit koden
+# faktisk er): settdisiplinen (kanonisk hash + scoring) i
+# platform/core/m31/golden.py, leseflaten i
+# platform/core/api/modellstyring.py, dørene og porten i migrasjon
+# 086, CLI-ene i deploy/staging/registrer-m31-golden-sett.py +
+# kjor-m31-evaluering.py. Mappen her bærer kun manifestet.
+kjerne: platform/core/m31
+i18n_prefiks: m31
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json). Punktene står
+# `nei` fordi ingen av dem er MÅLT for M-31: `m31-v1`-grensen er
+# registrert (§0), men grensen registreres FØR byggingen den skal
+# måle, og ingen kjøring finnes. «Et manifest skal aldri lese sterkere
+# enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet (m02-suite-formen). CI-portene i
+      test_m31_modellstyring.py kjører i CI, men det er ikke denne
+      portens måling.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: golden-settet (syntetiske, blindede søknadstekster —
+      aldri persondata, dom 1) registrert med samme kanoniske hash
+      lokalt og på staging, og begge identitetene bundet i et
+      m31-v1-artefakt. Settet finnes ennå ikke; runbooken
+      (docs/RELEASE-M31.md) er seedingen.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: måling av at modellstyring_hendelse bærer hver
+      dørovergang (sett_registrert/krav_satt/kjoring_registrert) for
+      en staging-kjøring. Strømmen finnes (086); målingen finnes ikke.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      M-31 v1 har ingen egen kø eller arbeider å injisere feil i —
+      porten bor i bytt_release og feiler synkront mot kalleren.
+      Hva punktet skal bety for en portmodul er samme
+      arkitektavklaring som m38-punktet.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet ytelsesgrense for evalueringskjøringen (p95 per
+      eksempel mot staging-Ollama) og en målt kjøring mot den. Ingen
+      grenseverdi er vedtatt; terskel_maks_p95_ms i kravraden settes
+      av runbookens målekjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      M-31 v1 har ingen egen release å rulle tilbake — koden skipper
+      med kjernen. Portens egen rollback-semantikk (fail-closed FØR
+      byttet) måles av CI-portene 1–5 i test_m31_modellstyring.py,
+      men det er ikke dette punktets staging-måling.

@@ -188,6 +188,12 @@ GRANT SELECT ON domenekontroll, artefakt, artefakttype_register TO {rolle};
 -- 072 (BESLUTNING-168): skjemaoppslaget går via gjeldende versjon —
 -- runtime leser versjonstabellen, skriver den aldri.
 GRANT SELECT ON artefakttype_versjon TO {rolle};
+-- 086 (M-31): modellstyringsregisteret. Runtime LESER det (model card
+-- er en avledet leseflate) — ALL skriving går via de herdede dørene
+-- (registrer_golden_sett/sett_evalueringskrav/registrer_evalueringskjoring),
+-- som for 014-registeret over.
+GRANT SELECT ON golden_sett, evalueringskrav, evalueringskjoring,
+    modellstyring_hendelse TO {rolle};
 -- PR-014c: skjemavalidering ved opplasting/promotering og aktiveringsporten
 -- for `ekstern_lesing` leses i API-prosessen. Runtime skriver aldri.
 GRANT SELECT ON artefaktskjema, malautorisasjonsvilkar TO {rolle};
