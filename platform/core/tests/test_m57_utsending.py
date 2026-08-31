@@ -97,6 +97,29 @@ def _grunnlag(m, *, oppdragstype="rekruttering.evaluering",
     return int(oid), (ct, key_id, nonce)
 
 
+def _prosess_med_kandidater(m, antall):
+    """Manifestriggen (080): fullført evaluering + levende prosess +
+    `antall` levende kandidater i ankeret. Prosessvakten krever fødsel
+    under AKTIVT claim, så prosessen settes inn mens oppdraget står
+    `plukket`, og oppdraget fullføres etterpå."""
+    import uuid as uuidmod
+    oid, payload = _grunnlag(m, status="plukket")
+    _sett_kontekst(m, TENANT)
+    pid = uuidmod.uuid4()
+    m.execute(
+        "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+        " oppdrag_id, slettefrist_dogn)"
+        " VALUES (%s,%s,%s,365)", (TENANT, pid, oid))
+    kids = [uuidmod.uuid4() for _ in range(antall)]
+    for kid in kids:
+        m.execute("INSERT INTO kandidat (tenant, prosess_id, kandidat_id)"
+                  " VALUES (%s,%s,%s)", (TENANT, pid, kid))
+    m.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s"
+              " AND id=%s", (TENANT, oid))
+    m.commit()
+    return oid, pid, kids, payload
+
+
 def _evaluering(m):
     """Et FULLFØRT `rekruttering.evaluering`-oppdrag — det ENESTE en
     liste kan promotere (klarsignal §1 + §7/port 28)."""
@@ -131,15 +154,29 @@ def _m37_evaluering(m):
     """En FULLFØRT `rekruttering.evaluering` på M37-ARMEN. Både vakten og
     funksjonen tillater `opprinnelse IN ('beslutning','m37_reparasjon')`:
     en evaluering kan også ha kommet av en reparasjon."""
+    import uuid as uuidmod
     sak, logg = _lag_sak(m, TENANT)
     oid, _ = _lag_oppdrag(m, TENANT, sak, logg,
-                          oppdragstype="rekruttering.evaluering")
+                          oppdragstype="rekruttering.evaluering",
+                          eiermodul="m57_ats")
     _sett_kontekst(m, TENANT)
-    for steg in ("plukket", "utfort"):
-        m.execute("UPDATE oppdrag SET status=%s WHERE tenant=%s AND id=%s",
-                  (steg, TENANT, oid))
+    m.execute("UPDATE oppdrag SET status='plukket' WHERE tenant=%s"
+              " AND id=%s", (TENANT, oid))
+    # Manifestdøren (080) krever levende prosess + kandidater, og
+    # prosessvakten krever fødsel under aktivt claim.
+    pid = uuidmod.uuid4()
+    m.execute(
+        "INSERT INTO rekrutteringsprosess (tenant, prosess_id,"
+        " oppdrag_id, slettefrist_dogn) VALUES (%s,%s,%s,365)",
+        (TENANT, pid, oid))
+    kids = [uuidmod.uuid4(), uuidmod.uuid4()]
+    for kid in kids:
+        m.execute("INSERT INTO kandidat (tenant, prosess_id, kandidat_id)"
+                  " VALUES (%s,%s,%s)", (TENANT, pid, kid))
+    m.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s"
+              " AND id=%s", (TENANT, oid))
     m.commit()
-    return int(oid)
+    return int(oid), kids
 
 
 def _liste(m, oid, *, serie=None, forrige=None, hash_="h1", antall=3):
@@ -785,7 +822,7 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
     """Positiv kontroll for funksjonsveien + SP-2: opprett → signer →
     frigi → frigivelsesoppdrag; identisk replay er no-op, samme nøkkel
     med annet innhold (også en ANNEN SIGNATAR — 055-regelen) avvises."""
-    oid, payload = _evaluering(migrator)
+    oid, _pid, kids, payload = _prosess_med_kandidater(migrator, 2)
     ct, key_id, nonce = payload
     bid, bid2 = _signatar(migrator), _signatar(migrator)
     # Kallene går som de EKTE rollene: runtime lager og signerer (API-
@@ -796,8 +833,9 @@ def test_funksjonskjeden_ende_til_ende_med_replay(migrator):
     _sett_kontekst(rt, TENANT)
     serie = __import__("uuid").uuid4()
     liste_id = rt.execute(
-        "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon','m@1',"
-        "'h-fn',2)", (TENANT, serie, oid)).fetchone()[0]
+        "SELECT ut_liste_id FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','m@1',%s::uuid[])",
+        (TENANT, serie, oid, kids)).fetchone()[0]
     nk = "sig-" + secrets.token_hex(6)
     rt.execute("SELECT signer_utsendingsliste(%s,%s,%s,%s)",
                (TENANT, liste_id, bid, nk))
@@ -864,7 +902,7 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
                           status="feilet")
     avbrutt, _ = _grunnlag(migrator, oppdragstype="rekruttering.evaluering",
                            status="kansellert")
-    fullfort, _ = _evaluering(migrator)
+    fullfort, _fp, fkids, _ = _prosess_med_kandidater(migrator, 2)
     uuid = __import__("uuid")
     rt = _rt()
     try:
@@ -872,15 +910,16 @@ def test_liste_krever_fullfort_evalueringsoppdrag(migrator):
             _sett_kontekst(rt, TENANT)
             with pytest.raises(psycopg.errors.InvalidParameterValue):
                 rt.execute(
-                    "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,"
-                    "'invitasjon','m@1','h-neg',2)",
-                    (TENANT, uuid.uuid4(), oid))
+                    "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+                    "'invitasjon','m@1',%s::uuid[])",
+                    (TENANT, uuid.uuid4(), oid, [uuid.uuid4()]))
             rt.rollback()
         # Positiv kontroll: den fullførte evalueringen promoteres.
         _sett_kontekst(rt, TENANT)
         rt.execute(
-            "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
-            "'m@1','h-pos',2)", (TENANT, uuid.uuid4(), fullfort))
+            "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+            "'invitasjon','m@1',%s::uuid[])",
+            (TENANT, uuid.uuid4(), fullfort, fkids))
         rt.rollback()
     finally:
         rt.close()
@@ -899,15 +938,16 @@ def test_m37_evaluering_kan_promotere_liste(migrator):
     først vist seg hos en kunde med en reparert evaluering.
 
     Begge veiene måles, for påstanden er skjemasann OG funksjonssann."""
-    oid = _m37_evaluering(migrator)
+    oid, kids = _m37_evaluering(migrator)
     uuid = __import__("uuid")
     assert _liste(migrator, oid, hash_="h-m37") is not None   # skjemaveien
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
         rt.execute(
-            "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,'invitasjon',"
-            "'m@1','h-m37-fn',2)", (TENANT, uuid.uuid4(), oid))
+            "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+            "'invitasjon','m@1',%s::uuid[])",
+            (TENANT, uuid.uuid4(), oid, kids))
         rt.rollback()
     finally:
         rt.close()
@@ -1752,7 +1792,7 @@ def test_migrer_baerer_utsendingskjedens_rettigheter():
     assert ("GRANT SELECT ON utsendingsliste, utsendingssignatur,"
             " utsendingsfrigivelse TO {rolle};") in tekst
     for fn in ("opprett_utsendingsliste(TEXT, UUID, UUID, BIGINT, TEXT,"
-               " TEXT, TEXT, INT)",
+               " TEXT, UUID[])",
                "signer_utsendingsliste(TEXT, UUID, TEXT, TEXT)",
                "frigi_utsendelse(TEXT, UUID, TEXT)",
                "opprett_frigivelsesoppdrag(TEXT, UUID, TEXT, TEXT, TEXT,"
@@ -2454,15 +2494,15 @@ def test_barn_arver_forelderens_evalueringsoppdrag(migrator):
     proveniensen ville forgrene seg inni en kjede klarsignalet beskriver
     som lineær. Barnet arver forelderens evalueringsoppdrag; det velger
     det ikke."""
-    e1, _ = _evaluering(migrator)
+    e1, _p1, kids1, _ = _prosess_med_kandidater(migrator, 2)
     e2, _ = _evaluering(migrator)
     rt = _rt()
     try:
         _sett_kontekst(rt, TENANT)
         rot = rt.execute(
-            "SELECT opprett_utsendingsliste(%s, gen_random_uuid(), NULL,"
-            " %s, 'invitasjon','m@1','h-rot-serie',1)",
-            (TENANT, e1)).fetchone()[0]
+            "SELECT ut_liste_id FROM opprett_utsendingsliste(%s,"
+            " gen_random_uuid(), NULL, %s, 'invitasjon','m@1',%s::uuid[])",
+            (TENANT, e1, kids1)).fetchone()[0]
         rot_serie = rt.execute(
             "SELECT utkast_serie FROM utsendingsliste WHERE tenant=%s"
             " AND liste_id=%s", (TENANT, rot)).fetchone()[0]
@@ -2470,16 +2510,18 @@ def test_barn_arver_forelderens_evalueringsoppdrag(migrator):
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             rt.execute(
-                "SELECT opprett_utsendingsliste(%s, %s, %s, %s,"
-                " 'invitasjon','m@1','h-barn-feil',1)",
-                (TENANT, rot_serie, rot, e2))
+                "SELECT * FROM opprett_utsendingsliste(%s, %s, %s, %s,"
+                " 'invitasjon','m@1',%s::uuid[])",
+                (TENANT, rot_serie, rot, e2, [kids1[0]]))
         rt.rollback()
         # positiv kontroll: samme evalueringsoppdrag som forelderen -> OK.
+        # (Et annet medlemsutvalg: en revisjon med identisk innhold har
+        # identisk utledet hash, og serien er unik på innholdet.)
         _sett_kontekst(rt, TENANT)
         rt.execute(
-            "SELECT opprett_utsendingsliste(%s, %s, %s, %s,"
-            " 'invitasjon','m@1','h-barn-ok',1)",
-            (TENANT, rot_serie, rot, e1))
+            "SELECT * FROM opprett_utsendingsliste(%s, %s, %s, %s,"
+            " 'invitasjon','m@1',%s::uuid[])",
+            (TENANT, rot_serie, rot, e1, [kids1[0]]))
         rt.commit()
     finally:
         rt.close()
@@ -2532,7 +2574,7 @@ def test_listen_starter_i_et_evalueringsoppdrag(migrator):
     seg selv). Evalueringsoppdrag (beslutning/m37) er de lovlige
     startpunktene — og siden runde 2 må evalueringen dessuten være
     FULLFØRT (se `test_liste_krever_fullfort_evalueringsoppdrag`)."""
-    oid, payload = _evaluering(migrator)
+    oid, _pid, kids, payload = _prosess_med_kandidater(migrator, 1)
     bid = _signatar(migrator)
     liste = _liste(migrator, oid)
     _signer(migrator, liste, bid)
@@ -2543,15 +2585,16 @@ def test_listen_starter_i_et_evalueringsoppdrag(migrator):
         _sett_kontekst(rt, TENANT)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             rt.execute(
-                "SELECT opprett_utsendingsliste(%s, gen_random_uuid(),"
-                " NULL, %s, 'invitasjon','m@1','h-sirkel',1)",
-                (TENANT, aoid))
+                "SELECT * FROM opprett_utsendingsliste(%s,"
+                " gen_random_uuid(), NULL, %s, 'invitasjon','m@1',"
+                "%s::uuid[])", (TENANT, aoid, kids))
         rt.rollback()
         # positiv kontroll: evalueringsoppdraget er lovlig startpunkt.
         _sett_kontekst(rt, TENANT)
         rt.execute(
-            "SELECT opprett_utsendingsliste(%s, gen_random_uuid(),"
-            " NULL, %s, 'invitasjon','m@1','h-eval',1)", (TENANT, oid))
+            "SELECT * FROM opprett_utsendingsliste(%s, gen_random_uuid(),"
+            " NULL, %s, 'invitasjon','m@1',%s::uuid[])",
+            (TENANT, oid, kids))
         rt.rollback()
     finally:
         rt.close()
@@ -2616,7 +2659,7 @@ def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
         "serielåsen skal tas FØR spisslesningen — låses det etterpå, er" \
         " vinduet bare ett hakk mindre, ikke lukket"
 
-    oid, _ = _grunnlag(migrator)
+    oid, _pid, kids, _ = _prosess_med_kandidater(migrator, 1)
     liste = _liste(migrator, oid)
     _sett_kontekst(migrator, TENANT)
     serie, = migrator.execute(
@@ -2654,9 +2697,9 @@ def test_serielaasen_serialiserer_signering_mot_ny_versjon(migrator):
             try:
                 _sett_kontekst(b, TENANT)
                 resultat["id"] = b.execute(
-                    "SELECT opprett_utsendingsliste(%s,%s,%s,%s,'invitasjon',"
-                    " 'mal@1',%s,1)",
-                    (TENANT, serie, liste[0], oid, "b" * 64)).fetchone()[0]
+                    "SELECT ut_liste_id FROM opprett_utsendingsliste("
+                    "%s,%s,%s,%s,'invitasjon','mal@1',%s::uuid[])",
+                    (TENANT, serie, liste[0], oid, kids)).fetchone()[0]
                 b.commit()
             except Exception as e:            # noqa: BLE001 — meldes videre
                 resultat["feil"] = f"{type(e).__name__}: {e}"
@@ -3251,4 +3294,75 @@ def test_156_pseudonymnokkelen_baerer_frigivelsen(migrator):
         migrator.execute(
             "UPDATE tenant_pseudonymnokkel SET nokkel=%s WHERE tenant=%s",
             (b"x" * 32, TENANT))
+    migrator.rollback()
+
+
+@pg
+def test_165_manifestet_foelger_listen(migrator):
+    """#149/080: manifestet skrives i SAMME transaksjon som listen, og
+    `innhold_hash` UTLEDES av det sorterte medlemskapet — hashen er en
+    funksjon av MENGDEN, aldri av rekkefølgen kalleren tilbød. Manifestet
+    er append-only: det er en del av det signerte innholdet."""
+    import uuid as uuidmod
+    oid, pid, kids, _ = _prosess_med_kandidater(migrator, 3)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    lid, h1 = migrator.execute(
+        "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','m@1',%s::uuid[])",
+        (TENANT, uuidmod.uuid4(), oid, kids)).fetchone()
+    antall = migrator.execute(
+        "SELECT antall FROM utsendingsliste WHERE tenant=%s"
+        " AND liste_id=%s", (TENANT, lid)).fetchone()[0]
+    assert antall == 3, "antall er ikke manifestets kardinalitet"
+    medlemmer = {str(r[0]) for r in migrator.execute(
+        "SELECT kandidat_id FROM utsendingsliste_medlem"
+        " WHERE tenant=%s AND liste_id=%s", (TENANT, lid)).fetchall()}
+    assert medlemmer == {str(k) for k in kids}, "manifestet mangler rader"
+    # Samme mengde i OMVENDT rekkefølge, ny serie: identisk hash —
+    # signataren signerer medlemskapet, ikke innsettingsrekkefølgen.
+    _lid2, h2 = migrator.execute(
+        "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+        "'invitasjon','m@1',%s::uuid[])",
+        (TENANT, uuidmod.uuid4(), oid, list(reversed(kids)))).fetchone()
+    assert h1 == h2, "hashen avhenger av rekkefølgen"
+    migrator.execute("RESET ROLE")
+    migrator.commit()
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "DELETE FROM utsendingsliste_medlem WHERE tenant=%s"
+            " AND liste_id=%s", (TENANT, lid))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "UPDATE utsendingsliste_medlem SET kandidat_id=%s"
+            " WHERE tenant=%s AND liste_id=%s",
+            (uuidmod.uuid4(), TENANT, lid))
+    migrator.rollback()
+
+
+@pg
+def test_165_ukjent_kandidat_avviser_manifestet_samlet(migrator):
+    """080: hvert medlem må være en LEVENDE kandidat i prosessens anker
+    — ett ukjent medlem feller HELE manifestet (fail-closed), og et tomt
+    manifest avvises."""
+    import uuid as uuidmod
+    oid, pid, kids, _ = _prosess_med_kandidater(migrator, 2)
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+            "'invitasjon','m@1',%s::uuid[])",
+            (TENANT, uuidmod.uuid4(), oid, [kids[0], uuidmod.uuid4()]))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("SET ROLE disponit_m37_claimer")
+    with pytest.raises(psycopg.errors.InvalidParameterValue):
+        migrator.execute(
+            "SELECT * FROM opprett_utsendingsliste(%s,%s,NULL,%s,"
+            "'invitasjon','m@1',%s::uuid[])",
+            (TENANT, uuidmod.uuid4(), oid, []))
     migrator.rollback()

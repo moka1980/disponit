@@ -7072,3 +7072,66 @@ test("Utsendingstekster: fanen forfatter, versjonerer og sletter kundens tone (#
   assert.ok(await vent(() => seksjon().textContent
     .includes(t("ui.rekruttering.tekster.ingen"))));
 });
+
+test("Rapporten: innstillingen sender topp N av GJELDENDE rangering (#149)", async () => {
+  KALL = [];
+  SVAR = (sti, opts = {}) => {
+    if (sti === "/v1/rekruttering/lister" && opts.method === "POST") {
+      return { liste_id: "l-1", innhold_hash: "h".repeat(64),
+               antall: 1, listetype: "invitasjon" };
+    }
+    return {
+      "/v1/rekruttering/prosesser": prosess(),
+      "/v1/rekruttering/stillingsprofiler": profiler(),
+      "/v1/rekruttering/evalueringer": { evalueringer: [
+        { oppdrag_id: 97, status: "utfort",
+          opprettet: "2026-08-28T00:40:00+00:00", rapport_klar: true }] },
+      "/v1/rekruttering/rapport/97": { oppdrag_id: 97, rapport: {
+        rapporttype: "rekruttering.evaluering.rapport", versjon: 2,
+        profil: { profil_id: "p-1", versjon: 1, navn: "Driftskonsulent",
+          krav: [{ kravnavn: "drift", vekt: 3 }] },
+        antall_soknader: 2,
+        rangering: [
+          { kandidat_id: "kandidat-01", poeng: 1, nedbrytning: { drift: 1 } },
+          { kandidat_id: "kandidat-02", poeng: 5, nedbrytning: { drift: 5 } }],
+        kandidater: { "kandidat-01": { funn: [] },
+                      "kandidat-02": { funn: [] } },
+        fremdrift: { filer_lest: 2, filer_totalt: 2, byte_lest: 90 },
+      } },
+    }[sti] ?? 500;
+  };
+  const hoved = nyHoved();
+  visRekruttering(hoved, ctx());
+  const seksjon = () => hoved.querySelector(
+    "section[aria-labelledby=evaluering-tittel]");
+  assert.ok(await vent(() => seksjon() && [...seksjon()
+    .querySelectorAll(".rekrut-kortliste button")]
+    .some((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))));
+  [...seksjon().querySelectorAll(".rekrut-kortliste button")]
+    .find((b) => b.textContent === t("ui.rekruttering.evalueringer.vis"))
+    .click();
+  assert.ok(await vent(() => seksjon().querySelector(".rekrut-innstilling")),
+    "innstillingsflaten mangler i rapporten");
+  const flate = seksjon().querySelector(".rekrut-innstilling");
+  const antall = flate.querySelector("input[type=number]");
+  antall.value = "1";
+  const knapp = [...flate.querySelectorAll("button")].find((b) =>
+    b.textContent === t("ui.rekruttering.innstill.invitasjon_knapp"));
+  assert.ok(knapp, "invitasjonsknappen mangler");
+  knapp.click();
+  assert.ok(await vent(() => KALL.some((k) =>
+    k.sti === "/v1/rekruttering/lister" && k.metode === "POST")),
+    "listen ble aldri postet");
+  const kall = KALL.find((k) => k.sti === "/v1/rekruttering/lister");
+  // Utvalget er GJELDENDE rangering: kandidat-02 har høyest poeng og er
+  // topp 1 — aldri råbuntens rekkefølge.
+  assert.deepEqual(kall.kropp.kandidater, ["kandidat-02"]);
+  assert.equal(kall.kropp.listetype, "invitasjon");
+  assert.equal(kall.kropp.oppdrag_id, 97);
+  assert.ok(Object.keys(kall.hoder).some((h) =>
+    h.toLowerCase() === "idempotency-key"), "idempotensnøkkelen mangler");
+  // Suksessen henter prosessene på nytt (listen bor i signeringsflaten).
+  assert.ok(await vent(() => KALL.filter((k) =>
+    k.sti === "/v1/rekruttering/prosesser").length >= 2),
+    "prosessene ble aldri hentet på nytt");
+});

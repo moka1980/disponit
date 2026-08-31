@@ -251,6 +251,12 @@ export const avbrytEvaluering = (oppdragId) =>
 export const hentEvalueringsrapport = (oppdragId) =>
   hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
 
+export const opprettUtsendingsliste = (oppdragId, listetype, kandidater,
+                                       idem) =>
+  _muter("/v1/rekruttering/lister", "POST",
+    { oppdrag_id: oppdragId, listetype, kandidater },
+    idem || nyIdempotensnokkel());
+
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());

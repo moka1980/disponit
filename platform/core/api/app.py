@@ -1128,6 +1128,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return rekruttering_http.stillingsprofil_slett_endepunkt(
             tjeneste, request)
 
+    def rekruttering_liste_opprett(request: Request) -> Response:
+        return rekruttering_http.liste_opprett_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -1384,6 +1387,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               rk_avbryt, methods=["POST"]),
         Route("/v1/rekruttering/prosesser/{prosess_id}/blinding",
               rekruttering_blinding, methods=["POST"]),
+        Route("/v1/rekruttering/lister",
+              rekruttering_liste_opprett, methods=["POST"]),
         Route("/v1/rekruttering/lister/{liste_id:uuid}/signer",
               rekruttering_signer, methods=["POST"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
@@ -1861,6 +1866,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("PUT",  "/v1/inndata/opplast/{jti:str}"): "bestilling:opprett",
     ("POST", "/v1/rekruttering/prosesser/{prosess_id}/blinding"):
         "bestilling:opprett",
+    ("POST", "/v1/rekruttering/lister"): "bestilling:opprett",
     ("POST", "/v1/rekruttering/lister/{liste_id:uuid}/signer"):
         "bestilling:opprett",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE

@@ -165,12 +165,14 @@ def _seed_prosess(vekter=None):
             pid = rt.execute(
                 "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
                 (TEN, oid)).fetchone()[0]
+            kids = []
             for n, (poeng_ok, funn) in enumerate((
                     (True, []),
                     (False, [{"kategori": "krav_ikke_dokumentert",
                               "kilde": {"start": 0, "slutt": 4,
                                         "sitat": "Uten"}}]))):
                 kid = uuid.uuid4()
+                kids.append(kid)
                 rt.execute("SELECT opprett_kandidat(%s,%s,%s)",
                            (TEN, pid, kid))
                 rt.execute(
@@ -208,12 +210,14 @@ def _seed_prosess(vekter=None):
             assert n == 1, "utfort-overgangen traff ikke raden"
             m.commit()
             # Konteksten er transaksjonslokal og døde i commiten over.
+            # Manifestformen (080): døren tar MEDLEMMENE og utleder
+            # hashen — riggen mottar den i stedet for å finne på en.
             sett_kontekst(rt, TEN, "test", "r2")
-            innhold_hash = hashlib.sha256(b"demoliste-v1").hexdigest()
-            lid = rt.execute(
-                "SELECT opprett_utsendingsliste(%s,%s,NULL,%s,"
-                " 'invitasjon','invitasjon-v1',%s,2)",
-                (TEN, uuid.uuid4(), oid, innhold_hash)).fetchone()[0]
+            lid, innhold_hash = rt.execute(
+                "SELECT ut_liste_id, ut_innhold_hash FROM"
+                " opprett_utsendingsliste(%s,%s,NULL,%s,"
+                " 'invitasjon','invitasjon-v1',%s::uuid[])",
+                (TEN, uuid.uuid4(), oid, kids)).fetchone()
             rt.commit()
             return str(pid), str(lid), innhold_hash
         finally:
@@ -400,12 +404,17 @@ def _ny_versjon(liste_id: str):
             "SELECT utkast_serie, oppdrag_id FROM utsendingsliste"
             " WHERE tenant=%s AND liste_id=%s",
             (TEN, liste_id)).fetchone()
-        barn_hash = hashlib.sha256(
-            f"demoliste-v2:{liste_id}".encode()).hexdigest()
-        barn = rt.execute(
-            "SELECT opprett_utsendingsliste(%s,%s,%s,%s,"
-            " 'invitasjon','invitasjon-v1',%s,3)",
-            (TEN, serie, liste_id, oid, barn_hash)).fetchone()[0]
+        # Revisjonen er et ANNET medlemsutvalg (identisk innhold ville
+        # gitt identisk utledet hash, og serien er unik på innholdet).
+        medlem = rt.execute(
+            "SELECT kandidat_id FROM utsendingsliste_medlem"
+            " WHERE tenant=%s AND liste_id=%s ORDER BY kandidat_id"
+            " LIMIT 1", (TEN, liste_id)).fetchone()[0]
+        barn, barn_hash = rt.execute(
+            "SELECT ut_liste_id, ut_innhold_hash FROM"
+            " opprett_utsendingsliste(%s,%s,%s,%s,"
+            " 'invitasjon','invitasjon-v1',%s::uuid[])",
+            (TEN, serie, liste_id, oid, [medlem])).fetchone()
         rt.commit()
         return str(barn), barn_hash
     finally:
@@ -2347,3 +2356,96 @@ def test_160_utsendingstekstene_er_kundeeide_og_versjonerte(klient):
             == "Hilsen oss – v2", "eksakte referanser lever videre"
     finally:
         m.close()
+
+
+@pg
+def test_165_listen_innstilles_fra_rapporten_med_manifest(klient):
+    """#149/080: POST /v1/rekruttering/lister — flaten sender buntens
+    kandidat-id-er, endepunktet mapper til lagerets uuid5-form, døren
+    skriver manifestet og UTLEDER innhold_hash. Idempotensnøkkelen eier
+    serien: samme nøkkel + samme medlemskap er et gjenspill (200, samme
+    liste), annet medlemskap på samme nøkkel er en konflikt (409)."""
+    import uuid as uuidmod
+
+    from api.app import _KANDIDAT_NS
+    from db import kryptering
+    m = _migrator()
+    try:
+        logg = m.execute(
+            "INSERT INTO revisjonslogg (tenant, aktor, kilde, input_hash,"
+            " policy_id, beslutning, begrunnelse, idempotency_key)"
+            " VALUES (%s,'test','api_token','ih','p@1.0.0/x.y','TILLAT',"
+            " '[]',%s) RETURNING id", (TEN, secrets.token_hex(8))
+        ).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, TEN)
+        ct, nonce = kryptering.krypter(dek, {"demo": True}, TEN, key_id)
+        oid = m.execute(
+            "INSERT INTO oppdrag (opprinnelse, tenant,"
+            " beslutning_loggpost_id, oppdragstype, handling, eiermodul,"
+            " payload_kryptert, key_id, nonce, utforelsesfrist,"
+            " evidensfrist, koblingsstatus)"
+            " VALUES ('beslutning',%s,%s,'rekruttering.evaluering',"
+            " 'rekruttering.evaluering.bunt','m57_ats',%s,%s,%s,"
+            " now()+interval '4 hour', now()+interval '1 day','KOBLET')"
+            " RETURNING id", (TEN, logg, ct, key_id, nonce)).fetchone()[0]
+        m.execute("UPDATE oppdrag SET status='plukket' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
+        from db.pg import koble, sett_kontekst
+        rt = koble(DSN)
+        try:
+            sett_kontekst(rt, TEN, "test", "r165")
+            pid = rt.execute(
+                "SELECT opprett_rekrutteringsprosess(%s,%s,90)",
+                (TEN, oid)).fetchone()[0]
+            # Kandidatene fødes under LAGERETS uuid5-nøkkel — nøyaktig
+            # den formen endepunktet utleder av buntens id.
+            for bunt_kid in ("kandidat-01", "kandidat-02"):
+                rt.execute(
+                    "SELECT opprett_kandidat(%s,%s,%s)",
+                    (TEN, pid, uuidmod.uuid5(
+                        _KANDIDAT_NS, f"{TEN}\x1f{pid}\x1f{bunt_kid}")))
+            rt.commit()
+        finally:
+            rt.close()
+        sett_kontekst(m, TEN, "test", "r165c")
+        m.execute("UPDATE oppdrag SET status='utfort' WHERE tenant=%s"
+                  " AND id=%s", (TEN, oid))
+        m.commit()
+    finally:
+        m.close()
+    sjef = _bruker("innstiller", ["admin"])
+    cookie, csrf = _browsersesjon(sjef)
+    nokkel = "liste-" + secrets.token_hex(6)
+    r = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+              {"oppdrag_id": oid, "listetype": "invitasjon",
+               "kandidater": ["kandidat-01", "kandidat-02"]}, idem=nokkel)
+    assert r.status_code == 201, r.text
+    svar = r.json()
+    assert svar["antall"] == 2 and svar["listetype"] == "invitasjon"
+    assert len(svar["innhold_hash"]) == 64
+    m = _migrator()
+    try:
+        from db.pg import sett_kontekst
+        sett_kontekst(m, TEN, "test", "r165b")
+        medlemmer = {str(r2[0]) for r2 in m.execute(
+            "SELECT kandidat_id FROM utsendingsliste_medlem"
+            " WHERE tenant=%s AND liste_id=%s",
+            (TEN, svar["liste_id"])).fetchall()}
+        forventet = {str(uuidmod.uuid5(_KANDIDAT_NS,
+                                       f"{TEN}\x1f{pid}\x1f{k}"))
+                     for k in ("kandidat-01", "kandidat-02")}
+        assert medlemmer == forventet, "manifestet matcher ikke utvalget"
+    finally:
+        m.close()
+    # Gjenspill: samme nøkkel + samme medlemskap → samme liste, 200.
+    r2 = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+               {"oppdrag_id": oid, "listetype": "invitasjon",
+                "kandidater": ["kandidat-02", "kandidat-01"]}, idem=nokkel)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["liste_id"] == svar["liste_id"]
+    # Annet medlemskap på samme nøkkel er en KONFLIKT, aldri en ny liste.
+    r3 = _post(klient, cookie, csrf, "/v1/rekruttering/lister",
+               {"oppdrag_id": oid, "listetype": "invitasjon",
+                "kandidater": ["kandidat-01"]}, idem=nokkel)
+    assert r3.status_code == 409, r3.text
