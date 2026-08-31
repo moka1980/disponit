@@ -12,6 +12,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   hentMaler, hentAktivPolicyId, hentJson, opprettUtkast, redigerUtkast,
+  simulerPolicyutkast,
   nyIdempotensnokkel,
   UautorisertFeil, ApiFeil,
 } from "../api.js";
@@ -1240,6 +1241,87 @@ function grenserSomVenterPaaValg(policy) {
     .map((h) => h.id || "?");
 }
 
+// Simulering (PR-013 v2-punktet): «hva ville utkastet sagt?» — side ved
+// side med gjeldende base. Rent rådgivende: ingen revisjonsrad, ingen
+// frekvensreservasjon. Forfatteren beskriver hendelsen selv (JSON) —
+// replay av historiske saker er umulig by design (payloaden minimeres
+// før lagring), og det sies i flaten i stedet for å loves.
+function simulerSeksjon(st, ctx) {
+  const rot = el("section", { class: "editor-simuler" });
+  if (!st.utkast_id) {
+    rot.append(el("p", { text: t("ui.editor.simuler.utkast_forst") }));
+    return rot;
+  }
+  const hendelseId = "simuler-hendelse";
+  const rolleId = "simuler-rolle";
+  const hendelseFelt = el("textarea", { id: hendelseId, rows: "6",
+    placeholder: '{"handling": "betaling.utfor", "belop": "12000",'
+      + ' "valuta": "NOK"}' });
+  const rolleFelt = el("input", { id: rolleId, type: "text",
+    value: "operator" });
+  const kjorKnapp = el("button", { class: "knapp primar", type: "button",
+    text: t("ui.editor.simuler.kjor") });
+  const utfall = el("div", { role: "alert",
+    class: "editor-simuler-utfall" });
+  const resultat = el("div", { class: "editor-simuler-resultat" });
+  const side = (tittel, svar) => el("div", { class: "editor-simuler-side" },
+    el("h4", { text: tittel }),
+    el("p", { class: "editor-simuler-beslutning",
+      text: t(`ui.editor.simuler.beslutning.${svar.beslutning}`,
+              svar.beslutning) }),
+    el("ul", {}, ...svar.begrunnelse.map((g) =>
+      el("li", {}, el("code", { text: g.kode })))));
+  kjorKnapp.addEventListener("click", async () => {
+    sett(utfall);
+    let hendelse;
+    try {
+      hendelse = JSON.parse(hendelseFelt.value);
+    } catch {
+      sett(utfall, el("p", { text: t("ui.editor.simuler.ugyldig_json") }));
+      return;
+    }
+    kjorKnapp.disabled = true;
+    let svar;
+    try {
+      svar = await simulerPolicyutkast(st.utkast_id, hendelse,
+                                       rolleFelt.value || "simulering");
+    } catch (e) {
+      kjorKnapp.disabled = false;
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(utfall, el("p", { text: t("ui.editor.simuler.feil") }));
+      return;
+    }
+    kjorKnapp.disabled = false;
+    const gjeldendeTittel = svar.gjeldende_versjon
+      ? t("ui.editor.simuler.gjeldende")
+          .replace("{versjon}", svar.gjeldende_versjon)
+      : t("ui.editor.simuler.gjeldende_denyall");
+    sett(resultat,
+      el("div", { class: "editor-simuler-sider" },
+        side(t("ui.editor.simuler.utkastet"), svar.utkast),
+        side(gjeldendeTittel, svar.gjeldende)),
+      el("p", { class: svar.avvik ? "editor-simuler-avvik" : "muted",
+        text: t(svar.avvik ? "ui.editor.simuler.avvik"
+                           : "ui.editor.simuler.likt") }),
+      el("ul", { class: "muted" }, ...(svar.merknader || []).map((m) =>
+        el("li", { text: t(`ui.editor.simuler.merknad.${m}`, m) }))));
+    meldLive(t(svar.avvik ? "ui.editor.simuler.avvik"
+                          : "ui.editor.simuler.likt"));
+  });
+  rot.append(
+    el("p", { text: t("ui.editor.simuler.forklaring") }),
+    el("div", { class: "editor-simuler-skjema" },
+      el("label", { for: hendelseId,
+        text: t("ui.editor.simuler.hendelse") }),
+      hendelseFelt,
+      el("label", { for: rolleId, text: t("ui.editor.simuler.rolle") }),
+      rolleFelt,
+      kjorKnapp),
+    utfall, resultat);
+  return rot;
+}
+
+
 export function visPolicyeditor(hoved, ctx, opts = {}) {
   // opts: { utkast_id?, aapneUtkast: fn(uid), tilbake: fn(), eierSkjermen? }
   //
@@ -1370,6 +1452,8 @@ export function visPolicyeditor(hoved, ctx, opts = {}) {
           bygg: () => handlingerSeksjon(st.policy, tegn, st) },
         { nokkel: "overstyring", tittel: t("ui.editor.fane.overstyring"),
           bygg: () => overstyringSeksjon(st.policy, tegn, st.grunnlag) },
+        { nokkel: "simuler", tittel: t("ui.editor.fane.simuler"),
+          bygg: () => simulerSeksjon(st, ctx) },
       ],
     });
     const barn = [

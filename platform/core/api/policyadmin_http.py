@@ -527,6 +527,46 @@ def valider_utkast_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def simuler_utkast_endepunkt(tjeneste, request):
+    """POST /v1/policyutkast/{utkast_id}/simuler — «hva ville utkastet
+    sagt?», side ved side med gjeldende base. RÅDGIVENDE REN LESING
+    (ingen revisjonsrad, ingen frekvensreservasjon, ingen mutasjon) —
+    derfor `policy:read` og ingen idempotensnøkkel. POST fordi
+    hendelsen er en kropp, ikke fordi noe endres; `_browserkontekst`
+    beholder CSRF-vernet POST-formen alt har."""
+    from .app import _rid
+    rid = _rid(request)
+    utkast_id = request.path_params["utkast_id"]
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        "policy:read")
+        body = _kropp(request)
+        hendelse = body.get("hendelse")
+        rolle = body.get("rolle", "simulering")
+        if not isinstance(hendelse, dict) or not hendelse                 or not isinstance(rolle, str) or not rolle:
+            return _feil("request_feilformet", rid)
+        try:
+            res = policyadmin.simuler_utkast(
+                conn, tenant=tenant, utkast_id=utkast_id,
+                hendelse=hendelse, rolle=rolle)
+        except policyadmin.Aktiveringsfeil as e:
+            if e.args and e.args[0] == "ikke_funnet":
+                return _feil("ikke_funnet", rid, 404)
+            return _feil("request_feilformet", rid)
+        except Exception:
+            # Motoren dømmer et forfatter-konstruert innhold: en hendelse
+            # den ikke kan evaluere er forfatterens data, aldri en 500.
+            tjeneste.logg.hendelse("policy_simulering_avvist", rid, tenant)
+            return _feil("request_feilformet", rid)
+        tjeneste.logg.hendelse("policy_simulert", rid, tenant,
+                               utkast_id=utkast_id,
+                               avvik=res["avvik"])
+        return _ok(res, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def varsel_liste_endepunkt(tjeneste, request):
     """Mine varsler. `policy:read` — å se at noe venter på deg krever ikke
     fullmakt til å endre noe.

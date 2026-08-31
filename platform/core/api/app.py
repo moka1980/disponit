@@ -1185,6 +1185,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_rediger_utkast(request: Request) -> Response:
         return policyadmin_http.rediger_utkast_endepunkt(tjeneste, request)
 
+    def pa_simuler_utkast(request: Request) -> Response:
+        return policyadmin_http.simuler_utkast_endepunkt(tjeneste, request)
+
     def pa_valider_utkast(request: Request) -> Response:
         return policyadmin_http.valider_utkast_endepunkt(tjeneste, request)
 
@@ -1397,6 +1400,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/policymaler", pa_maler, methods=["GET"]),
         Route("/v1/policyutkast", pa_opprett_utkast, methods=["POST"]),
         Route("/v1/policyutkast", pa_list_utkast, methods=["GET"]),
+        Route("/v1/policyutkast/{utkast_id:str}/simuler", pa_simuler_utkast,
+              methods=["POST"]),
         Route("/v1/policyutkast/{utkast_id:str}/valider", pa_valider_utkast,
               methods=["POST"]),
         Route("/v1/varsel", pa_varsel_liste, methods=["GET"]),
@@ -1902,6 +1907,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/modul/token/tilbakekall"): "modules:onboard",
     ("POST", "/v1/policyutkast"):            "policy:write",
     ("GET",  "/v1/policyutkast"):            "policy:read",
+    ("POST", "/v1/policyutkast/{utkast_id:str}/simuler"): "policy:read",
     ("POST", "/v1/policyutkast/{utkast_id:str}/valider"): "policy:write",
     # INNBOKSEN ER MOTTAKERENS, IKKE POLICYFORVALTNINGENS (Codex P2). Begge
     # POST-ene rører KUN kallerens egne rader — bruker-id-en kommer fra
