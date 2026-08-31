@@ -17,10 +17,14 @@ from __future__ import annotations
 ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # Vanlig kundebruker: ser beslutninger, unntak og policy — ikke
     # sikkerhetskøen.
-    "leser": frozenset({"decisions:read", "exceptions:read", "policy:read"}),
+    # M-6 PR-A: `epost:read` — lese klassifiseringer/utkast/oppfølging i
+    # M-6-flaten (PR-D). Rent lesende, derfor også hos leser/sikkerhet.
+    "leser": frozenset({"decisions:read", "exceptions:read", "policy:read",
+                        "epost:read"}),
     # Compliance/ops: i tillegg sikkerhetsinnsyn.
     "sikkerhet": frozenset({"decisions:read", "exceptions:read",
-                            "policy:read", "security:read"}),
+                            "policy:read", "security:read",
+                            "epost:read"}),
     # Administrator: alt lesende (v1 er rent lese-API; mutasjon er senere).
     # 038: administratoren bestiller kontroller på tenantens egne,
     # verifiserte mål. Scopet gir retten til å FORSØKE — målautorisasjon,
@@ -28,9 +32,16 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # 044: planen er tenantens (§6) — administratoren oppretter, aktiverer
     # og gjenopptar. Én rolle i v1; en tenant kan senere splitte
     # aktiver/gjenoppta til egne roller uten skjemaendring.
+    # M-6 PR-A: administratoren forvalter kildene (koble til/deaktiver
+    # postboks — OAuth-flyten i PR-B) og feller flatens dom over utkast
+    # (forkast/brukt manuelt — PR-D). Begge er per-handling-scopes, som
+    # PR-012s unntaksbehandling: retten til å FORSØKE; 088-vaktene og
+    # statusmaskinene avgjør.
     "admin": frozenset({"decisions:read", "exceptions:read", "policy:read",
                         "security:read", "bestilling:opprett",
-                        "plan:opprett", "plan:aktiver", "plan:gjenoppta"}),
+                        "plan:opprett", "plan:aktiver", "plan:gjenoppta",
+                        "epost:read", "epost:kilde:administrer",
+                        "epost:utkast:behandle"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).

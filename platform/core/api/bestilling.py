@@ -146,10 +146,31 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
         intensjonsfelt=("tenant", "bestillingstype", "inndata_id",
                         "stillingsprofil_ref", "antall_soknader",
                         "omfang", "slettefrist_dogn")),
+    # M-6 PR-A: e-postbehandlingen — DEKLARERT, ikke claimbar ennå.
+    # Kroppen bærer en REFERANSE (kilden — den tilkoblede postboksen fra
+    # 088) og kundens slettefristvalg; grensene er KONTRAKTENS
+    # (`oppdragskontrakt.FELTGRENSER`) og leses derfra i normaliseringen
+    # — aldri en lokal kopi (rekruttering.evaluering-formen, #162 PR-3).
+    # Uten registrert modul svarer `/v1/bestilling`
+    # `bestillingstype_utilgjengelig` FØR beslutningen — ingen kvote
+    # brennes og intet oppdrag fødes før M-6 onboardes (PR-B/C).
+    "epost.behandling": Bestillingstype(
+        handling="epost.behandling",
+        oppdragstype="epost.behandling",
+        eiermodul="m06_epost",
+        kravsett=(),
+        omfang=("postboks",),
+        skjemafelt=frozenset({"bestillingstype", "kilde_ref",
+                              "omfang", "slettefrist_dogn"}),
+        intensjonsfelt=("tenant", "bestillingstype", "kilde_id",
+                        "omfang", "slettefrist_dogn")),
 }
 
 _INNDATA_REF = re.compile(
     r"^inndata:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
+    r"-[0-9a-f]{12}$")
+_KILDE_REF = re.compile(
+    r"^kilde:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
 _PROFIL_REF = re.compile(
     r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
@@ -191,6 +212,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         raise Bestillingsfeil("request_feilformet")
     if bt.oppdragstype == "rekruttering.evaluering":
         return _normaliser_rekruttering(tenant, bt, data)
+    if bt.oppdragstype == "epost.behandling":
+        return _normaliser_epost(tenant, bt, data)
     host = data.get("hostname")
     if not isinstance(host, str) or "@" in host or ":" in host \
             or "/" in host or not _HOSTNAME.fullmatch(host.lower()) \
@@ -260,6 +283,39 @@ def _normaliser_rekruttering(tenant: str, bt: Bestillingstype,
             "inndata_id": inndata_id,
             "stillingsprofil_ref": data["stillingsprofil_ref"],
             "antall_soknader": antall, "omfang": data["omfang"]}
+    if frist is not None:
+        norm["slettefrist_dogn"] = frist
+    return norm
+
+
+def _normaliser_epost(tenant: str, bt: Bestillingstype,
+                      data: dict) -> dict:
+    """M-6: referanseformen og kontraktgrensene — aldri innhold.
+
+    Kilden valideres som FORM her (`kilde:<uuid>`) og som TILSTAND i
+    modulens egne porter senere (PR-B/C); fristen kanoniseres som i
+    rekrutteringsformen — fraværet ER standardvalget (088 `DEFAULT 90`),
+    så en eksplisitt standard er samme intensjon i en annen skrivemåte
+    og skal gi samme intensjonshash.
+    """
+    import oppdragskontrakt
+    m = _KILDE_REF.fullmatch(str(data.get("kilde_ref") or ""))
+    if m is None:
+        raise Bestillingsfeil("request_feilformet")
+    kilde_id = m.group(0).split(":", 1)[1]
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    frist = data.get("slettefrist_dogn")
+    if frist is not None:
+        f_lo, f_hi = oppdragskontrakt.FELTGRENSER[
+            "epost.behandling"]["slettefrist_dogn"]
+        if isinstance(frist, bool) or not isinstance(frist, int) \
+                or not f_lo <= frist <= f_hi:
+            raise Bestillingsfeil("request_feilformet")
+        if frist == oppdragskontrakt.SLETTEFRIST_STANDARD_DOGN:
+            frist = None
+    norm = {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "kilde_id": kilde_id, "omfang": data["omfang"]}
     if frist is not None:
         norm["slettefrist_dogn"] = frist
     return norm

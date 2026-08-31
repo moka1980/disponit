@@ -108,6 +108,15 @@ APPEND_ONLY_TRIGGERE = (
     # DELETE av `oppdrag`/`tenant_nokler`, som tabellen har FK til — den
     # nøyaktige nabo-regresjonen 057-lagrene over ble registrert for.
     ("inndata_artefakt", "inndata_artefakt_vakt"),
+    # 088 (M-6): alle seks vaktene nekter DELETE — kilden avvikles ved
+    # status, meldinger og barnelagre reapes (payload til NULL),
+    # oppfølginger lukkes. Som de skal — så oppryddingen må skru dem av.
+    ("epost_kilde", "epost_kilde_vakt"),
+    ("epost_melding", "epost_melding_vakt"),
+    ("epost_klassifisering", "epost_klassifisering_vakt"),
+    ("epost_utkast", "epost_utkast_vakt"),
+    ("epost_vedlegg", "epost_vedlegg_vakt"),
+    ("epost_oppfolging", "epost_oppfolging_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -204,6 +213,13 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # ute over).
                  "m8_slot",
                  "rekrutteringsprosess",
+                 # 088 (M-6): barnelagrene peker på meldingen, meldingen
+                 # på kilden, og alle payload-lagrene + kilden på
+                 # `tenant_nokler` (DEK-referansen) — barna først,
+                 # kilden sist, alt FØR nøklene. Oppfølgingen er fri,
+                 # men hører til familien.
+                 "epost_vedlegg", "epost_klassifisering", "epost_utkast",
+                 "epost_melding", "epost_oppfolging", "epost_kilde",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

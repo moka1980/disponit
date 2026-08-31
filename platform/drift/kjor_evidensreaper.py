@@ -1,7 +1,8 @@
 """Inngangspunkt for `disponit-evidensreaper.service`.
 
-Kjører BEGGE de databaseeide retensjonsreglene timerrollen har EXECUTE
-på: evidensfristene (038 §5) og kandidatdatagrensen (057 §5).
+Kjører ALLE de databaseeide retensjonsreglene timerrollen har EXECUTE
+på: evidensfristene (038 §5), kandidatdatagrensen (057 §5) og
+e-postdatagrensen (088, M-6).
 
 Én JSON-linje per kjøring — samme kontrakt som de andre drift-jobbene:
 utfallet skal kunne leses av `journalctl` uten å kjenne koden. Exit 1 på
@@ -47,9 +48,10 @@ def main() -> int:
             pass
     # Id-ene logges — de er referanser, aldri innhold (payloaden er og
     # forblir kryptert; klartekst finnes ikke i denne prosessen).
-    # Kandidatdatagrensen (057 §5) rapporteres i EGNE felter med sitt eget
-    # feilflagg: kjøringen bærer to uavhengige retensjonsplikter, og
-    # `journalctl` skal kunne se hvilken av dem som eventuelt feilet.
+    # Kandidatdatagrensen (057 §5) og e-postdatagrensen (088) rapporteres
+    # i EGNE felter med hvert sitt feilflagg: kjøringen bærer tre
+    # uavhengige retensjonsplikter, og `journalctl` skal kunne se hvilken
+    # av dem som eventuelt feilet.
     print(json.dumps({"hendelse": "reaperkjoring",
                       "reapet": len(r.reapet),
                       "saker": [{"tenant": t, "oppdrag_id": o,
@@ -58,8 +60,13 @@ def main() -> int:
                       "kandidatdata_reapet": len(r.kandidatdata),
                       "prosesser": [{"tenant": t, "prosess_id": p}
                                     for t, p in r.kandidatdata],
-                      "kandidatdata_feilet": int(r.kandidatdata_feilet)}))
-    return 1 if (r.feilet or r.kandidatdata_feilet) else 0
+                      "kandidatdata_feilet": int(r.kandidatdata_feilet),
+                      "epostdata_reapet": len(r.epostdata),
+                      "meldinger": [{"tenant": t, "melding_id": m}
+                                    for t, m in r.epostdata],
+                      "epostdata_feilet": int(r.epostdata_feilet)}))
+    return 1 if (r.feilet or r.kandidatdata_feilet
+                 or r.epostdata_feilet) else 0
 
 
 if __name__ == "__main__":       # pragma: no cover

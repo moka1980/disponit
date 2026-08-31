@@ -275,6 +275,8 @@
   "site.modul.m56.tekst": "Checks websites you have confirmed that you control, and stores the report as evidence.",
   "site.modul.m57.navn": "Recruitment agent (ATS)",
   "site.modul.m57.tekst": "Reads and ranks up to 5,000 applications blind against the role's requirements — a human decides who moves on, and nothing is sent without a signature.",
+  "site.modul.m6.navn": "Email operations agent",
+  "site.modul.m6.tekst": "Reads and prioritises your inbox — classification, drafts and follow-up suggestions; nothing is sent automatically.",
   "site.modul.m8.navn": "Calendar and capacity agent",
   "site.modul.m8.tekst": "Lets candidates pick their own interview time — no login, no email back-and-forth.",
   "site.moduler": "Module register",

@@ -1,0 +1,86 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# M-6 registreres VED FØDSELEN (PR-A av M-6-planen, dommene 31/8):
+# fundamentet er migrasjon 088 (kilde/melding/klassifisering/utkast/
+# oppfølging/vedlegg + e-postdatagrensen `reap_epostdata`),
+# bestillingstypen `epost.behandling` og evidensgrensen `m6-v1` i
+# manifestskjema.KRAVGRENSER — grensen registrert FØR bygging
+# (§0-regelen, m57). OAuth-døren (PR-B), innhenter/klassifisering/
+# utkast (PR-C) og flaten (PR-D) kommer i egne PR-er.
+#
+# TO AKSER, ÆRLIG LEST (m16/m38-formen): `status` er GODKJENT-aksen —
+# ingen aksepthendelse finnes, og ingen sjekklistepunkter er målt.
+# `driftstilstand: ikke_i_drift` er bokstavelig: ingen release, ingen
+# deploymentrad, ingen arbeider — bare datamodellen og reaperen skipper
+# med kjernen.
+#
+# V1-GRENSENE ER DOMMER, ikke mangler (31/8): kun lesende (ingen
+# sendevei representerbar — v2 spesifiseres først etter >= 4 ukers
+# foreslå-drift med feil_mottaker=0), utkast kun i Disponit-flaten,
+# arkivering som forslagsliste, M365 først (Gmail = senere
+# CHECK-utvidelse), standard slettefrist 90 døgn (30–365, immutabel).
+id: m06_epost
+navn: E-postoperasjonsagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
+# derfor ærlig oppgir ingen: M-6 BESTILLER gjennom policyporten
+# (`epost.behandling` er en bestillingstype, hver kjøring policyvurderes
+# som enhver annen bestilling — m01), og hver beslutning bokføres i
+# evidenskjeden (m02). Uten de to finnes ikke M-6s vei til et oppdrag.
+avhengigheter:
+  - m01_policy                 # bestillingsveien policyvurderer hver kjøring
+  - m02_revisjonslogg          # beslutningene bokføres i evidenskjeden
+kjerne: platform/modules/m06_epost
+i18n_prefiks: m06epost
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json). Punktene står `nei`
+# fordi ingen av dem er MÅLT for M-6 ennå: grensen `m6-v1` er registrert
+# i KRAVGRENSER (§0), men målingene den skal lese kommer først med
+# utførelsesarmen (PR-C) og flaten (PR-D). «Et manifest skal aldri lese
+# sterkere enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet (m02-suite-formen). PR-A-portene
+      (test_m6_epost.py: idempotens, ciphertext, immutabel frist,
+      samlet reaping, statisk sendeveisport) kjører i CI, men det er
+      ikke denne portens måling.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: syntetisk postboks med fasit-klassifiseringer målt både
+      lokalt og på staging, med begge datasett-identitetene bundet
+      (wcag-kontroll-v2-formen). Datasettet bygges med innhenteren
+      (PR-C); ingen måling finnes.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      M-6s skrivevei til evidenskjeden er bestillingsveiens (m01/m02) —
+      modulen selv skriver aldri revisjonslogg direkte (den statiske
+      porten i test_m6_epost.py måler fraværet). Punktet flippes når
+      utførelsesarmen (PR-C) finnes og kjeden er målt ende til ende.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: arbeider og kø å injisere feil i — de kommer med PR-C
+      (innhenteren). Feilveiene (kilde feilet, token utløpt,
+      klassifisering utenfor lukket sett) måles da mot m6-v1-grensen.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring mot
+      den. m6-v1 bærer invariantparene og ddl-ja-punktet, men ingen
+      ytelsestall ennå — tallet pinnes når innhenterens arbeidsprofil
+      (meldinger per hentevindu) er kjent (PR-C), FØR målingen kjøres.
+  rollback_testet:
+    status: nei
+    notat: >-
+      M-6 har ingen egen release å rulle tilbake ennå — PR-A skipper med
+      kjernen (088 er en migrasjon i kjernens kjede). Punktet får
+      mening når modulen får release/arbeider (PR-C) og drilles da på
+      rollback-m56-formen.
