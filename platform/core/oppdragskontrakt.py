@@ -326,6 +326,36 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " stillingens krav i isolert container — ingen"
                      " ekstern trafikk, ingen mutasjon; utsendelse er en"
                      " egen, signaturbundet vei (056).")),
+    # M-6 (dommene 31/8): e-postbehandlingen er KUN LESENDE i v1 — ingen
+    # sendevei er representerbar (dommen pkt. 2), utkast finnes bare i
+    # Disponit-flaten (pkt. 4), arkivering er en forslagsliste (pkt. 5).
+    # LUKKET payload: kildereferansen (den tilkoblede postboksen, 088),
+    # omfanget som bærer fristen, og kundens slettefristvalg —
+    # meldingsinnhold når aldri payloaden (det bor tenant-DEK-kryptert i
+    # 088-lagrene og hentes av modulen med dens claimede oppdrag).
+    "epost.behandling": Oppdragstype(
+        navn="epost.behandling",
+        # UTEN punktum til slutt (m57s Codex P1, ordrett): handlingen er
+        # navngitt nøyaktig som oppdragstypen, og prefikset uten punktum
+        # treffer både den kanoniske handlingen og et eventuelt senere
+        # `epost.behandling.<noe>` — på segmentgrensen, aldri på tegn.
+        handlingsprefikser=("epost.behandling",),
+        # `slettefrist_dogn` er KUNDENS valg (057/088: spennet 30–365,
+        # standard 90, immutabelt etter INSERT) og må ha en kilde i det
+        # signerte oppdraget — samme lærdom som m57s Codex P1. VALGFRITT:
+        # fraværet ER standardvalget (basens `DEFAULT 90`).
+        felter=frozenset({"kilde_id", "omfang", "slettefrist_dogn"}),
+        paakrevde=frozenset({"kilde_id", "omfang"}),
+        eiermodul="m06_epost",
+        # Ingen målautorisasjon: modulen leser kundens EGEN postboks med
+        # kundens egne, OAuth-samtykkede credentials (PR-B) — det finnes
+        # intet eksternt mål å autorisere positivt, og ingen observerbar
+        # trafikk mot tredjepart.
+        beskrivelse=("M-6: leser og klassifiserer innkommende e-post fra"
+                     " en tilkoblet postboks (M365 Graph, Mail.Read) —"
+                     " kun lesende i v1: utkast bare i Disponit-flaten,"
+                     " arkivering som forslagsliste, ingen sendevei"
+                     " (dommene 31/8 pkt. 2/4/5).")),
 }
 
 
@@ -882,6 +912,8 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     # M-57: ett omfang i v1 — «bunt». Enumen er lukket med vilje: en ny
     # verdi skal være en feil (og en fristbeslutning), ikke stillhet.
     "rekruttering.evaluering": {"omfang": ("bunt",)},
+    # M-6: ett omfang i v1 — «postboks». Samme lukkede form.
+    "epost.behandling": {"omfang": ("postboks",)},
     "kontroll.wcag.nettsted": {
         # Samme lukkede enum som rapportskjemaets `kravsett`: et oppdrag
         # med en annen verdi kan ikke gi en rapport som validerer.
@@ -915,6 +947,12 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
         "slettefrist_dogn": (30, 365),
         # (Standardvalget 90 er navngitt under — IKKE en grense.)
     },
+    # M-6 (088): samme kundevalgte spenn som `melding_frist_i_spennet`,
+    # målt der bestillingen tas imot — en bestilling med
+    # `slettefrist_dogn: 3650` er dødfødt og skal avvises FØR noe
+    # oppdrag fødes, ikke først på basens CHECK (m57-radens egen
+    # begrunnelse).
+    "epost.behandling": {"slettefrist_dogn": (30, 365)},
 }
 
 #: Basens `DEFAULT 90` (057) med navn: kanoniseringens ene kilde.
@@ -934,6 +972,9 @@ SLETTEFRIST_STANDARD_DOGN = 90
 #: `FELTGRENSER` har for `maks_sider`.
 FELTSTRENGER: dict[str, tuple[str, ...]] = {
     "rekruttering.evaluering": ("stillingsprofil_ref",),
+    # M-6: en kildereferanse som ikke er en referanse avvises der
+    # bestillingen tas imot, ikke der den utføres.
+    "epost.behandling": ("kilde_id",),
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
@@ -1029,6 +1070,11 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # felles fristen her igjen.
     "rekruttering.evaluering": ("omfang",
                                 {"bunt": None}),  # settes under
+    # M-6 (planen §3): 30 min for postboks-omfanget — godt innenfor
+    # per-grant-taket (`UTSTEDT_AUTORITET_S` = 3600 s), så fristen er
+    # dekket av ETT grant og trenger ingen fornyelseskjede (den klassen
+    # #165/063 finnes for treffer først frister over taket).
+    "epost.behandling": ("omfang", {"postboks": 30 * 60}),
 }
 
 #: PER-GRANT-TAKET, med produksjonsnavn: claim-leasen (037/049),

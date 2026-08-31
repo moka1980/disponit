@@ -275,6 +275,8 @@
   "site.modul.m56.tekst": "Kontrollerer nettsteder du har bekreftet at du kontrollerer, og lagrer rapporten som evidens.",
   "site.modul.m57.navn": "Rekrutteringsagent (ATS)",
   "site.modul.m57.tekst": "Leser og rangerer opptil 5000 søknader blindet mot stillingens krav — mennesket beslutter hvem som går videre, og ingen utsendelse skjer uten signatur.",
+  "site.modul.m6.navn": "E-postoperasjonsagent",
+  "site.modul.m6.tekst": "Leser og prioriterer innboksen for deg — klassifisering, utkast og oppfølgingsforslag; ingenting sendes automatisk.",
   "site.modul.m8.navn": "Kalender- og kapasitetsagent",
   "site.modul.m8.tekst": "Lar kandidater velge intervjutid selv — uten innlogging, uten e-postping-pong.",
   "site.moduler": "Modulregister",

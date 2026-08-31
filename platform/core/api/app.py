@@ -1504,7 +1504,10 @@ def _rid(request: Request) -> str:
 
 #: PR-008: de fire lese-scopene brukersesjonen kan holde.
 LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
-                        "security:read"})
+                        "security:read",
+                        # M-6 PR-A: leseflaten for klassifiseringer,
+                        # utkast og oppfølging (PR-D) — rent lesende.
+                        "epost:read"})
 
 #: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
 #: muterende endepunkt — selv om noen skulle utstede et bruker-token med
@@ -1540,7 +1543,17 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # vanlig bestilling, så scopene gir
                                      # aldri stående utførelsesfullmakt.
                                      "plan:opprett", "plan:aktiver",
-                                     "plan:gjenoppta"})
+                                     "plan:gjenoppta",
+                                     # M-6 PR-A: kildeforvaltning (koble
+                                     # til/deaktiver postboks, PR-B) og
+                                     # flatens dom over utkast (PR-D) —
+                                     # menneskelige handlinger i flaten,
+                                     # OIDC + CSRF som de andre. Carve-
+                                     # outen slipper dem bare forbi den
+                                     # generelle porten; endepunktene
+                                     # finnes først i PR-B/D.
+                                     "epost:kilde:administrer",
+                                     "epost:utkast:behandle"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,

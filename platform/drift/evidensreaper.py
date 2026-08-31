@@ -30,7 +30,18 @@ er den samme, DSN-en er den samme, og 057 gir EXECUTE til akkurat den
 rollen denne enheten alt kjører som. En egen timer hadde vært en ny
 deploy-flate for en regel basen alt eier alene.
 
-De to reapene deler kjøring, men ikke skjebne: hver har sin egen
+088 (M-6) — E-POSTDATAGRENSEN, i samme kjøring
+----------------------------------------------
+`reap_epostdata()` (migrasjon 088) er 057-formens søster for M-6:
+meldinger forbi sin 30–365-døgnsfrist (målt fra `mottatt_ts`) får
+payloaden tømt i ALLE lagre — kropp, sammendrag, utkast-tekst,
+vedleggsnavn — i samme transaksjon per melding. Den kobles inn HER og
+ikke i en ny tjeneste, av nøyaktig samme grunn som kandidatdatagrensen:
+rollen er den samme, DSN-en er den samme, og 088 gir EXECUTE til akkurat
+den rollen denne enheten alt kjører som. 057s Codex P1 («definert,
+testet, GRANTet — og aldri kalt») skal ikke gjentas for M-6.
+
+Reapene deler kjøring, men ikke skjebne: hver har sin egen
 transaksjon og sitt eget feilflagg, så en feilende evidensfrist-reap ikke
 stanser retensjonsarbeidet — og omvendt.
 """
@@ -48,6 +59,11 @@ BATCHGRENSE = 200
 #: (`reap_kandidatdata(p_grense INT DEFAULT 50)`).
 KANDIDATGRENSE = 50
 
+#: Maks antall MELDINGER per kjøring (088, M-6). Egen grense av samme
+#: grunn som kandidatgrensen: hver melding tømmer fire lagre i samme
+#: transaksjon. Speiler `reap_epostdata(p_grense INT DEFAULT 50)`.
+EPOSTGRENSE = 50
+
 
 @dataclass
 class Reapresultat:
@@ -57,14 +73,19 @@ class Reapresultat:
     #: (tenant, prosess_id) per tømt rekrutteringsprosess (057 §5).
     kandidatdata: list[tuple[str, str]] = field(default_factory=list)
     kandidatdata_feilet: bool = False
+    #: (tenant, melding_id) per tømt e-postmelding (088, M-6).
+    epostdata: list[tuple[str, str]] = field(default_factory=list)
+    epostdata_feilet: bool = False
 
 
 def kjor(conn, *, grense: int = BATCHGRENSE,
-         kandidatgrense: int = KANDIDATGRENSE) -> Reapresultat:
-    """Én reaperkjøring: evidensfristene først, kandidatdatagrensen
-    etterpå. Overlapp er trygt uten lås i begge: funksjonene bruker
-    `FOR UPDATE SKIP LOCKED`, så to samtidige kjøringer deler kandidatene
-    i stedet for å behandle samme rad to ganger."""
+         kandidatgrense: int = KANDIDATGRENSE,
+         epostgrense: int = EPOSTGRENSE) -> Reapresultat:
+    """Én reaperkjøring: evidensfristene først, så kandidatdatagrensen,
+    så e-postdatagrensen (088). Overlapp er trygt uten lås i alle tre:
+    funksjonene bruker `FOR UPDATE SKIP LOCKED`, så to samtidige
+    kjøringer deler kandidatene i stedet for å behandle samme rad to
+    ganger."""
     r = Reapresultat()
     try:
         rader = conn.execute(
@@ -92,4 +113,19 @@ def kjor(conn, *, grense: int = BATCHGRENSE,
         except Exception:
             pass
         r.kandidatdata_feilet = True
+    # 088 (M-6): tredje retensjonsplikt, samme uavhengighet — egen
+    # transaksjon, eget feilflagg, kjøres uansett hvordan de to over
+    # gikk.
+    try:
+        rader = conn.execute(
+            "SELECT tenant, melding_id"
+            "  FROM reap_epostdata(%s)", (epostgrense,)).fetchall()
+        conn.commit()
+        r.epostdata = [(t, str(m)) for (t, m) in rader]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        r.epostdata_feilet = True
     return r

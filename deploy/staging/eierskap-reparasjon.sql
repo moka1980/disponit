@@ -127,6 +127,16 @@ INSERT INTO _design VALUES
     -- krev_tenantkontekst-port og lukker via lukk_rekrutteringsprosess
     -- — samme vindu, samme eier som 057-funksjonene over.
     ('FUNCTION', 'bestill_tidligsletting(text,uuid)',                 'disponit_m37_claimer'),
+    -- 088 (M-6): e-postreaperen er kryss-tenant paa 038/057-formen og
+    -- den utsatte samlet-porten kjoerer ved COMMIT, etter at definer-
+    -- identiteten er borte -- begge maa lese gjennom claimerens
+    -- m6_reaper-policy, saa eierskapet ER lesetilgangen (057-radenes
+    -- egen begrunnelse, ordrett)
+    ('FUNCTION', 'reap_epostdata(integer)',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_lagrene_reapes_samlet()',                        'disponit_m37_claimer'),
+    -- 088 (M-6): markoeren som armerer samlet-porten -- claimer-eid
+    -- definer av samme grunn som 076s m57_marker_beroert_prosess
+    ('FUNCTION', 'm6_marker_beroert_melding()',                       'disponit_m37_claimer'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

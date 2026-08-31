@@ -29,6 +29,9 @@ export const MODULSTATUS = {
   2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
                     // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
                     // m02-aksept-v1, alle punkter bundet)
+  6: "bygges",      // m06_epost: under_utvikling, ikke_i_drift — PR-A
+                    // (datamodell + retensjon) er fundamentet; flippes
+                    // av en M-6-aksept, aldri av en byggemilepæl
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
@@ -74,6 +77,15 @@ const MODULER = [
     navn_nokkel: "site.modul.m2.navn",
     fase_nokkel: "site.fase.fundament",
     tekst_nokkel: "site.modul.m2.tekst",
+  },
+  {
+    // M-6 er en operasjonsagent i kundens hverdag — samme klasse som
+    // M-8 (også katalogfase 1): fasen her er plattformens
+    // utrullingsfase, og agentene hører til autopilotene.
+    id: 6,
+    navn_nokkel: "site.modul.m6.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m6.tekst",
   },
   {
     id: 8,
@@ -146,7 +158,8 @@ export const KUNDEROLLER = [
     id: "leser",
     navn_nokkel: "ui.kundeadmin.rolle.leser",
     tekst_nokkel: "ui.kundeadmin.rolle.leser_tekst",
-    scopes: ["decisions:read", "exceptions:read", "policy:read"],
+    scopes: ["decisions:read", "exceptions:read", "policy:read",
+             "epost:read"],
   },
   {
     id: "godkjenner",

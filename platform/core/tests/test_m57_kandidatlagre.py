@@ -3882,12 +3882,19 @@ def test_163_samletporten_staar_pa_ankeret_ikke_per_rad(migrator):
         "SELECT tgrelid::regclass::text, count(*) FROM pg_trigger"
         " WHERE tgname LIKE '%reapes_samlet' AND NOT tgisinternal"
         " GROUP BY 1").fetchall()}
-    assert utsatte == {"rekrutteringsprosess": 1}, utsatte
+    # 088 (M-6): sveipen er basevid, og fasiten er ETT ANKER PER
+    # MELDINGSGRAF — e-postfamilien ble født på 076-formen (markører på
+    # barnelagrene, den ene utsatte porten på `epost_melding`), så dens
+    # anker står her ved siden av rekrutteringsprosessen. En rad til i
+    # denne fasiten krever samme dom: porten bor på et anker.
+    assert utsatte == {"rekrutteringsprosess": 1,
+                       "epost_melding": 1}, utsatte
     markorer = {r[0] for r in migrator.execute(
         "SELECT tgrelid::regclass::text FROM pg_trigger"
         " WHERE tgname LIKE '%\\_beroert' AND NOT tgisinternal"
     ).fetchall()}
-    assert markorer == set(MEDLEMMER), markorer
+    assert markorer == set(MEDLEMMER) | {
+        "epost_klassifisering", "epost_utkast", "epost_vedlegg"}, markorer
     migrator.rollback()
 
 
