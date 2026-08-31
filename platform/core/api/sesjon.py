@@ -41,6 +41,10 @@ RATE = {
     "callback_token":   (300, 10, 900),
     "medlemskap":       (900, 5, 3600),
     "nodbrems":         (900, 200, 1800),
+    # 082 (M-8): den offentlige tidsvalg-veien — nøklet på IP + token_id
+    # etter formatsjekk (api/tidsvalg.py). Vinduet speiler nginx-sonen
+    # disponit_tidsvalg (30 r/m) med backoff når bøtten renner over.
+    "tidsvalg":         (300, 150, 900),
 }
 
 

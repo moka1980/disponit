@@ -262,6 +262,18 @@ export const opprettUtsendingsliste = (oppdragId, listetype, kandidater,
     { oppdrag_id: oppdragId, listetype, kandidater },
     idem || nyIdempotensnokkel());
 
+// M-8 (082): kundens tidsvalg-administrasjon. Kandidatsiden bruker
+// ALDRI disse — den er en frittstående flate uten cookies/CSRF og gjør
+// sine egne fetch-kall (flater/tidsvalg.js).
+export const hentTidsvalg = (prosessId) =>
+  hentJson("/v1/rekruttering/tidsvalg", { prosess_id: prosessId });
+export const opprettTidsvalgSlots = (prosessId, slots, idem) =>
+  _muter("/v1/rekruttering/tidsvalg/slots", "POST",
+    { prosess_id: prosessId, slots }, idem || nyIdempotensnokkel());
+export const deaktiverTidsvalgSlot = (slotId) =>
+  _muter(`/v1/rekruttering/tidsvalg/slot/${encodeURIComponent(slotId)}`
+    + "/deaktiver", "POST", {});
+
 export const signerRekrutteringsliste = (listeId, innholdHash, idem) =>
   _muter(`/v1/rekruttering/lister/${encodeURIComponent(listeId)}/signer`,
          "POST", { innhold_hash: innholdHash }, idem || nyIdempotensnokkel());

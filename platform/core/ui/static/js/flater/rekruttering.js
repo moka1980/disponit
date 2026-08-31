@@ -24,6 +24,7 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
          nyIdempotensnokkel, hentKandidatdokument,
+         hentTidsvalg, opprettTidsvalgSlots, deaktiverTidsvalgSlot,
          UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
@@ -1425,6 +1426,7 @@ function tegn(hoved, ctx, data, okt, valgtId) {
   fanevalg({
     evalueringer: el("div", {}, evalDel, hoppAnker, velgerRot,
       utfall, kunngjoring, blindingRot, vektRot, merknadRot, tabellRot,
+      tidsvalgSeksjon(ctx, prosess.prosess_id),
       listeRot),
     bestill: bestillDel
       || el("p", { text: t("ui.rekruttering.bestill.ingen_profil") }),
@@ -1944,8 +1946,13 @@ function evalueringSeksjon(hoved, ctx, data, okt) {
             for (const b of innstilling.querySelectorAll("button")) {
               b.disabled = false;
             }
+            // M-8 (DOM 2): en invitasjonsliste krever minst én aktiv
+            // slot — egen tekst som peker kunden til tidsvalg-
+            // seksjonen, aldri en generisk feil.
             sett(innstillUtfall, el("p", {
-              text: t("ui.rekruttering.innstill.feil") }));
+              text: t(e && e.kode === "tidsvalg_slot_mangler"
+                ? "ui.rekruttering.innstill.tidsvalg_mangler"
+                : "ui.rekruttering.innstill.feil") }));
             return;
           }
           // Listen bor under «Innstilte lister» — prosessene hentes på
@@ -2899,6 +2906,189 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   sett(rot, el("h2", { id: "bestill-tittel",
     text: t("ui.rekruttering.bestill.tittel") }),
     utfall, skjema);
+  return rot;
+}
+
+
+// ------------------------------------------------------------------
+// M-8 tidsvalg (082, planen §4): kundens slot-administrasjon i
+// prosessdetaljen. Tabell med caption/th scope, skjema for ny slot
+// (datetime-local + kapasitet, label-bundet), deaktivering bak
+// bekreftelsesdialog, utfall i role=alert. Kandidatens side er en EGEN
+// flate (static/tidsvalg.html) — denne seksjonen er kundens.
+// ------------------------------------------------------------------
+function tidsvalgSeksjon(ctx, prosessId) {
+  const rot = el("section", { "aria-labelledby": "tidsvalg-tittel",
+    class: "rekrut-tidsvalg" });
+  const kanSkrive = harScope(ctx, "bestilling:opprett");
+  const utfall = el("div", { role: "alert",
+    class: "rekrut-tidsvalg-utfall" });
+  const listeRot = el("div", {});
+  let idem = null;
+
+  const tegnListe = (slots) => {
+    if (!slots.length) {
+      sett(listeRot, el("p", {
+        text: t("ui.rekruttering.tidsvalg.ingen") }));
+      return;
+    }
+    const rader = slots.map((slot) => {
+      const tidTekst = `${Tidspunkt(slot.start).textContent} – `
+        + Tidspunkt(slot.slutt).textContent;
+      const celler = [
+        el("td", {}, Tidspunkt(slot.start), " – ", Tidspunkt(slot.slutt)),
+        el("td", { text: `${slot.antall_valgt}/${slot.kapasitet}` }),
+        // Kandidat-id-ene er lagerets pseudonyme uuid-er — kortformen
+        // er sporbar mot kandidatlisten uten å være et navn.
+        el("td", { text: slot.valgt_av.length
+          ? slot.valgt_av.map((k) => k.slice(0, 8)).join(", ") : "—" }),
+        el("td", { text:
+          t(`ui.rekruttering.tidsvalg.status.${slot.status}`) }),
+      ];
+      const handling = el("td", {});
+      if (kanSkrive && slot.status === "aktiv") {
+        const knapp = el("button", { type: "button", class: "fare",
+          text: t("ui.rekruttering.tidsvalg.deaktiver"),
+          "aria-label": `${t("ui.rekruttering.tidsvalg.deaktiver")}`
+            + ` — ${tidTekst}` });
+        knapp.addEventListener("click", () => {
+          Bekreftelsesdialog({
+            tittel: t("ui.rekruttering.tidsvalg.deaktiver_tittel"),
+            tekst: flett(t("ui.rekruttering.tidsvalg.deaktiver_tekst"),
+              { tid: tidTekst }),
+            primarTekst: t("ui.rekruttering.tidsvalg.deaktiver"),
+            farlig: true,
+            paaPrimar: async () => {
+              try {
+                await deaktiverTidsvalgSlot(slot.slot_id);
+              } catch (e) {
+                if (e instanceof UautorisertFeil) {
+                  ctx.paaUautorisert(); return;
+                }
+                // DOM 3: en slot med bekreftet valg kan ikke trekkes —
+                // egen tekst, så kunden forstår at det er valget som
+                // står i veien, ikke en teknisk feil.
+                sett(utfall, el("span", { role: "alert",
+                  text: t(e && e.kode === "tidsvalg_slot_har_valg"
+                    ? "ui.rekruttering.tidsvalg.har_valg"
+                    : "ui.rekruttering.tidsvalg.feil") }));
+                return;
+              }
+              sett(utfall, flett(
+                t("ui.rekruttering.tidsvalg.deaktivert"),
+                { tid: tidTekst }));
+              provIgjen();
+            },
+          });
+        });
+        handling.append(knapp);
+      }
+      celler.push(handling);
+      return el("tr", {}, ...celler);
+    });
+    sett(listeRot, el("div", { class: "tablewrap" },
+      el("table", {},
+        el("caption", { text: t("ui.rekruttering.tidsvalg.caption") }),
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.tidsvalg.kolonne_tid") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.tidsvalg.kolonne_valgt") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.tidsvalg.kolonne_valgt_av") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.tidsvalg.kolonne_status") }),
+          el("th", { scope: "col",
+            text: t("ui.rekruttering.tidsvalg.kolonne_handling") }))),
+        el("tbody", {}, ...rader))));
+  };
+
+  const oppdater = async () => {
+    const svar = await hentTidsvalg(prosessId);
+    if (!rot.isConnected) return;
+    tegnListe((svar && svar.slots) || []);
+  };
+
+  // FØRSTELASTINGEN ER STILLE (tekstSeksjon-dommen): 401 til
+  // innloggingsveien; andre mount-feil roper ikke — en Prøv
+  // igjen-knapp, og bare brukerens egne handlinger får role=alert.
+  const provIgjen = () => oppdater().catch((e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+    if (!rot.isConnected) return;
+    const knapp = el("button", { type: "button",
+      text: t("ui.rekruttering.tidsvalg.prov_igjen") });
+    knapp.addEventListener("click", () => { sett(utfall); provIgjen(); });
+    sett(listeRot, el("span", { class: "muted",
+      text: t("ui.rekruttering.tidsvalg.liste_feil") }), " ", knapp);
+  });
+  provIgjen();
+
+  const skjemaRot = el("div", {});
+  if (kanSkrive) {
+    const startInp = el("input", { type: "datetime-local",
+      id: "tidsvalg-start" });
+    const sluttInp = el("input", { type: "datetime-local",
+      id: "tidsvalg-slutt" });
+    const kapInp = el("input", { type: "number", id: "tidsvalg-kap",
+      min: "1", max: "50", value: "1" });
+    const lagre = el("button", { type: "submit",
+      text: t("ui.rekruttering.tidsvalg.legg_til") });
+    const skjema = el("form", {},
+      el("p", {}, el("label", { for: "tidsvalg-start",
+        text: t("ui.rekruttering.tidsvalg.start") }), startInp),
+      el("p", {}, el("label", { for: "tidsvalg-slutt",
+        text: t("ui.rekruttering.tidsvalg.slutt") }), sluttInp),
+      el("p", {}, el("label", { for: "tidsvalg-kap",
+        text: t("ui.rekruttering.tidsvalg.kapasitet") }), kapInp),
+      el("p", {}, lagre));
+    // Nøkkelen binder ETT innhold (tekstSeksjon-dommen): endres
+    // feltene, er det en ny operasjon; et definitivt 4xx forbruker
+    // nøkkelen, tapte svar og 5xx beholder den.
+    skjema.addEventListener("input", () => { idem = null; });
+    skjema.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      if (lagre.disabled) return;
+      // datetime-local er sonefri — konverteres til ISO med sone her,
+      // så serveren aldri må gjette kundens tidssone.
+      const start = new Date(startInp.value);
+      const slutt = new Date(sluttInp.value);
+      if (!startInp.value || !sluttInp.value
+          || !(slutt.getTime() > start.getTime())) {
+        sett(utfall, el("span", { role: "alert",
+          text: t("ui.rekruttering.tidsvalg.ugyldig_tid") }));
+        return;
+      }
+      lagre.disabled = true;
+      if (!idem) idem = nyIdempotensnokkel();
+      try {
+        await opprettTidsvalgSlots(prosessId,
+          [{ start: start.toISOString(), slutt: slutt.toISOString(),
+             kapasitet: Math.max(1, Math.min(50,
+               Number(kapInp.value) || 1)) }], idem);
+      } catch (e) {
+        lagre.disabled = false;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e && e.status >= 400 && e.status < 500) idem = null;
+        sett(utfall, el("span", { role: "alert",
+          text: t("ui.rekruttering.tidsvalg.feil") }));
+        return;
+      }
+      idem = null;
+      lagre.disabled = false;
+      sett(utfall, el("span", {
+        text: t("ui.rekruttering.tidsvalg.lagret") }));
+      startInp.value = ""; sluttInp.value = ""; kapInp.value = "1";
+      provIgjen();
+    });
+    sett(skjemaRot, skjema);
+  }
+
+  sett(rot,
+    el("h2", { id: "tidsvalg-tittel",
+      text: t("ui.rekruttering.tidsvalg.tittel") }),
+    el("p", { class: "muted",
+      text: t("ui.rekruttering.tidsvalg.forklaring") }),
+    utfall, listeRot, skjemaRot);
   return rot;
 }
 

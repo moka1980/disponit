@@ -21,6 +21,15 @@ Group=disponit-helse
 WorkingDirectory=/opt/disponit/aktiv/platform
 Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
 LoadCredential=DISPONIT_DATABASE_URL:/etc/disponit/varsel/DISPONIT_DATABASE_URL
+# M-8 (082): tidsvalg-kapabiliteten myntes av utsenderen — pepperet er
+# det SAMME som API-ets (modulonboarding._mac-formen) og kommer via
+# LoadCredential (deploy legger filen i varsel-katalogen sammen med
+# DSN-en). Verten (DISPONIT_HOST) bygger lenken
+# https://<host>/tidsvalg#... og er VALGFRI i formen (minus-tegnet):
+# mangler host eller pepper i miljøet, står invitasjonsradene urørt
+# (`tidsvalg_stanset`) til config er på plass — avslag sendes som før.
+LoadCredential=DISPONIT_TOKEN_PEPPER:/etc/disponit/varsel/DISPONIT_TOKEN_PEPPER
+EnvironmentFile=-/etc/disponit/varsel/tidsvalg.env
 # SMTP-oppsettet er VALGFRITT (minus-tegnet): mangler filen, rapporterer
 # senderen `smtp_ikke_konfigurert`, rører ikke køen og avslutter med 0 —
 # varselsender-dommen, ordrett.

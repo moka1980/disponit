@@ -29,6 +29,9 @@ export const MODULSTATUS = {
   2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
                     // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
                     // m02-aksept-v1, alle punkter bundet)
+  8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
+                    // v1 er tidsvalg-benen (082); flippes av en
+                    // M-8-aksept, aldri av en byggemilepæl
   // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
   // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
   // ingen aksepthendelse, og registerets regel (drift krever aktiv,
@@ -65,6 +68,12 @@ const MODULER = [
     navn_nokkel: "site.modul.m2.navn",
     fase_nokkel: "site.fase.fundament",
     tekst_nokkel: "site.modul.m2.tekst",
+  },
+  {
+    id: 8,
+    navn_nokkel: "site.modul.m8.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m8.tekst",
   },
   {
     // M-16 hører til fase 2 i katalogen (analyse_og_ledelse), altså

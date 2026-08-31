@@ -218,11 +218,15 @@ def main() -> int:
         # av feltlisten som kan drifte fra den.
         from modules.m57_ats import maler
         mottaker_ref = f"demo-kandidat-{n+1}@example.invalid"
+        # M-8 (082, §5): `tidsvalg_lenke` er UTSTEDELSENS felt, ikke
+        # lagerets — utsenderen minter tokenet og OVERSKRIVER feltet i
+        # sendeøyeblikket, så seeden skriver ingen placeholder lenger.
+        # Porten (14) måles fortsatt med malens fulle feltsett: flett-
+        # kallet får lenken transient, som utsenderen gjør det.
         flettefelt = {"kandidatnavn": "[NAVN-1]",
-                      "stilling": "Demo-stilling",
-                      "tidsvalg_lenke":
-                          f"https://tidsvalg.example.invalid/{kid}"}
-        maler.flett("invitasjon", flettefelt)
+                      "stilling": "Demo-stilling"}
+        maler.flett("invitasjon", flettefelt
+                    | {"tidsvalg_lenke": "https://ikke-lagret.invalid/x"})
         if not funn and all(v is True for v in oppfylt.values()):
             mottakere.append({"kandidat_id": str(kid),
                               "mottaker_ref": mottaker_ref,

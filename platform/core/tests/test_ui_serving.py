@@ -118,13 +118,19 @@ def _alle(endelser):
 
 
 def test_ingen_inline_script_style_eller_handlers_i_html():
-    html = (_STATISK_ROT / "index.html").read_text(encoding="utf-8")
-    # Ingen inline <script>MED innhold</script> (ekstern src er lov).
-    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>\s*\S", html), \
-        "inline script i index.html"
-    assert "<style" not in html.lower(), "inline <style> i index.html"
-    assert not re.search(r"\son\w+\s*=", html), "inline on*-handler i html"
-    assert not re.search(r"\sstyle\s*=", html), "inline style-attributt i html"
+    # BEGGE skallene: SPA-ens index.html og kandidatsidens tidsvalg.html
+    # (M-8, 082) — den innloggingsfrie siden står bak en enda strammere
+    # CSP og skal bestå nøyaktig samme port.
+    for navn in ("index.html", "tidsvalg.html"):
+        html = (_STATISK_ROT / navn).read_text(encoding="utf-8")
+        # Ingen inline <script>MED innhold</script> (ekstern src er lov).
+        assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>\s*\S", html), \
+            f"inline script i {navn}"
+        assert "<style" not in html.lower(), f"inline <style> i {navn}"
+        assert not re.search(r"\son\w+\s*=", html), \
+            f"inline on*-handler i {navn}"
+        assert not re.search(r"\sstyle\s*=", html), \
+            f"inline style-attributt i {navn}"
 
 
 def test_ingen_innerhtml_eller_eval_i_js():
@@ -136,6 +142,52 @@ def test_ingen_innerhtml_eller_eval_i_js():
         assert not re.search(r"\bouterHTML\s*=", kilde), f"outerHTML i {p.name}"
         assert not re.search(r"\beval\s*\(", kilde), f"eval i {p.name}"
         assert "insertAdjacentHTML" not in kilde, f"insertAdjacentHTML {p.name}"
+
+
+def test_tidsvalg_siden_serveres_med_egen_stram_csp():
+    """M-8 (082): kandidatsiden har sin EGEN CSP — strammere enn UI-ets
+    (ingen bilder/fonter/rammer, form-action kun 'self' — det finnes
+    ingen IdP her), pluss no-referrer og no-store: tokenet bor i
+    fragmentet og skal aldri lekke via referrer eller cache."""
+    app = Starlette(routes=[
+        Route("/tidsvalg", uiserver.tidsvalg_side, methods=["GET"]),
+    ])
+    r = TestClient(app).get("/tidsvalg")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "text/html; charset=utf-8"
+    assert r.headers["content-security-policy"] == uiserver.TIDSVALG_CSP
+    assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["cache-control"] == "no-store"
+    csp = uiserver.TIDSVALG_CSP
+    assert "'unsafe-inline'" not in csp and "'unsafe-eval'" not in csp
+    assert "default-src 'none'" in csp
+    assert "form-action 'self'" in csp and "${" not in csp
+    for fravaerende in ("img-src", "font-src", "frame-src"):
+        assert fravaerende not in csp, \
+            f"kandidatsiden trenger ikke {fravaerende} — CSP-en skal"\
+            " være minimal"
+
+
+def test_nginx_tidsvalg_location_speiler_appens_csp():
+    """proxy_hide_header-formen (UI-parity-testens søster): nginx
+    re-setter NØYAKTIG appens TIDSVALG_CSP på `location = /tidsvalg`,
+    og de offentlige API-rutene har sin egen sone."""
+    mal = (Path(uiserver._ROT) / "deploy" / "staging" / "nginx"
+           / "disponit-https.conf.template").read_text(encoding="utf-8")
+    assert "location = /tidsvalg {" in mal
+    assert "location = /v1/tidsvalg/oppslag {" in mal
+    assert "location = /v1/tidsvalg/velg {" in mal
+    assert mal.count("zone=disponit_tidsvalg") == 3, \
+        "alle tre tidsvalg-rutene skal stå i den egne sonen"
+    blokk = mal.split("location = /tidsvalg {", 1)[1].split("}", 1)[0]
+    assert "proxy_hide_header Content-Security-Policy;" in blokk
+    m = re.search(r'add_header Content-Security-Policy "([^"]+)" always;',
+                  blokk)
+    assert m and m.group(1) == uiserver.TIDSVALG_CSP, \
+        "nginx-CSP-en for /tidsvalg skal være ORDRETT appens"
+    soner = (Path(uiserver._ROT) / "deploy" / "staging" / "nginx"
+             / "rate-soner.conf").read_text(encoding="utf-8")
+    assert "zone=disponit_tidsvalg:10m rate=30r/m" in soner
 
 
 def test_nginx_ui_location_setter_samme_ui_csp_og_skjuler_oppstrom():

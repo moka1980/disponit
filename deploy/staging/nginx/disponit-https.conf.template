@@ -249,6 +249,38 @@ server {
         proxy_pass http://unix:/run/disponit/api.sock;
     }
 
+    # M-8 (082): kandidatens tidsvalg — uautentisert utenom OIDC, derfor
+    # KUN sin egen (stramme) sone; den generelle gjelder de tre rutene
+    # aldri (OIDC-formen). Kroppstaket speiler appens MAKS_TIDSVALG_KROPP
+    # med samme prinsipp som artefaktruten: ingressen skal ikke være
+    # rausere ENN appen på en uautentisert vei. Tokenet reiser i
+    # URL-FRAGMENTET på /tidsvalg og i KROPPEN på API-kallene — ingen av
+    # delene når access-loggen ($uri er bare stien).
+    location = /v1/tidsvalg/oppslag {
+        client_max_body_size 4k;        # = MAKS_TIDSVALG_KROPP
+        limit_req zone=disponit_tidsvalg burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+    location = /v1/tidsvalg/velg {
+        client_max_body_size 4k;        # = MAKS_TIDSVALG_KROPP
+        limit_req zone=disponit_tidsvalg burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+    # Kandidatsidens skall: appen setter TIDSVALG_CSP (ui/server.py);
+    # her skjules den oppstrøms og re-settes ORDRETT
+    # (proxy_hide_header-formen fra UI-locations under), så svaret bærer
+    # nøyaktig én CSP — paritetstesten i test_ui_serving binder de to
+    # strengene.
+    location = /tidsvalg {
+        limit_req zone=disponit_tidsvalg burst=10 nodelay;
+        limit_req_status 429;
+        proxy_hide_header Content-Security-Policy;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     # PR-011: M-1 kundeflate. UI-svar trenger en ÅPNERE CSP enn API-ets
     # `default-src 'none'` (klarsignal V4) — den ville ellers blokkert egne
     # ressurser. Appen setter UI-CSP-en selv (målbar i CI, gate 5); her

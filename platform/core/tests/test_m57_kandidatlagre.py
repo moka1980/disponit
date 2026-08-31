@@ -41,7 +41,21 @@ LAGRE = {
 #: 075 (#157): reapingens MEDLEMMER er de seks payloadlagrene pluss
 #: ankeret — det syvende har ingen payload (identiteten er en UUID),
 #: men reaperen må nevne og merke det, og samlet-porten teller det.
-MEDLEMMER = {"kandidat": (), **LAGRE}
+#: 082 (M-8): kandidatens tidsvalg er det ÅTTENDE — payloaden er
+#: pekeren `slot_id` (hvilken tid kandidaten valgte er persondata).
+MEDLEMMER = {"kandidat": (), "m8_slotvalg": ("slot_id",), **LAGRE}
+
+#: 082 (M-8): tabeller som FK-er inn i kandidatgrafen men BÆRER INGEN
+#: personpayload og derfor består etter reaping som evidens — sloten er
+#: kundens tilbudte tid (ingen kandidat på raden), tokenet bærer kun en
+#: MAC og id-er (klartekst-PII finnes ikke; gamle lenker dør på
+#: payloadvinduet). Settet er LUKKET: en ny tabell i grafen må enten inn
+#: i MEDLEMMER med reap-dekning eller hit, med samme begrunnelse som
+#: disse. Manifestmedlemmet (080) hører også hit: medlemskapet er en
+#: del av det SIGNERTE innholdet (append-only evidens); adressen bak
+#: det bor i kandidat_utsendingsdata, som ER et medlem.
+EVIDENS_UTEN_PAYLOAD = {"m8_slot", "m8_tidsvalgtoken",
+                        "utsendingsliste_medlem"}
 
 
 def _claimet(m):
@@ -1382,9 +1396,20 @@ def test_port19_settet_av_lagre_er_maalt_mot_katalogen(migrator):
             "SELECT c.conrelid::regclass::text FROM pg_constraint c"
             " WHERE c.confrelid = 'kandidat_originaldokument'::regclass"
             "   AND c.contype = 'f'").fetchall()}
+    # 082 (M-8): målingen dekker også FK-ene mot ANKERET — det er den
+    # veien nye kandidatbundne tabeller (m8_slotvalg) faktisk kobles på.
+    fk_tabeller |= {
+        r[0] for r in migrator.execute(
+            "SELECT c.conrelid::regclass::text FROM pg_constraint c"
+            " WHERE c.confrelid = 'kandidat'::regclass"
+            "   AND c.contype = 'f'").fetchall()}
     fk_tabeller.discard("kandidat_originaldokument")
+    fk_tabeller -= EVIDENS_UTEN_PAYLOAD
     assert fk_tabeller | {"kandidat_originaldokument"} == set(MEDLEMMER), \
-        "medlemmene i katalogen er ikke testens sju (#157: ankeret er med)"
+        ("medlemmene i katalogen er ikke testens åtte (#157: ankeret er"
+         " med; 082: tidsvalget er med) — en ny tabell i grafen må inn i"
+         " MEDLEMMER med reap-dekning eller deklareres i"
+         " EVIDENS_UTEN_PAYLOAD")
     kilde = migrator.execute(
         "SELECT pg_get_functiondef('reap_kandidatdata(int)'::regprocedure)"
     ).fetchone()[0]

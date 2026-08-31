@@ -1,0 +1,65 @@
+# M-8 Kalender- og kapasitetsagent — modulmanifest (DOM 1: egen
+# modulmappe med manifest fra dag én).
+#
+# v1 er KUN tidsvalg-benen M-57s invitasjoner trenger (082): kunden
+# definerer intervjuslots per prosess, kandidaten velger uten innlogging
+# bak kapabilitetstoken, kunden ser valgene. Ingen kalenderskriving mot
+# kundens kalender, ingen ICS, ingen oppdragstype — og derfor heller
+# ingen registrering i modulregisteret ennå: M-57s manifest får INGEN
+# registry-avhengighet på M-8 (DOM 1), koblingen er utsenderens kall til
+# den claimer-eide utstederdøren, målt i testene, aldri en
+# katalogpåstand.
+#
+# Status er UNDER_UTVIKLING til en M-8-aksept er kjørt og skrevet i
+# basen — flippen er katalogens AVLESNING av en aksepthendelse, aldri en
+# påstand i forkant (m56/m02-formen, som M-57s eget manifest).
+id: m08_kalender
+navn: Kalender- og kapasitetsagent (M-8)
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+avhengigheter:
+  - m02_revisjonslogg          # én skrivevei til evidenskjeden
+kjerne: platform/modules/m08_kalender
+i18n_prefiks: m08kalender
+
+# Ingen punkter kan flippes på evidens ennå: v1 har ingen egen
+# evidensgrense registrert (samme ærlighet som M-57s manifest — et
+# manifest skal aldri lese sterkere enn porten måler).
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet.
+      Tidsvalg-benens egne porter ligger i test_m8_tidsvalg.py og
+      UI-testene (tidsvalg.test.js); stagingmålingen finnes ikke ennå.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: syntetisk slot-/valgsett drevet lokalt og på staging med
+      byte-likhet mellom datasett-identitetene. Målingen finnes ikke.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at slot-opprettelse/-deaktivering og kandidatvalg står som
+      hendelser med identitet i revisjonskjeden. I dag logges de som
+      driftshendelser i API-loggen; evidensmålingen finnes ikke.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en feilet tokenutstedelse/valgtransaksjon leverer en
+      post i unntakskøen bundet til den injiserte feilen. Utsenderen
+      kvitterer i dag `feilet` på raden (m57-kjeden); egen køpost for
+      M-8 finnes ikke.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: en pinnet grense for valg under samtidighet (radlåsen i
+      m8_velg_slot serialiserer kapasiteten). Grensen er ikke definert.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: flippedrill for modulens release. M-8 har ingen release
+      ennå; rollback-kontrakten i API-et (DISPONIT_INAKTIVE_MODULER →
+      503 modul_inaktiv på tidsvalg-rutene) er målt i test-suiten, men
+      det er en API-kontrakt, ikke en releasedrill.

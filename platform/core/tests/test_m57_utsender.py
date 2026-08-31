@@ -57,10 +57,13 @@ def _signert_liste(m, kids, oid):
 
 
 @pg
-def test_utsenderen_sender_signert_liste_en_gang(migrator):
+def test_utsenderen_sender_signert_liste_en_gang(migrator, monkeypatch):
     """Ende-til-ende: manifest + signatur + utsendingsdata → e-post per
     medlem, kvittering `sendt`, frigivelsen pseudonym — og en ny kjøring
     sender INGENTING (idempotensen bor i transporten)."""
+    # M-8 (082): invitasjoner sendes bare når tidsvalg-lenken
+    # kan myntes (pepper + host) — riggen speiler driften.
+    monkeypatch.setenv("DISPONIT_HOST", "kunde.example")
     oid, pid, kids, _ = _prosess_med_kandidater(migrator, 2)
     adresser = _utsendingsdata(migrator, pid, kids)
     lid = _signert_liste(migrator, kids, oid)
@@ -150,9 +153,12 @@ def test_uten_smtp_oppsett_roeres_ingenting(migrator, monkeypatch):
 
 
 @pg
-def test_en_feilende_adresse_stopper_ikke_resten(migrator):
+def test_en_feilende_adresse_stopper_ikke_resten(migrator, monkeypatch):
     """En avvist sending er data på raden: resten går ut, den feilede
     står `feilet` og plukkes igjen av NESTE kjøring."""
+    # M-8 (082): invitasjoner sendes bare når tidsvalg-lenken
+    # kan myntes (pepper + host) — riggen speiler driften.
+    monkeypatch.setenv("DISPONIT_HOST", "kunde.example")
     oid, pid, kids, _ = _prosess_med_kandidater(migrator, 2)
     adresser = _utsendingsdata(migrator, pid, kids)
     _signert_liste(migrator, kids, oid)
@@ -219,10 +225,13 @@ def test_doedt_klaim_blir_uviss_og_resendes_aldri(migrator):
 
 
 @pg
-def test_udefinerbar_sendefeil_kvitteres_aldri(migrator):
+def test_udefinerbar_sendefeil_kvitteres_aldri(migrator, monkeypatch):
     """CodeRabbit på 081: en feil som IKKE beviser «før aksept» (timeout
     midt i dialogen) kvitteres ikke — klaimet står, lease-utløpet feller
     `uviss`-dommen, og raden resendes aldri automatisk."""
+    # M-8 (082): invitasjoner sendes bare når tidsvalg-lenken
+    # kan myntes (pepper + host) — riggen speiler driften.
+    monkeypatch.setenv("DISPONIT_HOST", "kunde.example")
     oid, pid, kids, _ = _prosess_med_kandidater(migrator, 1)
     _utsendingsdata(migrator, pid, kids)
     lid = _signert_liste(migrator, kids, oid)
