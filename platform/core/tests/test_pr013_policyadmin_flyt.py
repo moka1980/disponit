@@ -1966,3 +1966,174 @@ def test_forfalt_runde_pensjonerer_varslene_sine():
         assert v[bid][0] is not None, (
             f"runden forfalt, men {hvem} blir bedt om å attestere den fortsatt")
         assert v[bid][1] == "ikke_aktuelt"
+
+
+# ---------------------------------------------------------------------------
+# M-38 — valideringsmemoisering i `hent_aktiv` (portene a, b, d, e).
+# Hjemmet er valgt fordi lastekontrakten til `hent_aktiv` allerede testes
+# her med FULLGYLDIGE policyer (se identitetsporten over); port (c) —
+# sletting gir PolicyUkjent, intet gjenferd — bor i test_slett_policy, der
+# sletteflaten testes.
+# ---------------------------------------------------------------------------
+
+def _tellende_validator(monkeypatch):
+    """Teller kallene til `valider_policy` uten å endre svaret.
+
+    `hent_aktiv` importerer funksjonen fra `policy_validator.schema` ved
+    hvert kall, så en patch på modulattributtet er den faktiske veien inn.
+    """
+    import policy_validator.schema as skjema
+    ekte = skjema.valider_policy
+    teller = {"n": 0}
+
+    def talt(policy):
+        teller["n"] += 1
+        return ekte(policy)
+
+    monkeypatch.setattr(skjema, "valider_policy", talt)
+    return teller
+
+
+@pg
+def test_m38_andre_lesning_kaller_ikke_valider_policy(monkeypatch):
+    """M-38 port (a): identiske bytes måles mot skjemaet ÉN gang.
+
+    Alt annet i lastekontrakten kjøres begge gangene — det er bare
+    skjemavandringen som memoiseres, nøklet på den rekomputerte hashen.
+    """
+    from db.pg import sett_kontekst
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    m = _mig()
+    try:
+        pr.registrer(m, TEN, _policy("1.0.0", policy_id=pid), "produksjon")
+        m.commit()
+        teller = _tellende_validator(monkeypatch)
+        sett_kontekst(m, TEN, "sys", "r1")
+        forste = pr.hent_aktiv(m, TEN, pid)
+        m.rollback()
+        assert teller["n"] == 1, "første lesning skal måle skjemaet"
+        sett_kontekst(m, TEN, "sys", "r2")
+        andre = pr.hent_aktiv(m, TEN, pid)
+        m.rollback()
+        assert teller["n"] == 1, \
+            "andre lesning av samme innhold skal treffe memoiseringen"
+        assert andre == forste, "treffet skal ikke endre svaret"
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_m38_aktivering_synes_umiddelbart_i_hent_aktiv():
+    """M-38 port (b): styrt aktivering → NESTE `hent_aktiv` gir ny versjon.
+
+    Cachen varmes med den gamle versjonen FØR runden, nettopp for å bevise
+    at det ikke finnes noe å invalidere: nytt innhold er en ny nøkkel, og
+    radlesningen i samme transaksjon ser den nye raden.
+    """
+    from db.pg import sett_kontekst
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    a = _medlem("forf", ["policyforvalter"])
+    b = _medlem("uavh", ["policyforvalter"])
+
+    m = _mig()
+    try:
+        pr.registrer(m, TEN, _policy("1.0.0", policy_id=pid), "produksjon")
+        m.commit()
+        sett_kontekst(m, TEN, "sys", "r1")
+        gammel, _ = pr.hent_aktiv(m, TEN, pid)      # varmer memoiseringen
+        m.rollback()
+        assert gammel["meta"]["versjon"] == "1.0.0"
+
+        ny = _policy("1.1.0", policy_id=pid)
+        ny["roller"] = [*ny["roller"], {"id": "agent2"}]
+        uid = "utk-" + secrets.token_hex(3)
+        _utkast(uid, pid, a, ny)
+        rt = _rt()
+        try:
+            r = _apne(rt, uid, a)
+            _attester(rt, uid, a, r["diff_hash"])
+            r2 = _attester(rt, uid, b, r["diff_hash"])
+            assert r2["utfall"] == "aktivert", r2
+        finally:
+            rt.close()
+
+        sett_kontekst(m, TEN, "sys", "r2")
+        innhold, _h = pr.hent_aktiv(m, TEN, pid)
+        m.rollback()
+        assert innhold["meta"]["versjon"] == "1.1.0", \
+            "hent_aktiv serverte en foreldet versjon etter aktivering"
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_m38_rekomputeringsporten_star_etter_memoisering():
+    """M-38 port (d): korrupt innhold med uendret hash-kolonne felles ENNÅ.
+
+    v2 1.5-kontrakten: hashen REKOMPUTERES fra innholdet ved hver lasting
+    og måles mot kolonnen — memoiseringen står bak den porten, aldri foran.
+    At policyen alt lå i cachen da korrupsjonen skjedde, hjelper den ikke.
+    """
+    from db.pg import sett_kontekst
+    from .test_bootstrap_ankerrad import _policy
+    pid = "pol-" + secrets.token_hex(3)
+    m = _mig()
+    try:
+        pr.registrer(m, TEN, _policy("1.0.0", policy_id=pid), "produksjon")
+        m.commit()
+        sett_kontekst(m, TEN, "sys", "r1")
+        pr.hent_aktiv(m, TEN, pid)                  # varmer memoiseringen
+        m.rollback()
+
+        # DB-korrupsjon: innholdet endres, hash-kolonnen står urørt.
+        sett_kontekst(m, TEN, "sys", "r2")
+        m.execute(
+            "UPDATE policyer SET innhold ="
+            " jsonb_set(innhold, '{tidssone}', '\"Mars/Olympus\"')"
+            " WHERE tenant=%s AND policy_id=%s AND aktiv", (TEN, pid))
+        m.commit()
+
+        sett_kontekst(m, TEN, "sys", "r3")
+        with pytest.raises(pr.PolicyKorrupt) as e:
+            pr.hent_aktiv(m, TEN, pid)
+        assert "innholds_hash" in str(e.value), str(e.value)
+    finally:
+        m.rollback()
+        m.close()
+
+
+@pg
+def test_m38_negativ_validering_memoiseres_aldri(monkeypatch):
+    """M-38 port (e): et feilende innhold re-måles ved HVER lasting.
+
+    Bare beståtte valideringer legges inn — feillisten i `PolicyKorrupt`
+    skal alltid være fersk og komplett, aldri et memoisert ekko.
+    """
+    from db.pg import sett_kontekst
+    pid = "pol-" + secrets.token_hex(3)
+    # Riktig hash og konsistent meta — men innholdet består ikke skjemaet.
+    innhold = {"meta": {"policy_id": pid, "versjon": "1.0.0",
+                        "status": "produksjon"}}
+    m = _mig()
+    try:
+        m.execute(
+            "INSERT INTO policyer (tenant,policy_id,versjon,innholds_hash,"
+            "status,innhold,aktiv) VALUES"
+            " (%s,%s,'1.0.0',%s,'produksjon',%s::jsonb,true)",
+            (TEN, pid, pr.innholds_hash(innhold), json.dumps(innhold)))
+        m.commit()
+        teller = _tellende_validator(monkeypatch)
+        for forsok in (1, 2):
+            sett_kontekst(m, TEN, "sys", f"r{forsok}")
+            with pytest.raises(pr.PolicyKorrupt):
+                pr.hent_aktiv(m, TEN, pid)
+            m.rollback()
+            assert teller["n"] == forsok, \
+                "feilende innhold skal måles på nytt ved hver lasting"
+    finally:
+        m.rollback()
+        m.close()
