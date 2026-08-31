@@ -119,7 +119,7 @@ test("Ny: malvelger → skjema → lagre POSTer med CSRF + Idempotency-Key", asy
   const fanetitler = [...h.querySelectorAll('[role="tab"]')].map((f) => f.textContent);
   assert.deepEqual(fanetitler, [t("ui.editor.fane.grunn"),
     t("ui.editor.fane.roller"), t("ui.editor.fane.handlinger"),
-    t("ui.editor.fane.overstyring")]);
+    t("ui.editor.fane.overstyring"), t("ui.editor.fane.simuler")]);
   gaaTilFane(h, t("ui.editor.fane.roller"));
   assert.ok(h.textContent.includes(t("ui.editor.roller")));
   gaaTilFane(h, t("ui.editor.fane.handlinger"));
@@ -1938,5 +1938,66 @@ test("Vilkår: uten editorgrunnlag er ALT låst (fail-closed)", async () => {
       "ingen fjern-knapp uten grunnlag");
   } finally {
     globalThis.fetch = gammelFetch;
+  }
+});
+
+test("Simuler: fanen kjører utkastet mot en hendelse og viser begge dommene", async () => {
+  const cookieDesc = Object.getOwnPropertyDescriptor(
+    window.Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", { configurable: true,
+    get: () => "__Host-disponit_csrf=tok123" });
+  const ekte = globalThis.fetch;
+  let simulerKall;
+  globalThis.fetch = async (url, opts) => {
+    if (url.includes("/simuler")) {
+      simulerKall = { url, opts };
+      return { ok: true, status: 200, json: async () => ({
+        utkast: { beslutning: "TILLAT",
+                  begrunnelse: [{ kode: "belop_ok", params: {} }] },
+        gjeldende: { beslutning: "UNNTAK",
+                     begrunnelse: [{ kode: "deny_all", params: {} }] },
+        gjeldende_versjon: null, avvik: true,
+        merknader: ["frekvens_uten_historikk", "rolle_som_oppgitt"] }) };
+    }
+    return ekte(url, opts);
+  };
+  try {
+    const h = nyHoved();
+    visPolicyeditor(h, ctx(), { utkast_id: "u-1", aapneUtkast: () => {} });
+    await vent(() => h.querySelector(".editor-seksjon"));
+    gaaTilFane(h, t("ui.editor.fane.simuler"));
+    const seksjon = h.querySelector(".editor-simuler");
+    assert.ok(seksjon, "simuleringsseksjonen mangler");
+    // Ugyldig JSON stoppes i flaten — ingen POST.
+    const felt = seksjon.querySelector("textarea");
+    felt.value = "{ikke json";
+    finnKnapp(seksjon, t("ui.editor.simuler.kjor"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => seksjon.textContent
+      .includes(t("ui.editor.simuler.ugyldig_json")));
+    assert.equal(simulerKall, undefined, "ugyldig JSON skal aldri POSTes");
+    // Gyldig hendelse → POST med hendelse+rolle, og BEGGE dommene vises.
+    felt.value = JSON.stringify({ handling: "betaling.utfor",
+                                  belop: "12000", valuta: "NOK" });
+    finnKnapp(seksjon, t("ui.editor.simuler.kjor"))
+      .dispatchEvent(new window.Event("click"));
+    await vent(() => seksjon.querySelector(".editor-simuler-sider"));
+    assert.ok(simulerKall.url.includes("/v1/policyutkast/u-1/simuler"));
+    const kropp = JSON.parse(simulerKall.opts.body);
+    assert.equal(kropp.hendelse.handling, "betaling.utfor");
+    assert.ok(kropp.rolle, "rollen mangler i kroppen");
+    const tekst = seksjon.textContent;
+    assert.ok(tekst.includes(t("ui.editor.simuler.utkastet")));
+    assert.ok(tekst.includes(t("ui.editor.simuler.gjeldende_denyall")));
+    assert.ok(tekst.includes(t("ui.editor.simuler.avvik")),
+      "avviket sies ikke");
+    assert.ok(tekst.includes("belop_ok") && tekst.includes("deny_all"),
+      "grunnkjedene vises ikke");
+    assert.ok(tekst.includes(
+      t("ui.editor.simuler.merknad.frekvens_uten_historikk")),
+      "ærlighetsmerknaden mangler");
+  } finally {
+    globalThis.fetch = ekte;
+    if (cookieDesc) Object.defineProperty(document, "cookie", cookieDesc);
   }
 });

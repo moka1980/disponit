@@ -251,6 +251,11 @@ export const avbrytEvaluering = (oppdragId) =>
 export const hentEvalueringsrapport = (oppdragId) =>
   hentJson(`/v1/rekruttering/rapport/${encodeURIComponent(oppdragId)}`);
 
+// Simulering (PR-013 v2-punktet): rådgivende lesing — ingen idem-nøkkel.
+export const simulerPolicyutkast = (utkastId, hendelse, rolle) =>
+  _muter(`/v1/policyutkast/${encodeURIComponent(utkastId)}/simuler`,
+         "POST", { hendelse, rolle });
+
 export const opprettUtsendingsliste = (oppdragId, listetype, kandidater,
                                        idem) =>
   _muter("/v1/rekruttering/lister", "POST",

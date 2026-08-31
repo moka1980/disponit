@@ -1274,3 +1274,18 @@ th.rekrut-kandidat { white-space: normal; }
 /* Dypdykkets slette-handling (eiers funn 30/8 ×3). */
 .rekrut-prosesshandling { display: flex; justify-content: flex-end;
   margin: var(--sp-2) 0; }
+
+/* Simuleringen (PR-013 v2): skjema + side-om-side-dom. */
+.editor-simuler-skjema { display: flex; flex-direction: column;
+  gap: var(--sp-2); max-width: 40rem; }
+.editor-simuler-skjema textarea { font-family: ui-monospace, monospace;
+  padding: var(--sp-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--card);
+  color: var(--ink); }
+.editor-simuler-sider { display: flex; flex-wrap: wrap; gap: var(--sp-4);
+  margin-top: var(--sp-4); }
+.editor-simuler-side { flex: 1 1 16rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: var(--sp-3);
+  background: var(--card); }
+.editor-simuler-beslutning { font-weight: 600; }
+.editor-simuler-avvik { color: var(--danger); font-weight: 600; }

@@ -710,3 +710,59 @@ def test_hent_detalj_har_diff_og_klasse():
         assert det["aktiv_runde"] is None
     finally:
         rt.close()
+
+
+@pg
+def test_simulering_er_radgivende_og_deterministisk():
+    """PR-013 v2-punktet (simulering): «hva ville utkastet sagt?» — side
+    ved side med gjeldende base. Rådgivende REN LESING: ingen
+    revisjonsrad fødes, ingen frekvensreservasjon skrives, og to like
+    kall gir bit-likt svar (motoren er deterministisk). Uten aktiv
+    policy er gjeldende deny-all — og det VISES, aldri utelates."""
+    pid = "pol-sim-" + secrets.token_hex(3)
+    rt = _rt()
+    try:
+        o = _opprett(rt, tenant=TEN, aktor="forf", request_id="r",
+                     policy_id=pid, innhold=_gyldig(pid))
+        uid = o["utkast_id"]
+        hendelse = {"handling": "betaling.utfor", "belop": "125",
+                    "valuta": "NOK"}
+        from db.pg import sett_kontekst
+        sett_kontekst(rt, TEN, "forf", "r-sim")
+        foer = rt.execute(
+            "SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+            (TEN,)).fetchone()[0]
+        res = policyadmin.simuler_utkast(
+            rt, tenant=TEN, utkast_id=uid, hendelse=hendelse,
+            rolle="operator")
+        res2 = policyadmin.simuler_utkast(
+            rt, tenant=TEN, utkast_id=uid, hendelse=hendelse,
+            rolle="operator")
+        assert res == res2, "simuleringen er ikke deterministisk"
+        assert res["utkast"]["beslutning"] in ("TILLAT", "STOPP", "UNNTAK")
+        assert isinstance(res["utkast"]["begrunnelse"], list) \
+            and res["utkast"]["begrunnelse"], "grunnkjeden mangler"
+        # Ingen aktiv policy: gjeldende ER deny-all-basen, og sies.
+        # (Husets deny-all dømmer UNNTAK — stoppet og til behandling —
+        # aldri stille STOPP.)
+        assert res["gjeldende_versjon"] is None
+        assert res["gjeldende"]["beslutning"] in ("STOPP", "UNNTAK")
+        assert res["avvik"] == (res["utkast"]["beslutning"]
+                                != res["gjeldende"]["beslutning"])
+        assert "frekvens_uten_historikk" in res["merknader"]
+        assert "rolle_som_oppgitt" in res["merknader"]
+        etter = rt.execute(
+            "SELECT count(*) FROM revisjonslogg WHERE tenant=%s",
+            (TEN,)).fetchone()[0]
+        assert etter == foer, "simuleringen fødte en revisjonsrad"
+        rt.rollback()
+        # Ukjent utkast → egen dom, aldri en 500-klasse.
+        import pytest as _pt
+        sett_kontekst(rt, TEN, "forf", "r-sim2")
+        with _pt.raises(policyadmin.Aktiveringsfeil) as e:
+            policyadmin.simuler_utkast(
+                rt, tenant=TEN, utkast_id="finnes-ikke",
+                hendelse=hendelse)
+        assert e.value.args[0] == "ikke_funnet"
+    finally:
+        rt.close()

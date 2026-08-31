@@ -339,6 +339,59 @@ def rediger_utkast(conn: psycopg.Connection, *, tenant: str, aktor: str,
         "utkast_id": utkast_id, "utkastversjon": ny, "status": "utkast"})
 
 
+def simuler_utkast(conn: psycopg.Connection, *, tenant: str,
+                   utkast_id: str, hendelse: dict,
+                   rolle: str = "simulering") -> dict:
+    """Simulering (v2-punktet fra PR-013 §spm. 2): «hva ville utkastet
+    sagt?» — side ved side med gjeldende policy. RENT RÅDGIVENDE og REN
+    LESING: motoren er deterministisk, telleren er et tomt minnelager
+    (ingen frekvensreservasjon skrives), ingenting logges til
+    revisjonsloggen, og ingen beslutning fødes.
+
+    FORMEN ER SYNTETISK, IKKE REPLAY — og det er en arkitekturdom, ikke
+    en snarvei: spec-notatets «kjør de siste N beslutningene mot
+    utkastet» er UMULIG å gjøre ærlig, fordi sakspayloaden minimeres
+    (`minimering.minimer_payload`) før lagring og revisjonsloggen bærer
+    kun `input_hash`. Grunnlaget for replay finnes ikke, med vilje
+    (dataminimering). Forfatteren beskriver derfor hendelsen selv.
+
+    To ærlighetsgrenser sies i svaret (`merknader`), aldri skjules:
+    frekvensvilkår simuleres uten historikk (tomt tellerlager), og
+    rollevilkår dømmes mot den OPPGITTE rollen — simulering beviser
+    aldri en fullmakt."""
+    from policy_validator.engine import EvaluationContext, MinneTellerLager
+    from policy_validator.engine import evaluate
+
+    rad = conn.execute(
+        "SELECT innhold, status, policy_id FROM policyutkast"
+        " WHERE tenant=%s AND utkast_id=%s", (tenant, utkast_id)).fetchone()
+    if rad is None:
+        raise Aktiveringsfeil("ikke_funnet")
+    innhold, _status, policy_id = rad
+    ctx = EvaluationContext(tenant_id=tenant, aktor_rolle=rolle,
+                            autentisert=True, kilde="simulering")
+
+    def _kjor(policy: dict) -> dict:
+        d = evaluate(policy, ctx, dict(hendelse), MinneTellerLager())
+        return {"beslutning": d.beslutning,
+                "begrunnelse": [g.to_dict() for g in d.begrunnelse],
+                "unntak_kategori": d.unntak_kategori}
+
+    utkast_svar = _kjor(innhold)
+    # Gjeldende base med husets egen deny-all-reserve (`_base_med_versjon`,
+    # samme kilde som utkast-detaljen): finnes ingen aktiv policy, ER
+    # gjeldende drift deny-all — simuleringen viser det i stedet for å
+    # late som sammenligningen ikke finnes.
+    gjeldende, _hash, aktiv_versjon = _base_med_versjon(conn, tenant,
+                                                        policy_id)
+    gjeldende_svar = _kjor(gjeldende)
+    return {"utkast": utkast_svar, "gjeldende": gjeldende_svar,
+            "gjeldende_versjon": aktiv_versjon,
+            "avvik": utkast_svar["beslutning"]
+            != gjeldende_svar["beslutning"],
+            "merknader": ["frekvens_uten_historikk", "rolle_som_oppgitt"]}
+
+
 def _krev_malautorisasjonsvilkar(conn: psycopg.Connection,
                                  innhold) -> list[str]:
     """Feilliste: `ekstern_lesing`-handlinger uten plattformvilkår (047).
