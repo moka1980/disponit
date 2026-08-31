@@ -1506,11 +1506,20 @@ def liste_opprett_endepunkt(tjeneste, request):
         oppdrag_id = kropp.get("oppdrag_id")
         listetype = kropp.get("listetype")
         kandidater = kropp.get("kandidater")
+        firmatekst = kropp.get("firmatekst")
         if (not isinstance(oppdrag_id, int) or isinstance(oppdrag_id, bool)
                 or listetype not in maler.MALER
                 or not isinstance(kandidater, list) or not kandidater
                 or not all(isinstance(k, str) and k for k in kandidater)):
             raise _Avbrudd(_feil("request_feilformet", rid))
+        # Tonen er VALGFRI (#160/083): en tekst-id fra kundens eget
+        # lager; døren pinner nyeste uskjulte versjon og avviser skjult/
+        # ukjent — flaten sender aldri en versjon.
+        if firmatekst is not None:
+            try:
+                firmatekst = uuidlib.UUID(str(firmatekst))
+            except ValueError:
+                raise _Avbrudd(_feil("request_feilformet", rid))
         malversjon = maler.MALER[listetype]["malversjon"]
         # Fristen gjelder også innstillingen (CodeRabbit): en prosess
         # med bestilt sletting eller passert frist innstilles aldri —
@@ -1549,9 +1558,10 @@ def liste_opprett_endepunkt(tjeneste, request):
         try:
             rad = conn.execute(
                 "SELECT ut_liste_id, ut_innhold_hash FROM"
-                " opprett_utsendingsliste(%s,%s,NULL,%s,%s,%s,%s::uuid[])",
+                " opprett_utsendingsliste(%s,%s,NULL,%s,%s,%s,%s::uuid[],"
+                "%s,NULL)",
                 (tenant, serie, oppdrag_id, listetype, malversjon,
-                 medlemmer)).fetchone()
+                 medlemmer, firmatekst)).fetchone()
         except psycopg.errors.InvalidParameterValue as e:
             raise _Avbrudd(_feil("request_feilformet", rid)) from e
         except psycopg.errors.UniqueViolation as e:
@@ -1563,7 +1573,7 @@ def liste_opprett_endepunkt(tjeneste, request):
             sett_kontekst(conn, tenant, bid, rid)
             rot = conn.execute(
                 "SELECT liste_id, innhold_hash, antall, listetype,"
-                "       oppdrag_id FROM utsendingsliste"
+                "       oppdrag_id, firmatekst_ref FROM utsendingsliste"
                 " WHERE tenant=%s AND utkast_serie=%s"
                 "   AND forrige_liste_id IS NULL",
                 (tenant, serie)).fetchone()
@@ -1574,6 +1584,7 @@ def liste_opprett_endepunkt(tjeneste, request):
                 " WHERE tenant=%s AND liste_id=%s",
                 (tenant, rot[0])).fetchall()}
             if (rot[3] != listetype or rot[4] != oppdrag_id
+                    or rot[5] != firmatekst
                     or lagret != set(medlemmer)):
                 raise _Avbrudd(_feil("idempotenskonflikt", rid)) from e
             tjeneste.logg.hendelse("utsendingsliste_innstilt", rid,

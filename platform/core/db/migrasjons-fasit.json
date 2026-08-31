@@ -80,5 +80,6 @@
   "079_utsendingstekst.sql": "26581372fe8a22da05656b22c2ed11ca9d543a159a9178111744aea3f43a94b7",
   "080_utsendingsmanifest.sql": "8ea87ed4ac90a13a55dd186174e7d436321620d057d13508c409d6ba38f24d4e",
   "081_senderbenen.sql": "e3165cfc389e68e12fcca357e5de2642b89869f8f392b2856351b44149b7913b",
-  "082_m8_tidsvalg.sql": "c7fb73407c04bfaa59e992a4f71912659a621b4c2360e1538f6df35a44cdaddf"
+  "082_m8_tidsvalg.sql": "c7fb73407c04bfaa59e992a4f71912659a621b4c2360e1538f6df35a44cdaddf",
+  "083_firmatekst_i_listen.sql": "ec6b3c256af664ab782cb00afb963ca24bb4ef1e1f460903b261ad7ce02d209a"
 }

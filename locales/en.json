@@ -1161,6 +1161,8 @@
   "ui.rekruttering.innstill.resten_tom": "No candidates in the selection — adjust the number.",
   "ui.rekruttering.innstill.tidsvalg_mangler": "The invitation list cannot be settled yet: the process has no active interview slots. Add at least one slot under Interview slots first.",
   "ui.rekruttering.innstill.tittel": "Nominate dispatch list",
+  "ui.rekruttering.innstill.tone": "Company text (your tone)",
+  "ui.rekruttering.innstill.tone_ingen": "No company text",
   "ui.rekruttering.kandidat": "Candidate",
   "ui.rekruttering.kandidatkort.dokument_feilet": "The document could not be fetched — try again.",
   "ui.rekruttering.kandidatkort.dokumenter": "Application documents",

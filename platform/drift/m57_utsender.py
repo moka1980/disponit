@@ -129,8 +129,8 @@ def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
             "SELECT * FROM m57_neste_sendinger(%s, %s, %s)",
             (tenant, GRENSE, MAKS_FORSOK)).fetchall()
         conn.rollback()
-        for liste_id, listetype, _malversjon, kandidat_id, _m, felter \
-                in rader:
+        for (liste_id, listetype, _malversjon, kandidat_id, _m, felter,
+             ft_ref, ft_versjon, ft_tekst) in rader:
             # Fristen sjekkes FØR et nytt klaim — det ene punktet der
             # ingenting er i luften (varselsender-dommen, ordrett).
             if time.monotonic() - fra > FRIST_S:
@@ -222,7 +222,14 @@ def kjor(conn, *, send=None, oppsett=None, sprak=None) -> dict:
                     # historikk — lenken er UTSTEDELSENS, og bare den
                     # peker på et token som faktisk finnes.
                     mine["tidsvalg_lenke"] = tidsvalg_lenke
-                flettet = maler.flett(listetype, mine, firmatekst=None)
+                # Tonen er LISTENS (083): signataren autoriserte den
+                # eksakte versjonen, og døren JOINet teksten — None er
+                # fortsatt 079-kontraktens ekte «ingen tone».
+                tone = (maler.KundeeidFirmatekst(str(ft_ref), ft_versjon,
+                                                 ft_tekst)
+                        if ft_ref is not None and ft_tekst is not None
+                        else None)
+                flettet = maler.flett(listetype, mine, firmatekst=tone)
                 emne = rendre(tekster, _EMNE[listetype],
                               {"stilling": (felter or {}).get(
                                   "stilling", "")})
