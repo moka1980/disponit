@@ -31,7 +31,9 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
   assert.equal(modulStatus(2), "i_drift");
-  assert.equal(modulStatus(38), "planlagt");
+  // 38 flippet planlagt → bygges 31/8: manifestet (m38_ruter) er
+  // avlesningens kilde, og fairness/cachen er levert (#314/#316).
+  assert.equal(modulStatus(38), "bygges");
   assert.equal(modulStatus(45), "planlagt");
 });
 

@@ -41,7 +41,9 @@ export const MODULSTATUS = {
   // hode for hva en ærligere avlesning krever.
   16: "bygges",
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
-  38: "planlagt",   // ingen manifest i platform/modules/ ennå
+  // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
+  // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
+  38: "bygges",
   // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
   // flippedrillen 22/8, aksepthendelsen i basen) og flippet SAMMEN med
   // m02 — konsistensregelen som holdt den igjen er nå oppfylt begge
