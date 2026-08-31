@@ -263,6 +263,8 @@
   "site.modul.m1.tekst": "Defines what the agents are actually allowed to do.",
   "site.modul.m2.navn": "Audit log and evidence",
   "site.modul.m2.tekst": "Makes every automated action traceable and reviewable.",
+  "site.modul.m16.navn": "Reporting and KPI agent",
+  "site.modul.m16.tekst": "Key figures computed from actual decisions — a pure read surface, nothing smoothed or projected.",
   "site.modul.m37.navn": "Exception and fault-handling agent",
   "site.modul.m37.tekst": "Collects everything stopped by policy into one controlled queue.",
   "site.modul.m38.navn": "Capacity, queue and model router",
