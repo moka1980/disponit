@@ -75,9 +75,12 @@ driftstilstand: staging        # ikke_i_drift | staging | produksjon
 #
 # HVA AKTIVERINGEN IKKE BETYR: den starter ingen fase 2-modul.
 # Bootstrap-unntaket i RUTINER.md krever at M-1, M-2, M-37 OG M-38 alle har
-# bestått hele sin staging-sjekkliste før noen fase 2-modul startes — og av
-# de fire har bare denne et manifest i det hele tatt. M-2 og M-37 finnes som
-# kode i `platform/core/` uten manifest; M-38 finnes ikke.
+# bestått hele sin staging-sjekkliste før noen fase 2-modul startes.
+# Daterte fakta (setningen her har vært usann i flere ledd): M-2 og
+# M-37 fikk manifester (#15), M-16 ble etterregistrert (#309, 31/8) og
+# M-38 etterregistrert med fairness + policycache levert (#314/#316 +
+# egen registrerings-PR, 31/8). Sjekklistene deres står fortsatt
+# u-målt — kravet består, kartet lyver bare ikke lenger om terrenget.
 avhengigheter: []              # M-1 er roten — ingen avhengigheter
 kjerne: platform/core/policy_validator   # hvor koden bor
 i18n_prefiks: m01              # alle modulens tekstnøkler starter slik

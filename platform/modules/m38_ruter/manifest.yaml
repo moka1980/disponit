@@ -1,0 +1,89 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# ETTERREGISTRERING (M-38 fantes som deklarert scope før den fantes som
+# kode): 005/policyregister deklarerte per-tenant fairness og
+# policycache som «M-38-scope» lenge før noen bygget dem. Begge er nå
+# levert — fairness i claim-køene (085, PR #314) og den
+# innholdsadresserte valideringsmemoiseringen (PR #316,
+# platform/core/m38/policycache.py). Dette manifestet registrerer
+# modulen; det bygger ingenting nytt.
+#
+# TO AKSER, ÆRLIG LEST (m16-formen fra #309): `status` er
+# GODKJENT-aksen — ingen aksepthendelse finnes, ingen m38-grense i
+# manifestskjema.KRAVGRENSER, og §0-regelen (m57) binder grensen til
+# byggingen som kommer (kapasitetsruteren, modellrutingen — v2).
+# `driftstilstand: ikke_i_drift` leses om MODULEN som registerobjekt:
+# ingen egen release, ingen deploymentrad, ingen arbeider — v1-krokene
+# skipper med kjernen og følger kjernens deploy.
+#
+# BOOTSTRAP-KJEDEN, sagt åpent (historikk manifestet må kunne leses
+# uten samtalen til): RUTINER.md krever M-1/M-2/M-37/M-38 grønne før
+# fase 2 — og fase 2 er alt i gang (M-56 akseptert, M-57 bygget).
+# Denne registreringen endrer ikke det; den gjør bare M-38 synlig og
+# målbar der de tre andre alt står.
+id: m38_ruter
+navn: Kapasitets-, kø- og modellruter
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i registerets forstand (m16-begrunnelsen):
+# v1-krokene bor i KJERNENS egne veier — claim-funksjonene er
+# m37-kjernens (085), cachen er policyveiens (policyregister). En
+# oppført avhengighet ville vært lånt, ikke målt. Revurderes når M-38
+# får egen arbeider/kontrakt.
+avhengigheter: []
+# Koden bor i KJERNEN (m37-formen: `kjerne` peker dit koden faktisk
+# er): platform/core/m38/policycache.py + fairness-rangeringen i
+# claim_neste_sak/claim_neste_oppdrag (migrasjon 085). Mappen her
+# bærer kun manifestet.
+kjerne: platform/core/m38
+i18n_prefiks: m38
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json). Punktene står
+# `nei` fordi ingen av dem er MÅLT for M-38: ingen m38-grense finnes i
+# KRAVGRENSER, og grensen registreres FØR byggingen den skal måle
+# (§0-regelen). «Et manifest skal aldri lese sterkere enn porten
+# måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet (m02-suite-formen). Fairness- og
+      cacheportene kjører i CI, men det er ikke denne portens måling,
+      og ingen m38-grense finnes i KRAVGRENSER.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: syntetisk kølast med fasit-fordeling (hvem claimet i
+      hvilken rekkefølge) målt lokalt og på staging med begge
+      datasett-identitetene bundet. Ingen slik måling finnes.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      M-38 v1 SKRIVER ingenting eget — fairness endrer rekkefølgen i
+      eksisterende claims (som selv er auditert), cachen skriver aldri.
+      Hva punktet skal bety for en rekkefølge-/memoiseringsmodul er en
+      skjema-/arkitektavklaring; står nei i stedet for å låne en
+      tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      M-38 v1 har ingen egen kø eller arbeider å injisere feil i —
+      krokene bor i kjernens claim- og lesevei. Krever samme avklaring
+      som punktet over.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet ytelsesgrense (rangeringskostnaden under kølast +
+      cache-treffraten) og en målt kjøring mot den. Planens egen dom:
+      ingen indeks og ingen påstand uten staging-måling. Ingen
+      m38-grense er registrert; ingen måling finnes.
+  rollback_testet:
+    status: nei
+    notat: >-
+      M-38 v1 har ingen egen release å rulle tilbake — koden skipper
+      med kjernen (085 er en migrasjon i kjernens kjede, cachen en
+      kjernefil). Om kjernens rollback-evidens kan bæres hit uten å
+      bli en lånt konklusjon er samme arkitektdom som m16-punktet.
