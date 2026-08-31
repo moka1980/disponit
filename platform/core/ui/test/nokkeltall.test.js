@@ -21,22 +21,31 @@ const SVARFORM = {
   vindu_start: "2026-08-20T10:00:00+00:00",
   vindu_slutt: "2026-08-21T10:00:00+00:00",
   tidssone: "UTC",
-  beslutninger: { total: 7, deler: { TILLAT: 5, UNNTAK: 1, hokuspokus: 1 } },
-  frekvensreservasjoner: 3,
+  beslutninger: { total: 7, deler: { TILLAT: 5, UNNTAK: 1, hokuspokus: 1 },
+    andeler: { TILLAT: 0.7143, UNNTAK: 0.1429, hokuspokus: 0.1429 } },
+  frekvens: { total: 3, deler: { utbetaling: 2, fakturering: 1 },
+    andeler: { utbetaling: 0.6667, fakturering: 0.3333 } },
   aktiveringer: {
-    kilde: { total: 2, deler: { styrt: 1, historisk: 1 } },
-    kvorumskrav: { total: 2, deler: { 1: 1, 2: 1 } },
-    attestanter: { total: 2, deler: { en: 1, to: 1 } },
+    kilde: { total: 2, deler: { styrt: 1, historisk: 1 },
+      andeler: { styrt: 0.5, historisk: 0.5 } },
+    kvorumskrav: { total: 2, deler: { 1: 1, 2: 1 },
+      andeler: { 1: 0.5, 2: 0.5 } },
+    attestanter: { total: 2, deler: { en: 1, to: 1 },
+      andeler: { en: 0.5, to: 0.5 } },
   },
-  oppdrag: { total: 4, deler: { utfort: 3, feilet: 1 } },
-  unntak_aktivitet: { total: 2, deler: { over_grense: 2 } },
+  oppdrag: { total: 4, deler: { utfort: 3, feilet: 1 },
+    andeler: { utfort: 0.75, feilet: 0.25 } },
+  unntak_aktivitet: { total: 2, deler: { over_grense: 2 },
+    andeler: { over_grense: 1 } },
   unntak_lukkede: [{ id: 9, kategori: "over_grense", sakstype: "normal",
     status: "løst", opprettet: "2026-08-20T11:00:00+00:00",
     lukket: "2026-08-20T12:30:00+00:00", varighet_s: 5400 }],
   unntak_lukkede_totalt: 1,
   unntak_lukkede_grense: 50,
+  unntak_lukketid: { sum_s: 5400, antall: 1, gjennomsnitt_s: 5400 },
   apne_naa: 6,
-  tick: { total: 0, deler: {} },
+  tick: { total: 0, deler: {}, andeler: {} },
+  tick_alltid_totalt: 12,
   request_id: "r-test",
 };
 
@@ -133,17 +142,41 @@ test("Nøkkeltall: UI-tall == API-svar, tabellform, axe rent", async () => {
   assert.ok(tilstand.textContent
     .includes(t("ui.nokkeltall.apne_naa_tekst")));
   assert.ok(!tilstand.closest(".kpi-kort-liste"));
-  // Port 9: tick-kortet med 0 rader er en SETNING — om VINDUET.
-  assert.ok(tekst.includes(t("ui.nokkeltall.ingen_tick")));
-  // Et tomt vindu er ikke et fravær over all tid: kortet teller
-  // aktivitet i [fra, til), og setningen får ikke påstå mer enn det.
+  // Port 9, fase 2: tick-kortet med 0 rader i vinduet OG kjøringer over
+  // all tid sier BEGGE deler — vinduet er tomt, og tallet for all tid
+  // (målt av m16_tick_alltid) står i setningen.
+  assert.ok(tekst.includes(t("ui.nokkeltall.ingen_tick_vindu_alltid")
+    .replace("{antall}", "12")));
+  // Setningen bærer tallet i begge språk — uten plassholderen ville
+  // vinduets tomhet igjen kunne leses som et fravær over all tid.
   for (const kart of [NB, EN]) {
-    const s = kart["ui.nokkeltall.ingen_tick"].toLowerCase();
-    for (const paastand of ["ennå", "yet", "aldri", "never"]) {
-      assert.ok(!s.includes(paastand),
-        `tomt tick-vindu påstår et fravær over all tid: ${s}`);
-    }
+    assert.ok(kart["ui.nokkeltall.ingen_tick_vindu_alltid"]
+      .includes("{antall}"),
+      "all-tid-setningen mangler tallet");
   }
+  // Fase 2: andelskolonnen — API-ets ferdige andel som prosenttekst,
+  // ved siden av telleren og totalen den kan leses tilbake til.
+  assert.ok(tekst.includes(t("ui.nokkeltall.kolonne.andel")));
+  const tillatRad = [...beslT.querySelectorAll("tbody tr")][0];
+  assert.equal(tillatRad.cells[2].textContent, "71 %",
+    "andelen er ikke API-verdien omskrevet til prosent");
+  // Fase 2: frekvensen er et EGET kort — en partisjon per handling med
+  // total, ikke lenger en skalarlinje i beslutningskortet.
+  const frekT = [...h.querySelectorAll("table")]
+    .find((tb) => tb.querySelector("caption").textContent
+      === t("ui.nokkeltall.kort.frekvens"));
+  assert.ok(frekT, "frekvenskortet mangler");
+  assert.ok(frekT.textContent.includes("utbetaling"));
+  assert.ok(frekT.querySelector("tfoot").textContent.includes("3"));
+  assert.ok(!beslT.parentElement.textContent.includes("utbetaling"),
+    "frekvensen står fortsatt i beslutningskortet");
+  // Fase 2: lukketid-snittet under lukkede-listen — API-ets omskriving
+  // av sum og antall som begge står i svaret; 5400 s → «1 t 30 min».
+  assert.ok(tekst.includes(t("ui.nokkeltall.lukketid_gjennomsnitt")
+    .replace("{varighet}",
+      `${t("ui.nokkeltall.varighet_timer").replace("{n}", "1")} `
+      + t("ui.nokkeltall.varighet_min").replace("{n}", "30"))
+    .replace("{antall}", "1")));
   // Radvis varighet vises som omskrevet klartekst.
   // 5400 s → «1 t 30 min» (omskriving av radens eget tall, tapsfri).
   assert.ok(tekst.includes(
@@ -155,10 +188,12 @@ test("Nøkkeltall: UI-tall == API-svar, tabellform, axe rent", async () => {
 
 test("Nøkkeltall: tomt vindu viser 0 og «ingen» — aldri et skjult kort", async () => {
   SVAR = { "/v1/nokkeltall": { ...SVARFORM,
-    beslutninger: { total: 0, deler: {} },
-    oppdrag: { total: 0, deler: {} },
-    unntak_aktivitet: { total: 0, deler: {} },
-    unntak_lukkede: [], unntak_lukkede_totalt: 0, apne_naa: 0 } };
+    beslutninger: { total: 0, deler: {}, andeler: {} },
+    oppdrag: { total: 0, deler: {}, andeler: {} },
+    unntak_aktivitet: { total: 0, deler: {}, andeler: {} },
+    unntak_lukkede: [], unntak_lukkede_totalt: 0,
+    unntak_lukketid: { sum_s: 0, antall: 0, gjennomsnitt_s: null },
+    apne_naa: 0 } };
   const h = nyHoved();
   visNokkeltall(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 4);
@@ -167,7 +202,15 @@ test("Nøkkeltall: tomt vindu viser 0 og «ingen» — aldri et skjult kort", as
       === t("ui.nokkeltall.kort.beslutninger"));
   assert.ok(beslT.textContent.includes(t("ui.nokkeltall.ingen")));
   assert.ok(beslT.querySelector("tfoot").textContent.includes("0"));
+  // Nevner 0: andelen er «ikke definert» — aldri «0 %». At ingen ble
+  // talt er ikke det samme som at andelen er ingenting.
+  assert.ok(beslT.textContent
+    .includes(t("ui.nokkeltall.andel_ikke_definert")));
+  assert.ok(!beslT.textContent.includes("0 %"));
   assert.ok(h.textContent.includes(t("ui.nokkeltall.ingen_lukkede")));
+  // Ingen lukkede saker → ikke noe snitt å omtale (null, ikke 0 sek).
+  assert.ok(!h.textContent.includes(
+    t("ui.nokkeltall.lukketid_gjennomsnitt").slice(0, 12)));
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 
@@ -303,7 +346,8 @@ test("Nøkkeltall: en feilet last lar ikke forrige svars tall stå igjen",
 
 test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async () => {
   SVAR = { "/v1/nokkeltall": { ...SVARFORM,
-    tick: { total: 3, deler: { tillat: 2, hoppet_over: 1 } } } };
+    tick: { total: 3, deler: { tillat: 2, hoppet_over: 1 },
+      andeler: { tillat: 0.6667, hoppet_over: 0.3333 } } } };
   settI18nForTest(EN, "en");
   try {
     const h = nyHoved();
@@ -333,6 +377,25 @@ test("Nøkkeltall: engelsk visning viser aldri de norske maskinkodene", async ()
   }
 });
 
+test("Nøkkeltall: tomt vindu og ingen kjøring noensinne er to ulike setninger",
+  async () => {
+    // Fase 2: all-tid-påstanden er nå MÅLT (m16_tick_alltid), så flaten
+    // får si den — men bare når tellingen faktisk er 0. Med kjøringer
+    // utenfor vinduet står i stedet setningen med tallet (se første
+    // test); de to tilstandene deler aldri tekst.
+    SVAR = { "/v1/nokkeltall": { ...SVARFORM, tick_alltid_totalt: 0 } };
+    const h = nyHoved();
+    visNokkeltall(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 5);
+    assert.ok(h.textContent.includes(t("ui.nokkeltall.ingen_tick_alltid")),
+      "alltid=0-setningen mangler");
+    assert.ok(!h.textContent.includes(
+      t("ui.nokkeltall.ingen_tick_vindu_alltid").slice(-20)),
+      "begge tomtilstandssetningene står samtidig");
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+    SVAR = { "/v1/nokkeltall": SVARFORM };
+  });
+
 test("Nøkkeltall: samme kode leses av kortet den står på", async () => {
   // Codex P2: definerne skriver `ukjent` som NULL-sentinel på HVERT kort,
   // men på unntakskortet er den samtidig en ekte kategori med en etablert
@@ -340,9 +403,11 @@ test("Nøkkeltall: samme kode leses av kortet den står på", async () => {
   // først i kandidatlisten og stjal den betydningen. Nå avgjør
   // spesifisitet: kortets familie slår flatens generelle tekst.
   SVAR = { "/v1/nokkeltall": { ...SVARFORM,
-    unntak_aktivitet: { total: 2, deler: { ukjent: 2 } },
+    unntak_aktivitet: { total: 2, deler: { ukjent: 2 },
+      andeler: { ukjent: 1 } },
     aktiveringer: { ...SVARFORM.aktiveringer,
-      kvorumskrav: { total: 1, deler: { ukjent: 1 } } } } };
+      kvorumskrav: { total: 1, deler: { ukjent: 1 },
+        andeler: { ukjent: 1 } } } } };
   const h = nyHoved();
   visNokkeltall(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 5);
@@ -367,7 +432,9 @@ test("Nøkkeltall: radvis varighet mister aldri presisjon", async () => {
     lukket: "2026-08-20T12:30:00+00:00", varighet_s });
   SVAR = { "/v1/nokkeltall": { ...SVARFORM, unntak_lukkede: [
     sak(1, 119), sak(2, 86399), sak(3, 45), sak(4, 90061), sak(5, 3600)],
-    unntak_lukkede_totalt: 5 } };
+    unntak_lukkede_totalt: 5,
+    unntak_lukketid: { sum_s: 180224, antall: 5,
+      gjennomsnitt_s: 36045 } } };
   const h = nyHoved();
   visNokkeltall(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 5);

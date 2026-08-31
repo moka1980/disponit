@@ -24,12 +24,25 @@ const VINDUER = ["24t", "7d", "30d"];
 // Én søylerad: tallet som TEKST først, bredden som visuell støtte.
 // Bredden er relativ til partisjonens største verdi — en presentasjons-
 // skala, ingen avledet størrelse (tallet ved siden av er sannheten).
+// Divisjonen her er den ENESTE i denne fila (statisk port): alle
+// avledede tall — andeler, snitt — regnes i API-laget og kommer ferdige
+// i svaret; flaten deler aldri to av svarets tall på hverandre.
 function soyle(antall, maks) {
   const bredde = maks > 0 ? Math.round((antall / maks) * 100) : 0;
   const rot = el("div", { class: "kpi-soyle", "aria-hidden": "true" });
   rot.append(el("div", { class: "kpi-soyle-fyll" }));
   rot.lastChild.style.width = `${bredde}%`;
   return rot;
+}
+
+// Andelen kommer FERDIG fra API-laget (0–1, fire desimaler) og skrives
+// bare om til prosent for lesbarhet — flaten regner ingen andel selv.
+// `null` er «ikke definert» (nevner 0): at ingen ble talt er ikke det
+// samme som at andelen er 0, og tomraden i et tomt vindu bærer samme
+// tekst av samme grunn.
+function andelTekst(verdi) {
+  if (verdi == null) return t("ui.nokkeltall.andel_ikke_definert");
+  return `${Math.round(verdi * 100)} %`;
 }
 
 // Partisjonsverdiene ER databasens maskinkoder («utfort», «over_grense»,
@@ -89,34 +102,42 @@ function radnavn(tekst) {
   return el("th", { scope: "row", text: tekst });
 }
 
-// Ett partisjonskort: <table> med rader (nokkel, antall, søyle) + total.
-// Tomt vindu er en EKSPLISITT rad: 0 og «ingen» — aldri et skjult kort.
+// Ett partisjonskort: <table> med rader (nokkel, antall, andel, søyle)
+// + total. Tomt vindu er en EKSPLISITT rad: 0 og «ingen» — aldri et
+// skjult kort. Andelskolonnen er GENERISK: hver partisjon bærer den,
+// aldri et kuratert utvalg — og hver andel kan leses tilbake til teller
+// og nevner som står i samme tabell (rad og totalrad).
 function partisjonstabell(kortNokkel, caption, partisjon) {
   const tabell = el("table", { class: "kpi-tabell" },
     el("caption", { text: caption }));
   const thead = el("thead", {}, el("tr", {},
     el("th", { scope: "col", text: t("ui.nokkeltall.kolonne.hva") }),
     el("th", { scope: "col", text: t("ui.nokkeltall.kolonne.antall") }),
+    el("th", { scope: "col", text: t("ui.nokkeltall.kolonne.andel") }),
     el("th", { scope: "col", class: "vh",
                text: t("ui.nokkeltall.kolonne.soyle") })));
   const tbody = el("tbody");
   const deler = Object.entries(partisjon.deler);
+  const andeler = partisjon.andeler ?? {};
   const maks = Math.max(0, ...deler.map(([, n]) => n));
   if (!deler.length) {
     tbody.append(el("tr", {},
       radnavn(t("ui.nokkeltall.ingen")),
       el("td", { text: "0" }),
+      el("td", { text: t("ui.nokkeltall.andel_ikke_definert") }),
       el("td", {})));
   }
   for (const [nokkel, antall] of deler) {
     tbody.append(el("tr", {},
       radnavn(nokkelTekst(kortNokkel, nokkel)),
       el("td", { text: String(antall) }),
+      el("td", { text: andelTekst(andeler[nokkel]) }),
       el("td", {}, soyle(antall, maks))));
   }
   const tfoot = el("tfoot", {}, el("tr", {},
     radnavn(t("ui.nokkeltall.total")),
     el("td", { text: String(partisjon.total) }),
+    el("td", {}),
     el("td", {})));
   tabell.append(thead, tbody, tfoot);
   return tabell;
@@ -128,7 +149,7 @@ function partisjonstabell(kortNokkel, caption, partisjon) {
 // `tidssone` er den samme som vindusledeteksten merkes med: radene ligger
 // PER DEFINISJON i vinduet, så tegnes de i en annen sone enn grensene, ser
 // en leser utenfor UTC rader som faller utenfor vinduet de er talt i.
-function lukkedeTabell(ctx, rader, totalt, grense, tidssone) {
+function lukkedeTabell(ctx, rader, totalt, grense, tidssone, lukketid) {
   if (!rader.length) {
     return el("p", { class: "muted",
       text: t("ui.nokkeltall.ingen_lukkede") });
@@ -151,6 +172,17 @@ function lukkedeTabell(ctx, rader, totalt, grense, tidssone) {
   }
   tabell.append(tbody);
   bolk.append(tabell);
+  // Snittet er API-lagets omskriving av to tall som BEGGE står i svaret
+  // (varighetssummen og tellingen, samme skann som radene) — flaten
+  // regner det aldri selv. Det gjelder HELE vinduet, ikke utsnittet
+  // over, og settes derfor ved siden av tellingen det er delt på.
+  // `null` (ingen lukkede) når aldri hit — da står «ingen»-setningen.
+  if (lukketid && lukketid.gjennomsnitt_s != null) {
+    bolk.append(el("p", { class: "muted",
+      text: t("ui.nokkeltall.lukketid_gjennomsnitt")
+        .replace("{varighet}", varighetTekst(lukketid.gjennomsnitt_s))
+        .replace("{antall}", String(lukketid.antall)) }));
+  }
   if (totalt > rader.length) {
     // Setningen står uansett hvem som leser: at utsnittet er avkuttet er
     // sant for alle, og den påstanden avhenger ikke av at det finnes en
@@ -189,8 +221,21 @@ function varighetTekst(sek) {
   const ledd = [];
   let rest = sek;
   for (const [storrelse, nokkel] of VARIGHETSLEDD) {
-    const n = Math.floor(rest / storrelse);
-    rest -= n * storrelse;
+    // Nedbrytingen skrives uten divisjonstegn: den statiske porten
+    // («eneste `/` i denne fila er soyle()s presentasjonsskala») skal
+    // kunne leses uten unntaksliste. Men heller ikke som naiv én-og-én-
+    // subtraksjon (CodeRabbit): en dataanomali med enorm varighet skal
+    // VISES, ikke fryse flaten i millioner av runder. Leddet dobles så
+    // lenge det får plass — binær kvotient, eksakt heltallsaritmetikk,
+    // logaritmisk antall steg, taps- og restfritt.
+    let n = 0;
+    while (rest >= storrelse) {
+      let steg = storrelse;
+      let telt = 1;
+      while (rest - steg >= steg) { steg += steg; telt += telt; }
+      rest -= steg;
+      n += telt;
+    }
     if (n > 0) ledd.push(t(nokkel).replace("{n}", String(n)));
   }
   return ledd.join(" ");
@@ -258,12 +303,17 @@ export function visNokkeltall(hoved, ctx) {
       const kort = [];
       const besl = partisjonstabell("beslutning",
         t("ui.nokkeltall.kort.beslutninger"), d.beslutninger);
-      const beslKort = el("section", { class: "kpi-kort" }, besl,
-        el("p", { class: "muted", text:
-          `${t("ui.nokkeltall.reservasjoner")}: ${d.frekvensreservasjoner}` }));
+      const beslKort = el("section", { class: "kpi-kort" }, besl);
       const tilBesl = lenkeTilBeslutninger(ctx);
       if (tilBesl) beslKort.append(tilBesl);
       kort.push(beslKort);
+      // Frekvenskortet: EGET kort (før var det én skalarlinje i
+      // beslutningskortet). Nøklene er tenantens egne handlingskoder —
+      // ingen oversettelsesfamilie finnes, så de vises rå, som enhver
+      // verdi utenfor det kjente domenet (port 1: aldri skjult).
+      kort.push(el("section", { class: "kpi-kort" },
+        partisjonstabell("frekvens",
+          t("ui.nokkeltall.kort.frekvens"), d.frekvens)));
       const akt = el("section", { class: "kpi-kort" });
       for (const [partisjon, data] of Object.entries(d.aktiveringer)) {
         akt.append(partisjonstabell("aktivering",
@@ -277,19 +327,25 @@ export function visNokkeltall(hoved, ctx) {
         partisjonstabell("unntak",
           t("ui.nokkeltall.kort.unntak_aktivitet"), d.unntak_aktivitet),
         lukkedeTabell(ctx, d.unntak_lukkede, d.unntak_lukkede_totalt,
-                      d.unntak_lukkede_grense, d.tidssone)));
+                      d.unntak_lukkede_grense, d.tidssone,
+                      d.unntak_lukketid)));
       // Tick-kortet: 0 rader er en SETNING, ikke en tom graf — og
-      // setningen gjelder VINDUET, ikke all tid. Kortet teller aktivitet
-      // i [fra, til), og 0 der sier ingenting om hva som skjedde før:
-      // «ingen planer har kjørt ennå» ville gjort et gyldig tomt
-      // 24-timers- eller 7-døgnsutsnitt om til et fravær som aldri er
-      // målt. Skulle all-tid-påstanden vises, måtte API-et telle den.
+      // setningen får ikke påstå mer enn det som er MÅLT. Vinduet og
+      // all tid er to tellinger fra hver sin definer, og de skilles i
+      // to setninger: er begge 0, har ingen plan noen gang kjørt — det
+      // er nå en målt påstand (tick_alltid_totalt). Er bare vinduet 0,
+      // sies det med tallet for all tid ved siden av, så et gyldig tomt
+      // utsnitt aldri leses som et fravær over all tid.
       kort.push(el("section", { class: "kpi-kort" },
         d.tick.total === 0
           ? el("div", {},
               el("h3", { text: t("ui.nokkeltall.kort.tick") }),
               el("p", { class: "muted",
-                text: t("ui.nokkeltall.ingen_tick") }))
+                text: d.tick_alltid_totalt === 0
+                  ? t("ui.nokkeltall.ingen_tick_alltid")
+                  : t("ui.nokkeltall.ingen_tick_vindu_alltid")
+                      .replace("{antall}",
+                               String(d.tick_alltid_totalt)) }))
           : partisjonstabell("tick",
               t("ui.nokkeltall.kort.tick"), d.tick)));
       sett(kropp, ...kort);

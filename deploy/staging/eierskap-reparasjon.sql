@@ -195,7 +195,17 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'hent_planer(text)',                                 'disponit_m37_claimer'),
     ('FUNCTION', 'hent_plan_tick(text,uuid,integer)',                 'disponit_m37_claimer'),
     ('FUNCTION', 'm16_beslutninger(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
+    -- Fase 2 (084): m16_frekvens ERSTATTET m16_frekvensreservasjoner og
+    -- m16_tick_alltid kom til. Skalarraden STÅR fordi den fortsatt
+    -- finnes i enhver base på 051–083: reparasjonen kan kjøres der FØR
+    -- 084 migreres, og uten raden ville den flatet skalaren til
+    -- migrator — hvorpå 084s ryddeblokk (som claimer) ikke lenger eier
+    -- den og hele migrasjonen stopper. Etter 084 finnes ikke funksjonen
+    -- og raden er inert (design uten objekt hoppes stille over) — den
+    -- kan fjernes når 084 er kjørt i alle baser.
     ('FUNCTION', 'm16_frekvensreservasjoner(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm16_frekvens(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm16_tick_alltid(text)',                             'disponit_m37_claimer'),
     ('FUNCTION', 'm16_aktiveringer(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm16_oppdrag(text,timestamp with time zone,timestamp with time zone)', 'disponit_m37_claimer'),
     -- Haleargumentet `p_sakstyper` er sakstypevernet (`security:read`) —

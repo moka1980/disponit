@@ -168,7 +168,8 @@ def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
 
 
 def _partisjon(rader) -> dict:
-    """(er_total, nokkel, antall) → {'total': n, 'deler': {nokkel: antall}}.
+    """(er_total, nokkel, antall) → {'total': n, 'deler': {...},
+    'andeler': {...}}.
 
     Totalen og delene kommer fra SAMME skann (GROUPING SETS i defineren),
     så suminvarianten holder per konstruksjon — den KONTROLLERES likevel
@@ -182,6 +183,14 @@ def _partisjon(rader) -> dict:
     aggregatet, og kontrollen under ville da slått ut på data som var helt
     i orden — eller, i et sett med bare den kategorien, gitt et kort uten
     en eneste rad. Nå finnes det ingen kategoristreng som kan kollidere.
+
+    ANDELENE regnes HER — aldri i definerne (den statiske porten på
+    definerfila står) og aldri i flaten. De regnes ETTER
+    suminvariant-kontrollen: en andel av en total som ikke stemmer er
+    et pent tall om en feil. Hver andel kan leses tilbake til teller og
+    nevner som står VED SIDEN AV i samme svar (M-16 §1). Nevner 0 gir
+    null — «ikke definert» er flatens ord for det — aldri 0: at ingen
+    ble talt er ikke det samme som at andelen er ingenting.
     """
     total = 0
     deler: dict[str, int] = {}
@@ -192,7 +201,9 @@ def _partisjon(rader) -> dict:
             deler[nokkel] = antall
     if sum(deler.values()) != total:
         raise kjerne.Feilsvar("intern_feil")
-    return {"total": total, "deler": deler}
+    andeler = {nokkel: (round(antall / total, 4) if total else None)
+               for nokkel, antall in deler.items()}
+    return {"total": total, "deler": deler, "andeler": andeler}
 
 
 def nokkeltall(tjeneste, request: Request) -> Response:
@@ -209,8 +220,12 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         beslutninger = _partisjon(conn.execute(
             "SELECT er_total, nokkel, antall FROM m16_beslutninger(%s,%s,%s)",
             arg).fetchall())
-        reservasjoner = conn.execute(
-            "SELECT m16_frekvensreservasjoner(%s,%s,%s)", arg).fetchone()[0]
+        # Fase 2: skalaren m16_frekvensreservasjoner er ERSTATTET av en
+        # generisk partisjon per handling — delene ved siden av totalen,
+        # samme skann. Ingen overgangsperiode: flaten var eneste konsument.
+        frekvens = _partisjon(conn.execute(
+            "SELECT er_total, nokkel, antall FROM m16_frekvens(%s,%s,%s)",
+            arg).fetchall())
         aktiveringer: dict[str, list] = {}
         for partisjon, er_total, nokkel, antall in conn.execute(
                 "SELECT partisjon, er_total, nokkel, antall FROM"
@@ -244,7 +259,7 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         # påstå at N ER alle lukkede saker i vinduet.
         lukkede_rader = conn.execute(
             "SELECT id, kategori, sakstype, status, opprettet,"
-            " lukket, varighet_s, antall_totalt FROM"
+            " lukket, varighet_s, antall_totalt, varighet_sum_s FROM"
             " m16_unntak_lukkede(%s,%s,%s,%s,%s,%s)",
             (*arg, terminale, sakstyper,
              NOKKELTALL_LUKKEDE_GRENSE)).fetchall()
@@ -254,8 +269,17 @@ def nokkeltall(tjeneste, request: Request) -> Response:
              "lukket": r[5].isoformat(), "varighet_s": r[6]}
             for r in lukkede_rader]
         # Tom liste ⇒ 0; ellers er tellingen lik i hver rad (window over
-        # hele settet), så første rad holder.
+        # hele settet), så første rad holder. Samme for varighetssummen —
+        # den er regnet i SAMME vindusform som tellingen, så teller og
+        # nevner for snittet kommer fra samme skann.
         lukkede_totalt = lukkede_rader[0][7] if lukkede_rader else 0
+        lukketid_sum = lukkede_rader[0][8] if lukkede_rader else 0
+        # Divisjonen bor HER (aldri i definer, aldri i flate) og skjer
+        # etter at teller og nevner alt står i svaret. Nevner 0 → null,
+        # aldri 0: et snitt over ingen saker er ikke definert.
+        lukketid = {"sum_s": lukketid_sum, "antall": lukkede_totalt,
+                    "gjennomsnitt_s": (round(lukketid_sum / lukkede_totalt)
+                                       if lukkede_totalt else None)}
         # TILSTAND, ikke aktivitet: «åpne nå» står utenfor vinduet.
         apne_naa = conn.execute(
             "SELECT m16_unntak_apne(%s,%s,%s)",
@@ -263,11 +287,16 @@ def nokkeltall(tjeneste, request: Request) -> Response:
         tick = _partisjon(conn.execute(
             "SELECT er_total, nokkel, antall FROM m16_tick(%s,%s,%s)",
             arg).fetchall())
+        # TILSTAND som `apne_naa`: tellingen over all tid, uten vindu —
+        # flaten kan da skille «tomt vindu» fra «ingen kjøring registrert
+        # i det hele tatt» uten å påstå et fravær som aldri er målt.
+        tick_alltid = conn.execute(
+            "SELECT m16_tick_alltid(%s)", (auth.tenant,)).fetchone()[0]
         return kanonisk_json(
             {"vindu_start": fra.isoformat(), "vindu_slutt": til.isoformat(),
              "tidssone": "UTC",
              "beslutninger": beslutninger,
-             "frekvensreservasjoner": reservasjoner,
+             "frekvens": frekvens,
              "aktiveringer": {
                  p: _partisjon(rader)
                  for p, rader in aktiveringer.items()},
@@ -276,8 +305,10 @@ def nokkeltall(tjeneste, request: Request) -> Response:
              "unntak_lukkede": lukkede,
              "unntak_lukkede_totalt": lukkede_totalt,
              "unntak_lukkede_grense": NOKKELTALL_LUKKEDE_GRENSE,
+             "unntak_lukketid": lukketid,
              "apne_naa": apne_naa,
              "tick": tick,
+             "tick_alltid_totalt": tick_alltid,
              "request_id": rid},
             200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)
