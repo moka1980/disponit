@@ -1,10 +1,14 @@
-"""M-16 nøkkeltall (051) — dataportene fra klarsignalet (1–10).
+"""M-16 nøkkeltall — dataportene fra klarsignalet (1–10) + fase 2.
 
-Grensen: tall er tellinger over rader som finnes, radvise varigheter er
-eneste differanseform, og suminvarianten per partisjon holder fordi
-gruppene og totalen kommer fra SAMME skann (GROUPING SETS — ett
-snapshot), også under samtidig skriving. Alle tester konstruerer egen
-tilstand. Ingen delt fixture.
+Definer-settet bor i 084 (fase 2, som overtok for 051): de statiske
+portene måler DEN fila. Grensen: tall er tellinger over rader som
+finnes, radvise varigheter er eneste differanseform, og suminvarianten
+per partisjon holder fordi gruppene og totalen kommer fra SAMME skann
+(GROUPING SETS — ett snapshot), også under samtidig skriving. Fase 2
+legger avledede tall VED SIDEN AV de rå tellingene de er regnet fra
+(andeler, lukketid-snitt): divisjonen bor i API-laget, aldri i
+definerne og aldri i flaten. Alle tester konstruerer egen tilstand.
+Ingen delt fixture.
 """
 import re
 import secrets
@@ -24,7 +28,7 @@ from .test_m37 import _sett_kontekst
 pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 ROT = Path(__file__).resolve().parents[3]
-M051 = ROT / "platform/core/db/migrations/051_m16_nokkeltall.sql"
+M084 = ROT / "platform/core/db/migrations/084_m16_fase2.sql"
 FLATE = ROT / "platform/core/ui/static/js/flater/nokkeltall.js"
 
 
@@ -232,7 +236,8 @@ def test_tenantbinding_per_definer(migrator):
                 ("m16_unntak_lukkede(%s,%s,%s,%s,%s,10)",
                  (b, fra, til, TERM, ALLE_SAKSTYPER)),
                 ("m16_tick(%s,%s,%s)", (b, fra, til)),
-                ("m16_frekvensreservasjoner(%s,%s,%s)", (b, fra, til))):
+                ("m16_tick_alltid(%s)", (b,)),
+                ("m16_frekvens(%s,%s,%s)", (b, fra, til))):
             _sett_kontekst(rt, a)      # kontekst a, parameter b
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 rt.execute(f"SELECT * FROM {fn}", arg)
@@ -299,7 +304,8 @@ def test_aggregatmerket_kolliderer_ikke_med_en_ekte_kategori(migrator):
     from api.lesing import _partisjon
     assert _partisjon([(True, None, 3), (False, "__total__", 2),
                        (False, "over_grense", 1)]) == {
-        "total": 3, "deler": {"__total__": 2, "over_grense": 1}}
+        "total": 3, "deler": {"__total__": 2, "over_grense": 1},
+        "andeler": {"__total__": 0.6667, "over_grense": 0.3333}}
 
 
 @pg
@@ -381,11 +387,19 @@ def test_api_endepunktet_er_generaliseringen(migrator, klient, token):
                    headers={"authorization": f"Bearer {tok}"})
     assert r.status_code == 200, r.text
     d = r.json()
-    for kort in ("beslutninger", "oppdrag", "unntak_aktivitet", "tick"):
+    for kort in ("beslutninger", "frekvens", "oppdrag",
+                 "unntak_aktivitet", "tick"):
         assert sum(d[kort]["deler"].values()) == d[kort]["total"], kort
     for partisjon in d["aktiveringer"].values():
         assert sum(partisjon["deler"].values()) == partisjon["total"]
     assert isinstance(d["apne_naa"], int)
+    # Fase 2: skalaren er borte — frekvens er partisjonen over. All-tid-
+    # tellingen og lukketiden står som egne felt, alltid til stede.
+    assert "frekvensreservasjoner" not in d
+    assert isinstance(d["tick_alltid_totalt"], int)
+    assert set(d["unntak_lukketid"]) == {"sum_s", "antall",
+                                         "gjennomsnitt_s"}
+    assert d["unntak_lukketid"]["antall"] == d["unntak_lukkede_totalt"]
     assert d["tidssone"] == "UTC"
     r2 = klient.get("/v1/nokkeltall?vindu=aldri",
                     headers={"authorization": f"Bearer {tok}"})
@@ -481,15 +495,154 @@ def test_lukkede_trunkeres_aldri_stille(migrator):
     assert {r[1] for r in rader} == {5}
 
 
+@pg
+def test_andelene_kan_leses_tilbake_til_telling_og_total(migrator, klient,
+                                                         token):
+    """Fase 2, grensen §1: hver andel i svaret er EKSAKT round(del/total,
+    4) av tall som står VED SIDEN AV i samme svar — for hver partisjon,
+    generisk, aldri et kuratert utvalg. Nevner 0 gir null, aldri 0."""
+    tok, _ = token(scopes=("decisions:read",))
+    r = klient.get("/v1/nokkeltall",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    partisjoner = [d[k] for k in ("beslutninger", "frekvens", "oppdrag",
+                                  "unntak_aktivitet", "tick")]
+    partisjoner += list(d["aktiveringer"].values())
+    for partisjon in partisjoner:
+        assert set(partisjon["andeler"]) == set(partisjon["deler"])
+        for nokkel, verdi in partisjon["andeler"].items():
+            if partisjon["total"] == 0:
+                assert verdi is None
+            else:
+                assert verdi == round(
+                    partisjon["deler"][nokkel] / partisjon["total"], 4),                     (nokkel, partisjon)
+    # Nevner 0 → null er kontrakten også når en del skulle finnes med
+    # antall 0: en andel av ingenting er ikke definert, aldri tallet 0.
+    from api.lesing import _partisjon
+    assert _partisjon([(True, None, 0), (False, "x", 0)]) == {
+        "total": 0, "deler": {"x": 0}, "andeler": {"x": None}}
+
+
+@pg
+def test_lukketidsnittet_er_vinduets_ikke_utsnittets(migrator, klient,
+                                                     token):
+    """Fase 2: `unntak_lukketid` er regnet over HELE vinduet — samme
+    skann som radlisten, men upåvirket av visningstaket. Fixturen gir de
+    50 nyeste sakene et HELT annet snitt enn vinduet: korte saker sist,
+    fem enorme først. Var snittet regnet av radene som vises, ville det
+    vært størrelsesordener mindre enn radene som ikke vises."""
+    ten = "t-m16-" + secrets.token_hex(3)
+    naa = datetime.now(timezone.utc)
+    _sett_kontekst(migrator, ten)
+    for i in range(50):        # de 50 nyeste: 60 s hver
+        _sak(migrator, ten, ts=naa - timedelta(minutes=i + 1, seconds=60),
+             status="løst", status_ts=naa - timedelta(minutes=i + 1))
+    for i in range(5):         # fem eldre i vinduet: 1 000 000 s hver
+        _sak(migrator, ten,
+             ts=naa - timedelta(hours=20, minutes=i, seconds=1_000_000),
+             status="løst", status_ts=naa - timedelta(hours=20, minutes=i))
+    migrator.commit()
+    tok, _ = token(tenant=ten, scopes=("decisions:read",))
+    r = klient.get("/v1/nokkeltall",
+                   headers={"authorization": f"Bearer {tok}"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert len(d["unntak_lukkede"]) == 50          # visningstaket
+    assert d["unntak_lukkede_totalt"] == 55
+    lukketid = d["unntak_lukketid"]
+    assert lukketid == {"sum_s": 50 * 60 + 5 * 1_000_000, "antall": 55,
+                        "gjennomsnitt_s": round((50 * 60 + 5 * 1_000_000)
+                                                / 55)}
+    # De 50 viste radene alene har snitt 60 — vinduets er ~91 000.
+    # Verdien er beviselig ikke utsnittets.
+    assert lukketid["gjennomsnitt_s"] > max(
+        r_["varighet_s"] for r_ in d["unntak_lukkede"])
+
+
+@pg
+def test_tick_alltid_star_utenfor_ethvert_vindu(migrator):
+    """Fase 2, tilstandsaksen for planer: `m16_tick_alltid` teller uten
+    vindu (den HAR ingen vindusparametre) — en tick langt utenfor
+    24t-vinduet telles der, mens vinduskortet viser 0."""
+    ten = "t-m16-" + secrets.token_hex(3)
+    naa = datetime.now(timezone.utc)
+    gammel = naa - timedelta(days=10)
+    _sett_kontekst(migrator, ten)
+    pid = migrator.execute(
+        "INSERT INTO bestillingsplan (tenant, bestillingstype, parametre,"
+        " rytme, time_lokal, tidssone, opprettet_av, status) VALUES"
+        " (%s,'kontroll.wcag.nettsted','{}','daglig',8,'Europe/Oslo',"
+        "'test','aktiv') RETURNING plan_id", (ten,)).fetchone()[0]
+    _sett_kontekst(migrator, ten)
+    migrator.execute(
+        "INSERT INTO bestillingsplan_vindu (plan_id, tenant, vindu_start,"
+        " vindu_slutt, tilstand, terminalisert_ts) VALUES (%s,%s,%s,%s,"
+        "'terminal', now())", (pid, ten, gammel,
+                              gammel + timedelta(hours=1)))
+    migrator.execute(
+        "INSERT INTO bestillingsplan_tick (plan_id, tenant, vindu_start,"
+        " idempotensnokkel, utfall) VALUES (%s,%s,%s,%s,'tillat')",
+        (pid, ten, gammel, "n-" + secrets.token_hex(8)))
+    migrator.commit()
+    fra = naa - timedelta(hours=24)
+    rt = _rt()
+    try:
+        vindu_total, _ = _kall(rt, ten, "m16_tick", fra, naa)
+        _sett_kontekst(rt, ten)
+        alltid = rt.execute("SELECT m16_tick_alltid(%s)",
+                            (ten,)).fetchone()[0]
+        rt.rollback()
+    finally:
+        rt.close()
+    assert vindu_total == 0, "ticken ligger utenfor vinduet"
+    assert alltid == 1
+
+
+@pg
+def test_frekvenspartisjonen_baerer_suminvarianten(migrator):
+    """Fase 2: m16_frekvens er samme GROUPING SETS-form som de andre
+    kortene — deler per handling og total fra SAMME skann, halvåpent
+    vindu på `tidspunkt`. (Ukjent-porten fra port 1 gjelder formen;
+    `handling` er NOT NULL i kilden, så NULL-veien kan ikke rigges her.)
+    """
+    ten = "t-m16-" + secrets.token_hex(3)
+    naa = datetime.now(timezone.utc)
+    _sett_kontekst(migrator, ten)
+    for handling, n in (("utbetaling", 2), ("fakturering", 1)):
+        for _ in range(n):
+            migrator.execute(
+                "INSERT INTO frekvens_hendelser (tenant, handling,"
+                " nokkel_felt, gruppe, tidspunkt) VALUES"
+                " (%s,%s,'belop','g1',%s)", (ten, handling, naa))
+    # Utenfor vinduet: skal ikke telles.
+    migrator.execute(
+        "INSERT INTO frekvens_hendelser (tenant, handling, nokkel_felt,"
+        " gruppe, tidspunkt) VALUES (%s,'utbetaling','belop','g1',%s)",
+        (ten, naa - timedelta(days=2)))
+    migrator.commit()
+    fra, til = naa - timedelta(hours=1), naa + timedelta(hours=1)
+    rt = _rt()
+    try:
+        total, deler = _kall(rt, ten, "m16_frekvens", fra, til)
+    finally:
+        rt.close()
+    assert total == 3
+    assert deler == {"utbetaling": 2, "fakturering": 1}
+    assert sum(deler.values()) == total
+
+
 # ---------------------------------------------------------------------------
 # Statiske porter (3, 4, 6, 8, 10)
 # ---------------------------------------------------------------------------
 
 @pg
 def test_ingen_divisjon_i_definerne():
-    """Port 10: ingen andel, snitt eller median — tegnet `/` finnes ikke
-    i 051 utenfor kommentarer, og eneste differanse er radvis varighet."""
-    kode = [l for l in M051.read_text(encoding="utf-8").splitlines()
+    """Port 10: ingen andel, snitt eller median i DEFINERNE — tegnet
+    `/` finnes ikke i 084 utenfor kommentarer; differanseformene er
+    radvis varighet og summen av den (samme skann). Andeler og snitt
+    regnes i API-laget, av teller og nevner som begge står i svaret."""
+    kode = [l for l in M084.read_text(encoding="utf-8").splitlines()
             if not l.strip().startswith("--")]
     for l in kode:
         assert "/" not in l, f"divisjonstegn i definerfila: {l!r}"
@@ -502,7 +655,7 @@ def test_ingen_divisjon_i_definerne():
 def test_definerne_er_lesing_uten_payload():
     """Port 4: ingen dekrypteringsvei og ingen payloadkolonner i
     nøkkeltallsveien — kun metadata."""
-    sql = M051.read_text(encoding="utf-8").lower()
+    sql = M084.read_text(encoding="utf-8").lower()
     for forbudt in ("payload_kryptert", "ciphertext", "dekrypter",
                     "key_id", "nonce", "handlingsintensjon"):
         assert forbudt not in sql, f"{forbudt} i definerfila"
@@ -531,13 +684,38 @@ def test_flaten_leser_aldri_tabeller_og_tegner_aldri_kurver():
 
 
 @pg
+def test_eneste_divisjon_i_flaten_er_soylens_presentasjonsskala():
+    """Fase 2-dommen: divisjonen bor i API-laget. Den eneste `/` i
+    nokkeltall.js utenfor kommentarer og strengliteraler er
+    presentasjonsskalaen i soyle() — bredden relativ til partisjonens
+    største verdi, med tallet som tekst ved siden av. Alle avledede
+    tall (andeler, snitt) kommer ferdige i svaret; flaten deler aldri
+    to av svarets tall på hverandre. Selv varighetsnedbrytingen skrives
+    uten `/` (gjentatt subtraksjon), så porten leses uten unntaksliste.
+    """
+    js = FLATE.read_text(encoding="utf-8")
+    assert "/*" not in js, "blokk-kommentar gjør /-porten uleselig"
+    uten_strenger = re.sub(r"`[^`]*`|\"[^\"]*\"|'[^']*'", '""', js)
+    i_soyle = False
+    for linje in uten_strenger.splitlines():
+        kode = linje.split("//")[0]
+        if linje.startswith("function soyle("):
+            i_soyle = True
+        if not i_soyle:
+            assert "/" not in kode, \
+                f"divisjonstegn i flaten utenfor soyle(): {linje!r}"
+        if i_soyle and linje == "}":
+            i_soyle = False
+
+
+@pg
 def test_delt_vindushjelp_ingen_egen_aritmetikk():
     """Port 6: ETT sted regner vinduer (NOKKELTALL_VINDUER +
     _nokkeltall_vindu); definerne mottar paret og bærer ingen egen
     tidsaritmetikk."""
     from api import lesing
     assert set(lesing.NOKKELTALL_VINDUER) == {"24t", "7d", "30d"}
-    kode = [l for l in M051.read_text(encoding="utf-8").splitlines()
+    kode = [l for l in M084.read_text(encoding="utf-8").splitlines()
             if not l.strip().startswith("--")]
     tekst = "\n".join(kode).lower()
     for forbudt in ("now()", "interval", "date_trunc", "current_"):
@@ -552,23 +730,26 @@ def test_delt_vindushjelp_ingen_egen_aritmetikk():
 def test_terminalsettet_kommer_fra_app_laget():
     """Oversikt-lærdommen: statusmaskinen kopieres aldri inn i SQL —
     definerne tar terminalsettet som parameter fra app.py-konstanten."""
-    sql = M051.read_text(encoding="utf-8")
+    sql = M084.read_text(encoding="utf-8")
     assert "løst" not in sql and "avvist" not in sql, \
         "terminalstatuser hardkodet i definerfila"
     from api.app import TERMINALE_UNNTAKSSTATUSER
     assert set(TERMINALE_UNNTAKSSTATUSER) == {"løst", "avvist"}
 
 
-#: Definerne 051 lager — navn, ikke signatur: signaturen er nettopp det
-#: fila ikke skal ha en andre utgave av.
-M16_DEFINERE = ["m16_beslutninger", "m16_frekvensreservasjoner",
+#: Definerne 084 lager — navn, ikke signatur: signaturen er nettopp det
+#: fila ikke skal ha en andre utgave av. Fase 2: skalaren
+#: m16_frekvensreservasjoner er ERSTATTET av m16_frekvens, og
+#: m16_tick_alltid er ny — ni definere, verken flere eller færre.
+M16_DEFINERE = ["m16_beslutninger", "m16_frekvens",
                 "m16_aktiveringer", "m16_oppdrag", "m16_unntak_aktivitet",
-                "m16_unntak_lukkede", "m16_unntak_apne", "m16_tick"]
+                "m16_unntak_lukkede", "m16_unntak_apne", "m16_tick",
+                "m16_tick_alltid"]
 
 
 @pg
 def test_rettighetene_folger_signaturene_som_faktisk_finnes(migrator):
-    """SP-7 etter at sakstypevernet endret tre signaturer: hver definer
+    """SP-7 etter at fase 2 byttet ut og la til definere: hver definer
     finnes i NØYAKTIG én utgave, runtime har EXECUTE på den, og PUBLIC
     har den ikke. En rettighetssetning som gjentok argumentlista pekte
     på en overlast DROP-en alt hadde fjernet — PostgreSQL slår opp på
@@ -592,7 +773,7 @@ def test_rettighetene_folger_signaturene_som_faktisk_finnes(migrator):
 
 @pg
 def test_ingen_setning_gjentar_argumentlistene():
-    """Roten under funnet over: signaturen skal stå ETT sted i 051 —
+    """Roten under funnet over: signaturen skal stå ETT sted i 084 —
     i CREATE. En REVOKE/GRANT/DROP med egen argumentliste er en andre
     utgave som driver fra definisjonen i stillhet, og det er nettopp
     slik drift som brøt migrasjonen.
@@ -601,7 +782,7 @@ def test_ingen_setning_gjentar_argumentlistene():
     returtypene endret seg: da måtte ENDA en håndskrevet signaturliste
     holdes i takt med CREATE-ene. Både ryddingen og rettighetene spør
     nå katalogen, så unntaket finnes ikke lenger."""
-    kode = [l for l in M051.read_text(encoding="utf-8").splitlines()
+    kode = [l for l in M084.read_text(encoding="utf-8").splitlines()
             if not l.strip().startswith("--")]
     for linje in kode:
         if re.search(r"\b(REVOKE|GRANT|DROP)\b.*\bFUNCTION\b", linje):
