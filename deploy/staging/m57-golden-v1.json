@@ -1,0 +1,423 @@
+[
+  {
+    "id": "g-01",
+    "tekst": "Jeg har arbeidet åtte år som driftskonsulent med ansvar for servere og overvåkning hos Fiktiv Drift AS (2017–2025). Jeg har daglig driftet plattformer i Azure og AWS de siste fire årene. Morsmålet mitt er norsk, og all dokumentasjon jeg skriver er på norsk.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "alt oppfylt, eksplisitt"
+  },
+  {
+    "id": "g-02",
+    "tekst": "Etter fagbrev i IT-drift i 2019 har jeg jobbet sammenhengende med drift av interne systemer hos Eksempla AS (2019–2026). Jeg har ikke arbeidet med skyplattformer. Jeg skriver og snakker flytende norsk.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "sky eksplisitt ikke"
+  },
+  {
+    "id": "g-03",
+    "tekst": "I have worked five years as a cloud engineer at Sample Ltd (2020-2025), operating Kubernetes clusters in Google Cloud. I do not speak Norwegian. I have never worked in classical on-premise operations.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": true,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "kun sky, engelsk tekst"
+  },
+  {
+    "id": "g-04",
+    "tekst": "Jeg er nyutdannet fra IT-linjen ved Fiktiv høgskole (fullført våren 2026) og har ingen arbeidserfaring med drift eller sky ennå. Jeg er norskspråklig.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "nyutdannet, ærlig tom"
+  },
+  {
+    "id": "g-05",
+    "tekst": "Fra 2015 til 2026 har jeg vært driftsansvarlig hos Testfirma AS, med skyplattformene Azure (2018–2026) og AWS (2020–2026) som hovedområde. Jeg underviser i tillegg i norsk fagspråk for IT-personell.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "alt, med årstall"
+  },
+  {
+    "id": "g-06",
+    "tekst": "Two years at Fictional Cloud Inc (2023-2025) running AWS workloads. Jeg lærer meg norsk og følger kveldskurs, men behersker det ennå ikke i arbeidssammenheng.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": true,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "norsk under opplæring = ikke oppfylt"
+  },
+  {
+    "id": "g-07",
+    "tekst": "Jeg passer perfekt til stillingen og har alt dere trenger innen drift, sky og språk. Jeg er en rask lærer og godt likt av kolleger.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert"
+    ],
+    "notat": "ren påstand uten belegg; teksten er norsk"
+  },
+  {
+    "id": "g-08",
+    "tekst": "Jeg har svært god skykompetanse. Innen drift har jeg jobbet hos Fiktiv Drift AS fra 2019 til 2026 med ansvar for overvåkning og beredskap. Norsk er morsmålet mitt.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert"
+    ],
+    "notat": "sky påstått uten ett konkret belegg"
+  },
+  {
+    "id": "g-09",
+    "tekst": "I am certified in everything cloud-related and the best operations person you will meet. No further details needed.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert"
+    ],
+    "notat": "engelsk skryt uten belegg"
+  },
+  {
+    "id": "g-10",
+    "tekst": "Drift kan jeg godt. Jeg driftet skyplattformen GCP hos Eksempla AS i perioden 2021–2025, med dokumentert oppetid på 99,9 %. Jeg skriver norsk daglig.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert"
+    ],
+    "notat": "drift-påstand uten belegg; sky dokumentert"
+  },
+  {
+    "id": "g-11",
+    "tekst": "Jeg har jobbet med drift i mange år, først et sted og så et annet, og en periode med sky innimellom. Årstall husker jeg ikke i farten. Norsk er morsmålet mitt.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "uklar_tidslinje"
+    ],
+    "notat": "ingen daterbare perioder"
+  },
+  {
+    "id": "g-12",
+    "tekst": "Driftsansvarlig hos Fiktiv Drift AS fra 2019. Før det, altså fra 2021 til 2018, var jeg skytekniker hos Testfirma AS. Jeg er norskspråklig.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "uklar_tidslinje"
+    ],
+    "notat": "baklengs periode 2021→2018"
+  },
+  {
+    "id": "g-13",
+    "tekst": "I worked in operations for a while, then cloud for some time, roughly around the last decade, give or take.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [
+      "uklar_tidslinje"
+    ],
+    "notat": "engelsk, vage perioder"
+  },
+  {
+    "id": "g-14",
+    "tekst": "Jeg var i drift hos Eksempla AS i 2020–2024 og samtidig i full stilling med sky hos Testfirma AS i 2019–2025 og dessuten fulltid hos Fiktiv Drift AS 2018–2026. Norsk morsmål.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "uklar_tidslinje"
+    ],
+    "notat": "tre samtidige fulltidsløp"
+  },
+  {
+    "id": "g-15",
+    "tekst": "Jeg har aldri arbeidet med skyplattformer. Hos Testfirma AS (2020–2024) driftet jeg selskapets AWS-miljø. Innen drift har jeg ti år hos Fiktiv Drift AS (2014–2024). Norsk er arbeidsspråket mitt.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "motstridende_opplysning"
+    ],
+    "notat": "aldri sky vs. driftet AWS"
+  },
+  {
+    "id": "g-16",
+    "tekst": "Jeg snakker ikke norsk. Denne søknaden skriver jeg selv på flytende norsk fordi jeg behersker språket fullt ut. Drift: Eksempla AS 2018–2025.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "motstridende_opplysning"
+    ],
+    "notat": "språkselvmotsigelse"
+  },
+  {
+    "id": "g-17",
+    "tekst": "Som nyutdannet i 2025 uten tidligere arbeidsgivere har jeg femten års driftserfaring fra Fiktiv Drift AS. I speak only English.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [
+      "motstridende_opplysning"
+    ],
+    "notat": "nyutdannet vs. 15 år"
+  },
+  {
+    "id": "g-18",
+    "tekst": "Se vedlagt CV for alle detaljer om drifts- og skyerfaringen min; jeg gjentar dem ikke her. Norsk morsmål. (Vedlegget mangler.)",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "manglende_dokumentasjon"
+    ],
+    "notat": "peker på fraværende vedlegg"
+  },
+  {
+    "id": "g-19",
+    "tekst": "Attester og sertifiseringer for skyplattformene ettersendes. Drift: Fiktiv Drift AS 2016–2026, dokumentert med referanse i teksten her. Jeg skriver norsk.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "manglende_dokumentasjon"
+    ],
+    "notat": "ettersendes = mangler nå"
+  },
+  {
+    "id": "g-20",
+    "tekst": "Jeg vet at fristen gikk ut i forrige uke, men håper dere likevel vurderer meg. Drift hos Eksempla AS 2017–2026, sky (Azure) 2021–2026. Norsk morsmål.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "utenfor_soknadsfrist"
+    ],
+    "notat": "innrømmet fristbrudd"
+  },
+  {
+    "id": "g-21",
+    "tekst": "Jeg er ekspert på alt innen sky. Jeg jobbet med drift en stund, kanskje fra 2019 eller 2020, det fløt litt sammen. Norsk er morsmålet mitt.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert",
+      "uklar_tidslinje"
+    ],
+    "notat": "skryt + vag tid"
+  },
+  {
+    "id": "g-22",
+    "tekst": "I have never used AWS. My main achievement is running our AWS production environment at Sample Ltd from 2022 to 2025. Referanser kan ettersendes ved behov.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": true,
+      "norsk": false
+    },
+    "forventede_funn_kategorier": [
+      "manglende_dokumentasjon",
+      "motstridende_opplysning"
+    ],
+    "notat": "selvmotsigelse + ettersending"
+  },
+  {
+    "id": "g-23",
+    "tekst": "Søknaden leveres etter fristen, det beklager jeg. Jeg har lang erfaring med drift, detaljer kommer i intervjuet. Norsk morsmål.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": false,
+      "sky": false,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [
+      "krav_ikke_dokumentert",
+      "utenfor_soknadsfrist"
+    ],
+    "notat": "fristbrudd + udokumentert"
+  },
+  {
+    "id": "g-24",
+    "tekst": "Driftsleder hos Fiktiv Drift AS 2012–2026 med dokumentert ansvar for 200 servere. Skymigrering til Azure gjennomført 2019–2023 med målbare resultater. Norsk morsmål, fagansvar for norskspråklig dokumentasjon.",
+    "vekter": {
+      "drift": 3,
+      "sky": 2,
+      "norsk": 1
+    },
+    "forventet_oppfylt": {
+      "drift": true,
+      "sky": true,
+      "norsk": true
+    },
+    "forventede_funn_kategorier": [],
+    "notat": "sterk kandidat, kontroll-eksempel"
+  }
+]
