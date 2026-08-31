@@ -1079,6 +1079,181 @@ def test_claim_prioriterer_hoy_for_normal(migrator):
     assert forst == hoy, "høyprioritert sak ble ikke claimet først"
 
 
+# ===========================================================================
+# M-38: fairness i køene — per-tenant plass-rangering som TREDJE nøkkel
+# ===========================================================================
+
+
+@pg
+def test_m38_fairness_sak_backlog_sulter_ikke_naboens_enkeltsak(migrator):
+    """M-38 port 1: tenant A har seks saker (eldst), B én (yngst).
+
+    Ren FIFO gir Bs sak plass 7. Per-tenant plass-rangeringen teller
+    også As sak i flukt ('under_behandling' står i partisjonen), så Bs
+    plass-1-sak går foran As plass-2-sak: B claimes som NR. 2 — mens
+    A-backloggen ellers går i FIFO-rekkefølge rundt den.
+
+    Mutasjonen som dreper denne: fjern `coalesce(r.plass, 101)` fra
+    ORDER BY i `claim_neste_sak` (eller hele rangert-CTE-en). Da er
+    rekkefølgen ren FIFO igjen, og B claimes sist.
+    """
+    a_saker = [_lag_sak(migrator, TENANT)[0] for _ in range(6)]
+    b_sak, _ = _lag_sak(migrator, ANNEN_TENANT)
+
+    rekkefolge: list[tuple[str, int]] = []
+
+    def _dren():
+        while True:
+            cid = secrets.token_hex(16)
+            rad = _rt("SELECT tenant, id FROM claim_neste_sak(%s,120)",
+                      (cid,), rid=cid)
+            if rad is None:
+                return
+            rekkefolge.append((rad[0], int(rad[1])))
+
+    _dren()
+    # Anti-dominansporten (5 i flukt, målt av sin egen test) stopper A
+    # før køen er tom — fullfør de claimede og dren resten. Det er
+    # fullføringsleddet i porten: sekvensielle claims m/fullføring.
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", "opprydd")
+    migrator.execute("UPDATE unntak SET status='manuell'"
+                     " WHERE tenant=%s AND status='under_behandling'",
+                     (TENANT,))
+    migrator.commit()
+    _dren()
+
+    assert rekkefolge[0] == (TENANT, a_saker[0]), (
+        f"eldste plass-1-sak claimes fortsatt først: {rekkefolge}")
+    assert rekkefolge[1] == (ANNEN_TENANT, b_sak), (
+        f"Bs enkeltsak skulle vært claim nr. 2, ikke nr."
+        f" {rekkefolge.index((ANNEN_TENANT, b_sak)) + 1}: {rekkefolge}")
+    assert sorted(i for _, i in rekkefolge) == sorted(a_saker + [b_sak]), (
+        f"alle sju skulle vært claimet: {rekkefolge}")
+
+
+@pg
+def test_m38_fairness_oppdrag_backlog_sulter_ikke_naboens_oppdrag(migrator):
+    """M-38 port 2: samme form på oppdragskøen, delt eiermodul.
+
+    A har seks oppdrag (eldst), B ett (yngst) — samme eiermodul. Første
+    claim tar As eldste (FIFO blant plass-1-radene); ved andre claim
+    teller As plukkede oppdrag i partisjonen, så Bs plass-1-oppdrag går
+    foran As plass-2-oppdrag.
+
+    Mutasjonen som dreper denne: fjern `coalesce(r.plass, 101)` fra
+    ORDER BY i `claim_neste_oppdrag`.
+    """
+    a_opp = []
+    for _ in range(6):
+        sak, logg = _lag_sak(migrator, TENANT)
+        a_opp.append(_lag_oppdrag(migrator, TENANT, sak, logg)[0])
+    sak, logg = _lag_sak(migrator, ANNEN_TENANT)
+    b_opp, _ = _lag_oppdrag(migrator, ANNEN_TENANT, sak, logg)
+
+    forste = _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+                 (EIERMODUL, ["purring."], secrets.token_hex(16)))
+    assert forste is not None and int(forste[0]) == a_opp[0], (
+        f"første claim skulle tatt As eldste oppdrag: {forste}")
+    andre = _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+                (EIERMODUL, ["purring."], secrets.token_hex(16)))
+    assert andre is not None and int(andre[0]) == b_opp, (
+        f"Bs oppdrag skulle vært claim nr. 2: {andre}")
+
+
+@pg
+def test_m38_fairness_taper_for_prioritet(migrator):
+    """M-38-dommen: fairness er TREDJE sorteringsnøkkel — prioritets-
+    klassen beholder forrang. As hoy-sak går foran Bs normalsak selv om
+    A har backlog og hoy-saken står bakerst i As egen partisjon.
+    Prioritetsdoktrine, ikke fairness-feil.
+
+    Mutasjonen som dreper denne: flytt `coalesce(r.plass, 101)` foran
+    prioritetsklassen i ORDER BY.
+    """
+    for _ in range(6):
+        _lag_sak(migrator, TENANT)                 # A-backlog, eldst
+    _lag_sak(migrator, ANNEN_TENANT)               # Bs normalsak
+    _sett_kontekst(migrator, TENANT)
+    hoy, _ = _lag_sak(migrator, TENANT)            # As hoy-sak, yngst
+    migrator.execute("SET LOCAL ROLE disponit_migrator")
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
+    migrator.execute("UPDATE unntak SET prioritet='hoy' WHERE tenant=%s"
+                     " AND id=%s", (TENANT, hoy))
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
+    migrator.commit()
+
+    cid = secrets.token_hex(16)
+    rad = _rt("SELECT tenant, id FROM claim_neste_sak(%s,120)", (cid,),
+              rid=cid)
+    assert (rad[0], int(rad[1])) == (TENANT, hoy), (
+        f"hoy-saken skulle claimes først (prioritet foran fairness): {rad}")
+
+
+@pg
+def test_m38_vindustaket_begrenser_aldri_claimbarhet_sak(migrator):
+    """M-38 port 4 (sak): plass <= 100 er en RANGERINGSKOSTNADSGRENSE,
+    aldri en claimport.
+
+    100 saker i flukt med UTLØPT claim fyller hele tenantens vindu:
+    'under_behandling' står i partisjonen (arbeid i flukt koster
+    plass), radene er uspisbare, og anti-dominansen teller kun levende
+    claims. Sak nr. 101 er den eneste spisbare — på plass 101, utenfor
+    vinduet. Med INNER JOIN mot rangert ville den vært USYNLIG —
+    LEFT JOIN + coalesce(101) setter den bakerst, aldri utenfor.
+
+    Mutasjonen som dreper denne: bytt `LEFT JOIN rangert` til `JOIN`
+    i `claim_neste_sak`.
+    """
+    saker = [_lag_sak(migrator, TENANT)[0] for _ in range(101)]
+    migrator.execute("SET LOCAL ROLE disponit_migrator")
+    _sett_kontekst(migrator, TENANT, "m37-arbeider", "vindu")
+    migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
+    migrator.execute(
+        "UPDATE unntak SET status='under_behandling', claim_id=%s,"
+        " claim_generation=1, claim_utloper=now() - interval '1 second'"
+        " WHERE tenant=%s AND id = ANY(%s)",
+        ("f" * 32, TENANT, saker[:100]))
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    migrator.execute("ALTER TABLE unntak ENABLE TRIGGER unntak_laas")
+    migrator.commit()
+
+    cid = secrets.token_hex(16)
+    rad = _rt("SELECT id FROM claim_neste_sak(%s,120)", (cid,), rid=cid)
+    assert rad is not None and int(rad[0]) == saker[100], (
+        f"sak nr. 101 skulle vært claimbar når køen ellers er tom: {rad}")
+
+
+@pg
+def test_m38_vindustaket_begrenser_aldri_claimbarhet_oppdrag(migrator):
+    """M-38 port 4 (oppdrag): som over — 100 oppdrag claimes på
+    ordinær vei og står som 'plukket' med levende lease: de fyller
+    hele vinduet (arbeid i flukt koster plass), men er ikke claimbare.
+    Oppdrag nr. 101 — plass 101, utenfor vinduet — claimes likevel.
+
+    Mutasjonen som dreper denne: bytt `LEFT JOIN rangert` til `JOIN`
+    i `claim_neste_oppdrag`.
+    """
+    for _ in range(100):
+        sak, logg = _lag_sak(migrator, TENANT)
+        _lag_oppdrag(migrator, TENANT, sak, logg)
+    sak, logg = _lag_sak(migrator, TENANT)
+    claimbar, _ = _lag_oppdrag(migrator, TENANT, sak, logg)
+
+    for i in range(100):
+        rad = _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+                  (EIERMODUL, ["purring."], secrets.token_hex(16)))
+        assert rad is not None, f"fyller-claim {i} feilet"
+        assert int(rad[0]) != claimbar, "vinduet ble claimet i feil orden"
+
+    rad = _rt("SELECT id FROM claim_neste_oppdrag(%s,%s,%s,300)",
+              (EIERMODUL, ["purring."], secrets.token_hex(16)))
+    assert rad is not None and int(rad[0]) == claimbar, (
+        f"oppdrag nr. 101 skulle vært claimbart når køen ellers er tom:"
+        f" {rad}")
+
+
 @pg
 def test_port9_referert_policyversjon_kan_ikke_slettes_heller_ikke_av_migrator(
         migrator):
