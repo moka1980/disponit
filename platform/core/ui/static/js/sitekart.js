@@ -87,6 +87,16 @@ const BASISRUTER = [
   { nokkel: "oversikt", scope: "decisions:read" },
   // M-16: nøkkeltall regnet fra faktiske beslutninger — ren leseflate
   // over samme scope som oversikten (tallene ER beslutningsdataene).
+  //
+  // M-16 ble ETTERREGISTRERT som modul 2026-08-31 (platform/modules/
+  // m16_nokkeltall), men ruten står MED VILJE uten `modulflate: 16`:
+  // modulflate-inngangen bor i venstremenyen, som viser KUNDENS
+  // modultildeling — og M-16 er ikke tildelt noen tenant, så flippet
+  // hadde tatt flaten ut av toppnavigasjonen uten å gi den noen
+  // annonsert inngang igjen. Å flytte en flate kunder bruker fra topp
+  // til venstre er dessuten samme slags eiervedtak som 24/8-vedtaket
+  // som la modulflatene der. Flippet hører til M-16-akseptløpet, ikke
+  // til registreringen.
   { nokkel: "nokkeltall", scope: "decisions:read" },
   { nokkel: "policy", scope: "policy:read" },
   { nokkel: "beslutninger", scope: "decisions:read" },

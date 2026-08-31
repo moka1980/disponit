@@ -29,6 +29,14 @@ export const MODULSTATUS = {
   2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
                     // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
                     // m02-aksept-v1, alle punkter bundet)
+  // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
+  // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
+  // ingen aksepthendelse, og registerets regel (drift krever aktiv,
+  // aktiv krever bevis) gjør `i_drift` usigelig uten en akseptdom.
+  // Manifestet sier under_utvikling/ikke_i_drift om registerobjektet;
+  // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
+  // hode for hva en ærligere avlesning krever.
+  16: "bygges",
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   38: "planlagt",   // ingen manifest i platform/modules/ ennå
   // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
@@ -57,6 +65,14 @@ const MODULER = [
     navn_nokkel: "site.modul.m2.navn",
     fase_nokkel: "site.fase.fundament",
     tekst_nokkel: "site.modul.m2.tekst",
+  },
+  {
+    // M-16 hører til fase 2 i katalogen (analyse_og_ledelse), altså
+    // `site.fase.operasjoner` — samme kilde som `katalog.js`.
+    id: 16,
+    navn_nokkel: "site.modul.m16.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m16.tekst",
   },
   {
     id: 37,

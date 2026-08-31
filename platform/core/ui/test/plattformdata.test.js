@@ -158,13 +158,16 @@ test("FASEOVERSIKT: ingen fase står planlagt med en påbegynt modul i seg", () 
       `${fase.navn_nokkel} står ${fase.status} med ${paabegynte.length}` +
       " påbegynte moduler i seg");
   }
-  // Slik plattformen faktisk står etter flippet: fasen M-56 ligger i er
-  // aktiv, og de to fasene uten en eneste modul er det ikke.
+  // Slik plattformen faktisk står: fasene med påbegynte moduler er
+  // aktive — operasjoner kom til 2026-08-31 da M-16 ble etterregistrert
+  // (`bygges` er avlesningen av manifestets under_utvikling/
+  // ikke_i_drift, se MODULSTATUS) — og fasen uten en eneste modul er
+  // det ikke.
   const status = Object.fromEntries(
     FASEOVERSIKT.map((f) => [f.navn_nokkel, f.status]));
   assert.equal(status["site.fase.autopiloter"], "aktiv");
   assert.equal(status["site.fase.fundament"], "aktiv");
-  assert.equal(status["site.fase.operasjoner"], "planlagt");
+  assert.equal(status["site.fase.operasjoner"], "aktiv");
   assert.equal(status["site.fase.global"], "planlagt");
   // Etiketten må finnes på begge språk, ellers rendres nøkkelen som merke.
   for (const [sprak, sett] of LOKALER) {

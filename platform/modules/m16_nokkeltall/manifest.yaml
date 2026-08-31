@@ -1,0 +1,109 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# ETTERREGISTRERING (M-16 fantes før den ble registrert som modul):
+# nøkkeltallsFLATEN kjører i produksjon som KJERNEflate — `nokkeltall`
+# er en BASISRUTE i sitekart.js (decisions:read), tellingen skjer i
+# `GET /v1/nokkeltall` (platform/core/api/lesing.py), og tallene ER
+# beslutningsdataene. Denne fila registrerer modulen i katalogen; den
+# bygger ingenting nytt (avledede tall og fritt intervall er egne
+# saker).
+#
+# TO AKSER, ÆRLIG LEST for en etterregistrert kjerneflate:
+#   * `status` er GODKJENT-aksen (bestått sjekkliste). M-16 har ingen
+#     aksepthendelse i basen og ingen målt sjekkliste — RUTINER pkt. 2
+#     og `aktiv_uten_bevis` forbyr `aktiv` med uavklarte punkter, og
+#     m56/m57-formen sier at flippet er katalogens AVLESNING av en
+#     aksepthendelse, aldri en påstand i forkant. Derfor
+#     `under_utvikling` — det er MODULREGISTRERINGEN som er under
+#     arbeid, ikke flaten.
+#   * `driftstilstand` skulle om BRUKEN alene sagt `produksjon`
+#     (flaten er i bruk hos kunder i dag, m56-lesningen av feltet).
+#     Men registerets konsistensregel (`registry.valider`: enhver
+#     drift ≠ ikke_i_drift KREVER status aktiv) gjør kombinasjonen
+#     under_utvikling/produksjon urepresenterbar, og `aktiv` kan ikke
+#     sies uten bevis. `ikke_i_drift` her er derfor lest om MODULEN
+#     som registerobjekt: ingen egen release, ingen deploymentrad,
+#     ingen arbeider — koden skipper med kjernen og har aldri hatt et
+#     livsløp registeret kan drille eller rulle. Å la forsiden si
+#     «I drift» om M-16 krever en dom: retroaktiv aksept, eller en
+#     skjema-/registerutvidelse for lesemoduler i kjernen. Det er en
+#     arkitektbeslutning, ikke en manifestlinje.
+#
+# LESEMODUL: M-16 har ingen arbeider, ingen kontrakt, ingen
+# oppdragstype og ingen skrivevei — den leser det økten alt har
+# tilgang til (`decisions:read`) og skriver ingenting.
+id: m16_nokkeltall
+navn: Rapporterings- og KPI-agent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i registerets forstand: flaten bestiller
+# ingenting gjennom policyporten (m01) og skriver ingenting til
+# evidenskjeden (m02) — den LESER kjernens beslutningsdata over samme
+# API som oversikten. En oppført avhengighet her ville vært lånt, ikke
+# målt.
+avhengigheter: []
+# Koden bor i KJERNEN (m37-formen: `kjerne` peker dit koden faktisk
+# er): tellingen i platform/core/api/lesing.py (`GET /v1/nokkeltall`),
+# flaten i platform/core/ui/static/js/flater/nokkeltall.js. Mappen her
+# bærer kun manifestet (m37_unntak-formen).
+kjerne: platform/core/api/lesing.py
+i18n_prefiks: nokkeltall
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json) og formet av
+# moduler med eget kjøre-livsløp (release, arbeider, kø). Punktene står
+# `nei` fordi ingen av dem er MÅLT for M-16: det finnes ingen
+# m16-grense i manifestskjema.KRAVGRENSER, og §0-regelen (m57) sier at
+# grensen registreres FØR bygging. Flere av punktene forutsetter
+# dessuten mekanismer en lesemodul i kjernen ikke har — notatene sier
+# hvilke, og hva som krever arkitektdom. «Et manifest skal aldri lese
+# sterkere enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet (m02-suite-formen). Flatens enhetstester
+      (nokkeltall.test.js) og API-tester kjører i CI, men det er ikke
+      denne portens måling, og ingen m16-grense finnes i KRAVGRENSER.
+      Ikke flippbart på evidens ennå.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: syntetisk beslutningsdatasett med fasit-nøkkeltall målt
+      både lokalt og på staging, med begge datasett-identitetene
+      bundet (wcag-kontroll-v2-formen). Ingen slik måling og ingen
+      grense finnes for M-16.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      M-16 SKRIVER ingenting — punktet slik det er formet (én
+      skrivevei til evidenskjeden) har ingen mekanisme å måle i en ren
+      lesemodul. Hva punktet skal BETY for en lesemodul (for eksempel
+      at lesingen beviselig aldri muterer) er en skjema-/
+      arkitektavklaring; til den finnes står punktet nei i stedet for
+      å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      M-16 har ingen oppdrag, ingen kø og ingen arbeider å injisere
+      feil i — punktet forutsetter et kjøre-livsløp lesemodulen ikke
+      har. Hva feilveien skal bety for et rent leseendepunkt (feilsvar
+      uten løfter, aldri delvise tall) krever samme avklaring som
+      punktet over; står nei i stedet for å dikte en mekanisme.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring
+      mot den (perf-m01-v1-formen er nærmest for et leseendepunkt
+      under last). Ingen m16-grense er registrert; ingen måling
+      finnes.
+  rollback_testet:
+    status: nei
+    notat: >-
+      M-16 har ingen egen release å rulle tilbake — koden skipper med
+      kjernen og følger kjernens deploy og rollback. Om kjernens
+      rollback-evidens kan bæres hit uten å bli en lånt konklusjon
+      (m37-lærdommen på nettopp dette punktet) er en arkitektdom; til
+      den er tatt står punktet nei.
