@@ -1141,6 +1141,7 @@
   "ui.rekruttering.kandidatkort.ingen_felter": "No unmasked fields are stored for this candidate.",
   "ui.rekruttering.kandidatkort.utilgjengelig": "The candidate card is unavailable — the retention deadline may have passed.",
   "ui.rekruttering.kandidatkort.vis": "Show candidate",
+  "ui.rekruttering.kandidatkort.vis_dokument": "View document",
   "ui.rekruttering.kol_kandidat": "Candidate",
   "ui.rekruttering.kol_kategori": "Assessment",
   "ui.rekruttering.kol_poeng": "Points",

@@ -1169,6 +1169,12 @@ tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
   background: color-mix(in srgb, var(--auto) 7%, var(--card)); }
 tr.rekrut-sjikt-neste > :first-child {
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--auto) 40%, var(--card)); }
+/* Dokumentvisningen i kandidatkortet (eiers funn 31/8): sandboxet
+   ramme på kortgrunnen (tokenporten eier fargene; et dokument med egen
+   bakgrunn tegner uansett sin egen). */
+.rekrut-dokvisning { width: 100%; height: 65vh; border: 1px solid
+  var(--line); border-radius: var(--radius-sm); background: var(--card); }
+
 /* Plassnummeret (eiers bestilling 30/8): rangeringen sies med tall, ikke
    bare som rekkefølge — dempet, tabulære sifre, fast luke til navnet. */
 .rekrut-plass { color: var(--muted); font-variant-numeric: tabular-nums;

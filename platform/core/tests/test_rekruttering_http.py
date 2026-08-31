@@ -2135,16 +2135,39 @@ def test_kandidatkortet_avmaskerer_og_fristen_stenger(klient):
     assert _get(klient, cookie,
                 f"/v1/rekruttering/kandidatkort/{oid}/kandidat-99"
                 ).status_code == 404
-    # DOKUMENTET BAK KORTET: alltid nedlasting, aldri rendring —
-    # kundeopplastet HTML får octet-stream + attachment + nosniff, så
-    # lagret skript aldri kjører på appens origin med sesjonskaken.
+    # DOKUMENTET BAK KORTET VISES — I SANDKASSE (eiers funn 31/8):
+    # HTML serveres inline med `Content-Security-Policy: sandbox` (unik
+    # origin, ingen skript, ingen sesjon) + nosniff; lagret skript i en
+    # søknad kan aldri kjøre med appens fullmakter. Ukjent innholdstype
+    # beholder nattens form: octet-stream + attachment — rendres aldri.
     rd = _get(klient, cookie,
               f"/v1/rekruttering/kandidatdokument/{oid}/{did}")
     assert rd.status_code == 200, rd.text
     assert rd.content == b"%PDF"
-    assert rd.headers["content-type"].startswith("application/octet-stream")
-    assert rd.headers["content-disposition"] == 'attachment; filename="cv.pdf"'
+    assert rd.headers["content-type"].startswith("text/html")
+    assert rd.headers["content-disposition"] == 'inline; filename="cv.pdf"'
+    assert rd.headers["content-security-policy"] == "sandbox", \
+        "HTML uten CSP-sandkasse er lagret XSS med sesjonskaken"
     assert rd.headers["x-content-type-options"] == "nosniff"
+    # Ukjent innholdstype rendres aldri: attachment + octet-stream.
+    m2 = _migrator()
+    try:
+        from db.pg import sett_kontekst as _ktx2
+        _ktx2(m2, TEN, "test", "r-kort-dok")
+        did2 = uuid.uuid4()
+        m2.execute(
+            "INSERT INTO kandidat_originaldokument (tenant, prosess_id,"
+            " kandidat_id, dokument_id, filnavn, innholdstype, dokument,"
+            " storrelse_bytes, innhold_sha256) VALUES"
+            " (%s,%s,%s,%s,'ukjent.bin','application/x-ukjent',%s,3,%s)",
+            (TEN, pid, kid, did2, b"abc", "d" * 64))
+        m2.commit()
+    finally:
+        m2.close()
+    ru = _get(klient, cookie,
+              f"/v1/rekruttering/kandidatdokument/{oid}/{did2}")
+    assert ru.headers["content-type"].startswith("application/octet-stream")
+    assert ru.headers["content-disposition"].startswith("attachment;")
     # Ukjent dokument er «finnes ikke».
     assert _get(klient, cookie,
                 f"/v1/rekruttering/kandidatdokument/{oid}/{uuid.uuid4()}"

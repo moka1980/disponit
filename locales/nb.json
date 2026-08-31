@@ -1141,6 +1141,7 @@
   "ui.rekruttering.kandidatkort.ingen_felter": "Ingen avmaskerte felter er lagret for kandidaten.",
   "ui.rekruttering.kandidatkort.utilgjengelig": "Kandidatkortet er utilgjengelig — fristen kan være passert.",
   "ui.rekruttering.kandidatkort.vis": "Vis kandidat",
+  "ui.rekruttering.kandidatkort.vis_dokument": "Vis dokument",
   "ui.rekruttering.kol_kandidat": "Kandidat",
   "ui.rekruttering.kol_kategori": "Vurdering",
   "ui.rekruttering.kol_poeng": "Poeng",

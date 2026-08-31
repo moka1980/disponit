@@ -61,17 +61,31 @@ function kandidatkortBoks(oppdragId, kandidatId) {
           : token }),
         el("dd", { text: verdi }));
     }
-    // Nedlastingslenker — vanlig navigasjon, så nettleseren lagrer
-    // filen (serveren tvinger attachment; kundeopplastet HTML skal
-    // aldri rendres på appens origin).
+    // DOKUMENTENE VISES, IKKE LASTES NED (eiers funn 31/8: kunden har
+    // alt filene lokalt). Visningen skjer i en SANDKASSE: serveren
+    // setter `Content-Security-Policy: sandbox` på HTML (unik origin,
+    // ingen skript, ingen sesjon), og rammen her er selv sandboxet —
+    // opplastet innhold rendres med null fullmakter.
     const dok = (svar.dokumenter || [])
       .filter((d) => d && typeof d === "object"
         && typeof d.filnavn === "string"
         && typeof d.dokument_id === "string")
-      .map((d) => el("li", {}, el("a", {
-        href: "/v1/rekruttering/kandidatdokument/"
-          + `${oppdragId}/${encodeURIComponent(d.dokument_id)}`,
-        download: d.filnavn }, d.filnavn)));
+      .map((d) => {
+        const vis = el("button", { class: "knapp lenkeknapp",
+          type: "button", text: d.filnavn });
+        vis.setAttribute("aria-label",
+          `${t("ui.rekruttering.kandidatkort.vis_dokument")} — ${d.filnavn}`);
+        vis.addEventListener("click", () => {
+          const ramme = el("iframe", {
+            class: "rekrut-dokvisning",
+            title: d.filnavn,
+            sandbox: "",
+            src: "/v1/rekruttering/kandidatdokument/"
+              + `${oppdragId}/${encodeURIComponent(d.dokument_id)}` });
+          Detaljpanel({ tittel: d.filnavn, innhold: ramme });
+        });
+        return el("li", {}, vis);
+      });
     // Knappen leseren sto på erstattes av innholdet — fokus flyttes
     // dit (CodeRabbit): en tastaturbruker skal lande på kortet, ikke
     // falle til body.
