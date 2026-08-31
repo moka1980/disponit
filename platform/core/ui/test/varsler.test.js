@@ -379,6 +379,38 @@ test("Varsler: planvarselet fører til planflaten, ikke til en blindvei",
       .includes("policy_stopper"));
   });
 
+test("Varsler: driftsvarslene fører til driftstatusflaten", async () => {
+  // 090/091: `varsel.selvtest_rodt` henviser i sin EGEN tekst til
+  // Driftstatus. Sto arten ikke i `RUTE_FOR_ART`, ville henvisningen vært
+  // en instruksjon om å lete — samme feil som planvarselet over ble felt
+  // for, på en tekst som er enda mer eksplisitt om hvor svaret står.
+  for (const [art, nokkel, ressurs] of [
+    ["selvtest_rodt", "varsel.selvtest_rodt", "timer_disponit-backup"],
+    ["selvtest_uteblitt", "varsel.selvtest_uteblitt", "plattform"],
+    ["backupverifisering_uteblitt", "varsel.backupverifisering_uteblitt",
+     "plattform"],
+  ]) {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [{
+      id: 9, art, ressurs_type: "selvtest", ressurs_id: ressurs,
+      tekstnokkel: nokkel,
+      parametre: { probe: ressurs, terskel_timer: 3, siste_ts: null,
+        siste_verifisert_ts: null },
+      opprettet: "2026-08-31T09:00:00+00:00", lest: false,
+    }], uleste: 1, kanal: "kun_portal" } };
+    const h = nyHoved();
+    window.location.hash = "#/varsler";
+    visVarsler(h, ctx());
+    await vent(() => h.querySelector(".varselrad"));
+    const gaa = finn(h, t("ui.varsler.gaa_til"));
+    assert.ok(gaa, `${art} fikk ingen vei til handlingen`);
+    gaa.dispatchEvent(new window.Event("click"));
+    await vent(() => window.location.hash !== "#/varsler");
+    assert.ok(window.location.hash.startsWith("#/driftstatus"),
+      `${art} landet på ${window.location.hash}`);
+  }
+});
+
 test("Varsler: axe-ren, og radiogruppen har en legend", async () => {
   POSTET = [];
   SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,

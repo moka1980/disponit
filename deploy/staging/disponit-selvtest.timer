@@ -1,0 +1,30 @@
+# M-11 (091): hver time.
+#
+# Kadensen og varselterskelen hører sammen og skal endres sammen:
+# `varsle_selvtest_uteblitt` varsler etter 3 timers taushet, altså
+# 3 × kadensen — samme forhold som helsesjekkens heartbeat-grense (90 s
+# mot 30 s syklustid) og samme forhold selvtestens egne timer-prober
+# bruker mot de andre timerne. To kadenser gir falske utslag på jitter og
+# én treg kjøring; fire gjør en død selvtest usynlig for lenge.
+#
+# Én time er også en øvre grense for hvor gammelt bildet på flaten kan
+# være. Tettere ville ikke gitt bedre svar: probene måler tilstander som
+# endrer seg i minutter og timer (er timerne i rute, står SMTP-oppsettet,
+# svarer modellserveren), ikke i sekunder. Det som endrer seg i sekunder
+# — henger API-et — eies av `disponit-helse.timer` hvert 60. sekund, og
+# den har en omstartsfullmakt selvtesten med vilje ikke har.
+#
+# `Persistent=true`: en vert som var nede da timen passerte, kjører én
+# runde ved oppstart. Det er riktig her — runden måler NÅ, ikke da, og
+# en fersk måling rett etter oppstart er nettopp det driften vil se.
+
+[Unit]
+Description=Disponit selvtest-timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

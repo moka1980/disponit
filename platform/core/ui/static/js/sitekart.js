@@ -169,6 +169,20 @@ const BASISRUTER = [
   // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
   // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger
   // (decisions:read). Den gamle adressen lever videre som alias under.
+  //
+  // M-10 + M-11 (090/091): driftstatus er en BASISRUTE bak admin-
+  // lesescopet — samme presedens som `modellstyring` over, og samme
+  // eiervedtak: INGEN modulflate-flipp, så ruten bor i toppnavigasjonen
+  // og ikke bak et modulkort. De to er heller ikke moduler; de er
+  // plattformens eget innsyn i seg selv.
+  //
+  // Scopet er API-ets: BÅDE `GET /v1/drift/backup` og
+  // `GET /v1/drift/selvtest` krever `security:read` i RUTESCOPE, og
+  // flaten henter begge i ett kall-par. En rute som lovet mer enn det
+  // svakeste av de to endepunktene ville vært nøyaktig løftet denne
+  // tabellen finnes for å ikke gi — men her er de like, så flaten er
+  // enten hel eller ikke synlig.
+  { nokkel: "driftstatus", scope: "security:read" },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

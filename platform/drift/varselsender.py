@@ -247,15 +247,38 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     # er den ene timerdrevne prosessen som allerede eier varselkøens rytme.
     # `DISPONIT_PLATTFORMTENANT` er tenanten hvis `admin`-medlemmer driver
     # plattformen (v1-standard: disponit).
-    try:
-        conn.execute("SELECT varsle_tokenfamilie_utlop(%s)",
-                     (os.environ.get("DISPONIT_PLATTFORMTENANT",
-                                     "disponit"),))
-        conn.commit()
-    except Exception as e:                                    # noqa: BLE001
-        conn.rollback()
-        print(f"varselsender: familievarsel-sveipen feilet: "
-              f"{type(e).__name__}: {e}", file=sys.stderr)
+    plattformtenant = os.environ.get("DISPONIT_PLATTFORMTENANT", "disponit")
+    # 090 (M-10) og 091 (M-11) la til to sveiper til, og de hører hjemme
+    # NØYAKTIG her av 035s grunn: senderen er den ene timerdrevne
+    # prosessen som allerede eier varselkøens rytme, og begge de nye
+    # tilstandene er TAUSHET — noe som IKKE har skjedd. En taushet kan
+    # per definisjon ikke varsle om seg selv:
+    #
+    #   `varsle_backupverifisering_uteblitt` (30 t) fordi lesejobben ikke
+    #   kjører når det ikke finnes noe å lese, og
+    #   `varsle_selvtest_uteblitt` (3 t) fordi selvtesten ikke kan
+    #   rapportere sin egen død — den må observeres utenfra, av en
+    #   prosess med en annen rolle på en annen kadens.
+    #
+    # HVER SVEIP HAR SIN EGEN SKJERMEDE BLOKK, ikke én felles: en feil i
+    # den ene skal verken stoppe den andre eller sendingen av det som alt
+    # ligger i køen. Alle tre er idempotente per døgn på
+    # `varsel_en_per_hendelse`, så en gjentatt kjøring køer ingenting nytt.
+    # SQL-en er tre HELE literaler, ikke ett navn satt inn i en mal:
+    # funksjonsnavn kan ikke parameteriseres, og en f-streng her ville
+    # vært en strenginterpolasjon inn i SQL — riktig i dag, og en felle
+    # den dagen noen gjør listen konfigurerbar.
+    for setning, hva in (
+            ("SELECT varsle_tokenfamilie_utlop(%s)", "familievarsel"),
+            ("SELECT varsle_backupverifisering_uteblitt(%s)", "backup"),
+            ("SELECT varsle_selvtest_uteblitt(%s)", "selvtest")):
+        try:
+            conn.execute(setning, (plattformtenant,))
+            conn.commit()
+        except Exception as e:                                # noqa: BLE001
+            conn.rollback()
+            print(f"varselsender: {hva}-sveipen feilet: "
+                  f"{type(e).__name__}: {e}", file=sys.stderr)
 
     oppsett = oppsett or _smtp_oppsett()
     if oppsett is None and send is None:

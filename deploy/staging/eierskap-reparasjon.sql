@@ -147,6 +147,19 @@ INSERT INTO _design VALUES
     -- 088 (M-6): markoeren som armerer samlet-porten -- claimer-eid
     -- definer av samme grunn som 076s m57_marker_beroert_prosess
     ('FUNCTION', 'm6_marker_beroert_melding()',                       'disponit_m37_claimer'),
+    -- 090 (M-10) / 091 (M-11): driftstatusens seks doerer. Alle seks
+    -- opprettes i det samme SET ROLE-vinduet som 051/057-doerene, og av
+    -- samme grunn: lesedoerene gaar gjennom krev_tenantkontekst-porten,
+    -- som er claimer-eid, og en definer som skal PASSERE den porten maa
+    -- ha samme eier. Skrivedoerene og sveipene deler vindu fordi de
+    -- deler tabell -- eierskapet ER skrivetilgangen for dem (057-radenes
+    -- egen begrunnelse, ordrett)
+    ('FUNCTION', 'registrer_backupverifisering(timestamp with time zone,timestamp with time zone,numeric,integer,bigint)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'backup_status(text,integer)',                       'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_backupverifisering_uteblitt(text)',          'disponit_m37_claimer'),
+    ('FUNCTION', 'registrer_selvtest(uuid,jsonb,text)',               'disponit_m37_claimer'),
+    ('FUNCTION', 'selvtest_status(text,integer)',                     'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_selvtest_uteblitt(text)',                    'disponit_m37_claimer'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

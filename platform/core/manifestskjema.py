@@ -624,6 +624,103 @@ KRAVGRENSER["m35-v1"] = {
 }
 
 
+#: M-10 (090) — backupinnsynet. Invariantene pinnet FØR bygging
+#: (§0-regelen), i m57/m31/m6s parform: hver invariant måles som
+#: (forsøk, brudd), og null brudd uten et eneste forsøk er en port som
+#: aldri kjørte — ikke en port som besto.
+M10_INVARIANTER: tuple[str, ...] = (
+    # Idempotensen: samme `backup_ts` registrert to ganger er ÉN rad
+    # (090 `ON CONFLICT (backup_ts) DO NOTHING`). Lesejobben kjører hvert
+    # 30. minutt over den samme dagsferske rapporten; uten dette ville
+    # hver kjøring vært en ny «verifisering».
+    "registrering_duplikat_backup_ts",
+    # FAIL-CLOSED: en rapport som mangler et felt, har feil type eller
+    # bryter en CHECK gir ALDRI en rad — og aldri en rad «med forbehold».
+    # En verifisering vi ikke kan lese er ikke en verifisering.
+    "ugyldig_rapport_registrert",
+    # Grantporten: skrivedøren er lesejobbrollens ALENE. Web-runtime skal
+    # avvises i RUNTIME, ikke bare i en kodegjennomgang — en rettighet
+    # som bare slutter å bli gitt er ikke trukket tilbake (035).
+    "skrivedor_naadd_av_runtime",
+    # Varsel-dedupe: hendelsen er DØGNET, så en tilstand som vedvarer gir
+    # ett varsel per dag — ikke ett per timerkjøring, og ikke evig
+    # stillhet etter det første.
+    "varsel_duplikat_per_dogn",
+    # Sveipen VIRKER: 30 timers taushet (også fra en helt tom tabell —
+    # fravær er feil i v1) gir et varsel til plattformtenantens aktive
+    # admin-medlemmer.
+    "uteblitt_ikke_varslet",
+    # Flaten: ingen alvorlige axe-brudd (m57s ui-invariant).
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m10-v1"] = {
+    # Settet er PINNET her, ikke avledet av artefaktet (m57-regelen):
+    # et artefakt som utelater en invariant felles på fraværet.
+    "invarianter": M10_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: migrasjonen er grønn både fra tom base (CI) og mot
+    # bebodd tilstand — bokstavelig `true`, alt annet er nei.
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    # PUNKTBINDING: TOM MED VILJE (m6/m57s form og grunn) — punktene er
+    # UFLIPPBARE til målingene finnes. Hvert punkt som får sin måling,
+    # får sin linje her, pinnet før flippen.
+    "punktbinding": {},
+}
+
+
+#: M-11 (091) — selvtesten. Samme parform, og TO AV INVARIANTENE ER
+#: SIKKERHETSINVARIANTER i egen klasse (dommen natt til 1/9):
+#: `hemmelighet_i_rapport` (kanariporten) og `destruktiv_probe` (den
+#: statiske destruktivitetsporten). De er ikke kvalitetsmål med en
+#: terskel som kan justeres ved målt behov — de er 0, og forskjellen er
+#: at et brudd på dem gjør selvtesten til en lekkasjekanal eller et
+#: angrepsverktøy med planlagt kjøring, høye fullmakter og ingen
+#: menneskelig godkjenning i sløyfa.
+M11_INVARIANTER: tuple[str, ...] = (
+    # KANARIPORTEN (sikkerhetsinvariant). En hemmelighet plantet i
+    # miljøet og i oppsettsfilen skal ikke finnes igjen i `maalt`, i et
+    # varselparameter eller på stdout. Rapporten er tenkt LEST av
+    # mennesker og lagret i en tabell flaten viser — en probe som tar med
+    # verdien den så, lekker den tre steder på én gang.
+    "hemmelighet_i_rapport",
+    # DESTRUKTIVITETSPORTEN (sikkerhetsinvariant). `selvtest.py` har
+    # ingen skrivende HTTP-metode, ingen kommando som endrer en enhet og
+    # ingen rettighetsheving. Målt statisk på kildeteksten, fordi «den
+    # gjør ikke det i dag» ikke er en egenskap ved en fil som endres.
+    "destruktiv_probe",
+    # Idempotensen: samme `kjoring_id` registrert to ganger er ÉN kjøring
+    # — og køer heller ikke varslene en gang til (091).
+    "registrering_duplikat_kjoring_id",
+    # Varselet køes i SAMME TRANSAKSJON som kjøringen skrives: en rød
+    # probe uten varsel i køen skal være urepresenterbar, ikke usannsynlig.
+    "rodt_uten_varsel",
+    # `ikke_konfigurert` VARSLES ALDRI (dommen). Et ærlig fravær som
+    # varsler, er et varsel folk lærer seg å overse — og da forsvinner
+    # de røde med dem.
+    "ikke_konfigurert_varslet",
+    # Grantporten, som M-10s: skrivedøren er timerrollens alene, og
+    # web-runtime skal avvises i RUNTIME.
+    "skrivedor_naadd_av_runtime",
+    # Sveipen VIRKER: 3 timers taushet (3 × kadensen) gir et varsel.
+    # Selvtesten kan ikke varsle om sin egen død; dette er den ENE veien
+    # tilstanden når fram.
+    "uteblitt_ikke_varslet",
+    # Flaten: ingen alvorlige axe-brudd (m57s ui-invariant).
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m11-v1"] = {
+    "invarianter": M11_INVARIANTER,
+    # 0 for ALLE invariantene, inkludert de to sikkerhetsinvariantene.
+    # De skiller seg ikke i tallet, men i hva et brudd BETYR — og det
+    # står i kommentarene over, der en leser faktisk ser det.
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -940,6 +1037,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m6(grense, art)
     if krav_id == "m35-v1":
         return feil + _grenser_m35(grense, art)
+    if krav_id == "m10-v1":
+        return feil + _grenser_m10(grense, art)
+    if krav_id == "m11-v1":
+        return feil + _grenser_m11(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1935,6 +2036,20 @@ def _grenser_m35(grense: dict, art: dict) -> list[str]:
     Tallene er ÆRLIG NAVNGITT (dom 5): `maalt_restoretid_s` er
     restore-til-isolert-base-proxyen fra backupskriptets egen
     verifisering — aldri en påstand om full tjeneste-RTO."""
+def _grenser_parform(grense: dict, art: dict) -> list[str]:
+    """Parformen, én gang: hver invariant måles som (forsøk, brudd).
+
+    `m57-v1`, `m31-v1` og `m6-v1` har hver sin kopi av nøyaktig denne
+    løkka. De kopiene røres IKKE — de er pinnet i merget historikk, og en
+    refaktorering av en port er en endring av porten uansett hvor lik den
+    ser ut. Nye grenser deler denne i stedet, slik at det ikke blir en
+    femte og en sjette kopi.
+
+    De to tallene er tvillinger, og det er hele poenget med formen:
+    `maks_brudd: 0` beviser ingenting alene, for en port som aldri kjørte
+    har heller ingen brudd å vise. `min_forsok: 1` er det som gjør null
+    til et resultat i stedet for en stillhet.
+    """
     feil: list[str] = []
     m = art.get("maalt")
     if not isinstance(m, dict):
@@ -1989,8 +2104,30 @@ def _grenser_m35(grense: dict, art: dict) -> list[str]:
                     f" {grense['ovelse_maks_gronn_alder_dogn']} —"
                     " øvelsesrytmen er månedlig (dom 2)")
     return feil
+    return feil
 
 
+def _grenser_m10(grense: dict, art: dict) -> list[str]:
+    """`m10-v1` — backupinnsynets invarianter i parform.
+
+    Egen dispatch-gren og egen funksjon selv om kroppen er delt: en
+    `krav_id` uten gren faller i den generiske perf-lesningen nederst i
+    `_sjekk_grenser` og feiler på et skjema den aldri lovet. Navnet her
+    er det som binder grenen til grensen.
+    """
+    return _grenser_parform(grense, art)
+
+
+def _grenser_m11(grense: dict, art: dict) -> list[str]:
+    """`m11-v1` — selvtestens invarianter i parform.
+
+    To av dem er SIKKERHETSINVARIANTER (`hemmelighet_i_rapport`,
+    `destruktiv_probe`). De måles med samme aritmetikk som resten — 0
+    brudd, minst 1 forsøk — og det er med vilje: en sikkerhetsinvariant
+    som fikk sin egen mildere kodesti ville vært den ene som kunne
+    justeres når den ble upraktisk.
+    """
+    return _grenser_parform(grense, art)
 def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     """`rollback-m56-v1` — flippedrillen for moduldeployment (049).
 

@@ -1,0 +1,75 @@
+# M-11 (091): selvtestrunden — plattformen måler seg selv, hver time.
+#
+# DETTE ER EN DRIFTSTIMER, ALDRI EN BESTILLINGSPLAN (dommen natt til 1/9).
+# Selvtesten må overleve pasienten: en runde som gikk gjennom planmotoren
+# ville vært stum nøyaktig når planmotoren står — altså i den ene
+# tilstanden den finnes for å oppdage. Og den kan ikke varsle om sin egen
+# død; det gjør `varsle_selvtest_uteblitt` fra varselsenderen, som er en
+# annen prosess med en annen rolle på en annen kadens.
+#
+# KUN LESENDE, HÅNDHEVET STATISK. `platform/drift/selvtest.py` har ingen
+# skrivende HTTP-metode, ingen kommando som endrer en enhet og ingen
+# rettighetsheving — `test_m11_selvtest` måler kildeteksten mot den
+# regelen. En selvtest som kan endre systemet er et angrepsverktøy med
+# planlagt kjøring, høye fullmakter og ingen menneskelig godkjenning.
+#
+# IDENTITETEN ER HELSESJEKKENS, ORDRETT. `disponit-helse` +
+# `SupplementaryGroups=disponit-proxy` er nøyaktig kombinasjonen
+# `disponit-helse.service` har, og av samme grunn: /live og /ready nås
+# over Unix-sokkelen, og å snakke med en sokkel krever skrivetilgang til
+# den. Selvtesten er en TILSYNSKLIENT på linje med nginx og helsesjekken
+# — samme bevisste, dokumenterte utvidelse av gruppen (DEPLOY.md), ikke
+# en ny.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_selvtest` har nøyaktig ÉN rettighet i
+# basen: EXECUTE på `registrer_selvtest`. Ingen tabellrettigheter, ingen
+# lesedør, ingen sveip, ingen kunderad. Delte den DSN med runtime, ville
+# skrivedøren måttet grantes til `disponit`, og hele forespørselsveien
+# kunne diktet en grønn runde over en rød plattform.
+
+[Unit]
+Description=Disponit selvtest (prober -> selvtest_kjoring)
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+# Se kommentaren over: sokkeltilgangen, ikke en fullmakt.
+SupplementaryGroups=disponit-proxy
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+NoNewPrivileges=true
+LoadCredential=DISPONIT_SELVTEST_URL:/etc/disponit/selvtest/DISPONIT_SELVTEST_URL
+# Modell-URL og modellnavn er VALGFRITT — merk minus-tegnet, samme grep
+# som `disponit-varselsender.service` bruker for SMTP. En vert uten
+# modellserver skal ikke feile på at filen ikke finnes; `ollama`-proben
+# rapporterer `ikke_konfigurert`, som varsles ALDRI. Legges filen inn,
+# begynner proben å måle — uten redeploy.
+# SMTP-OPPSETTET, KUN FOR NAVNENE. `/etc/disponit/varsel/` er `0700
+# root:root` med vilje — det er hemmeligheter — og selvtesten kjører som
+# `disponit-helse`. Uten denne linjen ville `smtp_oppsett`-proben meldt
+# `fil_uleselig` hver eneste time, for alltid, og en probe som alltid er
+# rød er en probe folk skrur av.
+#
+# systemd leser filen som ROOT og injiserer navnene i miljøet, akkurat
+# som for `disponit-varselsender.service` — så proben måler nøyaktig det
+# SENDEREN vil se. Proben spør `navn in os.environ` og aldri hva verdien
+# er; kanariporten i `test_m11_selvtest` planter en hemmelighet i
+# nettopp dette miljøet og krever at den ikke finnes igjen i rapporten,
+# i et varselparameter eller på stdout.
+#
+# Minus-tegnet: uten SMTP-oppsett skal enheten starte som før, og proben
+# rapportere `ikke_konfigurert` — som varsles ALDRI.
+EnvironmentFile=-/etc/disponit/varsel/smtp.env
+EnvironmentFile=-/etc/disponit/m57/modell.env
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_selvtest
+# Probene har hver sin egen 5-sekundersgrense (`selvtest.TIDSGRENSE_S`),
+# og runden er fjorten prober. Unitens frist er sikkerhetsnettet over
+# summen av dem — den skal ikke utløses. Blir den det, er ingenting
+# halvskrevet: runden skrives i ÉN transaksjon etter at alle probene er
+# ferdige, så et avbrudd gir en runde som aldri ble registrert, og neste
+# time måler på nytt.
+TimeoutStartSec=3min
+
+[Install]
+WantedBy=multi-user.target

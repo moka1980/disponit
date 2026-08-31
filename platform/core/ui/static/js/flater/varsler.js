@@ -27,6 +27,13 @@ const RUTE_FOR_ART = {
   // fanenøkkel. Pausen kan bare oppheves ett sted: på planen.
   plan_pauset: "wcagkontroll",
   plan_gjentatt_brudd: "wcagkontroll",
+  // 090/091: driftsvarslene peker til driftstatusflaten, som er der
+  // svaret på «hva målte den» faktisk står. `varsel.selvtest_rodt`
+  // henviser dit i sin egen tekst — uten oppføringen her ville henvisningen
+  // vært en instruksjon om å lete, ikke en vei.
+  backupverifisering_uteblitt: "driftstatus",
+  selvtest_rodt: "driftstatus",
+  selvtest_uteblitt: "driftstatus",
 };
 
 function varseltekst(v) {

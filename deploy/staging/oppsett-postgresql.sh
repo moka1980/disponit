@@ -70,7 +70,23 @@ PLANARB=disponit_plan_arbeider
 # på de to attestfunksjonene (migrasjon 049) og ingen vei til
 # eierrollen.
 VERIFIKATOR=disponit_ci_verifikator
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR"; do
+# 090 (M-10) / 091 (M-11): driftstatusens lesejobb og selvtesten har HVER
+# SIN DB-rolle — varselsender-modellen, ordrett. Begge er LOGIN med
+# tilfeldig passord og faar sin egen DSN i miljoefila, som $VARSLER og
+# $PLANARB: enhetene leser den gjennom LoadCredential, aldri gjennom
+# API-ets.
+#
+# Hver rolle har noeyaktig EN rettighet (migrer.py
+# DRIFTSTATUS_RETTIGHETER/SELVTEST_RETTIGHETER): EXECUTE paa sin
+# skrivedoer. Ingen tabellrettigheter, ingen lesedoer, ingen sveip.
+# Fravaeret av alt annet ER rollen: en kompromittert lesejobb kan dikte
+# en verifisering som ikke har skjedd, og en kompromittert selvtest kan
+# dikte en groenn runde — og det er alt hver av dem kan. Delte de DSN
+# med API-et, ville skrivedoerene maattet grantes til `disponit`, og
+# hele foresporselsveien kunne skrevet backuphistorikk og selvtestrunder.
+DRIFTSTATUS=disponit_driftstatus
+SELVTEST=disponit_selvtest
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" "$SELVTEST"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -158,6 +174,12 @@ DOMENER_DSN=("DISPONIT_DOMAINS_URL=$DB" "DISPONIT_TEST_DOMAINS_DSN=${DB}_test")
 VARSLER_DSN=("DISPONIT_VARSEL_URL=$DB" "DISPONIT_TEST_VARSEL_DSN=${DB}_test")
 PLANARB_DSN=("DISPONIT_PLAN_URL=$DB" "DISPONIT_TEST_PLAN_DSN=${DB}_test")
 VERIFIKATOR_DSN=("DISPONIT_VERIFIKATOR_URL=$DB" "DISPONIT_TEST_VERIFIKATOR_DSN=${DB}_test")
+# 090/091: driftstatusens og selvtestens DSN-er — samme state-machine som
+# rollene over, ellers kan de ikke autentisere paa en fersk install.
+DRIFTSTATUS_DSN=("DISPONIT_DRIFTSTATUS_URL=$DB"
+                 "DISPONIT_TEST_DRIFTSTATUS_DSN=${DB}_test")
+SELVTEST_DSN=("DISPONIT_SELVTEST_URL=$DB"
+              "DISPONIT_TEST_SELVTEST_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -168,6 +190,8 @@ sikre_rolle_dsn "$DOMENER"    "${DOMENER_DSN[@]}"
 sikre_rolle_dsn "$VARSLER"    "${VARSLER_DSN[@]}"
 sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
 sikre_rolle_dsn "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
+sikre_rolle_dsn "$DRIFTSTATUS" "${DRIFTSTATUS_DSN[@]}"
+sikre_rolle_dsn "$SELVTEST"   "${SELVTEST_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -192,6 +216,8 @@ verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
 verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
+verifiser_og_reparer "$DRIFTSTATUS" "${DRIFTSTATUS_DSN[@]}"
+verifiser_og_reparer "$SELVTEST"   "${SELVTEST_DSN[@]}"
 
 # ------------------------------------------------------------
 # Migrasjoner kjøres av MIGRATOR-rollen — verken av postgres eller av
@@ -384,6 +410,8 @@ verifiser_og_reparer "$DOMENER"    "${DOMENER_DSN[@]}"
 verifiser_og_reparer "$VARSLER"    "${VARSLER_DSN[@]}"
 verifiser_og_reparer "$PLANARB"    "${PLANARB_DSN[@]}"
 verifiser_og_reparer "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
+verifiser_og_reparer "$DRIFTSTATUS" "${DRIFTSTATUS_DSN[@]}"
+verifiser_og_reparer "$SELVTEST"   "${SELVTEST_DSN[@]}"
 
 # ------------------------------------------------------------
 # 048 (#108), Codex P1: LUKK VEDLIKEHOLDSVINDUET.
