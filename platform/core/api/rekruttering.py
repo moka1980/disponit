@@ -1183,13 +1183,14 @@ def kandidatdokument_les_endepunkt(tjeneste, request):
         if prad is None:
             return _feil("ikke_funnet", rid, 404)
         rad = conn.execute(
-            "SELECT filnavn, dokument FROM kandidat_originaldokument"
+            "SELECT filnavn, innholdstype, dokument"
+            "  FROM kandidat_originaldokument"
             " WHERE tenant=%s AND prosess_id=%s AND dokument_id=%s"
             "   AND slettet_ts IS NULL AND dokument IS NOT NULL",
             (tenant, prad[0], did)).fetchone()
         if rad is None:
             return _feil("ikke_funnet", rid, 404)
-        filnavn, innhold = rad
+        filnavn, innholdstype, innhold = rad
         # Filnavnet inn i headeren SANERES: kun kanonens trygge tegn,
         # aldri linjeskift/anførselstegn — resten byttes med '_'.
         trygt = remod.sub(r"[^A-Za-z0-9._/-]", "_", filnavn or "dokument")
@@ -1197,14 +1198,36 @@ def kandidatdokument_les_endepunkt(tjeneste, request):
         tjeneste.logg.hendelse("kandidatdokument_lest", rid, tenant,
                                art="sikkerhet", oppdrag_id=oppdrag_id,
                                dokument=str(did))
-        return RaaRespons(
-            bytes(innhold), media_type="application/octet-stream",
-            headers={
-                "content-disposition": f'attachment; filename="{trygt}"',
-                "x-content-type-options": "nosniff",
-                "cache-control": "no-store",
-                "x-request-id": rid,
-            })
+        # VISNING, IKKE NEDLASTING (eiers funn 31/8: «kunden har alt
+        # filene — vis dem brukervennlig») — men aldri med opplastet
+        # innholds fullmakter. De tre lovede innholdstypene vises
+        # INLINE; HTML får `Content-Security-Policy: sandbox`, som gir
+        # dokumentet unik origin uten skript: lagret skript i en søknad
+        # kan hverken kjøre eller nå sesjonskaken. PDF/klartekst kan
+        # ikke bære skript i nettleserens viser. Alt UTENFOR de tre
+        # typene beholder nattens form (octet-stream + attachment) —
+        # ukjent innhold rendres aldri.
+        norm = (innholdstype or "").split(";")[0].strip().lower()
+        hoder = {
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+            "x-request-id": rid,
+        }
+        if norm in ("text/html", "application/xhtml+xml"):
+            hoder["content-security-policy"] = "sandbox"
+            hoder["content-disposition"] = f'inline; filename="{trygt}"'
+            return RaaRespons(bytes(innhold),
+                              media_type=(norm if norm != "text/html"
+                                          else "text/html; charset=utf-8"),
+                              headers=hoder)
+        if norm in ("application/pdf", "text/plain"):
+            hoder["content-disposition"] = f'inline; filename="{trygt}"'
+            return RaaRespons(bytes(innhold), media_type=norm,
+                              headers=hoder)
+        hoder["content-disposition"] = f'attachment; filename="{trygt}"'
+        return RaaRespons(bytes(innhold),
+                          media_type="application/octet-stream",
+                          headers=hoder)
 
     return _med_conn(tjeneste, rid, kjor)
 

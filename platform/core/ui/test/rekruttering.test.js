@@ -6847,12 +6847,22 @@ test("Rapporten: kandidatkortet avmaskerer på klikk (eiers bestilling 30/8)", a
   const tekst = seksjon().textContent;
   assert.match(tekst, /kari@eksempel\.no/);
   assert.match(tekst, /cv\.pdf/);
-  // Dokumentet er en NEDLASTINGSLENKE mot dokumentruten — aldri
-  // inline-rendring av kundeopplastet innhold.
-  const lenke = kortEl().querySelector("a");
-  assert.ok(lenke && lenke.getAttribute("href").includes(
-    "/v1/rekruttering/kandidatdokument/96/"), "dokumentlenken mangler");
-  assert.equal(lenke.getAttribute("download"), "cv.pdf");
+  // Dokumentet VISES i en sandboxet ramme (eiers funn 31/8) — aldri
+  // rendring av kundeopplastet innhold med appens fullmakter.
+  const visKnapp = [...kortEl().querySelectorAll("button")]
+    .find((b) => b.textContent === "cv.pdf");
+  assert.ok(visKnapp, "dokumentets Vis-knapp mangler");
+  visKnapp.click();
+  const panel = document.querySelector(".dialog.skuff");
+  assert.ok(panel, "dokumentpanelet åpnet ikke");
+  const ramme = panel.querySelector("iframe.rekrut-dokvisning");
+  assert.ok(ramme && ramme.getAttribute("src").includes(
+    "/v1/rekruttering/kandidatdokument/96/"), "rammen mangler ruten");
+  // Sandkassen er PÅ og TOM: ingen allow-scripts, ingen
+  // allow-same-origin — opplastet HTML har null fullmakter.
+  assert.equal(ramme.getAttribute("sandbox"), "",
+    "rammen er ikke fullt sandboxet");
+  panel.querySelector(".dialog-lukk").click();
   // Etikettene er locale-tekster utledet av tokenet — aldri rå tokener.
   // (Målt på KORTET: flatens blinding-forklaring nevner selv [NAVN-1]
   // som eksempel, så hele seksjonen kan ikke bære negativen.)
