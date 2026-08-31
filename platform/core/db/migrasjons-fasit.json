@@ -83,5 +83,6 @@
   "082_m8_tidsvalg.sql": "c7fb73407c04bfaa59e992a4f71912659a621b4c2360e1538f6df35a44cdaddf",
   "083_firmatekst_i_listen.sql": "ec6b3c256af664ab782cb00afb963ca24bb4ef1e1f460903b261ad7ce02d209a",
   "084_m16_fase2.sql": "6f68b08c5a1f69e92cddfc4805919fe209c64f681989bd1142e6e30ce0b4d102",
-  "085_m38_fairness.sql": "cd11a400f0cb28b1491eb9e96bcb0760ab5bc22ad153e6b5d8b29c34e5f8f0a3"
+  "085_m38_fairness.sql": "cd11a400f0cb28b1491eb9e96bcb0760ab5bc22ad153e6b5d8b29c34e5f8f0a3",
+  "086_m16_indekser.sql": "c7217d41f62d52b60804562d03dc8a72aa52284692e9eccdc0951aa09f6cac61"
 }

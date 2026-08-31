@@ -29,6 +29,7 @@ pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 ROT = Path(__file__).resolve().parents[3]
 M084 = ROT / "platform/core/db/migrations/084_m16_fase2.sql"
+M086 = ROT / "platform/core/db/migrations/086_m16_indekser.sql"
 FLATE = ROT / "platform/core/ui/static/js/flater/nokkeltall.js"
 
 
@@ -788,3 +789,40 @@ def test_ingen_setning_gjentar_argumentlistene():
         if re.search(r"\b(REVOKE|GRANT|DROP)\b.*\bFUNCTION\b", linje):
             assert "||" in linje, \
                 f"setning med håndskrevet signatur: {linje!r}"
+
+
+# ---------------------------------------------------------------------------
+# PR-B (086): indeksene for de to uindekserte tidsankrene
+# ---------------------------------------------------------------------------
+
+@pg
+def test_086_indeksene_finnes_og_definerne_star(migrator):
+    """PR-B: hvert av de to skannene har sin (tenant, tidsanker)-indeks
+    — og 086 rører INGEN definer: fila lager indekser og ikke noe annet,
+    og katalogsettet av m16-definere er fortsatt nøyaktig 084s ni
+    (M16_DEFINERE). Bytene i 084 vokter fasitporten allerede."""
+    idx = dict(migrator.execute(
+        "SELECT indexname, indexdef FROM pg_indexes"
+        " WHERE schemaname = 'public'"
+        "   AND indexname IN ('oppdrag_status_ts', 'tick_vindu')"
+    ).fetchall())
+    migrator.rollback()
+    assert set(idx) == {"oppdrag_status_ts", "tick_vindu"}, idx
+    assert "(tenant, status_ts)" in idx["oppdrag_status_ts"]
+    assert "(tenant, vindu_start) INCLUDE (utfall)" in idx["tick_vindu"]
+
+    kode = "\n".join(l for l in M086.read_text(encoding="utf-8").splitlines()
+                     if not l.strip().startswith("--"))
+    assert re.search(r"\bFUNCTION\b", kode, re.IGNORECASE) is None, \
+        "086 skal aldri røre en definer"
+    for setning in kode.split(";"):
+        if setning.strip():
+            assert setning.strip().startswith("CREATE INDEX"), setning
+
+    navn = [r[0] for r in migrator.execute(
+        "SELECT p.proname FROM pg_catalog.pg_proc p"
+        " JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE n.nspname = 'public' AND p.proname LIKE 'm16\\_%'"
+    ).fetchall()]
+    migrator.rollback()
+    assert sorted(navn) == sorted(M16_DEFINERE), navn
