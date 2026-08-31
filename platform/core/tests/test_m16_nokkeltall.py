@@ -29,6 +29,7 @@ pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 
 ROT = Path(__file__).resolve().parents[3]
 M084 = ROT / "platform/core/db/migrations/084_m16_fase2.sql"
+M086 = ROT / "platform/core/db/migrations/086_m16_indekser.sql"
 FLATE = ROT / "platform/core/ui/static/js/flater/nokkeltall.js"
 
 
@@ -407,10 +408,11 @@ def test_api_endepunktet_er_generaliseringen(migrator, klient, token):
     r3 = klient.get("/v1/nokkeltall?vindu=30d",
                     headers={"authorization": f"Bearer {tok}"})
     assert r3.status_code == 200
-    # Fritt intervall finnes ikke i v1: et kall som ber om `fra`/`til`
-    # avvises, det får ALDRI et urelatert 24-timerssvar med status 200.
-    for spm in ("?fra=2026-08-01T00:00:00Z&til=2026-08-02T00:00:00Z",
-                "?fra=2026-08-01T00:00:00Z",
+    # PR-C: fritt intervall FINNES nå, men de gale formene er fortsatt
+    # 400 — et halvt par og en blanding med `vindu` er begge spørsmål
+    # som aldri besvares stille med noe annet. Hele parametermatrisen
+    # måles i test_fritt_intervall_parametermatrisen.
+    for spm in ("?fra=2026-08-01T00:00:00Z",
                 "?vindu=7d&til=2026-08-02T00:00:00Z"):
         rf = klient.get("/v1/nokkeltall" + spm,
                         headers={"authorization": f"Bearer {tok}"})
@@ -788,3 +790,114 @@ def test_ingen_setning_gjentar_argumentlistene():
         if re.search(r"\b(REVOKE|GRANT|DROP)\b.*\bFUNCTION\b", linje):
             assert "||" in linje, \
                 f"setning med håndskrevet signatur: {linje!r}"
+
+
+# ---------------------------------------------------------------------------
+# PR-B (086): indeksene for de to uindekserte tidsankrene
+# ---------------------------------------------------------------------------
+
+@pg
+def test_086_indeksene_finnes_og_definerne_star(migrator):
+    """PR-B: hvert av de to skannene har sin (tenant, tidsanker)-indeks
+    — og 086 rører INGEN definer: fila lager indekser og ikke noe annet,
+    og katalogsettet av m16-definere er fortsatt nøyaktig 084s ni
+    (M16_DEFINERE). Bytene i 084 vokter fasitporten allerede."""
+    idx = dict(migrator.execute(
+        "SELECT indexname, indexdef FROM pg_indexes"
+        " WHERE schemaname = 'public'"
+        "   AND indexname IN ('oppdrag_status_ts', 'tick_vindu')"
+    ).fetchall())
+    migrator.rollback()
+    assert set(idx) == {"oppdrag_status_ts", "tick_vindu"}, idx
+    assert "(tenant, status_ts)" in idx["oppdrag_status_ts"]
+    assert "(tenant, vindu_start) INCLUDE (utfall)" in idx["tick_vindu"]
+
+    kode = "\n".join(l for l in M086.read_text(encoding="utf-8").splitlines()
+                     if not l.strip().startswith("--"))
+    assert re.search(r"\bFUNCTION\b", kode, re.IGNORECASE) is None, \
+        "086 skal aldri røre en definer"
+    for setning in kode.split(";"):
+        if setning.strip():
+            assert setning.strip().startswith("CREATE INDEX"), setning
+
+    navn = [r[0] for r in migrator.execute(
+        "SELECT p.proname FROM pg_catalog.pg_proc p"
+        " JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace"
+        " WHERE n.nspname = 'public' AND p.proname LIKE 'm16\\_%'"
+    ).fetchall()]
+    migrator.rollback()
+    assert sorted(navn) == sorted(M16_DEFINERE), navn
+
+
+# ---------------------------------------------------------------------------
+# PR-C: fritt tidsintervall — samme ENE vindushjelp, strengt parset
+# ---------------------------------------------------------------------------
+
+@pg
+def test_fritt_intervall_parametermatrisen(migrator, klient, token):
+    """PR-C: hver gal form er 400 — aldri et klippet eller gjettet svar
+    med 200. Gyldig form ekkoer de PARSEDE grensene, normalisert UTC."""
+    tok, _ = token(scopes=("decisions:read",))
+    h = {"authorization": f"Bearer {tok}"}
+    for spm in (
+            # blandet: `vindu` sammen med paret — to spørsmål i ett kall
+            "?vindu=7d&fra=2026-08-01T00:00:00Z&til=2026-08-02T00:00:00Z",
+            # halvt par — begge veier
+            "?fra=2026-08-01T00:00:00Z",
+            "?til=2026-08-02T00:00:00Z",
+            # naivt tidsstempel (uten sone) — begge posisjoner
+            "?fra=2026-08-01T00:00:00&til=2026-08-02T00:00:00Z",
+            "?fra=2026-08-01T00:00:00Z&til=2026-08-02T00:00:00",
+            # ikke ISO-8601 i det hele tatt
+            "?fra=nylig&til=2026-08-02T00:00:00Z",
+            # invertert og tomt: fra < til er STRENGT
+            "?fra=2026-08-02T00:00:00Z&til=2026-08-01T00:00:00Z",
+            "?fra=2026-08-01T00:00:00Z&til=2026-08-01T00:00:00Z",
+            # overspenn: 366 døgn er taket, dette er 367
+            "?fra=2025-01-01T00:00:00Z&til=2026-01-03T00:00:00Z"):
+        r = klient.get("/v1/nokkeltall" + spm, headers=h)
+        assert r.status_code == 400, spm
+    # Gyldig: sonebærende ikke-UTC `fra` normaliseres — svaret ekkoer de
+    # parsede grensene, aldri noe serveren fant på selv. (+02:00 er
+    # URL-kodet: rå `+` i en query er et mellomrom.)
+    r = klient.get("/v1/nokkeltall?fra=2026-08-01T02:00:00%2B02:00"
+                   "&til=2026-08-02T00:00:00Z", headers=h)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["vindu_start"] == "2026-08-01T00:00:00+00:00"
+    assert d["vindu_slutt"] == "2026-08-02T00:00:00+00:00"
+    assert d["tidssone"] == "UTC"
+    # `til` i framtiden er lovlig: et tomt framtidsutsnitt er et sant
+    # «per nå» — aldri en klipping til now() med 200.
+    naa = datetime.now(timezone.utc)
+    fremtid = (naa + timedelta(days=30)).isoformat()
+    r2 = klient.get(f"/v1/nokkeltall?fra={naa.isoformat()}"
+                    f"&til={fremtid}".replace("+00:00", "Z"), headers=h)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["vindu_slutt"] == fremtid
+
+
+@pg
+def test_fritt_intervall_er_halvapent_som_vinduene(migrator, klient,
+                                                   token):
+    """PR-C, port 5 for egendefinert: en hendelse NØYAKTIG på `til`
+    ligger utenfor [fra, til) — og nøyaktig på `fra` innenfor. Én
+    vindusdefinisjon, uansett velger."""
+    ten = "t-m16-" + secrets.token_hex(3)
+    grense = datetime(2026, 8, 20, 12, 0, 0, tzinfo=timezone.utc)
+    _sett_kontekst(migrator, ten)
+    _logg(migrator, ten, ts=grense)
+    migrator.commit()
+    tok, _ = token(tenant=ten, scopes=("decisions:read",))
+    h = {"authorization": f"Bearer {tok}"}
+
+    def _total(fra, til):
+        r = klient.get(f"/v1/nokkeltall?fra={fra.isoformat()}"
+                       f"&til={til.isoformat()}".replace("+00:00", "Z"),
+                       headers=h)
+        assert r.status_code == 200, r.text
+        return r.json()["beslutninger"]["total"]
+
+    time = timedelta(hours=1)
+    assert _total(grense - time, grense) == 0, "hendelsen på `til` talt med"
+    assert _total(grense, grense + time) == 1, "hendelsen på `fra` mistet"

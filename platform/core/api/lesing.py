@@ -151,14 +151,54 @@ NOKKELTALL_VINDUER = {"24t": timedelta(hours=24),
 #: så et avkuttet utsnitt er synlig for klienten (M-16 §3).
 NOKKELTALL_LUKKEDE_GRENSE = 50
 
+#: Taket på et fritt intervall: 366 døgn rommer et helt år også over
+#: skuddår. Grensen er et vern om skannet (086-indeksene bærer det, men
+#: ikke ubegrenset), og den håndheves som 400 — aldri som stille
+#: klipping: et svar om et mindre utsnitt enn det som ble spurt om er
+#: et svar på noe annet.
+NOKKELTALL_MAKS_SPENN = timedelta(days=366)
+
 
 def _nokkeltall_vindu(request: Request) -> tuple[datetime, datetime] | None:
-    # Fritt intervall er BEVISST ikke implementert i v1 (§3:
-    # forhåndsdefinerte vinduer). En klient som likevel ber om `fra`/`til`
-    # skal få 400 — ikke et urelatert 24-timerssvar med status 200. Et
-    # eksplisitt spørsmål besvares aldri stille med noe annet.
-    if "fra" in request.query_params or "til" in request.query_params:
-        return None
+    """DEN ENE vindushjelpen — nå også for fritt intervall (PR-C).
+
+    Reglene, alle med 400 som svar fordi et eksplisitt spørsmål aldri
+    besvares stille med noe annet:
+
+      * `fra`/`til` kreves SAMMEN; én alene er et halvt spørsmål.
+      * `vindu` sammen med `fra`/`til` er TO spørsmål i ett kall —
+        hvilket av dem et 200-svar gjaldt ville vært klientens gjetning.
+      * Streng ISO-8601 (datetime.fromisoformat). Et NAIVT tidsstempel
+        avvises: UTC er basens språk, og å gjette avsenderens sone er
+        et stille svar på noe annet. Sonebærende verdier normaliseres
+        til UTC.
+      * `fra < til` strengt; intervallet er halvåpent `[fra, til)` som
+        forhåndsvinduene — én definisjon, uansett velger.
+      * Spennet er begrenset (NOKKELTALL_MAKS_SPENN). `til` i framtiden
+        er lovlig: et tomt framtidsutsnitt er et sant «per nå».
+
+    Svaret ekkoer de PARSEDE grensene — aldri en klippet variant med
+    status 200.
+    """
+    fra_raa = request.query_params.get("fra")
+    til_raa = request.query_params.get("til")
+    if fra_raa is not None or til_raa is not None:
+        if "vindu" in request.query_params:
+            return None
+        if fra_raa is None or til_raa is None:
+            return None
+        try:
+            fra = datetime.fromisoformat(fra_raa)
+            til = datetime.fromisoformat(til_raa)
+        except ValueError:
+            return None
+        if fra.tzinfo is None or til.tzinfo is None:
+            return None
+        fra = fra.astimezone(timezone.utc)
+        til = til.astimezone(timezone.utc)
+        if not fra < til or til - fra > NOKKELTALL_MAKS_SPENN:
+            return None
+        return fra, til
     valg = request.query_params.get("vindu", "24t")
     lengde = NOKKELTALL_VINDUER.get(valg)
     if lengde is None:
