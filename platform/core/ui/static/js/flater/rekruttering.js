@@ -23,7 +23,8 @@ import { hentJson, signerRekrutteringsliste, lagreStillingsprofil,
          slettUtsendingstekst,
          reserverBunt, lastOppBunt, bestillEvaluering,
          hentEvalueringer, hentEvalueringsrapport,
-         nyIdempotensnokkel, UautorisertFeil } from "../api.js";
+         nyIdempotensnokkel, hentKandidatdokument,
+         UautorisertFeil } from "../api.js";
 import { harScope } from "../sitekart.js";
 import { DataTabell } from "../tabell.js";
 
@@ -62,10 +63,17 @@ function kandidatkortBoks(oppdragId, kandidatId) {
         el("dd", { text: verdi }));
     }
     // DOKUMENTENE VISES, IKKE LASTES NED (eiers funn 31/8: kunden har
-    // alt filene lokalt). Visningen skjer i en SANDKASSE: serveren
-    // setter `Content-Security-Policy: sandbox` på HTML (unik origin,
-    // ingen skript, ingen sesjon), og rammen her er selv sandboxet —
-    // opplastet innhold rendres med null fullmakter.
+    // alt filene lokalt). To atskilte kontekster (runde 2 — direkte
+    // `src` ga blank side): HENTINGEN gjør forelderen selv, same-origin
+    // med øktcookien, for en sandboxet ramme har opak origin og får
+    // aldri cookien med sin egen forespørsel. RENDRINGEN skjer så fra
+    // en blob i en ramme uten fullmakter: HTML og tekst i full sandkasse
+    // (`sandbox=""` — ingen skript, ingen origin); PDF i egen ramme uten
+    // sandkasse-attributt, for PDF-viseren er en plugin nettlesere ikke
+    // kjører i sandboxede rammer (blank side igjen) — og en blob TYPET
+    // application/pdf av serverens egen dom rendres aldri som HTML, så
+    // den kan ikke bli DOM eller skript. Alt annet vises aldri: det får
+    // en nedlastingslenke, som serverens attachment-fall.
     const dok = (svar.dokumenter || [])
       .filter((d) => d && typeof d === "object"
         && typeof d.filnavn === "string"
@@ -75,14 +83,43 @@ function kandidatkortBoks(oppdragId, kandidatId) {
           type: "button", text: d.filnavn });
         vis.setAttribute("aria-label",
           `${t("ui.rekruttering.kandidatkort.vis_dokument")} — ${d.filnavn}`);
-        vis.addEventListener("click", () => {
-          const ramme = el("iframe", {
-            class: "rekrut-dokvisning",
-            title: d.filnavn,
-            sandbox: "",
-            src: "/v1/rekruttering/kandidatdokument/"
-              + `${oppdragId}/${encodeURIComponent(d.dokument_id)}` });
-          Detaljpanel({ tittel: d.filnavn, innhold: ramme });
+        vis.addEventListener("click", async () => {
+          vis.disabled = true;
+          let dokument;
+          try {
+            dokument = await hentKandidatdokument(oppdragId, d.dokument_id);
+          } catch {
+            // Samme dempede form som kortets egen henting: frist,
+            // nett eller økt — dokumentet er utilgjengelig NÅ.
+            vis.disabled = false;
+            Detaljpanel({ tittel: d.filnavn, innhold: el("p", {
+              role: "alert",
+              text: t("ui.rekruttering.kandidatkort.dokument_feilet") }) });
+            return;
+          }
+          vis.disabled = false;
+          const url = URL.createObjectURL(dokument.blob);
+          let innhold;
+          if (["text/html", "application/xhtml+xml", "text/plain"]
+              .includes(dokument.innholdstype)) {
+            innhold = el("iframe", { class: "rekrut-dokvisning",
+              title: d.filnavn, sandbox: "", src: url });
+          } else if (dokument.innholdstype === "application/pdf") {
+            innhold = el("iframe", { class: "rekrut-dokvisning rekrut-dokvisning-pdf",
+              title: d.filnavn, src: url });
+          } else {
+            const lenke = el("a", { class: "knapp",
+              href: url, text: t("ui.rekruttering.kandidatkort.last_ned") });
+            lenke.setAttribute("download", d.filnavn);
+            innhold = el("div", {},
+              el("p", { text: t(
+                "ui.rekruttering.kandidatkort.kan_ikke_vises") }),
+              lenke);
+          }
+          // Blob-URL-en peker på minne og slippes når panelet lukkes —
+          // alle lukkeveiene ender i `paaLukk`.
+          Detaljpanel({ tittel: d.filnavn, innhold,
+            paaLukk: () => URL.revokeObjectURL(url) });
         });
         return el("li", {}, vis);
       });

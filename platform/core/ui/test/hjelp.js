@@ -19,8 +19,12 @@ const dom = new JSDOM("<!doctype html><html lang='nb'><body></body></html>", {
   pretendToBeVisual: true,
 });
 const w = dom.window;
+// `performance` står IKKE i listen: jsdoms PerformanceImpl.now kaller
+// global `performance.now()`, så peker globalen på jsdom-wrapperen blir
+// det uendelig rekursjon («Maximum call stack size exceeded») ved første
+// tidsmåling — f.eks. når en iframe får en src. Nodes egen duger.
 for (const navn of ["window", "document", "navigator", "HTMLElement", "Node",
-                    "Element", "getComputedStyle", "performance",
+                    "Element", "getComputedStyle",
                     "localStorage", "SVGElement", "customElements",
                     "NodeFilter", "Event", "KeyboardEvent", "MouseEvent"]) {
   if (w[navn] === undefined) continue;
