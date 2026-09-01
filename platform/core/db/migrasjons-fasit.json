@@ -90,5 +90,6 @@
   "089_m35_kontinuitet.sql": "c69fee02918e077a8ec9f6760b2edc358b1c4e7f98259c8873385baf8d14cebb",
   "090_m10_backupinnsyn.sql": "df4fdd3a50f2f9639c378db0cf8205eadb7ba5e657aa8fd3459205eff1a5d5bb",
   "091_m11_selvtest.sql": "b4ebb1eac6e7259e0981c0201a80b290868d056b81a82f5779f5f8df4d55781b",
-  "092_m3_datakvalitet.sql": "00ad3813de3e621f3c97671361bd875b7f635f57538900cb73feba1e2dfb745d"
+  "092_m3_datakvalitet.sql": "00ad3813de3e621f3c97671361bd875b7f635f57538900cb73feba1e2dfb745d",
+  "093_m4_retensjonsregister.sql": "0cd969d49c8fc8f8ef5e6c8ff90a3fb16541258666ed527b27a3564c98bd944a"
 }

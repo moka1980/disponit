@@ -566,7 +566,40 @@ INSERT INTO _design VALUES
     -- 016s raa utsted_challenge er REVOKEd fra runtime. INGEN semikolon i
     -- denne kommentaren: bade reparasjonen og pariteten deler filen paa
     -- setningsskilletegnet, og ett semikolon her kutter VALUES-listen.
-    ('FUNCTION', 'utsted_challenge_selvbetjent(text,text,boolean,text,text)', 'disponit_domene_eier');
+    ('FUNCTION', 'utsted_challenge_selvbetjent(text,text,boolean,text,text)', 'disponit_domene_eier'),
+    -- 093 (M-4): retensjonsregisteret. De fem tabellene og de tolv
+    -- funksjonene eies av NOLOGIN-rollen disponit_lager_eier, og
+    -- eierskapet ER hele sikkerhetsargumentet: runtime naar tabellene
+    -- KUN gjennom de fire lesedoerene, maalerollen KUN gjennom
+    -- m4_mal_lagre, og kolonnegrantene paa de maalte lagrene er gitt til
+    -- NETTOPP denne rollen. Flyttes eierskapet til migrator, leser
+    -- definer-veiene som migrator -- som ikke har m4_maaler-policyen paa
+    -- de maalte tabellene og derfor faar null rader tilbake i stedet for
+    -- en feil. En stille null er nøyaktig det modulen finnes for aa ikke
+    -- levere. INGEN semikolon i denne kommentaren -- VALUES-blokken
+    -- parses paa setningsskilletegnet
+    ('TABLE',    'retensjonslager',      'disponit_lager_eier'),
+    ('TABLE',    'retensjonsmaaling',    'disponit_lager_eier'),
+    ('TABLE',    'retensjonsstorrelse',  'disponit_lager_eier'),
+    ('TABLE',    'retensjonsbeholdning', 'disponit_lager_eier'),
+    ('TABLE',    'retensjonsfunn',       'disponit_lager_eier'),
+    -- Registervaktene. De slaar opp i information_schema/pg_proc paa
+    -- vegne av den som skriver registeret, og maa ha eierens identitet
+    ('FUNCTION', 'm4_lager_finnes_i_basen()',   'disponit_lager_eier'),
+    ('FUNCTION', 'm4_reaper_finnes_i_basen()',  'disponit_lager_eier'),
+    -- Append-only-vaktene paa de tre maalelagrene
+    ('FUNCTION', 'm4_maaling_vakt()',           'disponit_lager_eier'),
+    ('FUNCTION', 'm4_aggregat_vakt()',          'disponit_lager_eier'),
+    -- Maaleveien og modulens ene reaper
+    ('FUNCTION', 'm4_registrer_funn(uuid,text,text,text,text,jsonb)', 'disponit_lager_eier'),
+    ('FUNCTION', 'm4_registerkolonner()',       'disponit_lager_eier'),
+    ('FUNCTION', 'm4_reap_egne_maalinger(integer)', 'disponit_lager_eier'),
+    ('FUNCTION', 'm4_mal_lagre(integer,boolean)',   'disponit_lager_eier'),
+    -- De fire lesedoerene -- de gaar gjennom krev_tenantkontekst-porten
+    ('FUNCTION', 'm4_siste_maaling(text)',      'disponit_lager_eier'),
+    ('FUNCTION', 'm4_retensjonsbilde(text)',    'disponit_lager_eier'),
+    ('FUNCTION', 'm4_retensjonskatalog(text)',  'disponit_lager_eier'),
+    ('FUNCTION', 'm4_retensjonsfunn(text)',     'disponit_lager_eier');
 
 DO $$
 DECLARE

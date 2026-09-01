@@ -1110,6 +1110,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
 
     def datakvalitet(request: Request) -> Response:
         return lesing.datakvalitet(tjeneste, request)
+    def retensjon(request: Request) -> Response:
+        return lesing.retensjon(tjeneste, request)
 
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
@@ -1452,6 +1454,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
+        # M-4 (093): retensjonsregnskapet. Kontrollplanet er
+        # `platform:admin` og avgjøres INNE i endepunktet
+        # (`/v1/utrulling`-presedensen) — se RUTESCOPE-raden.
+        Route("/v1/retensjon", retensjon, methods=["GET"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -2071,6 +2077,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # blokkerer ingen bestilling — en skriverute her ville vært det
     # første steget bort fra den dommen.
     ("GET",  "/v1/datakvalitet"):            "security:read",
+    # M-4 (093): retensjonsregnskapet — samme klasse som driftstatus over.
+    # INGEN nytt scope, og BEVISST ikke `platform:admin`: det scopet står
+    # ikke i `LESESCOPES`, og en browserøkt mot et scope utenfor det
+    # settet avvises i `_autentiser` — en rute deklarert `platform:admin`
+    # ville gitt 403 for hver eneste innlogging. Kontrollplanet
+    # (katalogtall, alle tenanters beholdning, hele funnlisten) er derfor
+    # en UTVIDELSE av svaret, avgjort i `retensjon.svar_for`, akkurat som
+    # for `/v1/utrulling`.
+    #
+    # Mutasjonen finnes ikke som HTTP: målingen skrives av
+    # `disponit-lagermaaling.service` (rollen `disponit_lagermaaler`), og
+    # registerets dommer felles i MIGRASJON — to fullmakter web-API-et
+    # ikke har.
+    ("GET",  "/v1/retensjon"):               "security:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

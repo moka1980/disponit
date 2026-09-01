@@ -1,0 +1,26 @@
+# M-4 (093): daglig, 03:17.
+#
+# KADENSEN FØLGER AV HVA SOM MÅLES. Retensjon endrer seg i døgn, ikke i
+# minutter: fristene er 24 timer (staged artefakter) og 90–400 døgn
+# (kandidat-, e-post- og målelagrene). En tettere kadens ville gitt
+# nøyaktig samme svar til en høyere pris — og prisen er ikke null:
+# beholdningstellingen leser rader i de største tabellene i basen.
+#
+# 03:17 og ikke 03:00: de faste klokkeslettene er der backupen,
+# ryddejobbene og verten selv har sine topper. `RandomizedDelaySec` sprer
+# i tillegg starten, så flere verter ikke treffer den samme minuttet.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte, måler
+# ved oppstart. Det er riktig her — målingen gjelder NÅ, ikke da, og et
+# ferskt bilde rett etter oppstart er nettopp det driften vil se.
+
+[Unit]
+Description=Disponit retensjonsmålingstimer (M-4)
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
