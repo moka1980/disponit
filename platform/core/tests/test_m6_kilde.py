@@ -821,3 +821,45 @@ def test_ugyldig_redirect_uri_er_ukonfigurert_ikke_en_omdirigering(klient,
         r = _start(klient, cookie, csrf, _postboks())
         assert r.status_code == 503, (ugyldig, r.text)
         assert r.json()["feil"] == "m365_ikke_konfigurert"
+
+
+def test_m365_konfigurasjonen_er_koblet_hele_veien():
+    """De fem M365-variablene skal nå API-ets prosess — alle tre leddene.
+
+    🔴 KJEDEN ER TRE LEDD, OG ETT MANGLET (1/9). `epost_kilde` leser
+    `os.environ`, men API-uniten bruker ikke `EnvironmentFile`: den henter
+    hver hemmelighet med `LoadCredential` fra `/etc/disponit/api/<NAVN>`,
+    og `opp.sh` er den som materialiserer filene fra miljøfila. PR-B var
+    ferdig og merget mens INGEN av de fem sto i noen av de to filene —
+    modulen ville svart «ikke konfigurert» uansett hva eier la i
+    staging.env, og feilen ville sett ut som en Azure-feil.
+
+    Hydreringen (`hemmeligheter.last_credentials`) itererer over HELE
+    katalogen og trenger ingen liste — derfor måles bare de to leddene
+    som faktisk har en liste å glemme noe fra.
+    """
+    rot = Path(__file__).resolve().parents[3]
+    opp = (rot / "deploy/staging/opp.sh").read_text(encoding="utf-8")
+    unit = (rot / "deploy/staging/disponit-api.service").read_text(
+        encoding="utf-8")
+    for navn in ("DISPONIT_M365_CLIENT_ID", "DISPONIT_M365_CLIENT_SECRET",
+                 "DISPONIT_M365_REDIRECT_URI", "DISPONIT_M365_TENANT",
+                 "DISPONIT_M365_ALLOWLIST"):
+        assert f"skriv_cred api {navn}" in opp.replace("  ", " ") \
+            or f"skriv_cred api {navn}" in " ".join(opp.split()), \
+            f"opp.sh materialiserer ikke {navn} — fila API-et leser blir"
+        assert f"LoadCredential={navn}:/etc/disponit/api/{navn}" in unit, \
+            f"{navn} lastes ikke inn i API-uniten — verdien når aldri" \
+            " prosessen, uansett hva som står i miljøfila"
+    # …og hemmeligheten skal KUN komme fra LoadCredential, aldri fra en
+    # EnvironmentFile hele prosesstreet kan lese. Målt som: hver linje i
+    # uniten som nevner variabelen ER en LoadCredential-linje.
+    #
+    # Første versjon av denne asserten splittet fila på «EnvironmentFile»
+    # og lette i halen — som selvsagt inneholder LoadCredential-linjene
+    # også, så den slo ut på seg selv. Den nye leser linje for linje.
+    for linje in unit.splitlines():
+        if "DISPONIT_M365_CLIENT_SECRET" not in linje:
+            continue
+        assert linje.strip().startswith("LoadCredential="), \
+            f"klienthemmeligheten eksponeres utenfor LoadCredential: {linje!r}"
