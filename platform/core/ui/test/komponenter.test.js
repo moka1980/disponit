@@ -1022,3 +1022,21 @@ test("AppShell: den aktive modulflaten er merket i menyen som eier den", () => {
     .getAttribute("aria-current"), "page",
   "en dyplenke inn i flaten er umerket i menyen");
 });
+
+test("AppShell: tenantbrikken utelates når den gjentar produktnavnet", () => {
+  // Eier: «disponit står 2 ganger». Produktnavn + tenantnavn er to
+  // forskjellige ting, men når de er samme streng er den andre ren støy.
+  const ruter = byggRuter({ scopes: ["decisions:read"] });
+  const lik = AppShell({ tenant: "disponit", sprak: "nb", aktiv: "oversikt",
+    ruter, paaSprak: () => {}, paaLoggUt: () => {} }).rot;
+  assert.equal(lik.querySelector(".skall-tenant"), null,
+    "tenantbrikken gjentar produktnavnet");
+
+  // …men en ekte kunde skal fortsatt se hvilken tenant hun er i. Det er
+  // hele grunnen til at brikken finnes.
+  const ulik = AppShell({ tenant: "Nordvik Regnskap AS", sprak: "nb",
+    aktiv: "oversikt", ruter, paaSprak: () => {}, paaLoggUt: () => {} }).rot;
+  assert.equal(ulik.querySelector(".skall-tenant").textContent,
+    "Nordvik Regnskap AS",
+    "tenantbrikken forsvant for en kunde som trenger den");
+});

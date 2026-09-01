@@ -78,7 +78,11 @@ function begrepstabell(begreper) {
         : t("ui.kunnskap.status.gjeldende") })));
   }
   tabell.append(tbody);
-  return tabell;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tabell);
 }
 
 function funntabell(funn) {
@@ -98,7 +102,11 @@ function funntabell(funn) {
       el("td", {}, Tidspunkt(f.forst_sett, {}))));
   }
   tabell.append(tbody);
-  return tabell;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tabell);
 }
 
 function funnseksjon(funn) {

@@ -104,13 +104,17 @@ function regelseksjon(regler) {
   for (const r of regler) {
     tbody.append(el("tr", {},
       el("th", { scope: "row", text: r.regel_id }),
-      el("td", { text: `${r.relasjon}.${r.kolonne}` }),
+      el("td", { class: "celle-id", text: `${r.relasjon}.${r.kolonne}` }),
       el("td", { text: regeltypeTekst(r.regeltype) }),
       el("td", { text: alvorlighetTekst(r.alvorlighet) }),
       el("td", { class: "celle-tekst", text: r.begrunnelse })));
   }
   tabell.append(tbody);
-  seksjon.append(tabell);
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  seksjon.append(el("div", { class: "tablewrap" }, tabell));
   return seksjon;
 }
 
@@ -184,7 +188,11 @@ function profiltabell(k, regler) {
       el("td", { text: avvik })));
   }
   tabell.append(tbody);
-  return tabell;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tabell);
 }
 
 function profilseksjon(d) {
@@ -236,7 +244,11 @@ function funntabell(funn, medTenant) {
     tbody.append(rad);
   }
   tabell.append(tbody);
-  return tabell;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tabell);
 }
 
 function funnseksjon(d) {

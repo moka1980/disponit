@@ -128,7 +128,11 @@ function tabell(plikter, ctx, apneDialog) {
   const tbody = el("tbody");
   for (const p of plikter) tbody.append(pliktrad(p, ctx, apneDialog));
   tb.append(tbody);
-  return tb;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tb);
 }
 
 // Registreringsskjemaet. EIEREN VELGES EKSPLISITT — feltet er påkrevd og
@@ -139,7 +143,7 @@ function tabell(plikter, ctx, apneDialog) {
 function registrerSkjema(ctx, last) {
   const boks = el("div", { class: "skjemaboks" });
   const utfall = el("p", { "aria-live": "polite" });
-  const skjema = el("form", { class: "kv-skjema" });
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const tittel = el("input", { id: "plikt-tittel", name: "tittel",
     type: "text", required: true, maxlength: 200 });
   const eier = el("input", { id: "plikt-eier", name: "eier_bruker_id",
@@ -156,21 +160,29 @@ function registrerSkjema(ctx, last) {
   }
   const knapp = el("button", { type: "submit",
     text: t("ui.avtalefrist.knapp.registrer") });
+  // ÉN GRUPPE PER FELT (eiervedtak 1/9: «feltene og knappene bør stå ved
+  // siden av hverandre»). Etikett, kontroll og hjelpetekst hører sammen —
+  // ligger de som løse søsken, sprer rutenettet dem i hver sin celle, og
+  // etiketten mister den visuelle koblingen til feltet sitt uansett hva
+  // `for`-attributtet sier.
+  const felt = (id, nokkel, kontroll, hjelp) => el("div", { class: "felt" },
+    el("label", { for: id, text: t(`ui.avtalefrist.skjema.${nokkel}`) }),
+    kontroll,
+    hjelp ? el("p", { class: "muted",
+      text: t(`ui.avtalefrist.skjema.${hjelp}`) }) : null);
+
   skjema.append(
-    el("label", { for: "plikt-tittel",
-      text: t("ui.avtalefrist.skjema.tittel") }), tittel,
-    el("label", { for: "plikt-eier",
-      text: t("ui.avtalefrist.skjema.eier") }), eier,
-    el("p", { class: "muted", text: t("ui.avtalefrist.skjema.eierhjelp") }),
-    el("label", { for: "plikt-kilde",
-      text: t("ui.avtalefrist.skjema.kilde") }), kilde,
-    el("p", { class: "muted", text: t("ui.avtalefrist.skjema.kildehjelp") }),
-    el("label", { for: "plikt-frist",
-      text: t("ui.avtalefrist.skjema.frist") }), frist,
-    el("label", { for: "plikt-gjentakelse",
-      text: t("ui.avtalefrist.skjema.gjentakelse") }), gjentakelse,
-    knapp,
-    el("p", { class: "muted", text: t("ui.avtalefrist.skjema.varselhjelp") }));
+    felt("plikt-tittel", "tittel", tittel),
+    felt("plikt-eier", "eier", eier, "eierhjelp"),
+    felt("plikt-kilde", "kilde", kilde, "kildehjelp"),
+    felt("plikt-frist", "frist", frist),
+    felt("plikt-gjentakelse", "gjentakelse", gjentakelse),
+    // Knappen og varselhjelpen står i en egen bunnrad over hele bredden:
+    // en send-knapp inne i en feltkolonne leses som «send inn DETTE
+    // feltet».
+    el("div", { class: "skjema-bunn" }, knapp,
+      el("p", { class: "muted",
+        text: t("ui.avtalefrist.skjema.varselhjelp") })));
 
   // Én nøkkel per intensjon (PR-014 R1): nullstilles når innholdet
   // endres, og ved 4xx — et avvist forsøk har FORBRUKT nøkkelen, og en
