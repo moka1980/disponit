@@ -270,6 +270,16 @@ const BASISRUTER = [
   // aldri UTVIDE tilgang like lite som den skal inndra den.
   // Skriveveiene er gatet på `bestilling:opprett` i `RUTESCOPE`.
   { nokkel: "tilgang", scope: "security:read", modulflate: 12 },
+  // M-22 (098): SaaS- og lisensagenten. MODULFLATE bak `decisions:read`
+  // — scopet API-et bak flatens SVAKESTE ledd krever (wcagkontroll-
+  // regelen): lista er `GET /v1/lisens` i RUTESCOPE, og de tre
+  // skriveveiene er alt gatet både inne på flaten og i registeret
+  // (`bestilling:opprett`). En sammenslått oppføring skal aldri inndra
+  // tilgang, og her ville et mutasjonsscope på ruten fjernet hele
+  // registeret for `leser`, `sikkerhet`, `godkjenner` og
+  // `policyforvalter` — som alle har lov til å SE hva virksomheten
+  // betaler for og når det må besluttes.
+  { nokkel: "lisens", scope: "decisions:read", modulflate: 22 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

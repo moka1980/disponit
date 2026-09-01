@@ -909,7 +909,14 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     "ordlisten har ingen inngang i det hele tatt for en ekte tenant");
   assert.ok(kortene(nordvik.rot).includes("#/avtalefrist"),
     "fristregisteret har ingen inngang i det hele tatt for en ekte tenant");
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 9,
+  // M-22 (098): lisensregisteret er den neste modulflaten en LESEØKT har
+  // rute til. TALLET UNDER ER UTTØMMENDE og vokser med hver slik flate —
+  // en ny modulflate bak `decisions:read` skal UTVIDE det, ikke skrive
+  // en ny assert ved siden av (lærdommen fra klynge 1: to uttømmende
+  // asserts over samme rot kan aldri begge være sanne).
+  assert.ok(kortene(nordvik.rot).includes("#/lisens"),
+    "lisensregisteret har ingen inngang i det hele tatt for en ekte tenant");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 10,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -919,8 +926,8 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
-    ["#/avtalefrist", "#/dokumentmal", "#/kunnskap", "#/nokkeltall",
-      "#/rekruttering", "#/wcagkontroll"],
+    ["#/avtalefrist", "#/dokumentmal", "#/kunnskap", "#/lisens",
+      "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),

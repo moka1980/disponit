@@ -80,6 +80,16 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # TILSTANDEN (eller innholdskravet basen håndhever) som sier nei, og
     # forskjellen er hele forklaringen mennesket i flaten trenger.
     Feilvei("tilgang_ulovlig_tilstand", 409, ("avvis",), None),
+    # 098 (M-22): lisensregisterets doerer nekter en overgang tilstanden
+    # ikke tillater — avslutning uten begrunnelse, en eier som ikke er
+    # medlem av tenanten, en fornyelsesdato som flyttes bakover, eller en
+    # lisens som alt er avsluttet. 409 av samme grunn som raden over:
+    # kroppen ER velformet, det er TILSTANDEN (eller innholdskravet basen
+    # haandhever) som sier nei. Egen kode og ikke plikt-radens: to
+    # registre med hver sin dom skal ikke dele feilkode, ellers blir
+    # flatens forklaring til mennesket en gjetning om hvilket register
+    # som sa nei.
+    Feilvei("lisens_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

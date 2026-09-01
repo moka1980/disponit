@@ -160,6 +160,13 @@ APPEND_ONLY_TRIGGERE = (
     ("tilgangsfunn", "m12_funn_vakt"),
     ("tilgang", "m12_tilgang_vakt"),
     ("tilgangsobjekt", "m12_objekt_vakt"),
+    # 098 (M-22): lisensen avsluttes, den slettes aldri; og ankeret er
+    # append-only fordi ankeret ER idempotensen — kunne raden fjernes,
+    # ville utløpsvarselet blitt køet på nytt. Begge nekter DELETE, som
+    # de skal, så oppryddingen må skru dem av. `lisensvarsling` har
+    # ingen vakt: varslingspunktene er innstillinger, ikke evidens.
+    ("lisensvarsel_sendt", "m22_anker_vakt"),
+    ("lisens", "m22_lisens_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -289,6 +296,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # (eieren), som ikke ryddes herfra, så familien er fri
                  # for øvrig.
                  "tilgangsfunn", "tilgang", "tilgangsobjekt",
+                 # 098 (M-22): ankeret og varslingspunktene peker begge
+                 # på `lisens` — barna først, lisensen etter. Lisensen
+                 # selv peker på den GLOBALE `brukeridentitet` (eieren),
+                 # som ikke ryddes herfra, så familien er fri for øvrig.
+                 "lisensvarsel_sendt", "lisensvarsling", "lisens",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

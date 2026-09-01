@@ -248,6 +248,18 @@ GRANT EXECUTE ON FUNCTION m12_objekter(TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m12_apne_funn(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m12_sveip_gjennomganger(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m12_sveip_for_tenant(TEXT, INT) FROM {rolle};
+-- 098 (M-22): lisensregisterets LESEDØR, samme snitt og samme
+-- begrunnelse som 096-blokken over. `lisens`, `lisensvarsling` og
+-- `lisensvarsel_sendt` står bevisst IKKE i noen GRANT-liste her: runtime
+-- har ingen SELECT på dem i det hele tatt (SP-7) og når registeret KUN
+-- gjennom dørene, som krever tenantkontekst først. Skrivedørene ligger i
+-- M37_RETTIGHETER_API (menneskelige handlinger i flaten); SVEIPEN hører
+-- senderen til (VARSLER_RETTIGHETER) og er kryss-tenant — et grant her
+-- ville gitt forespørselsveien nøyaktig det vinduet senderrollen finnes
+-- for å nekte den.
+SET LOCAL ROLE disponit_lisens_eier;
+GRANT EXECUTE ON FUNCTION m22_lisenser(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m22_koe_utlopsvarsler(INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -640,6 +652,18 @@ SET LOCAL ROLE disponit_tilgang_eier;
 GRANT EXECUTE ON FUNCTION m12_registrer_objekt(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m12_registrer_tilgang(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m12_registrer_gjennomgang(TEXT, UUID, TEXT) TO {rolle};
+-- 098 (M-22): lisensregisterets tre skrivedører — registrering,
+-- fornyelse og avslutning. Menneskelige handlinger i flaten
+-- (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu som
+-- 096-blokken over, men en ANNEN eier — derfor sin egen rolleblokk.
+-- Begrunnelseskravet ved avslutning håndheves i døren og i CHECK-en,
+-- ikke her. MERK at fornyelsen er en MENNESKELIG dør: sveipen flytter
+-- aldri en fornyelsesdato, og har heller ingen rettighet til å gjøre
+-- det.
+SET LOCAL ROLE disponit_lisens_eier;
+GRANT EXECUTE ON FUNCTION m22_registrer_lisens(TEXT, UUID, TEXT, TEXT, TEXT, INT, NUMERIC, TEXT, DATE, TEXT, INT, TEXT, INT[], TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m22_registrer_fornyelse(TEXT, UUID, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m22_marker_avsluttet(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -719,6 +743,18 @@ RESET ROLE;
 -- og ikke lese en eneste plikt.
 SET LOCAL ROLE disponit_plikt_eier;
 GRANT EXECUTE ON FUNCTION m21_koe_fristvarsler(INT) TO {rolle};
+RESET ROLE;
+-- 098 (M-22): utløpssveipen — det FEMTE forpasset i senderens pre-pass,
+-- og det andre som er kryss-tenant per konstruksjon. Den bor her av
+-- 035/096s grunn: senderen er den ene timerdrevne prosessen som
+-- allerede eier varselkøens rytme, backoff og idempotens, og en ny
+-- varslingsvei er en ny vei å miste et varsel i. Klyngefundamentet slo
+-- derfor fast at M-22 IKKE får en egen sveiperolle.
+--
+-- ÉN EXECUTE, INGEN TABELLRETTIGHETER — som for M-21: senderrollen kan
+-- kjøre sveipen og ikke lese en eneste lisens.
+SET LOCAL ROLE disponit_lisens_eier;
+GRANT EXECUTE ON FUNCTION m22_koe_utlopsvarsler(INT) TO {rolle};
 RESET ROLE;
 -- 056: utsendingsveien — det er SENDEREN som konsumerer signerte lister:
 -- frigivelse per mottaker og frigivelsesoppdraget (tredje opphavsvei).

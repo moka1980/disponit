@@ -30,6 +30,7 @@ import { visDokumentmal } from "./flater/dokumentmal.js";
 import { visKunnskap } from "./flater/kunnskap.js";
 import { visAvtalefrist } from "./flater/avtalefrist.js";
 import { visTilgang } from "./flater/tilgang.js";
+import { visLisens } from "./flater/lisens.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -88,6 +89,11 @@ const FLATER = {
   // `bestilling:opprett`, men det er ergonomi: dørene i basen er den
   // bindende porten.
   tilgang: visTilgang,
+  // M-22 (098): modulflate bak `decisions:read` (sitekart.js) —
+  // scope-gaten bor der, som for de andre flatene. Skriveveiene i
+  // flaten er i tillegg gated på `bestilling:opprett`, men det er
+  // ergonomi: dørene i basen er den bindende porten.
+  lisens: visLisens,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

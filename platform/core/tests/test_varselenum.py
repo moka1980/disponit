@@ -42,11 +42,18 @@ KANONISK = {
         # art MÅ oppdatere både fasiten her og deklarasjonen i
         # varselenum-reparasjon.sql, i samme commit. Da kan skriptet og
         # kjeden ikke drive fra hverandre igjen.
-        "pliktfrist"),
+        "pliktfrist",
+        # 098 (M-22): utløpsvarselet på en lisens. Samme arbeidsflyt som
+        # raden over, og den er ikke frivillig: fasiten her og
+        # deklarasjonen i varselenum-reparasjon.sql er utvidet i SAMME
+        # commit som migrasjonen. En modul som glemmer den ene, blir rød
+        # her før den rekker å bli stille i drift.
+        "lisensutlop"),
     "varsel_ressurs_type_chk": (
         "policyutkast", "modultoken", "domene", "plan",
         "backupverifisering", "selvtest",
-        "plikt"),  # 096 (M-21)
+        "plikt",     # 096 (M-21)
+        "lisens"),   # 098 (M-22)
 }
 
 _VARIABEL = {"varsel_art_chk": "v_art",
