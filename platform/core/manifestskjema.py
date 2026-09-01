@@ -494,7 +494,101 @@ KRAVGRENSER["m57-v1"] = {
     # §10s egen setning gjort mekanisk — ikke en blokkering vi må rundt.
     #
     # Hvert punkt som får sin måling, får sin linje her, pinnet før bygging.
-    "punktbinding": {},
+    #
+    # ---- 1/9: FEM AV SEKS FÅR SIN MÅLING (§0 — grensene FØR byggingen).
+    #
+    # Fram til nå bar `m57-v1` invariantpar, to ja-punkter og ytelsesparet.
+    # Ett av seks sjekklistepunkter hadde en pinnet grense, og selv DET var
+    # uflippbart: bindingen sto tom, så en gjennomført 5000-måling ville
+    # ikke kunnet flippe `ytelse_bestatt`. Grensen fantes, veien fra måling
+    # til punkt gjorde ikke.
+    #
+    # Formene under er IKKE oppfunnet her. Hvert manifestnotat navngir
+    # forbildet sitt, og de er speilet: suiten fra `m02-suite-v1`,
+    # datasettlikheten fra `m02-fordeling-v1`, flippedrillen fra
+    # `rollback-m56-v1`. Å finne på en fjerde form for det samme ville gjort
+    # to grenser som måler det samme ulikt sammenlignbare — og en
+    # akseptdoktrine tåler ikke to sannheter om samme ord.
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.ytelse_full_bunt_soknader",
+                           "maalt.ytelse_full_bunt_minutter"),
+        "tester_gronne_pa_staging": (
+            "maalt.suite_tester", "maalt.suite_feilet",
+            "maalt.m57_tester", "maalt.m57_feilet", "maalt.m57_hoppet",
+            "maalt.stagingidentitet"),
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.bunt_soknader", "maalt.fasitavvik",
+            "maalt.datasett_sha_lokal", "maalt.datasett_sha_staging"),
+        "revisjonslogg_korrekt": (
+            "maalt.revisjon_avskruinger", "maalt.revisjon_signaturer",
+            "maalt.revisjon_frigivelser",
+            "maalt.revisjon_hendelser_uten_identitet"),
+        "feilinjisering_til_unntakskø": (
+            "maalt.injisert_jobber", "maalt.unntakskoe_poster",
+            "maalt.koeposter_uten_jobbinding"),
+        "rollback_testet": (
+            "maalt.rullback_claims", "maalt.rullback_promoterte",
+            "maalt.claims_etter_drenering", "maalt.release_digest_bundet"),
+    },
+
+    # ---- SUITEN (`tester_gronne_pa_staging`), m02-suite-v1s form.
+    # Modulens EGEN andel måles ved siden av totalen: en grønn suite på
+    # 3000 tester beviser ingenting om M-57 hvis modulens egne 90 ble
+    # hoppet over. Derfor tre tall for andelen — kjørte, feilet, HOPPET —
+    # og det siste er det som skiller «bestått» fra «ikke forsøkt».
+    "suite_min_tester": 3000,
+    "suite_maks_feilet": 0,
+    "m57_min_tester": 80,
+    "m57_maks_feilet": 0,
+    "m57_maks_hoppet": 0,
+    # Stagingidentiteten bindes fordi punktet heter «på STAGING». Uten
+    # den er en lokal kjøring like god bevisverdi, og det er nøyaktig det
+    # punktet er ment å utelukke.
+    "krev_stagingidentitet": True,
+
+    # ---- DATASETTET (`syntetisk_datasett_likt_lokalt`),
+    # m02-fordeling-v1s form. Punktet heter «likt lokalt», så BEGGE
+    # digestene skal stå i artefaktet og være like — én digest beviser at
+    # noe kjørte, ikke at det kjørte likt to steder.
+    "datasett_min_soknader": 200,
+    "datasett_maks_fasitavvik": 0,
+    "krev_datasett_sha_lik": True,
+
+    # ---- REVISJONEN (`revisjonslogg_korrekt`). Tre hendelsestyper
+    # notatet navngir, hver med minst én forekomst, og null hendelser uten
+    # identitet: «målt som hendelser med identitet — ikke som en påstand
+    # om at de gjør det».
+    #
+    # MERK, ÆRLIG: dette punktet kan ikke oppfylles i dag. Avskruingsdøra
+    # er selvattestert (#159) og etterlater ingen varig hendelse, så
+    # `revisjon_avskruinger` vil stå 0 til #159 har gitt den en. Grensen
+    # registreres likevel NÅ, og det er §0 i praksis: den definerer hva
+    # #159 må levere, i stedet for å bli skrevet etterpå av den som
+    # allerede vet hva målingen ga.
+    "revisjon_min_avskruinger": 1,
+    "revisjon_min_signaturer": 1,
+    "revisjon_min_frigivelser": 1,
+    "revisjon_maks_uten_identitet": 0,
+
+    # ---- FEILINJISERINGEN (`feilinjisering_til_unntakskø`). Invarianten
+    # `kjoring_delvis_resultat_promotert` dekker FØRSTE halvdel — at
+    # ingenting ble promotert. Notatet er presist om hvorfor det ikke
+    # holder: «en kjøring som MISTER feilen helt består den like godt som
+    # en som køer den». Andre halvdel måles her: en post i køen per
+    # injisert jobb, og null poster uten binding til jobben som feilet.
+    "min_injiserte_jobber": 1,
+    "min_unntakskoe_poster": 1,
+    "maks_koeposter_uten_jobbinding": 0,
+
+    # ---- FLIPPEDRILLEN (`rollback_testet`), rollback-m56-v1s form.
+    # `ddl_begge_kjoringer_gronne` er SP-10/DDL-idempotens og en annen
+    # ting enn en releaseflipp — notatet sier det selv. Drillen måler at
+    # forrige release GJENOPPTAR arbeid: den claimer og promoterer etter
+    # rollback, og køen er drenert først.
+    "min_rullback_claims": 1,
+    "min_rullback_promoterte": 1,
+    "maks_claims_etter_drenering": 0,
+    "krev_release_digest_bundet": True,
 }
 
 #: M-31-planen §8, registrert FØR bygging (§0-regelen, som `m57-v1`).
@@ -2271,7 +2365,127 @@ def _grenser_m57(grense: dict, art: dict) -> list[str]:
         feil.append(
             f"ytelse_full_bunt_minutter={minutter:g}, krever <="
             f" {grense['ytelse_maks_minutter']} (§4s utførelsesfrist)")
+
+    # ---- DE FEM ØVRIGE PUNKTENE (1/9). Grensene ble registrert i
+    # `m57-v1` samme runde; uten håndhevelse her ville de vært prosa, og
+    # `punktbinding` ville sluppet gjennom et artefakt som navnga stiene
+    # uten å oppfylle dem.
+    #
+    # HVERT FELT ER VALGFRITT Å RAPPORTERE, MEN IKKE Å OPPFYLLE: et
+    # artefakt som ikke påberoper seg punktet trenger ikke bære tallene,
+    # og `_punktbinding` er den som avgjør om punktet PÅBEROPES. Her
+    # måles tallene når de finnes — og fravær felles av bindingen, ikke
+    # av en dobbel feilmelding herfra.
+    feil += _m57_terskler(m, grense)
     return feil
+
+
+def _m57_terskler(m: dict, grense: dict) -> list[str]:
+    """De fem sjekklistepunktenes tall, målt mot `m57-v1`.
+
+    Skilt ut som egen funksjon fordi `_grenser_m57` ellers ble en vegg:
+    fem uavhengige grupper som ikke deler tilstand, hver med sin egen
+    begrunnelse i grensen. Rekkefølgen er sjekklistens.
+    """
+    feil: list[str] = []
+
+    def minst(sti: str, grensenavn: str, hva: str) -> None:
+        if f"maalt.{sti}" not in _stier(m):
+            return                      # ikke påberopt — bindingen dømmer
+        verdi, f = _teller(m, f"maalt.{sti}", sti)
+        if f:
+            feil.append(f)
+        elif verdi < grense[grensenavn]:
+            feil.append(f"{sti}={verdi}, krever >= {grense[grensenavn]}"
+                        f" — {hva}")
+
+    def hoyst(sti: str, grensenavn: str, hva: str) -> None:
+        if f"maalt.{sti}" not in _stier(m):
+            return
+        verdi, f = _teller(m, f"maalt.{sti}", sti)
+        if f:
+            feil.append(f)
+        elif verdi > grense[grensenavn]:
+            feil.append(f"{sti}={verdi}, krever <= {grense[grensenavn]}"
+                        f" — {hva}")
+
+    # Suiten: totalen OG modulens andel. `m57_hoppet` er den som skiller
+    # «bestått» fra «ikke forsøkt».
+    minst("suite_tester", "suite_min_tester", "en halv suite er ikke suiten")
+    hoyst("suite_feilet", "suite_maks_feilet", "en rød suite er ikke grønn")
+    minst("m57_tester", "m57_min_tester",
+          "modulens egen andel må ha kjørt, ikke bare totalen")
+    hoyst("m57_feilet", "m57_maks_feilet", "modulens egne tester feilet")
+    hoyst("m57_hoppet", "m57_maks_hoppet",
+          "hoppede tester er ikke beståtte tester")
+    if grense.get("krev_stagingidentitet") and "maalt.suite_tester" in _stier(m):
+        if not str(m.get("stagingidentitet") or "").strip():
+            feil.append("stagingidentitet mangler — punktet heter «på"
+                        " staging», og uten identiteten er en lokal"
+                        " kjøring like god bevisverdi")
+
+    # Datasettet: begge digestene, og de skal være LIKE.
+    minst("bunt_soknader", "datasett_min_soknader",
+          "en bunt for liten til å rangere beviser ingen rangering")
+    hoyst("fasitavvik", "datasett_maks_fasitavvik",
+          "rangeringen avvek fra fasiten")
+    if grense.get("krev_datasett_sha_lik") and "maalt.bunt_soknader" in _stier(m):
+        # `.lower()`: en sha-digest er den SAMME digesten enten den er
+        # skrevet med store eller små bokstaver, og de to kjøringene
+        # skriver den hver for seg — CI og staging trenger ikke bruke
+        # samme verktøy. Uten normaliseringen ville et gyldig par blitt
+        # avvist som «ULIKE data», og feilmeldingen ville sendt noen på
+        # jakt etter en datasettforskjell som ikke finnes.
+        lokal = str(m.get("datasett_sha_lokal") or "").strip().lower()
+        staging = str(m.get("datasett_sha_staging") or "").strip().lower()
+        if not lokal or not staging:
+            feil.append("datasett_sha_lokal/-staging mangler — punktet"
+                        " heter «likt lokalt», og én digest beviser at noe"
+                        " kjørte, ikke at det kjørte likt to steder")
+        elif lokal != staging:
+            feil.append("datasett_sha_lokal != datasett_sha_staging —"
+                        " de to kjøringene brukte ULIKE data, og da måler"
+                        " sammenligningen ingenting")
+
+    # Revisjonen: tre hendelsestyper, hver med identitet.
+    minst("revisjon_avskruinger", "revisjon_min_avskruinger",
+          "blinding-avskruinger står ikke i revisjonsloggen")
+    minst("revisjon_signaturer", "revisjon_min_signaturer",
+          "signaturhendelser står ikke i revisjonsloggen")
+    minst("revisjon_frigivelser", "revisjon_min_frigivelser",
+          "frigivelser står ikke i revisjonsloggen")
+    hoyst("revisjon_hendelser_uten_identitet", "revisjon_maks_uten_identitet",
+          "en hendelse uten identitet er en påstand, ikke evidens")
+
+    # Feilinjiseringen: andre halvdel — at feilen faktisk NÅDDE køen.
+    minst("injisert_jobber", "min_injiserte_jobber",
+          "ingen feil ble injisert, så ingenting ble målt")
+    minst("unntakskoe_poster", "min_unntakskoe_poster",
+          "feilen nådde aldri unntakskøen — en kjøring som MISTER feilen"
+          " består ellers like godt som en som køer den")
+    hoyst("koeposter_uten_jobbinding", "maks_koeposter_uten_jobbinding",
+          "en køpost uten binding til jobben beviser ikke DENNE feilen")
+
+    # Flippedrillen: forrige release gjenopptar arbeid.
+    minst("rullback_claims", "min_rullback_claims",
+          "forrige release claimet ingenting etter rollback")
+    minst("rullback_promoterte", "min_rullback_promoterte",
+          "forrige release fullførte ingenting etter rollback")
+    hoyst("claims_etter_drenering", "maks_claims_etter_drenering",
+          "køen var ikke drenert før drillen — da måler den noe annet")
+    if grense.get("krev_release_digest_bundet") \
+            and "maalt.rullback_claims" in _stier(m):
+        if not str(m.get("release_digest_bundet") or "").strip():
+            feil.append("release_digest_bundet mangler — uten den vet vi"
+                        " ikke HVILKEN release som gjenopptok arbeidet")
+    return feil
+
+
+def _stier(m: dict) -> set:
+    """De påberopte målestiene, på `maalt.`-form. `punktbinding` bruker
+    samme skrivemåte, så terskelkontrollen kan spørre «er dette i det
+    hele tatt rapportert» uten å gjette på nøkkelnavn."""
+    return {f"maalt.{k}" for k in m}
 
 
 def _grenser_m31(grense: dict, art: dict) -> list[str]:
