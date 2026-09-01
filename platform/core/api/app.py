@@ -1132,6 +1132,26 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def dokumentmal_utfylling(request: Request) -> Response:
         from . import dokumentmal as dokumentmalmodul
         return dokumentmalmodul.utfylling_endepunkt(tjeneste, request)
+    # 096 (M-21): pliktregisteret. Leseveien er tenantens eget register;
+    # de tre skriveveiene er menneskelige handlinger i flaten, bak
+    # `bestilling:opprett` + CSRF + Idempotency-Key. Sveipen som køer
+    # fristvarslene finnes IKKE som HTTP — den er et forpass i
+    # varselsenderen, med sitt eget grant til `disponit_varselsender`.
+    def plikt_liste(request: Request) -> Response:
+        from . import plikt as pliktmodul
+        return pliktmodul.plikter(tjeneste, request)
+
+    def plikt_registrer(request: Request) -> Response:
+        from . import plikt as pliktmodul
+        return pliktmodul.registrer_endepunkt(tjeneste, request)
+
+    def plikt_lukk(request: Request) -> Response:
+        from . import plikt as pliktmodul
+        return pliktmodul.lukk_endepunkt(tjeneste, request)
+
+    def plikt_bortfall(request: Request) -> Response:
+        from . import plikt as pliktmodul
+        return pliktmodul.bortfall_endepunkt(tjeneste, request)
 
     def drift_backup(request: Request) -> Response:
         return lesing.drift_backup(tjeneste, request)
@@ -1499,6 +1519,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               dokumentmal_trekk_tilbake, methods=["POST"]),
         Route("/v1/dokumentmal/versjon/{versjon_id:str}/utfylling",
               dokumentmal_utfylling, methods=["POST"]),
+        # 096 (M-21): kolleksjonsrutene FØR mønsterrutene, som ellers i
+        # fila — {plikt_id:uuid} avviser «lukk»/«bortfall» uansett, men
+        # rekkefølgen sier intensjonen.
+        Route("/v1/plikt", plikt_liste, methods=["GET"]),
+        Route("/v1/plikt", plikt_registrer, methods=["POST"]),
+        Route("/v1/plikt/{plikt_id:uuid}/lukk", plikt_lukk,
+              methods=["POST"]),
+        Route("/v1/plikt/{plikt_id:uuid}/bortfall", plikt_bortfall,
+              methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2120,6 +2149,23 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/utfylling"):
         "decisions:read",
+    # 096 (M-21): pliktregisteret. SCOPENE ER GJENBRUKT, IKKE NYE.
+    # Registrering, kvittering og bortfall er BESTILLINGER i
+    # plattformens forstand — de bærer `bestilling:opprett`, samme scope
+    # som stillingsprofilen, utsendingsteksten og tidsvalg-slotene, og
+    # det står alt i BROWSER_MUTASJONSSCOPES. Lesingen er kundens egen
+    # tilstandsflate og bærer `decisions:read`, som ALLE kunderollene
+    # har (utrullingsplanens begrunnelse, og det eneste `LESESCOPES`-
+    # porten under godtar for en `/v1/`-GET).
+    #
+    # Sveipen står IKKE her, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m21_koe_fristvarsler` er kryss-tenant og
+    # kjøres av `disponit_varselsender` som et forpass — en fullmakt
+    # web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/plikt"):                   "decisions:read",
+    ("POST", "/v1/plikt"):                   "bestilling:opprett",
+    ("POST", "/v1/plikt/{plikt_id:uuid}/lukk"): "bestilling:opprett",
+    ("POST", "/v1/plikt/{plikt_id:uuid}/bortfall"): "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

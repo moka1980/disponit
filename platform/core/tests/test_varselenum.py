@@ -35,10 +35,18 @@ KANONISK = {
         "attestering_venter", "validering_venter", "runde_apnet",
         "tokenfamilie_utloper", "domeneovertakelse", "plan_pauset",
         "plan_gjentatt_brudd", "backupverifisering_uteblitt",
-        "selvtest_rodt", "selvtest_uteblitt"),
+        "selvtest_rodt", "selvtest_uteblitt",
+        # 096 (M-21): fristvarselet. Porten fanget denne på sitt første
+        # møte med en modul som utvider enumet — og det er nøyaktig
+        # arbeidsflyten den skal tvinge fram: en modul som legger til en
+        # art MÅ oppdatere både fasiten her og deklarasjonen i
+        # varselenum-reparasjon.sql, i samme commit. Da kan skriptet og
+        # kjeden ikke drive fra hverandre igjen.
+        "pliktfrist"),
     "varsel_ressurs_type_chk": (
         "policyutkast", "modultoken", "domene", "plan",
-        "backupverifisering", "selvtest"),
+        "backupverifisering", "selvtest",
+        "plikt"),  # 096 (M-21)
 }
 
 _VARIABEL = {"varsel_art_chk": "v_art",
@@ -125,10 +133,19 @@ def test_reparasjonen_kanoniserer_den_drevne_formen(migrator):
     try:
         migrator.execute(
             "ALTER TABLE varsel DROP CONSTRAINT varsel_ressurs_type_chk")
+        # NOT VALID er ikke en snarvei — det er det eneste riktige her.
+        # Porten skal gjenskape produksjonens DEFINISJON, ikke påstå noe
+        # om radene: en modul som alt har landet (M-21 skriver
+        # `ressurs_type='plikt'`) har committede rader utenfor det gamle
+        # settet, og en validerende ADD CONSTRAINT ville da feilet på
+        # datainnholdet i stedet for å måle reparasjonen. Første versjon
+        # av denne testen gjorde nettopp det, og ble rød første gang en
+        # modul utvidet enumet — altså feilet den på seg selv, ikke på
+        # koden den skulle måle.
         migrator.execute(
             "ALTER TABLE varsel ADD CONSTRAINT varsel_ressurs_type_chk"
             " CHECK ((ressurs_type = ANY (ARRAY['policyutkast'::text,"
-            " 'modultoken'::text, 'domene'::text])))")
+            " 'modultoken'::text, 'domene'::text]))) NOT VALID")
         assert "'plan'::text" not in _def(migrator, "varsel_ressurs_type_chk")
 
         migrator.execute(sql)

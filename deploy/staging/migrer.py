@@ -214,6 +214,18 @@ GRANT EXECUTE ON FUNCTION m4_retensjonskatalog(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m4_retensjonsfunn(TEXT) TO {rolle};
 REVOKE ALL ON FUNCTION m4_mal_lagre(INT, BOOLEAN) FROM {rolle};
 REVOKE ALL ON FUNCTION m4_reap_egne_maalinger(INT) FROM {rolle};
+-- 096 (M-21): pliktregisterets LESEDØR, samme snitt og samme
+-- begrunnelse som de to over. `plikt`, `pliktvarsling` og
+-- `pliktvarsel_sendt` står bevisst IKKE i noen GRANT-liste her: runtime
+-- har ingen SELECT på dem i det hele tatt (SP-7) og når registeret KUN
+-- gjennom dørene, som krever tenantkontekst først. Skrivedørene ligger
+-- i M37_RETTIGHETER_API (menneskelige handlinger i flaten); SVEIPEN
+-- hører senderen til (VARSLER_RETTIGHETER) og er kryss-tenant — et
+-- grant her ville gitt forespørselsveien nøyaktig det vinduet
+-- senderrollen finnes for å nekte den.
+SET LOCAL ROLE disponit_plikt_eier;
+GRANT EXECUTE ON FUNCTION m21_plikter(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m21_koe_fristvarsler(INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -580,6 +592,18 @@ GRANT EXECUTE ON FUNCTION m35_bekreft_kontakt(TEXT, UUID, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m35_opprett_hendelse(TEXT, TEXT, JSONB, TEXT, TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m35_legg_post(TEXT, UUID, TEXT, TEXT, TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m35_lukk_hendelse(TEXT, UUID, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 096 (M-21): pliktregisterets tre skrivedører — registrering,
+-- kvittering og bortfall. Menneskelige handlinger i flaten
+-- (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu som
+-- 057/082/089-dørene over, men en ANNEN eier — derfor sin egen
+-- rolleblokk. Kvitteringskravet og bortfallsbegrunnelsen håndheves i
+-- dørene og i CHECK-ene, ikke her.
+SET LOCAL ROLE disponit_plikt_eier;
+GRANT EXECUTE ON FUNCTION m21_registrer_plikt(TEXT, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, INT[], TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m21_lukk_plikt(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m21_marker_bortfalt(TEXT, UUID, TEXT, TEXT) TO {rolle};
+SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
 -- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi
@@ -645,6 +669,19 @@ RESET ROLE;
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsle_selvtest_uteblitt(TEXT) TO {rolle};
+RESET ROLE;
+-- 096 (M-21): fristsveipen — den FJERDE sveipen i senderens pre-pass, og
+-- den eneste som er kryss-tenant per konstruksjon (registeret er
+-- kundenes, ikke plattformens). Den bor her av 035s grunn: senderen er
+-- den ene timerdrevne prosessen som allerede eier varselkøens rytme,
+-- backoff og idempotens, og en ny varslingsvei er en ny vei å miste et
+-- varsel i.
+--
+-- ÉN EXECUTE, INGEN TABELLRETTIGHETER. Senderrollen har ingen
+-- tabellrettigheter i dag, og M-21 gir den ingen: den kan kjøre sveipen
+-- og ikke lese en eneste plikt.
+SET LOCAL ROLE disponit_plikt_eier;
+GRANT EXECUTE ON FUNCTION m21_koe_fristvarsler(INT) TO {rolle};
 RESET ROLE;
 -- 056: utsendingsveien — det er SENDEREN som konsumerer signerte lister:
 -- frigivelse per mottaker og frigivelsesoppdraget (tredje opphavsvei).

@@ -86,6 +86,14 @@ LEASE_MIN = int(os.environ.get("DISPONIT_VARSEL_LEASE_MIN", "30"))
 #: valg — ikke den enkeltes. `nb` er standarden fordi det er plattformens
 #: reservespråk (`locales/nb.json`, `i18n.js`).
 SPRAK = os.environ.get("DISPONIT_VARSEL_SPRAK", "nb")
+#: 096 (M-21): taket for hvor mange fristvarsler forpasset køer per
+#: kjøring. Eget tall, ikke `GRENSE`: det ene er hvor mange e-poster én
+#: kjøring SENDER, det andre hvor mange varsler den SKRIVER — og et
+#: forpass som skrev like mange rader som senderen rekker å sende ville
+#: gjort køen lengre for hver eneste kjøring. Taket er også ytelsesvernet
+#: manifestets `ytelse_bestatt` peker på: et forpass i en eksisterende
+#: jobb er billig å legge inn og dyrt å oppdage at ble tregt.
+M21_GRENSE = int(os.environ.get("DISPONIT_M21_FRISTGRENSE", "100"))
 
 
 def _locale(sprak: str) -> dict:
@@ -268,6 +276,7 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     # funksjonsnavn kan ikke parameteriseres, og en f-streng her ville
     # vært en strenginterpolasjon inn i SQL — riktig i dag, og en felle
     # den dagen noen gjør listen konfigurerbar.
+    forpass_feil = 0
     for setning, hva in (
             ("SELECT varsle_tokenfamilie_utlop(%s)", "familievarsel"),
             ("SELECT varsle_backupverifisering_uteblitt(%s)", "backup"),
@@ -277,13 +286,45 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
             conn.commit()
         except Exception as e:                                # noqa: BLE001
             conn.rollback()
+            forpass_feil += 1
             print(f"varselsender: {hva}-sveipen feilet: "
                   f"{type(e).__name__}: {e}", file=sys.stderr)
+
+    # 096 (M-21): FRISTSVEIPEN. Egen blokk fordi den er den ene sveipen
+    # som IKKE tar en plattformtenant: den er kryss-tenant per
+    # konstruksjon (registeret er kundenes), og signaturen er derfor
+    # `(p_grense INT)` og ikke `(p_tenant TEXT)`. Å presse den inn i
+    # løkka over ville krevd et parameter-oppslag per rad — en generalitet
+    # kjøpt for prisen av at listen ikke lenger kan leses som tre like
+    # ting.
+    #
+    # DEN SKARPE INVARIANTEN BOR HER (`forpass_stanset_ordinaer_sending`):
+    # forpasset kjører i SIN EGEN transaksjon, fanger SINE EGNE unntak,
+    # ruller tilbake og teller feilen separat — og deretter går den
+    # ordinære sendingen under som om forpasset ikke fantes. Uten
+    # `conn.rollback()` ville en feilet sveip etterlatt en abortert
+    # transaksjon, og hver eneste påfølgende setning i denne funksjonen —
+    # rekøingen, klaimet, statusskrivingen — ville feilet på «current
+    # transaction is aborted». Det er nøyaktig den formen en naiv
+    # `forpass(); ordinaer()` i samme transaksjon har, og det er den
+    # `test_m21_pliktregister.py` måler.
+    try:
+        conn.execute("SELECT m21_koe_fristvarsler(%s)", (M21_GRENSE,))
+        conn.commit()
+    except Exception as e:                                    # noqa: BLE001
+        conn.rollback()
+        forpass_feil += 1
+        print(f"varselsender: fristsveipen (M-21) feilet: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
 
     oppsett = oppsett or _smtp_oppsett()
     if oppsett is None and send is None:
         # Ikke konfigurert. Si det tydelig og la køen ligge urørt.
+        # `forpass_feil` er med også her: forpasset kjørte FØR denne
+        # grenen, og en sveipefeil skal ikke bli usynlig av at SMTP
+        # tilfeldigvis ikke er satt opp på denne verten.
         return {"sendt": 0, "feilet": 0, "gjenkoet": 0, "mistet": 0,
+                "forpass_feil": forpass_feil,
                 "grunn": "smtp_ikke_konfigurert"}
     send = send or (lambda til, emne, tekst: _send_ekte(oppsett, til, emne,
                                                         tekst))
@@ -377,4 +418,11 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
         print(f"varselsender: køen ikke tømt, stanset på {stanset}",
               file=sys.stderr)
     return {"sendt": sendt, "feilet": feilet, "gjenkoet": gjenkoet,
-            "mistet": mistet, "stanset": stanset}
+            "mistet": mistet, "stanset": stanset,
+            # FORPASSFEILENE TELLES SEPARAT, aldri sammen med `feilet`.
+            # `feilet` er e-poster som ikke kom fram — en tilstand køen
+            # selv retter opp med backoff. En sveip som ikke kjørte er
+            # noe helt annet: varsler som ALDRI BLE KØET, og som ingen
+            # backoff henter inn. Slått sammen ville den ene tilstanden
+            # skjult seg i den andres normale støy.
+            "forpass_feil": forpass_feil}

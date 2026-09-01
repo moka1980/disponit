@@ -77,13 +77,20 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // referansetekst, som ALLE kunderollene skal kunne slå opp i.
   // `GET /v1/kunnskap` krever nøyaktig det scopet i `RUTESCOPE`.
   //
-  // ÉN assert for begge, med vilje: listen er UTTØMMENDE, så to
-  // separate deepEqual-er over samme `alle` kan aldri begge være sanne
-  // når to moduler deler scopet. Rekkefølgen er `BASISRUTER`-ens.
+  // M-21 (096): pliktregisteret er en LESEFLATE for enhver kunderolle
+  // med `decisions:read` — hvilke frister som løper og hvem som eier
+  // dem er ikke administratorens hemmelighet. Skriveveiene er gatet på
+  // `bestilling:opprett` i `RUTESCOPE`.
+  //
+  // ÉN assert for alle tre, med vilje: listen er UTTØMMENDE, så to
+  // separate deepEqual-er over samme `alle` kan ALDRI begge være sanne
+  // når flere moduler deler scopet — den andre er garantert rød. Tre
+  // moduler i samme klynge landet på `decisions:read`, og hver av dem
+  // skrev først sin egen komplette liste. Rekkefølgen er `BASISRUTER`-ens.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
       "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
-      "kunnskap"]);
+      "kunnskap", "avtalefrist"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.
