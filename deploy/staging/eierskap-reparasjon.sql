@@ -195,6 +195,20 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm3_kjoring_vakt()',                             'disponit_kvalitet_eier'),
     ('FUNCTION', 'm3_profil_vakt()',                              'disponit_kvalitet_eier'),
     ('FUNCTION', 'm3_funn_vakt()',                                'disponit_kvalitet_eier'),
+    -- 095 (M-9): begrepsregisterets fem doerer. De eies av modulens EGEN
+    -- rolle, ikke av claimeren -- eierskapet ER tabelltilgangen her, og
+    -- en modul som eier sine egne doerer kan ikke naa en annen moduls
+    -- rader ved et uhell. De tre tenantbundne doerene gaar gjennom
+    -- krev_tenantkontekst-porten, som er claimer-eid -- 095 gir derfor
+    -- kunnskap_eier EXECUTE paa porten, den maa ikke eie den.
+    -- Sveipen deler eier med de andre fordi den deler tabell, og fordi
+    -- kryss-tenant-lesingen er en policy som navngir NOEYAKTIG denne
+    -- rollen (057/088-radenes egen begrunnelse, med et snevrere vindu)
+    ('FUNCTION', 'm9_registrer_begrep(text,text,text,text,text,date,text,uuid)', 'disponit_kunnskap_eier'),
+    ('FUNCTION', 'm9_ny_begrepsversjon(text,text,text,text,text,date,text,uuid)', 'disponit_kunnskap_eier'),
+    ('FUNCTION', 'm9_sok(text,text,integer)',                         'disponit_kunnskap_eier'),
+    ('FUNCTION', 'm9_apne_funn(text,integer)',                        'disponit_kunnskap_eier'),
+    ('FUNCTION', 'm9_sveip_utlopte(integer)',                         'disponit_kunnskap_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

@@ -216,6 +216,17 @@ const BASISRUTER = [
   // utvidelse av SVARET, ikke en annen rute, så scopet her er det
   // samme som API-et bak flaten krever.
   { nokkel: "retensjon", scope: "security:read" },
+  // M-9 (095): ordlisten er en BASISRUTE bak `decisions:read` — scopet
+  // API-et bak den krever (`GET /v1/kunnskap` i RUTESCOPE), som resten
+  // av tabellen: menyen lover aldri en flate serveren svarer 403 på.
+  //
+  // INGEN `modulflate`, og det er en vurdering og ikke en forglemmelse:
+  // en ordliste er ikke en modul kunden slår på og av — det er
+  // bedriftens egne ord, og enhver som leser en beslutning skal kunne
+  // slå opp et begrep i den uten å gå veien om et modulkort. Samme
+  // presedens som `modellstyring` og `driftstatus` over, av motsatt
+  // grunn: de er plattformens tilstand, denne er kundens språk.
+  { nokkel: "kunnskap", scope: "decisions:read" },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

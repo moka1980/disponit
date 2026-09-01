@@ -19,6 +19,7 @@ sudo deploy/staging/bootstrap-token.sh demo-a  # interaktiv, KREVER TTY
 | `disponit-selvtest.timer` | Unix `disponit-helse` (medlem `disponit-proxy`), DB `disponit_selvtest` | `/etc/disponit/selvtest/` | M-11 (091): selvtestrunden, hver time — KUN lesende prober |
 | `disponit-kvalitetsprofil.timer` | Unix `disponit-domener`, DB `disponit_kvalitetsmaaler` | `/etc/disponit/kvalitet/` | M-3 (092): datakvalitetsprofilering, daglig — KUN telling. Rollen har null tabellrettigheter og EXECUTE på nøyaktig én funksjon; profileren leser bare de kolonnegrantede kolonnene, aldri payload |
 | `disponit-lagermaaling.timer` | Unix `disponit-domener`, DB `disponit_lagermaaler` | `/etc/disponit/lagermaaler/` | M-4 (093): retensjonsmålingen, daglig 03:17 — KUN målende. Rollen har null tabellrettigheter og EXECUTE på nøyaktig én funksjon; kolonnegrantene gir den {tenant, alderskolonne, reapetkolonne} og ingen payloadkolonne |
+| `disponit-begrepssveip.timer` | Unix `disponit-domener`, DB `disponit_kunnskapssveip` | `/etc/disponit/kunnskapssveip/` | M-9 (095): utløpssveipen over begrepsregisteret, én gang i døgnet (04:20 UTC + spredning) — KUN EXECUTE på `m9_sveip_utlopte`, ingen tabellrettigheter |
 
 **Backupen er et PAR, ikke en fil (#191).** Hver kjøring legger to
 filer i `/var/backups/disponit` under samme stempel:

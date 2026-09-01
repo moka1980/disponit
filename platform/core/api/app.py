@@ -1143,6 +1143,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return lesing.datakvalitet(tjeneste, request)
     def retensjon(request: Request) -> Response:
         return lesing.retensjon(tjeneste, request)
+    # M-9 (095): begrepsregisteret. Rent lesende — ordlisten fylles
+    # gjennom de eier-eide dørene i 095, som `migrer.py` REVOKEr fra
+    # runtime-rollen. Det er en sikkerhetsdom (M-31-formen), ikke en
+    # manglende funksjon.
+    def kunnskap(request: Request) -> Response:
+        return lesing.kunnskap(tjeneste, request)
 
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
@@ -1500,6 +1506,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # `platform:admin` og avgjøres INNE i endepunktet
         # (`/v1/utrulling`-presedensen) — se RUTESCOPE-raden.
         Route("/v1/retensjon", retensjon, methods=["GET"]),
+        Route("/v1/kunnskap", kunnskap, methods=["GET"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -2154,6 +2161,14 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # registerets dommer felles i MIGRASJON — to fullmakter web-API-et
     # ikke har.
     ("GET",  "/v1/retensjon"):               "security:read",
+    # M-9 (095): begrepsregisteret — bedriftens egen ordliste med eier,
+    # kilde og gyldighetsdato, og et fritekstsøk over den. Scopet er
+    # `decisions:read`, samme klasse som `/v1/utrulling`: dette er
+    # kundens egen referansetekst, og ALLE kunderollene skal kunne slå
+    # opp et begrep. Begrunnelsen for å IKKE registrere et eget
+    # `kunnskap:read` står i `lesing.kunnskap`. Ingen skriverute finnes:
+    # dørene i 095 er REVOKEt fra runtime-rollen i `migrer.py`.
+    ("GET",  "/v1/kunnskap"):                "decisions:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

@@ -73,9 +73,17 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // (`decisions:read` — `GET /v1/dokumentmal`), med opprettelse,
   // publisering og tilbaketrekking gatet på `bestilling:opprett` i
   // `RUTESCOPE`. Utfyllingen bærer BEVISST lesescopet: den returnerer.
+  // M-9 (095): ordlisten står bak `decisions:read` — kundens egen
+  // referansetekst, som ALLE kunderollene skal kunne slå opp i.
+  // `GET /v1/kunnskap` krever nøyaktig det scopet i `RUTESCOPE`.
+  //
+  // ÉN assert for begge, med vilje: listen er UTTØMMENDE, så to
+  // separate deepEqual-er over samme `alle` kan aldri begge være sanne
+  // når to moduler deler scopet. Rekkefølgen er `BASISRUTER`-ens.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
-      "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal"]);
+      "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
+      "kunnskap"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.

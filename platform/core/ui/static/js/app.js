@@ -27,6 +27,7 @@ import { visDriftstatus } from "./flater/driftstatus.js";
 import { visDatakvalitet } from "./flater/datakvalitet.js";
 import { visRetensjon } from "./flater/retensjon.js";
 import { visDokumentmal } from "./flater/dokumentmal.js";
+import { visKunnskap } from "./flater/kunnskap.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -69,6 +70,10 @@ const FLATER = {
   // M-4 (093): basisrute bak `security:read` (sitekart.js) —
   // scope-gaten bor der, som for de andre flatene.
   retensjon: visRetensjon,
+  // M-9 (095): ordlisten. Basisrute bak `decisions:read` (sitekart.js)
+  // — scope-gaten bor der, som for de andre flatene. Flaten er rent
+  // lesende: det finnes ingen HTTP-skrivevei å tegne en knapp til.
+  kunnskap: visKunnskap,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).
