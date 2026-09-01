@@ -64,6 +64,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # nei — og for malen er den forskjellen selve svaret («feltet maa
     # deklareres», ikke «noe gikk galt»).
     Feilvei("dokumentmal_ulovlig_tilstand", 409, ("avvis",), None),
+    # 096 (M-21): pliktregisterets doerer nekter en overgang tilstanden
+    # ikke tillater — lukking uten kvitteringsreferanse, bortfall uten
+    # begrunnelse, en eier som ikke er medlem av tenanten, eller en plikt
+    # som alt er lukket/bortfalt. 409 av samme grunn som raden over:
+    # kroppen ER velformet, det er TILSTANDEN (eller innholdskravet
+    # basen haandhever) som sier nei, og forskjellen er hele
+    # forklaringen mennesket i flaten trenger.
+    Feilvei("plikt_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

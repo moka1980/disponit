@@ -28,6 +28,7 @@ import { visDatakvalitet } from "./flater/datakvalitet.js";
 import { visRetensjon } from "./flater/retensjon.js";
 import { visDokumentmal } from "./flater/dokumentmal.js";
 import { visKunnskap } from "./flater/kunnskap.js";
+import { visAvtalefrist } from "./flater/avtalefrist.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -74,6 +75,11 @@ const FLATER = {
   // — scope-gaten bor der, som for de andre flatene. Flaten er rent
   // lesende: det finnes ingen HTTP-skrivevei å tegne en knapp til.
   kunnskap: visKunnskap,
+  // M-21 (096): basisrute bak `decisions:read` (sitekart.js) —
+  // scope-gaten bor der. Skriveveiene i flaten er i tillegg gated på
+  // `bestilling:opprett`, men det er ergonomi: dørene i basen er den
+  // bindende porten.
+  avtalefrist: visAvtalefrist,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

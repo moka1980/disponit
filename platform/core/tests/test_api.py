@@ -143,6 +143,13 @@ APPEND_ONLY_TRIGGERE = (
     ("malfelt", "m5_felt_vakt"),
     ("malversjon", "m5_versjon_vakt"),
     ("malfamilie", "m5_familie_vakt"),
+    # 096 (M-21): plikten lukkes eller bortfaller, den slettes aldri; og
+    # ankeret er append-only fordi ankeret ER idempotensen — kunne raden
+    # fjernes, ville varselet blitt køet på nytt. Begge nekter DELETE,
+    # som de skal, så oppryddingen må skru dem av. `pliktvarsling` har
+    # ingen vakt: varslingspunktene er innstillinger, ikke evidens.
+    ("pliktvarsel_sendt", "m21_anker_vakt"),
+    ("plikt", "m21_plikt_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -261,6 +268,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # versjonen, versjonen på familien — barna først,
                  # ankeret sist. Familien peker ikke ut av seg selv.
                  "malkomponent", "malfelt", "malversjon", "malfamilie",
+                 # 096 (M-21): ankeret og varslingspunktene peker begge
+                 # på `plikt` — barna først, plikten etter. Plikten selv
+                 # peker på den GLOBALE `brukeridentitet` (eieren), som
+                 # ikke ryddes herfra, så familien er fri for øvrig.
+                 "pliktvarsel_sendt", "pliktvarsling", "plikt",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

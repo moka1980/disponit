@@ -227,6 +227,21 @@ const BASISRUTER = [
   // presedens som `modellstyring` og `driftstatus` over, av motsatt
   // grunn: de er plattformens tilstand, denne er kundens språk.
   { nokkel: "kunnskap", scope: "decisions:read" },
+  // M-21 (096): avtale- og fristagenten. BASISRUTE bak `decisions:read`
+  // — scopet API-et bak flatens SVAKESTE ledd krever (wcagkontroll-
+  // regelen): lista er `GET /v1/plikt` i RUTESCOPE, og de tre
+  // skriveveiene er alt gatet både inne på flaten og i registeret
+  // (`bestilling:opprett`). En sammenslått oppføring skal aldri inndra
+  // tilgang, og her ville et mutasjonsscope på ruten fjernet hele
+  // registeret for `leser`, `sikkerhet`, `godkjenner` og
+  // `policyforvalter` — som alle har lov til å SE hvilke frister som
+  // løper.
+  //
+  // INGEN `modulflate`-flipp i v1 (#315-presedensen, som modellstyring
+  // og driftstatus): ruten bor i toppnavigasjonen. M-21 står
+  // `under_utvikling` i katalogen, og en modulkort-inngang ville lovet
+  // en modul kunden kan kjøpe.
+  { nokkel: "avtalefrist", scope: "decisions:read" },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

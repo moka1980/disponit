@@ -70,14 +70,16 @@ DECLARE
       'plan_gjentatt_brudd',
       'backupverifisering_uteblitt',
       'selvtest_rodt',
-      'selvtest_uteblitt'];
+      'selvtest_uteblitt',
+      'pliktfrist'];
   v_ressurs TEXT[] := ARRAY[
       'policyutkast',
       'modultoken',
       'domene',
       'plan',
       'backupverifisering',
-      'selvtest'];
+      'selvtest',
+      'plikt'];
   r RECORD; v_def TEXT; v_onsket TEXT; v_ulovlige TEXT;
 BEGIN
   IF to_regclass('public.varsel') IS NULL THEN

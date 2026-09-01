@@ -522,3 +522,19 @@ export const trekkTilbakeMalversjon = (versjonId, idem) =>
 export const fyllMal = (versjonId, verdier) =>
   _muter(`/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/utfylling`,
          "POST", { verdier });
+// M-21 (096): pliktregisteret. Registreringen bærer en SP-2-nøkkel —
+// serveren UTLEDER plikt-id-en av den, så en tapt respons + nytt klikk
+// gjenspiller i stedet for å føde plikten en gang til. Kvitteringen og
+// bortfallet er idempotente av tilstanden sin (døren avviser en plikt
+// som ikke er åpen), men bærer nøkkelen likevel: serveren krever den på
+// alle tre, og formen skal være den samme.
+export const registrerPlikt = (plikt, idem) =>
+  _muter("/v1/plikt", "POST", plikt, idem || nyIdempotensnokkel());
+
+export const lukkPlikt = (pliktId, kvitteringRef, idem) =>
+  _muter(`/v1/plikt/${encodeURIComponent(pliktId)}/lukk`, "POST",
+         { kvittering_ref: kvitteringRef }, idem || nyIdempotensnokkel());
+
+export const bortfallPlikt = (pliktId, begrunnelse, idem) =>
+  _muter(`/v1/plikt/${encodeURIComponent(pliktId)}/bortfall`, "POST",
+         { begrunnelse }, idem || nyIdempotensnokkel());
