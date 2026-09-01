@@ -839,7 +839,12 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
   // tilbake.
   assert.ok(kortene(nordvik.rot).includes("#/nokkeltall"),
     "nøkkeltall har ingen inngang etter eiervedtaket 31/8 (topp → venstre)");
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 6,
+  // M-5 (094): malflaten er den fjerde modulflaten en leseøkt har rute
+  // til (`decisions:read`), og den står i venstremenyen ved siden av
+  // WCAG kontroll, rekruttering og nøkkeltall — samme union som over.
+  assert.ok(kortene(nordvik.rot).includes("#/dokumentmal"),
+    "malregisteret har ingen inngang i det hele tatt for en ekte tenant");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 7,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -849,7 +854,7 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
-    ["#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
+    ["#/dokumentmal", "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),

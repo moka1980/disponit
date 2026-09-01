@@ -123,6 +123,19 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm35_opprett_hendelse(text,text,jsonb,text,text,uuid)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm35_legg_post(text,uuid,text,text,text,uuid)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm35_lukk_hendelse(text,uuid,text,text)', 'disponit_m37_claimer'),
+    -- 094 (M-5): malregisterets fem doerer eies av mal_eier — samme
+    -- vindu og samme grunn som 057/082/089-doerene over, men EGEN eier
+    -- fordi malregisteret ikke deler lager med noen av dem. Vaktene
+    -- (m5_familie_vakt, m5_versjon_vakt, m5_innhold_vakt) staar bevisst
+    -- IKKE her: de er triggerfunksjoner laget FOER rolleblokken og eies
+    -- av migrator som alle andre vakter. m5_fyll_mal er STABLE og kan
+    -- derfor ikke skrive i det hele tatt — eierskapet gir den lesing
+    -- gjennom FORCE RLS, ingenting mer.
+    ('FUNCTION', 'm5_opprett_malfamilie(text,text,text,text,uuid)', 'disponit_mal_eier'),
+    ('FUNCTION', 'm5_opprett_malversjon(text,uuid,jsonb,jsonb,text,uuid)', 'disponit_mal_eier'),
+    ('FUNCTION', 'm5_publiser_malversjon(text,uuid,text)', 'disponit_mal_eier'),
+    ('FUNCTION', 'm5_trekk_tilbake_malversjon(text,uuid,text)', 'disponit_mal_eier'),
+    ('FUNCTION', 'm5_fyll_mal(text,uuid,jsonb)', 'disponit_mal_eier'),
     -- 082 (M-8): kapabilitetstabellen og de to offentlige doerene eies
     -- av authenticator (004-presedensen — konstanttiden bor i defineren,
     -- og oppslaget paa token_id alene gaar gjennom eierpolicyen).

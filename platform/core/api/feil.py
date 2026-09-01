@@ -56,6 +56,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # kroppen ER velformet; det er TILSTANDEN som sier nei, og
     # forskjellen er hele forklaringen mennesket i flaten trenger.
     Feilvei("kontinuitet_ulovlig_tilstand", 409, ("avvis",), None),
+    # 094 (M-5): malregisterets doerer nekter en overgang tilstanden ikke
+    # tillater — publisering av noe som alt er publisert, tilbaketrekking
+    # av et utkast, publisering av en mal som refererer et UDEKLARERT
+    # felt, og utfylling av en versjon som ikke er i kraft. 409 av samme
+    # grunn som over: kroppen ER velformet, det er TILSTANDEN som sier
+    # nei — og for malen er den forskjellen selve svaret («feltet maa
+    # deklareres», ikke «noe gikk galt»).
+    Feilvei("dokumentmal_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

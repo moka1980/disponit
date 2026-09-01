@@ -127,6 +127,16 @@ APPEND_ONLY_TRIGGERE = (
     ("kontinuitetshendelse", "m35_hendelse_vakt"),
     ("beredskapskontakt", "m35_kontakt_vakt"),
     ("kontinuitet_tjeneste", "m35_tjeneste_vakt"),
+    # 094 (M-5): alle fire vaktene nekter DELETE. Komponentene og
+    # feltdeklarasjonene er totalt append-only (verken UPDATE eller
+    # DELETE, for noen rolle); versjonen tar bare de to
+    # livssyklusovergangene, og familien bærer versjonshistorikk og
+    # slettes aldri. At oppryddingen MÅ skru dem av er selv beviset:
+    # en publisert mal kan ikke skrives om i ettertid av noen.
+    ("malkomponent", "m5_komponent_vakt"),
+    ("malfelt", "m5_felt_vakt"),
+    ("malversjon", "m5_versjon_vakt"),
+    ("malfamilie", "m5_familie_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -238,6 +248,10 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  # de står her fordi de hører til samme familie.
                  "kontinuitetshendelse_post", "kontinuitetshendelse",
                  "beredskapskontakt", "kontinuitet_tjeneste",
+                 # 094 (M-5): komponentene og feltdeklarasjonene peker på
+                 # versjonen, versjonen på familien — barna først,
+                 # ankeret sist. Familien peker ikke ut av seg selv.
+                 "malkomponent", "malfelt", "malversjon", "malfamilie",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

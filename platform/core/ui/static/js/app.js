@@ -26,6 +26,7 @@ import { visKontinuitet } from "./flater/kontinuitet.js";
 import { visDriftstatus } from "./flater/driftstatus.js";
 import { visDatakvalitet } from "./flater/datakvalitet.js";
 import { visRetensjon } from "./flater/retensjon.js";
+import { visDokumentmal } from "./flater/dokumentmal.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -40,6 +41,11 @@ const FLATER = {
   // `tillatteFlater` slipper bare gjennom flater som HAR en rute økten
   // fikk, så scope-gaten bor ett sted.
   rekruttering: visRekruttering,
+  // M-5 (094): modulflate bak `decisions:read` (sitekart.js) —
+  // scope-gaten bor der, som for de andre flatene. Skriveveiene i
+  // flaten er i tillegg gated på `bestilling:opprett`, men det er
+  // ergonomi: dørene i 094 er den bindende porten.
+  dokumentmal: visDokumentmal,
   adjudikator: visAdjudikator,
   // M-31: basisrute bak `security:read` (sitekart.js) — scope-gaten
   // bor der, som for de andre flatene.
