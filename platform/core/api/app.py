@@ -1102,6 +1102,37 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def kontinuitet_lukk(request: Request) -> Response:
         from . import kontinuitet as kontinuitetsmodul
         return kontinuitetsmodul.lukk_endepunkt(tjeneste, request)
+
+    # 094 (M-5): malregisteret. Leseveien er hele registeret i én
+    # transaksjon; de fire skrivende POST-ene gjør hver nøyaktig ett kall
+    # mot en mal_eier-eid dør i 094. Append-only, låste klausuler og
+    # felt-totaliteten bor DER, aldri her.
+    def dokumentmal(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.dokumentmal(tjeneste, request)
+
+    def dokumentmal_familier(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.familie_endepunkt(tjeneste, request)
+
+    def dokumentmal_versjoner(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.versjon_endepunkt(tjeneste, request)
+
+    def dokumentmal_publiser(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.publiser_endepunkt(tjeneste, request)
+
+    def dokumentmal_trekk_tilbake(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.trekk_tilbake_endepunkt(tjeneste, request)
+
+    # Utfyllingen RETURNERER. Den lagrer ikke, sender ikke, publiserer
+    # ikke — og `m5_fyll_mal` er STABLE, så basen håndhever det.
+    def dokumentmal_utfylling(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.utfylling_endepunkt(tjeneste, request)
+
     def drift_backup(request: Request) -> Response:
         return lesing.drift_backup(tjeneste, request)
 
@@ -1451,6 +1482,17 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kontinuitet_post, methods=["POST"]),
         Route("/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk",
               kontinuitet_lukk, methods=["POST"]),
+        Route("/v1/dokumentmal", dokumentmal, methods=["GET"]),
+        Route("/v1/dokumentmal/familier", dokumentmal_familier,
+              methods=["POST"]),
+        Route("/v1/dokumentmal/versjoner", dokumentmal_versjoner,
+              methods=["POST"]),
+        Route("/v1/dokumentmal/versjon/{versjon_id:str}/publiser",
+              dokumentmal_publiser, methods=["POST"]),
+        Route("/v1/dokumentmal/versjon/{versjon_id:str}/trekk-tilbake",
+              dokumentmal_trekk_tilbake, methods=["POST"]),
+        Route("/v1/dokumentmal/versjon/{versjon_id:str}/utfylling",
+              dokumentmal_utfylling, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2050,6 +2092,27 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "kontinuitet:write",
     ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk"):
         "kontinuitet:write",
+    # 094 (M-5): malregisteret. INGEN nye scopes — M-5 generaliserer
+    # 079_utsendingstekst, og 079s to ruter står alt her med
+    # `decisions:read` for lesing og `bestilling:opprett` for forfatting
+    # og skjuling. Et nytt scope er en registrering i autorisasjonslaget
+    # med egen port; her finnes ingen myndighet 079 ikke har navngitt.
+    #
+    # UTFYLLINGEN BÆRER LESESCOPET, og det er ikke en forglemmelse: den
+    # RETURNERER. `m5_fyll_mal` er STABLE (basen avviser enhver skriving
+    # i kroppen), runtime har kun SELECT på de fire tabellene, og linjen
+    # under er det tredje laget — ruten kan ikke vokse en skriveevne uten
+    # at scopet endres i samme diff. POST og ikke GET fordi verdiene er
+    # kundens data og ikke hører hjemme i en query-streng.
+    ("GET",  "/v1/dokumentmal"):             "decisions:read",
+    ("POST", "/v1/dokumentmal/familier"):    "bestilling:opprett",
+    ("POST", "/v1/dokumentmal/versjoner"):   "bestilling:opprett",
+    ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/publiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/trekk-tilbake"):
+        "bestilling:opprett",
+    ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/utfylling"):
+        "decisions:read",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

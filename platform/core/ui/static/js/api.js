@@ -490,3 +490,35 @@ export const leggKontinuitetspost = (hendelseId, posttype, tekst, idem) =>
 export const lukkKontinuitetshendelse = (hendelseId, tekst, idem) =>
   _muter(`/v1/kontinuitet/hendelse/${encodeURIComponent(hendelseId)}/lukk`,
          "POST", { tekst }, idem || nyIdempotensnokkel());
+
+// 094 (M-5): malregisterets fem skriveveier og utfyllingen.
+//
+// UTFYLLINGEN GÅR OGSÅ GJENNOM `_muter`, og det er et bevisst valg som
+// IKKE gjør den til en mutasjon: verdiene er kundens data og hører i en
+// kropp, ikke i en query-streng der de havner i tilgangslogger og
+// browserhistorikk. Serveren krever `decisions:read` på ruten — altså
+// LESEmyndighet — og `m5_fyll_mal` er STABLE i basen, så kallet kan ikke
+// skrive noe uansett hva klienten sender. Den får ingen
+// `Idempotency-Key`: en idempotensnøkkel lover at et gjenspill ikke
+// skaper noe nytt, og her finnes ingenting å skape.
+export const opprettMalfamilie = (navn, beskrivelse, idem) =>
+  _muter("/v1/dokumentmal/familier", "POST", { navn, beskrivelse },
+         idem || nyIdempotensnokkel());
+
+export const opprettMalversjon = (familieId, komponenter, felt, idem) =>
+  _muter("/v1/dokumentmal/versjoner", "POST",
+         { familie_id: familieId, komponenter, felt },
+         idem || nyIdempotensnokkel());
+
+export const publiserMalversjon = (versjonId, idem) =>
+  _muter(`/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/publiser`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const trekkTilbakeMalversjon = (versjonId, idem) =>
+  _muter(
+    `/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/trekk-tilbake`,
+    "POST", {}, idem || nyIdempotensnokkel());
+
+export const fyllMal = (versjonId, verdier) =>
+  _muter(`/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/utfylling`,
+         "POST", { verdier });

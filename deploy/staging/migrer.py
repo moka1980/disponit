@@ -116,6 +116,12 @@ GRANT SELECT ON m8_slot, m8_slotvalg TO {rolle};
 -- definer-dørene (EXECUTE i M37_RETTIGHETER_API under).
 GRANT SELECT ON kontinuitet_tjeneste, beredskapskontakt,
     kontinuitetshendelse, kontinuitetshendelse_post TO {rolle};
+-- 094 (M-5): malregisteret leses rett på tabellene (RLS-gated) — flaten
+-- lister familier, versjoner, komponenter og feltdeklarasjoner. ALL
+-- skriving eies av de mal_eier-eide definer-dørene (EXECUTE i den egne
+-- blokken lenger nede), og verken INSERT, UPDATE eller DELETE gis noe
+-- sted her: en publisert mal endres aldri, den etterfølges.
+GRANT SELECT ON malfamilie, malversjon, malkomponent, malfelt TO {rolle};
 -- De to offentlige tidsvalg-dørene er authenticator-eide og grantes som
 -- verifiser_token: migrator arver authenticator (fullt INHERIT, i
 -- motsetning til claimer-medlemskapet), så granten gis direkte her.
@@ -331,6 +337,22 @@ GRANT EXECUTE ON FUNCTION opprett_stillingsprofil_versjon(TEXT, UUID, TEXT, TEXT
 GRANT EXECUTE ON FUNCTION opprett_utsendingstekst_versjon(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION skjul_utsendingstekst(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION hent_inndata_for_oppdrag(BIGINT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 094 (M-5): malregisterets fem dører, eid av `disponit_mal_eier` — så
+-- grantene MÅ gis som eieren (samme felle som domene_eier-blokken over:
+-- som migrator blir de en stille WARNING og ingen rettighet).
+--
+-- `m5_fyll_mal` står her SELV OM DEN IKKE SKRIVER, og det er poenget:
+-- utfyllingen er erklært STABLE, så PostgreSQL avviser enhver skriving i
+-- kroppen. Runtime får altså EXECUTE på en funksjon som per definisjon
+-- ikke kan lagre et dokument — v1-dommen håndhevet av basen, ikke av at
+-- ingen har skrevet en INSERT ennå.
+SET LOCAL ROLE disponit_mal_eier;
+GRANT EXECUTE ON FUNCTION m5_opprett_malfamilie(TEXT, TEXT, TEXT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m5_opprett_malversjon(TEXT, UUID, JSONB, JSONB, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m5_publiser_malversjon(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m5_trekk_tilbake_malversjon(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m5_fyll_mal(TEXT, UUID, JSONB) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er
 -- SECURITY DEFINER-funksjoner eid av `disponit_modul_eier`; runtime har

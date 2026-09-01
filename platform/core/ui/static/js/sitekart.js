@@ -140,6 +140,18 @@ const BASISRUTER = [
   // `#/rekruttering` ute — og demo-stien (`seed-rekruttering-demo.py`)
   // ber eier åpne nettopp den adressen.
   { nokkel: "rekruttering", scope: "decisions:read", modulflate: 57 },
+  // M-5 (094): malregisteret. MODULFLATE, ikke basisrute i toppnav —
+  // M-5 er en modul kunden kjøper (`MODULSTATUS[5]`), ikke plattformens
+  // eget innsyn i seg selv, og eiervedtaket 24/8 er at venstremenyen er
+  // modulnavigasjonen. Samme plass som wcagkontroll og rekruttering.
+  //
+  // Scopet er flatens SVAKESTE ledd (wcagkontroll-regelen): lesingen bak
+  // ruten krever `decisions:read` (`GET /v1/dokumentmal` i RUTESCOPE);
+  // opprettelse, publisering og tilbaketrekking muterer og gates INNE på
+  // flaten — og av serveren — med `bestilling:opprett`. UTFYLLINGEN er
+  // bevisst ikke gatet på mutasjonsscopet: den returnerer, og bærer
+  // lesescopet hele veien ned til at `m5_fyll_mal` er STABLE i basen.
+  { nokkel: "dokumentmal", scope: "decisions:read", modulflate: 5 },
   // 041: adjudikatorkøen viser sakenes PARTER på tvers av tenanter — den
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },

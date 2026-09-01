@@ -69,9 +69,13 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // P1). Endepunktene er registrert i `app.py` nå, så ruten er inne — bak
   // flatens svakeste ledd (`decisions:read`), med mutasjonene gatet i
   // `RUTESCOPE` på `bestilling:opprett`.
+  // M-5 (094): malregisteret er en MODULFLATE bak flatens svakeste ledd
+  // (`decisions:read` — `GET /v1/dokumentmal`), med opprettelse,
+  // publisering og tilbaketrekking gatet på `bestilling:opprett` i
+  // `RUTESCOPE`. Utfyllingen bærer BEVISST lesescopet: den returnerer.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
-      "kundeadmin", "wcagkontroll", "rekruttering"]);
+      "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.
@@ -291,6 +295,7 @@ test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
     ["ui.nav.wcagkontroll", "ui.wcag.tittel"],
     ["ui.nav.rekruttering", "ui.rekruttering.tittel"],
     ["ui.nav.nokkeltall", "ui.nokkeltall.tittel"],
+    ["ui.nav.dokumentmal", "ui.dokumentmal.tittel"],
   ];
   for (const navn of ["nb", "en"]) {
     const tekster = locale(navn);
