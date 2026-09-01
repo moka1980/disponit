@@ -80,13 +80,20 @@ DECLARE
       'backupverifisering',
       'selvtest',
       'plikt'];
-  r RECORD; v_def TEXT; v_onsket TEXT; v_ulovlige TEXT;
+  r RECORD; v_def TEXT; v_onsket TEXT; v_ulovlige TEXT; v_forst TEXT;
 BEGIN
   IF to_regclass('public.varsel') IS NULL THEN
     RAISE NOTICE 'varselenum: tabellen varsel finnes ikke ennaa -- hopper'
         ' over (fersk base, kjeden lager den kanonisk)';
     RETURN;
   END IF;
+  -- Maalingen av rekkefoelgen skal skje under den planen produksjonen
+  -- faktisk velger — bitmap heap scan, som gir FYSISK rekkefoelge. Med
+  -- indeksskann kommer radene i conname-rekkefoelge og CHECKen vinner
+  -- alltid; da hadde porten maalt den snille planen og sluppet gjennom
+  -- den farlige.
+  SET LOCAL enable_indexscan = off;
+  SET LOCAL enable_indexonlyscan = off;
   FOR r IN
     SELECT 'varsel_art_chk' AS navn, 'art' AS kolonne, v_art AS sett
     UNION ALL
@@ -106,7 +113,19 @@ BEGIN
     v_onsket := format('CHECK ((%I = ANY (ARRAY[%s])))', r.kolonne,
         (SELECT string_agg(format('%L::text', v), ', ')
            FROM unnest(r.sett) AS v));
-    CONTINUE WHEN v_def = v_onsket;
+    -- TO grunner til aa gjenskape, ikke én. Innholdet kan vaere riktig
+    -- mens REKKEFOELGEN er gal — og det er nøyaktig tilstanden
+    -- produksjonsbasen sto i etter foerste kjoering av denne filen:
+    -- CHECKen var kanonisk, men laa fysisk etter NOT NULL-raden, saa 090
+    -- plukket feil rad. En `CONTINUE WHEN v_def = v_onsket` alene ville
+    -- hoppet over og latt feilen staa.
+    --
+    -- Rekkefoelgen maales under BITMAPPLANEN, den ene som kan gi feil
+    -- rad (se blokken nederst).
+    SELECT conname INTO v_forst FROM pg_constraint
+     WHERE conrelid = 'public.varsel'::regclass
+       AND pg_get_constraintdef(oid) LIKE '%' || r.kolonne || '%';
+    CONTINUE WHEN v_def = v_onsket AND v_forst = r.navn;
 
     -- Kanoniseringen er en UTVIDELSE: ingen eksisterende rad skal kunne
     -- falle utenfor. Skulle en gjoere det, er basen i en tilstand denne
@@ -121,9 +140,105 @@ BEGIN
           r.kolonne, v_ulovlige;
     END IF;
 
+    -- BEGGE begrensningene legges tilbake, CHECKen FOERST. Grunnen staar
+    -- i blokken nederst i filen: 090/091 leser en UORDNET
+    -- `SELECT ... INTO` som treffer baade CHECKen og NOT NULL-raden, og
+    -- produksjonsbasens plan gir dem i FYSISK rekkefoelge. Legges CHECKen
+    -- tilbake foerst, faar den den tidligste ledige plassen.
+    --
+    -- Vinduet der kolonnen er nullbar ligger INNE i denne transaksjonen,
+    -- som holder ACCESS EXCLUSIVE paa varsel: ingen annen oekt ser det,
+    -- og en feil ruller alt tilbake. SET NOT NULL skanner tabellen paa
+    -- nytt — det er prisen, og den er liten.
     EXECUTE format('ALTER TABLE public.varsel DROP CONSTRAINT %I', r.navn);
+    EXECUTE format('ALTER TABLE public.varsel ALTER COLUMN %I DROP NOT NULL',
+                   r.kolonne);
     EXECUTE format('ALTER TABLE public.varsel ADD CONSTRAINT %I %s',
                    r.navn, v_onsket);
+    EXECUTE format('ALTER TABLE public.varsel ALTER COLUMN %I SET NOT NULL',
+                   r.kolonne);
     RAISE NOTICE 'varselenum: % kanonisert', r.navn;
   END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- RADREKKEFOELGEN — maalt, ikke antatt.
+--
+-- 090 og 091 slaar opp begrensningen slik:
+--
+--   SELECT conname, pg_get_constraintdef(oid) INTO c, def FROM pg_constraint
+--    WHERE conrelid = 'varsel'::regclass
+--      AND pg_get_constraintdef(oid) LIKE '%ressurs_type%'
+--
+-- Det treffer TO rader — CHECKen og NOT NULL-raden (PostgreSQL 17+) — og
+-- SELECT ... INTO tar den FOERSTE planen gir, uten ORDER BY.
+--
+-- HVILKEN som kommer foerst avhenger av PLANEN, og det er dette som gjoer
+-- feilen saa vanskelig aa se:
+--
+--   * Paa en liten base velger planleggeren Index Scan paa
+--     pg_constraint_conrelid_contypid_conname_index, og radene kommer i
+--     CONNAME-rekkefoelge. `varsel_ressurs_type_chk` sorterer foer
+--     `varsel_ressurs_type_not_null`, saa CHECKen vinner alltid.
+--   * Paa produksjonsbasen velger den BITMAP HEAP SCAN — og en bitmap
+--     heap scan returnerer rader i FYSISK rekkefoelge. Da vinner den
+--     tuppelen som ligger tidligst i haugen.
+--
+-- Foerste versjon av denne filen gjenskapte CHECKen med DROP + ADD. Den
+-- nye tuppelen havnet FYSISK ETTER NOT NULL-raden, og neste deploy
+-- stoppet paa
+--
+--   090: kunne ikke utvide varsel_ressurs_type_not_null
+--        — uventet definisjonsform: NOT NULL ressurs_type
+--
+-- altsaa: reparasjonen loeste innholdet og skapte rekkefoelgeproblemet.
+-- Begge deler er verifisert i en base med tvunget bitmap-plan
+-- (enable_indexscan=off): foer gjenskaping vant CHECKen, etter vant
+-- NOT NULL-raden, og etter rettelsen under vant CHECKen igjen.
+--
+-- 090 og 091 er MERGET HISTORIKK og kan ikke rettes:
+-- test_fasiten_er_append_only_mot_basisgrenen slaar ned paa enhver
+-- endring i en pinnet migrasjon — «en fasit som er sin egen fasit er
+-- ingen fasit». Feilen maa derfor omgaas FORFRA, og loesningen er at
+-- BLOKKEN OVER legger CHECKen tilbake FOER NOT NULL-raden, saa CHECKen
+-- faar den tidligste ledige plassen.
+--
+-- Blokken under kjoerer 090s og 091s EGEN spoerring og krever at den
+-- lander paa CHECKen — under BEGGE planformene, fordi bitmapplanen
+-- tvinges fram i den ene maalingen. Gjoer den ikke det, stopper vi HER,
+-- foer deployen har roert noe, i stedet for aa la migrasjonen feile midt
+-- i kjeden. En reparasjon som ikke kan bevise sitt eget resultat er
+-- ingen reparasjon.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE r RECORD; v_navn TEXT;
+BEGIN
+  IF to_regclass('public.varsel') IS NULL THEN
+    RETURN;
+  END IF;
+  -- Bitmap heap scan er planen produksjonsbasen faktisk velger, og den
+  -- ene som kan gi feil rad. Vi maaler DEN, ikke den snille.
+  SET LOCAL enable_indexscan = off;
+  SET LOCAL enable_indexonlyscan = off;
+  FOR r IN
+    SELECT 'ressurs_type' AS kolonne, 'varsel_ressurs_type_chk' AS forventet
+    UNION ALL
+    SELECT 'art', 'varsel_art_chk'
+  LOOP
+    SELECT conname INTO v_navn FROM pg_constraint
+     WHERE conrelid = 'public.varsel'::regclass
+       AND pg_get_constraintdef(oid) LIKE '%' || r.kolonne || '%';
+    IF v_navn IS DISTINCT FROM r.forventet THEN
+      RAISE EXCEPTION
+        'varselenum: 090/091 ville plukket % i stedet for % — CHECKen'
+        ' ligger fysisk etter NOT NULL-raden, og migrasjonen ville'
+        ' stoppet midt i kjeden. Kjoer denne filen paa nytt.',
+        coalesce(v_navn, '(ingen rad)'), r.forventet;
+    END IF;
+    RAISE NOTICE 'varselenum: %-oppslaget lander paa % — som 090/091 krever',
+        r.kolonne, v_navn;
+  END LOOP;
+  -- Ingen RESET: `SET LOCAL` er transaksjonsskopet og faller bort naar
+  -- blokken commiter. Et RESET her ville dessuten satt SESJONENS verdi,
+  -- ikke den som gjaldt foer — altsaa en annen tilstand enn den vi laante.
 END $$;
