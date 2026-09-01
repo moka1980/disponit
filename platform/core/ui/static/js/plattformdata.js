@@ -29,12 +29,21 @@ export const MODULSTATUS = {
   2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
                     // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
                     // m02-aksept-v1, alle punkter bundet)
+  // KLYNGEN «orden i eget hus» (3, 4, 5, 9, 21) — registrert 1/9
+  // sammen med grensene m3-v1…m21-v1 og de tildelte
+  // migrasjonsnumrene 092–096 (docs/KLYNGE-FUNDAMENT.md). Ordet er
+  // `bygges` fordi manifestet finnes; ingen av de fem har kode ennå,
+  // og ingen av dem flippes av en byggemilepæl — bare av en aksept.
+  3: "bygges",      // m03_datakvalitet: under_utvikling, ikke_i_drift
+  4: "bygges",      // m04_dataforvalter: under_utvikling, ikke_i_drift
+  5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
   6: "bygges",      // m06_epost: under_utvikling, ikke_i_drift — PR-A
                     // (datamodell + retensjon) er fundamentet; flippes
                     // av en M-6-aksept, aldri av en byggemilepæl
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
+  9: "bygges",      // m09_kunnskap: under_utvikling, ikke_i_drift
   // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
   // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
   // ingen aksepthendelse, og registerets regel (drift krever aktiv,
@@ -43,6 +52,7 @@ export const MODULSTATUS = {
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
   16: "bygges",
+  21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -85,6 +95,28 @@ const MODULER = [
     tekst_nokkel: "site.modul.m2.tekst",
   },
   {
+    // M-3/M-4/M-5/M-9: katalogfase 1, ikke plattform- og
+    // sikkerhetsområdet — altså autopiloter, samme klasse som
+    // M-6 og M-8. Fasen er plattformens utrullingsfase, ikke
+    // katalogens områdeinndeling.
+    id: 3,
+    navn_nokkel: "site.modul.m3.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m3.tekst",
+  },
+  {
+    id: 4,
+    navn_nokkel: "site.modul.m4.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m4.tekst",
+  },
+  {
+    id: 5,
+    navn_nokkel: "site.modul.m5.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m5.tekst",
+  },
+  {
     // M-6 er en operasjonsagent i kundens hverdag — samme klasse som
     // M-8 (også katalogfase 1): fasen her er plattformens
     // utrullingsfase, og agentene hører til autopilotene.
@@ -100,12 +132,26 @@ const MODULER = [
     tekst_nokkel: "site.modul.m8.tekst",
   },
   {
+    id: 9,
+    navn_nokkel: "site.modul.m9.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m9.tekst",
+  },
+  {
     // M-16 hører til fase 2 i katalogen (analyse_og_ledelse), altså
     // `site.fase.operasjoner` — samme kilde som `katalog.js`.
     id: 16,
     navn_nokkel: "site.modul.m16.navn",
     fase_nokkel: "site.fase.operasjoner",
     tekst_nokkel: "site.modul.m16.tekst",
+  },
+  {
+    // M-21 er katalogfase 2 (juridisk_og_compliance), altså
+    // `site.fase.operasjoner` — samme kilde som `katalog.js`.
+    id: 21,
+    navn_nokkel: "site.modul.m21.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m21.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

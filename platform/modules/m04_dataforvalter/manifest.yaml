@@ -1,0 +1,77 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m4-v1` står i manifestskjema.KRAVGRENSER fra samme commit, og
+# migrasjonsnummeret (093) er tildelt i docs/KLYNGE-FUNDAMENT.md.
+#
+# V1 ER HUSETS RETENSJONSREGNSKAP, ikke en rydder. Katalogteksten
+# beskriver en filforvalter over kundens skylagre (SharePoint, Drive,
+# Box, S3) med karantene og angrefrist. Ingen av de tre forutsetningene
+# den selv oppgir finnes — connector-rammeverk, OCR, tilgangskart — og
+# en ny slettevei ved siden av de seks reaperne som alt kjører ville
+# vært den farligste koden i huset.
+#
+# Derfor: M-4 v1 SLETTER INGENTING utenfor sine egne målerader. Den
+# navngir hvert lager, skriver ned hvilken frist og hvilken reaper som
+# gjelder, måler hvor mye som ligger der og hvor gammelt det eldste
+# ureapede er — og gjør et lager UTEN SKREVET DOM til et funn.
+# Sletting fortsetter å skje nøyaktig der den skjer i dag.
+#
+# Regelen som bærer modulen: et lager som ikke kunne måles rapporteres
+# som funn, ALDRI som null. En rapport som sier «0 ureapede rader»
+# fordi grantet manglet, er ikke en grønn måling — den er en måling som
+# ikke kjørte.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m04_dataforvalter
+navn: Data- og filforvalter
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter (m16-formen): modulen bestiller ingenting gjennom
+# policyporten og skriver ingen beslutning til evidenskjeden. Den LESER
+# katalogen og sine egne aggregater. En oppført avhengighet ville vært
+# lånt.
+avhengigheter: []
+kjerne: platform/modules/m04_dataforvalter
+i18n_prefiks: retensjon
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en seedet base med KJENT antall ureapede rader per lager,
+      målt likt lokalt og på staging med begge datasett-identitetene
+      bundet. Uten en fasit er et beholdningstall ikke et bevis.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: avklaring av hva punktet betyr for en modul som per v1
+      ikke beslutter noe og derfor ikke skriver til evidenskjeden.
+      Registerets dommer felles i MIGRASJON, ikke gjennom en dør — de
+      er sporet i git, ikke i revisjonsloggen. Om det tilfredsstiller
+      punktet er en arkitektdom; står nei framfor å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: målejobben bygget. Formen er gitt (advisory-lås,
+      hoppet_over skilt fra feil, alarm etter to sammenhengende feil,
+      statement_timeout per lager → funn `umaalbar`), men ingen kode
+      kjører, og det er nettopp umaalbar-veien porten må injisere.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for målekostnaden. v1 unngår seq scan over
+      store lagre ved å telle eksakt KUN der en reapetkolonne er
+      erklært, og bruke katalogtall ellers — men designvalget er ikke
+      en måling. Ingen grense pinnet, ingen kjøring målt.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

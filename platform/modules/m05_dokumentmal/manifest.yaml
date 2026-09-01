@@ -1,0 +1,72 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m5-v1` står i manifestskjema.KRAVGRENSER fra samme commit, og
+# migrasjonsnummeret (094) er tildelt i docs/KLYNGE-FUNDAMENT.md.
+#
+# V1 ER MALREGISTERET. Katalogteksten lover også DOCX/PDF-rendring,
+# semantisk versjonssammenligning og publisering til kontorpakke og
+# e-signering. Alt det forutsetter en dokumentrenderer og connectorer
+# som ikke finnes. v1 bygger det huset alt har vist at det trenger, og
+# GENERALISERER en form som allerede kjører i produksjon:
+# 079_utsendingstekst — versjonert, append-only, dør-eid, med enveis
+# skjuling i stedet for sletting. M-5 løfter den fra én utsendingstekst
+# til en malfamilie med obligatoriske felt.
+#
+# TO DOMMER v1 hviler på:
+#   * Fakta dikter modulen ALDRI. Et felt uten kilde i inndataene
+#     merkes som manglende og fyller ingenting — «ukjente felt markeres,
+#     aldri diktes» er katalogens eget krav, og det er den ene
+#     invarianten som gjør en malmotor trygg.
+#   * Låste klausuler er LÅST I DATAMODELLEN, ikke i disiplinen: en
+#     klausulkomponent merket låst kan ikke endres av utfyllingen, og
+#     forsøket er urepresenterbart framfor usannsynlig.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m05_dokumentmal
+navn: Dokument- og malagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i v1: malregisteret er et lager med dører, det
+# bestiller ingenting gjennom policyporten. Utfyllingen returnerer
+# tekst; den sender ingenting og beslutter ingenting. Blir utsending en
+# del av v2, er m01/m02 reelle avhengigheter — da, ikke nå.
+avhengigheter: []
+kjerne: platform/modules/m05_dokumentmal
+i18n_prefiks: dokumentmal
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et malsett med KJENT fasit for hvilke felt som skal
+      merkes manglende og hvilke klausuler som er låste, fylt ut likt
+      lokalt og på staging med begge datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: avklaring av hva punktet betyr for en modul som per v1
+      ikke beslutter noe. Malversjonene er append-only og sporet i sitt
+      eget lager; om det er «revisjonslogg korrekt» i punktets forstand
+      er en arkitektdom. Står nei framfor å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: en jobb eller arbeider å injisere feil i. v1 har ingen —
+      malregisteret er dører og lesevei, ingen kø.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for utfyllingskostnaden per dokument og en
+      målt kjøring mot den. Ingen grense pinnet.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

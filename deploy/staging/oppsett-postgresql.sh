@@ -86,12 +86,39 @@ VERIFIKATOR=disponit_ci_verifikator
 # hele foresporselsveien kunne skrevet backuphistorikk og selvtestrunder.
 DRIFTSTATUS=disponit_driftstatus
 SELVTEST=disponit_selvtest
-for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" "$SELVTEST"; do
+# KLYNGEN «orden i eget hus» (092-096). Rollene opprettes HER, i
+# fundamentet, og ikke én om gangen med hver modul-PR. Grunnen er
+# konkret og nylig: #324 la to nye roller i migrasjonene, verten hadde
+# dem ikke, og HVER påfølgende deploy stoppet på deployporten til dette
+# skriptet var kjørt. Fem moduler som lander etter tur ville gitt fem
+# slike stopp. Én rolleoppretting i forkant gir null.
+#
+# En rolle uten tabeller er ufarlig: NOLOGIN-eierne eier ingenting før
+# migrasjonen deres kjører, og LOGIN-rollene har ingen rettigheter før
+# migrer.py gir dem noen (den ene EXECUTE-en hver, m10/m11-formen).
+# Fraværet av alt annet ER rollen.
+#
+# Fem eiere, tre målere — og M-21 har MED VILJE ingen egen LOGIN:
+# fristsveipen er et forpass i varselsenderen, ikke en ny timer, så den
+# kjører som $VARSLER. En ny varslingsvei er en ny vei å miste et varsel i.
+KVALITETEIER=disponit_kvalitet_eier      # M-3 eier profil- og funnlagrene
+KVALITETSMAALER=disponit_kvalitetsmaaler # M-3s profileringsjobb
+LAGEREIER=disponit_lager_eier            # M-4 eier retensjonsregisteret
+LAGERMAALER=disponit_lagermaaler         # M-4s beholdningsmåling
+MALEIER=disponit_mal_eier                # M-5 eier malregisteret (ingen jobb)
+KUNNSKAPEIER=disponit_kunnskap_eier      # M-9 eier begrepsregisteret
+KUNNSKAPSSVEIP=disponit_kunnskapssveip   # M-9s utløpssveip
+PLIKTEIER=disponit_plikt_eier            # M-21 eier forpliktelsesregisteret
+for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
+         "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
+         "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
-for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" "$DOMAINSADMIN"; do
+for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
+         "$DOMAINSADMIN" "$KVALITETEIER" "$LAGEREIER" "$MALEIER" \
+         "$KUNNSKAPEIER" "$PLIKTEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -180,6 +207,15 @@ DRIFTSTATUS_DSN=("DISPONIT_DRIFTSTATUS_URL=$DB"
                  "DISPONIT_TEST_DRIFTSTATUS_DSN=${DB}_test")
 SELVTEST_DSN=("DISPONIT_SELVTEST_URL=$DB"
               "DISPONIT_TEST_SELVTEST_DSN=${DB}_test")
+# Klyngens tre målere. Samme state-machine som rollene over: uten en DSN
+# i miljøfila kan de ikke autentisere på en fersk install, og da stopper
+# deployen når modulen deres lander — akkurat som #324 gjorde.
+KVALITETSMAALER_DSN=("DISPONIT_KVALITETSMAALER_URL=$DB"
+                     "DISPONIT_TEST_KVALITETSMAALER_DSN=${DB}_test")
+LAGERMAALER_DSN=("DISPONIT_LAGERMAALER_URL=$DB"
+                 "DISPONIT_TEST_LAGERMAALER_DSN=${DB}_test")
+KUNNSKAPSSVEIP_DSN=("DISPONIT_KUNNSKAPSSVEIP_URL=$DB"
+                    "DISPONIT_TEST_KUNNSKAPSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -192,6 +228,9 @@ sikre_rolle_dsn "$PLANARB"    "${PLANARB_DSN[@]}"
 sikre_rolle_dsn "$VERIFIKATOR" "${VERIFIKATOR_DSN[@]}"
 sikre_rolle_dsn "$DRIFTSTATUS" "${DRIFTSTATUS_DSN[@]}"
 sikre_rolle_dsn "$SELVTEST"   "${SELVTEST_DSN[@]}"
+sikre_rolle_dsn "$KVALITETSMAALER" "${KVALITETSMAALER_DSN[@]}"
+sikre_rolle_dsn "$LAGERMAALER"     "${LAGERMAALER_DSN[@]}"
+sikre_rolle_dsn "$KUNNSKAPSSVEIP"  "${KUNNSKAPSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

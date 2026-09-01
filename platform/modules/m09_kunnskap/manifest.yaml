@@ -1,0 +1,73 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m9-v1` står i manifestskjema.KRAVGRENSER fra samme commit, og
+# migrasjonsnummeret (095) er tildelt i docs/KLYNGE-FUNDAMENT.md.
+#
+# V1 ER ORDLISTEN MED KILDEKRAV. Katalogteksten lover også indeksering
+# av intranett og filarkiv, og svar på spørsmål med presise kildepekere
+# — altså en RAG-vei over en vektordatabase modulen selv oppgir som
+# forutsetning. Verken søkeindeksen over eksterne kilder eller
+# vektorbasen finnes.
+#
+# v1 bygger den delen som er ekte i dag og som resten uansett hviler
+# på: et begrepsregister der HVERT begrep navngir en eier, en kilde og
+# en gyldighetsdato, og et fritekstsøk over det. Fritekstsøk finnes
+# ikke i plattformen fra før — ingen migrasjon har tsvector eller GIN —
+# så M-9 bygger det selv, med EKSPLISITT regconfig
+# (`to_tsvector('norwegian', …)`), aldri den sesjonsavhengige
+# to-arguments-formen: en indeks bygget på en annen default_text_search
+# _config enn spørringen er en indeks som stille slutter å treffe.
+#
+# DOMMEN v1 hviler på: et begrep uten kilde er urepresenterbart, og et
+# begrep forbi gyldighetsdato er et FUNN — ikke en stille gammel rad.
+# «Svar uten tilstrekkelig kildegrunnlag avvises» er katalogens eget
+# krav; i v1 er det en NOT NULL, ikke en policy.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m09_kunnskap
+navn: Kunnskaps- og ordlisteagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i v1: registeret er et tenant-skopet lager med
+# dører og et søk. Det bestiller ingenting og beslutter ingenting.
+avhengigheter: []
+kjerne: platform/modules/m09_kunnskap
+i18n_prefiks: kunnskap
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et begrepssett med KJENT fasit for hvilke søk som skal
+      treffe (inkludert norsk bøying og sammensetning), kjørt likt
+      lokalt og på staging med begge datasett-identitetene bundet.
+      Uten fasit måler en søketest bare at spørringen ikke kastet feil.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: avklaring av hva punktet betyr for et register som per v1
+      ikke beslutter noe. Står nei framfor å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: en jobb å injisere feil i. Utløpssveipen (begreper forbi
+      gyldighetsdato → funn) er en slik jobb, men den er ikke bygget.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for søkekostnaden under realistisk
+      begrepsmengde, og en målt kjøring mot den. Ingen grense pinnet —
+      og en GIN-indeks er en påstand om ytelse som skal MÅLES, ikke
+      antas (086-lærdommen: 47,6 → 0,33 ms ble målt, ikke gjettet).
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
