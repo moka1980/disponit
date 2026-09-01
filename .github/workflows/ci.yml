@@ -40,6 +40,9 @@ jobs:
       DISPONIT_TEST_KVALITETSMAALER_DSN: postgresql://disponit_kvalitetsmaaler:kval@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_LAGERMAALER_DSN: postgresql://disponit_lagermaaler:lagr@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_KUNNSKAPSSVEIP_DSN: postgresql://disponit_kunnskapssveip:kunn@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_TILGANGSSVEIP_DSN: postgresql://disponit_tilgangssveip:tilg@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_PERSONVERNSVEIP_DSN: postgresql://disponit_personvernsveip:pers@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_COMPLIANCESVEIP_DSN: postgresql://disponit_compliancesveip:comp@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -85,6 +88,18 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_mal_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kunnskap_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plikt_eier NOLOGIN"
+          # KLYNGE 2 (097-100), samme forhåndsoppretting i fundamentet:
+          # ci.yml merges normalt for hånd, og fire separate endringer i
+          # den er fire sjanser til en rød CI som ikke handler om modulen
+          # som landet. M-22 har ingen egen sveiperolle — utløpssveipen
+          # er et forpass i varselsenderen.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilgangssveip LOGIN PASSWORD 'tilg'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_personvernsveip LOGIN PASSWORD 'pers'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_compliancesveip LOGIN PASSWORD 'comp'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilgang_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lisens_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_personvern_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_compliance_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
@@ -133,6 +148,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_mal_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_kunnskap_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_plikt_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_tilgang_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_lisens_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_personvern_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_compliance_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
@@ -145,6 +164,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_mal_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_kunnskap_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_plikt_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_tilgang_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_lisens_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_personvern_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_compliance_eier"
           # GO-vilkaar V3: event-triggeren som hindrer at retention-vakten
           # DEAKTIVERES. Den kan bare lages av superbruker — derfor her og
           # ikke i en migrasjon, noeyaktig som rollene. CI maa speile

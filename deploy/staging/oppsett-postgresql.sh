@@ -109,16 +109,29 @@ MALEIER=disponit_mal_eier                # M-5 eier malregisteret (ingen jobb)
 KUNNSKAPEIER=disponit_kunnskap_eier      # M-9 eier begrepsregisteret
 KUNNSKAPSSVEIP=disponit_kunnskapssveip   # M-9s utløpssveip
 PLIKTEIER=disponit_plikt_eier            # M-21 eier forpliktelsesregisteret
+# KLYNGE 2 (097-100), samme forhåndsoppretting som klynge 1 og av samme
+# grunn: én kjøring av dette skriptet framfor fire stoppede deployer.
+# M-22 har MED VILJE ingen egen LOGIN — utløpssveipen er et forpass i
+# varselsenderen (M-21-formen), så den kjører som $VARSLER.
+TILGANGEIER=disponit_tilgang_eier        # M-12 eier tilgangsregisteret
+TILGANGSSVEIP=disponit_tilgangssveip     # M-12s gjennomgangssveip
+LISENSEIER=disponit_lisens_eier          # M-22 eier lisensregisteret
+PERSONVERNEIER=disponit_personvern_eier  # M-30 eier forespørselsregisteret
+PERSONVERNSVEIP=disponit_personvernsveip # M-30s fristsveip
+COMPLIANCEEIER=disponit_compliance_eier  # M-34 eier kontrollregisteret
+COMPLIANCESVEIP=disponit_compliancesveip # M-34s etterprøvingssveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
-         "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP"; do
+         "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
+         "$TILGANGSSVEIP" "$PERSONVERNSVEIP" "$COMPLIANCESVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
 done
 for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$DOMAINSADMIN" "$KVALITETEIER" "$LAGEREIER" "$MALEIER" \
-         "$KUNNSKAPEIER" "$PLIKTEIER"; do
+         "$KUNNSKAPEIER" "$PLIKTEIER" "$TILGANGEIER" "$LISENSEIER" \
+         "$PERSONVERNEIER" "$COMPLIANCEEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -173,6 +186,10 @@ sudo -u postgres psql -qc "GRANT $LAGEREIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MALEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $KUNNSKAPEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $PLIKTEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $TILGANGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $LISENSEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $PERSONVERNEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $COMPLIANCEEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -234,6 +251,12 @@ LAGERMAALER_DSN=("DISPONIT_LAGERMAALER_URL=$DB"
                  "DISPONIT_TEST_LAGERMAALER_DSN=${DB}_test")
 KUNNSKAPSSVEIP_DSN=("DISPONIT_KUNNSKAPSSVEIP_URL=$DB"
                     "DISPONIT_TEST_KUNNSKAPSSVEIP_DSN=${DB}_test")
+TILGANGSSVEIP_DSN=("DISPONIT_TILGANGSSVEIP_URL=$DB"
+                   "DISPONIT_TEST_TILGANGSSVEIP_DSN=${DB}_test")
+PERSONVERNSVEIP_DSN=("DISPONIT_PERSONVERNSVEIP_URL=$DB"
+                     "DISPONIT_TEST_PERSONVERNSVEIP_DSN=${DB}_test")
+COMPLIANCESVEIP_DSN=("DISPONIT_COMPLIANCESVEIP_URL=$DB"
+                     "DISPONIT_TEST_COMPLIANCESVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -249,6 +272,9 @@ sikre_rolle_dsn "$SELVTEST"   "${SELVTEST_DSN[@]}"
 sikre_rolle_dsn "$KVALITETSMAALER" "${KVALITETSMAALER_DSN[@]}"
 sikre_rolle_dsn "$LAGERMAALER"     "${LAGERMAALER_DSN[@]}"
 sikre_rolle_dsn "$KUNNSKAPSSVEIP"  "${KUNNSKAPSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$TILGANGSSVEIP"    "${TILGANGSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$PERSONVERNSVEIP" "${PERSONVERNSVEIP_DSN[@]}"
+sikre_rolle_dsn "$COMPLIANCESVEIP" "${COMPLIANCESVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
@@ -358,6 +384,8 @@ for base in $DB ${DB}_test; do
   # kjøringen med «permission denied for schema public».
   sudo -u postgres psql -q -d "$base" -c \
     "GRANT USAGE, CREATE ON SCHEMA public TO $KVALITETEIER, $LAGEREIER, $MALEIER, $KUNNSKAPEIER, $PLIKTEIER"
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $TILGANGEIER, $LISENSEIER, $PERSONVERNEIER, $COMPLIANCEEIER"
 done
 
 # ------------------------------------------------------------

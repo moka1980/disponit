@@ -44,6 +44,12 @@ export const MODULSTATUS = {
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
   9: "bygges",      // m09_kunnskap: under_utvikling, ikke_i_drift
+  // KLYNGE 2 «tilgang, lisens og etterlevelse» (097-100) — registrert
+  // 1/9 sammen med grensene m12-v1…m34-v1. Samme trygge form som
+  // klynge 1: alle fire er REGISTRE og MÅLERE, ingen av dem er en ny
+  // endringsvei mot kundens data. Ordet er `bygges` fordi manifestet
+  // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
+  12: "bygges",     // m12_tilgang: under_utvikling, ikke_i_drift
   // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
   // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
   // ingen aksepthendelse, og registerets regel (drift krever aktiv,
@@ -53,6 +59,9 @@ export const MODULSTATUS = {
   // hode for hva en ærligere avlesning krever.
   16: "bygges",
   21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
+  22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
+  30: "bygges",     // m30_personvern: under_utvikling, ikke_i_drift
+  34: "bygges",     // m34_compliance: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -138,6 +147,13 @@ const MODULER = [
     tekst_nokkel: "site.modul.m9.tekst",
   },
   {
+    // M-12 er katalogfase 1 (it_og_drift) — autopiloter, som M-6/M-8.
+    id: 12,
+    navn_nokkel: "site.modul.m12.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m12.tekst",
+  },
+  {
     // M-16 hører til fase 2 i katalogen (analyse_og_ledelse), altså
     // `site.fase.operasjoner` — samme kilde som `katalog.js`.
     id: 16,
@@ -152,6 +168,29 @@ const MODULER = [
     navn_nokkel: "site.modul.m21.navn",
     fase_nokkel: "site.fase.operasjoner",
     tekst_nokkel: "site.modul.m21.tekst",
+  },
+  {
+    // M-22 er katalogfase 2 (it_og_drift) — operasjoner, som M-16/M-21.
+    id: 22,
+    navn_nokkel: "site.modul.m22.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m22.tekst",
+  },
+  {
+    // M-30 og M-34 er katalogfase 3 og 4 (juridisk_og_compliance).
+    // UI-fasene er fundament/autopiloter/operasjoner/global, og de to
+    // legges i `operasjoner` — samme fase juridisk_og_compliance alt
+    // bruker for M-21.
+    id: 30,
+    navn_nokkel: "site.modul.m30.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m30.tekst",
+  },
+  {
+    id: 34,
+    navn_nokkel: "site.modul.m34.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m34.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

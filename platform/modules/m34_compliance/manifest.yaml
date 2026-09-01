@@ -1,0 +1,76 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m34-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 100
+# tildelt i docs/KLYNGE2-FUNDAMENT.md.
+#
+# V1 ER KONTROLLREGISTERET. Katalogteksten lover også automatisk
+# innsamling av evidens og innsending til sertifiseringsorgan. Begge
+# forutsetter connectorer per rammeverk og et mandat per mottaker —
+# ingen av delene finnes, og et compliance-verktøy som sender inn noe
+# på egen hånd er verre enn ingen: det skaper en påstand ingen har
+# lest.
+#
+# v1 registrerer kontrollene: hvilket krav de dekker, hvem som eier
+# dem, hvor ofte de skal etterprøves, når de sist BLE det, og hvilken
+# evidens som ligger til grunn. En kontroll uten eier er
+# urepresenterbar, og en kontroll forbi sin etterprøvingsfrist er et
+# funn — ikke en rad som stille blir gammel.
+#
+# DOMMEN v1 hviler på: en kontroll er «oppfylt» bare med en skrevet
+# evidenshenvisning og en dato. Det er ikke byråkrati — hele poenget
+# med et kontrollregister er at forskjellen mellom «vi gjør dette» og
+# «vi kan vise at vi gjorde dette» er den eneste som betyr noe i en
+# revisjon.
+#
+# GRENSER MOT SØSKNENE, sagt eksplisitt så ingen bygger det to ganger:
+# M-21 eier PLIKTER (frister mot omverdenen), M-30 eier FORESPØRSLER
+# fra registrerte, M-34 eier KONTROLLER (våre egne, gjentakende
+# etterprøvinger). De tre deler form og deler bevisst ikke tabeller.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m34_compliance
+navn: Compliance- og sertifiseringsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELL, MÅLT avhengighet: hver etterprøving bokføres i evidenskjeden —
+# en kontroll som ikke kan gjenfinnes er ikke etterprøvd, den er påstått.
+avhengigheter:
+  - m02_revisjonslogg          # etterprøvingene i evidenskjeden
+kjerne: platform/modules/m34_compliance
+i18n_prefiks: compliance
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et kontrollsett med KJENT fasit for hvilke som skal bli
+      funn ved forbigått etterprøvingsfrist, kjørt likt lokalt og på
+      staging med begge datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver etterprøving faktisk står i evidenskjeden, målt
+      som hendelser med identitet. Oppført som avhengighet fordi det
+      SKAL finnes; punktet står nei til målingen er gjort.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: etterprøvingssveipen bygget, og at en feil i den ikke
+      stanser den ordinære varselsendingen (M-21s forpassform).
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
+      den. Ingen grense pinnet.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

@@ -1,0 +1,75 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m30-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 099
+# tildelt i docs/KLYNGE2-FUNDAMENT.md.
+#
+# V1 ER FORESPØRSELSREGISTERET. En datasubjektagent skal etter
+# katalogen finne, samle og SLETTE personopplysninger på tvers av
+# lagrene når noen ber om det. Sletting er allerede eid av M-4s
+# retensjonsregnskap og de seks reaperne som kjører — og en ANDRE
+# slettevei ved siden av dem er nøyaktig det M-4 ble bygget for å
+# unngå. To veier som sletter det samme kan aldri holdes i takt.
+#
+# v1 registrerer derfor forespørslene: hvem som har bedt om hva, når
+# fristen går ut (GDPR art. 12: én måned), hvem som eier den, og hva
+# svaret ble. Den varsler før fristen og gjør en oversittet frist til
+# et funn. SELVE UTFØRELSEN gjøres av den som eier lageret — og
+# registeret er det som gjør at noen kan se at den ble gjort.
+#
+# DOMMEN v1 hviler på: en forespørsel lukkes av et SKREVET SVAR, aldri
+# av at fristen passerer. Det er samme regel som M-21s kvitteringskrav,
+# og den er strengere her: en oversittet innsynsforespørsel er et
+# lovbrudd, ikke en forsinkelse.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m30_personvern
+navn: Personvern- og datasubjektagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: hver forespørsel og hvert svar bokføres i
+# evidenskjeden (m02) — en innsynsbehandling som ikke kan gjenfinnes er
+# ikke dokumentert overholdelse. M-4 føres fordi registeret PEKER på
+# lagrene retensjonsregnskapet navngir; det utfører ingenting selv, men
+# uten M-4s register vet ingen hvilke lagre en forespørsel dekker.
+avhengigheter:
+  - m02_revisjonslogg          # forespørsel og svar i evidenskjeden
+  - m04_dataforvalter          # lagrene en forespørsel dekker
+kjerne: platform/modules/m30_personvern
+i18n_prefiks: personvern
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et forespørselssett med KJENT fasit for hvilke frister
+      som skal varsles og hvilke som skal bli funn, kjørt likt lokalt
+      og på staging med begge datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver forespørsel og hvert svar faktisk står i
+      evidenskjeden, målt som hendelser med identitet. Oppført som
+      avhengighet fordi det SKAL finnes; punktet står nei til målingen
+      er gjort.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: fristsveipen bygget, og at en feil i den ikke stanser den
+      ordinære varselsendingen (M-21s forpassform).
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
+      den. Ingen grense pinnet.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

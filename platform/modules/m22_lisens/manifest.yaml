@@ -1,0 +1,76 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m22-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 098
+# tildelt i docs/KLYNGE2-FUNDAMENT.md.
+#
+# V1 ER LISENSREGISTERET MED UTLØPSVARSEL. Katalogteksten lover også at
+# modulen NEDGRADERER eller AVSLUTTER abonnementer automatisk etter målt
+# inaktivitet. Katalogens egen guard sier hvorfor det ikke kan være v1:
+# «kritiske systemer og legal hold ekskluderes; tilgang kan gjenopprettes
+# i angreperioden». En modul som fjerner lisenser trenger altså BÅDE et
+# unntaksregister, en angrefrist og en gjenopprettingsvei — tre
+# mekanismer som ikke finnes.
+#
+# v1 registrerer lisenser og abonnementer med eier, kostnad, fornyelses-
+# dato og kilde, og varsler i god tid før utløp. Den fjerner ingenting.
+# Katalogens KPI «ubrukte lisenser» krever dessuten innloggingsdata fra
+# SSO — en datakilde vi ikke har — så v1 måler det den KAN vite: hva vi
+# betaler for, hvem som eier det, og hva som løper ut.
+#
+# GJENBRUKER M-21s FORPASS-FORM: fristsveipen er et forpass i
+# varselsenderen, ikke en ny timer. Samme begrunnelse, samme pris — en
+# feil i forpasset må aldri stanse den ordinære sendingen.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m22_lisens
+navn: SaaS- og lisensagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELL, MÅLT avhengighet (m21-formen): M-22 KØER VARSEL før utløp, og
+# et fristvarsel skal kunne gjenfinnes i evidenskjeden — ikke bare i en
+# varseltabell. Katalogen oppgir også modul 12 og 14 som avhengigheter;
+# de gjelder BRUKSMÅLINGEN og fakturaavstemmingen, som er v2. En oppført
+# m12 i v1 ville vært lånt.
+avhengigheter:
+  - m02_revisjonslogg          # utløpsvarslene skal kunne gjenfinnes
+kjerne: platform/modules/m22_lisens
+i18n_prefiks: lisens
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et lisenssett med KJENT fasit for hvilke varsler som skal
+      køes ved hvilket tidspunkt — og hvilke som IKKE skal køes en gang
+      til — kjørt likt lokalt og på staging med begge
+      datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at koblingen mot evidenskjeden er bygget og målt. Den er
+      oppført som avhengighet fordi den SKAL finnes, ikke fordi den
+      finnes. Punktet står nei til målingen er gjort.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: forpasset bygget. Porten er skarp av samme grunn som i
+      M-21: en feil i forpasset må ikke kunne stanse den ORDINÆRE
+      varselsendingen. Uten kode er det en påstand, ikke en måling.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for hva forpasset koster per sveip, og en
+      målt kjøring mot den. Et forpass i en eksisterende jobb er billig
+      å legge inn og dyrt å oppdage at ble tregt.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

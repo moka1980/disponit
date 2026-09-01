@@ -46,6 +46,11 @@ KJENTE_EIERROLLER = (
     "disponit_mal_eier",        # M-5, migrasjon 094
     "disponit_kunnskap_eier",   # M-9, migrasjon 095
     "disponit_plikt_eier",      # M-21, migrasjon 096
+    # Klynge 2 «tilgang, lisens og etterlevelse» (#klynge2).
+    "disponit_tilgang_eier",    # M-12, migrasjon 097
+    "disponit_lisens_eier",     # M-22, migrasjon 098
+    "disponit_personvern_eier", # M-30, migrasjon 099
+    "disponit_compliance_eier", # M-34, migrasjon 100
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.
