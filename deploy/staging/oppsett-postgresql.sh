@@ -319,6 +319,13 @@ for base in $DB ${DB}_test; do
   sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" \
     -f "$(dirname "$0")/eierskap-reparasjon.sql"
 
+  # VARSELENUMENE, samme klasse av reparasjon og samme grunn til at den
+  # bor HER og ikke i kjeden: migrasjonen som feiler PAA driften (090)
+  # kommer FOER en migrasjon som kunne rettet den. En base som alt er
+  # kanonisk roeres ikke; en fersk base uten `varsel` hoppes over.
+  sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$base" \
+    -f "$(dirname "$0")/varselenum-reparasjon.sql"
+
   # Selvhelbredelse: den forrige versjonen av dette skriptet rakk å ta
   # eierskap over extension-funksjoner UTEN argumenter (på staging traff den
   # pgcrypto sine `fips_mode()` og `gen_random_uuid()`). Gi dem tilbake til
