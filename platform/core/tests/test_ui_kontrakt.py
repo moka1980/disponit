@@ -19,7 +19,12 @@ UI_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "js"
 MODULER = Path(__file__).resolve().parents[2] / "modules"
 KILDE = "\n".join((API / f).read_text(encoding="utf-8")
                   for f in ("lesing.py", "app.py", "sesjon.py",
-                            "utrulling.py"))
+                            "utrulling.py",
+                            # 093 (M-4): retensjonsflatens felt bor i sin
+                            # egen handler-modul, som `utrulling.py` —
+                            # uten fila her ville kontrakten under vært
+                            # grønn fordi den ikke leste kilden.
+                            "retensjon.py"))
 
 # Feltene UI-et leser, per endepunkt (se platform/core/ui/static/js/flater/*).
 KONTRAKT = {
@@ -56,6 +61,15 @@ KONTRAKT = {
     # flater/kundeadmin.js — de har ingen tenanttabell å falle tilbake på.
     "/v1/utrulling": ["plattformdrift", "tenanter", "navn", "plan", "moduler",
                       "neste"],
+    # 093 (M-4): retensjonsregnskapet. `avbrutt` er det bærende feltet —
+    # faller det ut av backend, viser flaten en halv måling som et
+    # komplett bilde. `dom_begrunnelse` er det nest bærende: en dom uten
+    # begrunnelse er en påstand.
+    "/v1/retensjon": ["plattformdrift", "maaling", "avbrutt", "lagre",
+                      "katalog", "funn", "dom", "dom_begrunnelse",
+                      "frist_dogn", "fristkilde", "reaper",
+                      "rader_ureapet", "eldste_ureapet_ts",
+                      "rader_estimat", "bytes_totalt", "funntype"],
 }
 
 

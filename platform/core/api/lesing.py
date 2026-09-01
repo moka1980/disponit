@@ -1846,3 +1846,21 @@ def datakvalitet(tjeneste, request: Request) -> Response:
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "security:read", _fn)
+
+
+def retensjon(tjeneste, request: Request) -> Response:
+    """M-4s retensjonsregnskap: registeret, egen beholdning, målingen.
+
+    Ruten er `security:read` — samme klasse som driftstatus og M-31s
+    model card. Kontrollplanet (`platform:admin`) er en UTVIDELSE av
+    svaret som avgjøres i `retensjon.svar_for`, ikke en annen inngang:
+    `platform:admin` står ikke i `LESESCOPES`, så en rute deklarert på
+    det ville avvist hver eneste browserøkt.
+    """
+    from . import retensjon as retensjonsmodul
+
+    def _fn(conn, auth, rid):
+        svar = retensjonsmodul.svar_for(conn, auth.tenant, auth.scopes)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "security:read", _fn)

@@ -1,0 +1,54 @@
+# M-4 (093): retensjonsmålingen — husets regnskap over egne lagre.
+#
+# JOBBEN SLETTER INGENTING utenfor sine egne målerader. Den navngir hvert
+# lager, leser hvilken frist og hvilken reaper som gjelder, måler hvor mye
+# som ligger der og hvor gammelt det eldste ureapede er — og gjør et lager
+# uten skrevet dom til et FUNN. Sletting fortsetter å skje nøyaktig der
+# den skjer i dag, i de seks reaperne som alt kjører.
+#
+# ROLLEN ER JOBBENS EGEN, og fraværet av alt annet ER rollen.
+# `disponit_lagermaaler` har NULL tabellrettigheter i hele basen og
+# EXECUTE på NØYAKTIG én funksjon (`m4_mal_lagre`). Den kan ikke lese en
+# eneste payloadkolonne — ikke fordi koden lar være, men fordi grantene
+# er KOLONNEGRANT på {tenant, alderskolonne, reapetkolonne} og ingenting
+# mer. At måleren aldri leser persondata er en egenskap ved BASEN.
+#
+# IDENTITETEN ER RYDDEJOBBENS. `disponit-domener` er brukeren
+# `disponit-artefaktrydding.service` alt kjører som, og M-4 er samme
+# slags jobb: en tidsstyrt oneshot som snakker med databasen og ingenting
+# annet. En ny systembruker for en jobb med færre fullmakter enn den
+# eksisterende ville vært en ny ting å vedlikeholde, ikke en ny grense.
+#
+# ÉN JSON-LINJE PER KJØRING til journalctl, og exit 1 ved feil — samme
+# kontrakt som ryddejobben, så samme oppfølging virker på begge.
+
+[Unit]
+Description=Disponit retensjonsmåling (M-4)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# `drift` (platform/) og `db` (platform/core/db) er søskenpakker, ikke
+# nøstet — releaseroten alene eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+NoNewPrivileges=true
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess:
+# «to feilede kjøringer på rad» kan ikke observeres av kjøringen selv.
+# `StateDirectory` lar systemd opprette katalogen med riktig eier FØR
+# ExecStart — uten den leses telleren som 0 hver gang, og alarmen kan
+# aldri utløses.
+StateDirectory=disponit
+StateDirectoryMode=0750
+LoadCredential=DISPONIT_LAGERMAALER_URL:/etc/disponit/lagermaaler/DISPONIT_LAGERMAALER_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_retensjonsmaaling
+# Hvert lager har sin egen grense på 5 s (`retensjonsmaaling.
+# TIDSGRENSE_MS`), og batchen er 50 lagre. Unitens frist er
+# sikkerhetsnettet over summen — den skal ikke utløses. Blir den det, er
+# ingenting halvskrevet: hvert lager committes for seg, og målingen står
+# igjen som `avbrutt = true` til neste kjøring gjør den ferdig.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

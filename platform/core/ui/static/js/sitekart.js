@@ -197,6 +197,13 @@ const BASISRUTER = [
   // ruten — plattformdriftens tverrgående funnliste er en UTVIDELSE av
   // svaret for en økt som alt har `security:read`, ikke en egen inngang.
   { nokkel: "datakvalitet", scope: "security:read" },
+  // M-4 (093): retensjonsregnskapet er en BASISRUTE bak admin-
+  // lesescopet — samme presedens som `modellstyring` og
+  // `driftstatus` over (#315: ingen modulflate-flipp for en
+  // plattforminternflate). Kontrollplanet (`platform:admin`) er en
+  // utvidelse av SVARET, ikke en annen rute, så scopet her er det
+  // samme som API-et bak flaten krever.
+  { nokkel: "retensjon", scope: "security:read" },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

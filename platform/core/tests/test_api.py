@@ -256,6 +256,21 @@ RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
                  "policy_hode", "policyer", "tenant_nokler",
                  "frekvens_hendelser",
                  "domenekontroll_hendelse", "domenekontroll")
+#: 093 (M-4): retensjonsregisterets fem tabeller står IKKE her, av samme
+#: grunn som kapabilitetstabellene over: de eies av NOLOGIN-rollen
+#: `disponit_lager_eier`, og migrator verken eier dem eller arver
+#: eierrollens rettigheter (`WITH INHERIT FALSE`). De ryddes av
+#: `_rydd_retensjon` under eksplisitt `SET LOCAL ROLE` — testoppsettet
+#: skal ikke kunne endre produksjonens rettighetsmodell for å løse
+#: fixture-isolasjon.
+#:
+#: KUN de tenantbærende radene ryddes. `retensjonsmaaling` er
+#: PLATTFORMENS logg over egne kjøringer — den har ingen tenant, den er
+#: append-only, og en fixture som tømte den ville slettet evidensen for
+#: at målingene har kjørt. Barneradene i `retensjonsstorrelse` er
+#: tenantløse av samme grunn.
+RETENSJONSTABELLER = (("retensjonsbeholdning", "retensjonsbeholdning_vakt"),
+                      ("retensjonsfunn", None))
 
 
 def _rydd_kapabiliteter(migrator, tenanter) -> None:
@@ -351,6 +366,43 @@ def _rydd_kvalitet(migrator) -> None:
     for tabell, trigger in M3_LAGRE:
         migrator.execute(f"ALTER TABLE {tabell} FORCE ROW LEVEL SECURITY")
         migrator.execute(f"ALTER TABLE {tabell} ENABLE TRIGGER {trigger}")
+    migrator.commit()
+
+
+def _rydd_retensjon(migrator, tenanter) -> None:
+    """Rydder M-4s tenantbærende målerader SOM EIEREN.
+
+    Samme form og samme begrunnelse som `_rydd_kapabiliteter`: migrator er
+    medlem av `disponit_lager_eier` (kreves for OWNER TO i 093), men
+    medlemskapet er `WITH INHERIT FALSE` — det gir SET ROLE og ingenting
+    annet. Her brukes nøyaktig den muligheten, avgrenset til to DELETE-er.
+
+    At vakten må skrus av er i seg selv et bevis: ingen rolle — heller
+    ikke eieren, i drift — kan slette en beholdningsmåling.
+    """
+    if not migrator.execute(
+            "SELECT 1 FROM pg_tables WHERE schemaname='public'"
+            "   AND tablename='retensjonsbeholdning'").fetchone():
+        return          # basen står før 093
+    migrator.execute("SET LOCAL ROLE disponit_lager_eier")
+    for tabell, vakt in RETENSJONSTABELLER:
+        # `ALTER TABLE` tar ACCESS EXCLUSIVE. Fixturen kjører foran HVER
+        # test i suiten, og de aller fleste har aldri rørt en målerad —
+        # da er en avvæpning og en gjenoppretting av vakten to
+        # eksklusive låser for ingenting. Vi ser først etter om det
+        # finnes noe å rydde.
+        if not migrator.execute(
+                f"SELECT 1 FROM {tabell} WHERE tenant = ANY(%s) LIMIT 1",
+                (list(tenanter),)).fetchone():
+            continue
+        if vakt:
+            migrator.execute(
+                f"ALTER TABLE {tabell} DISABLE TRIGGER {vakt}")
+        migrator.execute(f"DELETE FROM {tabell} WHERE tenant = ANY(%s)",
+                         (list(tenanter),))
+        if vakt:
+            migrator.execute(
+                f"ALTER TABLE {tabell} ENABLE TRIGGER {vakt}")
     migrator.execute("RESET ROLE")
 
 
@@ -363,6 +415,7 @@ def _rydd(migrator, *tenanter: str) -> None:
     """
     _rydd_kapabiliteter(migrator, tenanter)
     _rydd_kvalitet(migrator)
+    _rydd_retensjon(migrator, tenanter)
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
     # 041: overtakelsessaker bor på PLATTFORMTENANTEN og PEKER (kompositt-FK

@@ -25,6 +25,7 @@ import { visEpost } from "./flater/epost.js";
 import { visKontinuitet } from "./flater/kontinuitet.js";
 import { visDriftstatus } from "./flater/driftstatus.js";
 import { visDatakvalitet } from "./flater/datakvalitet.js";
+import { visRetensjon } from "./flater/retensjon.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -59,6 +60,9 @@ const FLATER = {
   // gated på `platform:admin`, men det avgjøres av SERVEREN: flaten
   // tegner seksjonen bare når svaret sier `plattformdrift: true`.
   datakvalitet: visDatakvalitet,
+  // M-4 (093): basisrute bak `security:read` (sitekart.js) —
+  // scope-gaten bor der, som for de andre flatene.
+  retensjon: visRetensjon,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

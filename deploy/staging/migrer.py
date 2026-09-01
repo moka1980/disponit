@@ -168,6 +168,25 @@ REVOKE ALL ON FUNCTION registrer_selvtest(UUID, JSONB, TEXT) FROM {rolle};
 REVOKE ALL ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) FROM {rolle};
 REVOKE ALL ON FUNCTION varsle_selvtest_uteblitt(TEXT) FROM {rolle};
 RESET ROLE;
+-- 093 (M-4): retensjonsflatens LESEDØRER. Samme form og samme grunn som
+-- 090/091 over: `retensjonslager`, `retensjonsmaaling`,
+-- `retensjonsstorrelse`, `retensjonsbeholdning` og `retensjonsfunn` står
+-- bevisst IKKE i noen GRANT-liste her — runtime har ingen SELECT på dem i
+-- det hele tatt, og når dem KUN gjennom definer-dørene, som krever
+-- tenantkontekst først.
+--
+-- MÅLEDØREN ER MÅLERENS. `m4_mal_lagre` er kryss-tenant (utvalget er
+-- predikatet), og et grant her ville gitt forespørselsveien nøyaktig det
+-- vinduet `disponit_lagermaaler` finnes for å innelukke. Den REVOKEs, og
+-- en rettighet som bare slutter å bli gitt er ikke trukket tilbake (035).
+SET LOCAL ROLE disponit_lager_eier;
+GRANT EXECUTE ON FUNCTION m4_siste_maaling(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m4_retensjonsbilde(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m4_retensjonskatalog(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m4_retensjonsfunn(TEXT) TO {rolle};
+REVOKE ALL ON FUNCTION m4_mal_lagre(INT, BOOLEAN) FROM {rolle};
+REVOKE ALL ON FUNCTION m4_reap_egne_maalinger(INT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -713,6 +732,24 @@ GRANT EXECUTE ON FUNCTION m3_profiler(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 093 (M-4): retensjonsmålerens rolle. Samme form som de to over — og her
+# er innsnevringen på sitt skarpeste: rollen har NULL tabellrettigheter i
+# HELE basen og EXECUTE på NØYAKTIG én funksjon. Selve reaperen
+# (`m4_reap_egne_maalinger`) står bevisst ikke her: den kalles av
+# `m4_mal_lagre` når kjøringen lukker seg, og en reaper med sin egen
+# inngang er en slettevei til.
+LAGERMAALER_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_lager_eier;
+GRANT EXECUTE ON FUNCTION m4_mal_lagre(INT, BOOLEAN) TO {rolle};
+REVOKE ALL ON FUNCTION m4_reap_egne_maalinger(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m4_siste_maaling(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION m4_retensjonsbilde(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION m4_retensjonskatalog(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION m4_retensjonsfunn(TEXT) FROM {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -889,7 +926,8 @@ def main(argv: list[str] | None = None) -> int:
         for navn, mal in (("disponit_driftstatus", DRIFTSTATUS_RETTIGHETER),
                           ("disponit_selvtest", SELVTEST_RETTIGHETER),
                           ("disponit_kvalitetsmaaler",
-                           KVALITETSMAALER_RETTIGHETER)):
+                           KVALITETSMAALER_RETTIGHETER),
+                          ("disponit_lagermaaler", LAGERMAALER_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
