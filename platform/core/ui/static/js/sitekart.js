@@ -156,27 +156,41 @@ const BASISRUTER = [
   // finnes derfor KUN for adjudikasjonsscopet, aldri for en leserolle.
   { nokkel: "adjudikator", scope: "domains:adjudicate" },
   // M-31 (086): modellstyring er en BASISRUTE bak admin-lesescopet —
-  // eiervedtaket (#315-presedensen): INGEN modulflate-flipp, så ruten
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // bor i toppnavigasjonen, ikke bak et modulkort. Scopet er API-ets
   // (`GET /v1/modellstyring` krever `security:read` i RUTESCOPE) —
   // samme regel som resten av tabellen: menyen lover aldri en flate
   // serveren svarer 403 på. En ren `platform:admin`-økt har ikke
   // lesescopet og får derfor heller ikke ruten.
-  { nokkel: "modellstyring", scope: "security:read" },
+  // EIERVEDTAK 1/9 — TOPPNAVIGASJONEN VAR OVERFYLT. Ruten lå i toppen
+  // etter #315-presedensen («ingen modulflate-flipp for en
+  // plattforminternflate»), og den presedensen var riktig én modul om
+  // gangen. Ved sytten knapper i toppen og fire i venstremenyen bar den
+  // ikke lenger: eier så det som «mange knapper på toppen», og de to
+  // sonene hadde sluttet å bety noe hver for seg. Nå gjør de det igjen —
+  // toppen er PLATTFORMFLATENE, venstremenyen er MODULENE, og
+  // venstremenyen har alt områdeoverskriftene som gjør sytten oppføringer
+  // lesbare.
+  //
+  // Rekkevidden er uendret: `erSynlig` i AppShell er
+  // `MODULFLATE.has(n) || erTildelt(n)`, så en flate økten har rute til
+  // står i menyen uansett katalogtildeling (Cursor P1, 24/8). Dyplenker
+  // og bokmerker virker som før — ruten er den samme.
+  { nokkel: "modellstyring", scope: "security:read", modulflate: 31 },
   // M-6 PR-B: e-postagentens kildeflate. Scopet er flatens SVAKESTE
   // ledd (wcagkontroll-regelen): lista bak ruten krever `epost:read`;
   // koble-til/deaktiver muterer og avgjøres INNE på flaten (og av
-  // serveren) med `epost:kilde:administrer`. Basisrute uten modulflate
+  // serveren) med `epost:kilde:administrer`. (Flyttet 1/9.)
   // i PR-B — klassifiserings-/utkastsflaten og en eventuell
   // modulkort-inngang er PR-D.
-  { nokkel: "epost", scope: "epost:read" },
+  { nokkel: "epost", scope: "epost:read", modulflate: 6 },
   // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
-  // UTEN modulflate, samme #315-presedens som modellstyring: ruten bor
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er
   // plattformens tilstand og ikke en modul kunden har kjøpt. Scopet er
   // API-ets (`GET /v1/kontinuitet` i RUTESCOPE), så menyen lover aldri
   // en flate serveren svarer 403 på.
-  { nokkel: "kontinuitet", scope: "kontinuitet:read" },
+  { nokkel: "kontinuitet", scope: "kontinuitet:read", modulflate: 35 },
   // 044-planflaten har INGEN egen rute lenger: periodisk kontroll er en
   // fane under wcagkontroll (eier 19/8 — samme arbeidsflyt, én
   // menyoppføring), og wcagkontroll-ruten bærer alt planfanen trenger
@@ -184,7 +198,7 @@ const BASISRUTER = [
   //
   // M-10 + M-11 (090/091): driftstatus er en BASISRUTE bak admin-
   // lesescopet — samme presedens som `modellstyring` over, og samme
-  // eiervedtak: INGEN modulflate-flipp, så ruten bor i toppnavigasjonen
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // og ikke bak et modulkort. De to er heller ikke moduler; de er
   // plattformens eget innsyn i seg selv.
   //
@@ -194,10 +208,10 @@ const BASISRUTER = [
   // svakeste av de to endepunktene ville vært nøyaktig løftet denne
   // tabellen finnes for å ikke gi — men her er de like, så flaten er
   // enten hel eller ikke synlig.
-  { nokkel: "driftstatus", scope: "security:read" },
+  { nokkel: "driftstatus", scope: "security:read", modulflate: 10 },
   // M-3 (092): datakvalitetsflaten. BASISRUTE bak admin-lesescopet —
   // samme presedens som `modellstyring` og `driftstatus` over, og samme
-  // eiervedtak: INGEN modulflate-flipp, så ruten bor i toppnavigasjonen
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // og ikke bak et modulkort. Grunnen er den samme som for driftstatus:
   // profilen måler PLATTFORMENS egne tabeller, ikke en modul kunden har
   // kjøpt — og modulen står `ikke_i_drift` i manifestet, så et modulkort
@@ -208,25 +222,25 @@ const BASISRUTER = [
   // `platform:admin`-økt har ikke lesescopet og får derfor heller ikke
   // ruten — plattformdriftens tverrgående funnliste er en UTVIDELSE av
   // svaret for en økt som alt har `security:read`, ikke en egen inngang.
-  { nokkel: "datakvalitet", scope: "security:read" },
+  { nokkel: "datakvalitet", scope: "security:read", modulflate: 3 },
   // M-4 (093): retensjonsregnskapet er en BASISRUTE bak admin-
   // lesescopet — samme presedens som `modellstyring` og
   // `driftstatus` over (#315: ingen modulflate-flipp for en
   // plattforminternflate). Kontrollplanet (`platform:admin`) er en
   // utvidelse av SVARET, ikke en annen rute, så scopet her er det
   // samme som API-et bak flaten krever.
-  { nokkel: "retensjon", scope: "security:read" },
+  { nokkel: "retensjon", scope: "security:read", modulflate: 4 },
   // M-9 (095): ordlisten er en BASISRUTE bak `decisions:read` — scopet
   // API-et bak den krever (`GET /v1/kunnskap` i RUTESCOPE), som resten
   // av tabellen: menyen lover aldri en flate serveren svarer 403 på.
   //
-  // INGEN `modulflate`, og det er en vurdering og ikke en forglemmelse:
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // en ordliste er ikke en modul kunden slår på og av — det er
   // bedriftens egne ord, og enhver som leser en beslutning skal kunne
   // slå opp et begrep i den uten å gå veien om et modulkort. Samme
   // presedens som `modellstyring` og `driftstatus` over, av motsatt
   // grunn: de er plattformens tilstand, denne er kundens språk.
-  { nokkel: "kunnskap", scope: "decisions:read" },
+  { nokkel: "kunnskap", scope: "decisions:read", modulflate: 9 },
   // M-21 (096): avtale- og fristagenten. BASISRUTE bak `decisions:read`
   // — scopet API-et bak flatens SVAKESTE ledd krever (wcagkontroll-
   // regelen): lista er `GET /v1/plikt` i RUTESCOPE, og de tre
@@ -237,11 +251,11 @@ const BASISRUTER = [
   // `policyforvalter` — som alle har lov til å SE hvilke frister som
   // løper.
   //
-  // INGEN `modulflate`-flipp i v1 (#315-presedensen, som modellstyring
+  // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // og driftstatus): ruten bor i toppnavigasjonen. M-21 står
   // `under_utvikling` i katalogen, og en modulkort-inngang ville lovet
   // en modul kunden kan kjøpe.
-  { nokkel: "avtalefrist", scope: "decisions:read" },
+  { nokkel: "avtalefrist", scope: "decisions:read", modulflate: 21 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

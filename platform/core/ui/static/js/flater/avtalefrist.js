@@ -77,7 +77,8 @@ function pliktrad(p, ctx, apneDialog) {
   const rad = el("tr", {});
   // Tittelen NAVNGIR raden — det er den identiteten et menneske leser
   // tabellen etter.
-  rad.append(el("th", { scope: "row", text: p.tittel }));
+  rad.append(el("th", { scope: "row", class: "celle-tekst",
+                       text: p.tittel }));
   const fristcelle = el("td", {});
   sett(fristcelle, Tidspunkt(p.frist, {}), " ",
     el("span", { class: "muted", text: fristTekst(p.dogn_til_frist) }));

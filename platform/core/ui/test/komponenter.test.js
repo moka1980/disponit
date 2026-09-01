@@ -844,7 +844,15 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
   // WCAG kontroll, rekruttering og nøkkeltall — samme union som over.
   assert.ok(kortene(nordvik.rot).includes("#/dokumentmal"),
     "malregisteret har ingen inngang i det hele tatt for en ekte tenant");
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 7,
+  // Eiervedtak 1/9 (topp → venstre, runde 2): ordlisten og
+  // fristregisteret er de to nye modulflatene en LESEØKT har rute til.
+  // De seks andre som flyttet samme dag ligger bak andre scopes og er
+  // derfor ikke i denne økten — porten teller det økten faktisk har.
+  assert.ok(kortene(nordvik.rot).includes("#/kunnskap"),
+    "ordlisten har ingen inngang i det hele tatt for en ekte tenant");
+  assert.ok(kortene(nordvik.rot).includes("#/avtalefrist"),
+    "fristregisteret har ingen inngang i det hele tatt for en ekte tenant");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 9,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -854,7 +862,8 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
-    ["#/dokumentmal", "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
+    ["#/avtalefrist", "#/dokumentmal", "#/kunnskap", "#/nokkeltall",
+      "#/rekruttering", "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),

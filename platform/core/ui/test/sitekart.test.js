@@ -311,6 +311,17 @@ test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
     ["ui.nav.rekruttering", "ui.rekruttering.tittel"],
     ["ui.nav.nokkeltall", "ui.nokkeltall.tittel"],
     ["ui.nav.dokumentmal", "ui.dokumentmal.tittel"],
+    // Eiervedtak 1/9: de åtte modulflatene som lå i toppnavigasjonen
+    // flyttet til venstremenyen. Da gjelder likhetskravet dem også —
+    // kortet er nå deres eneste annonserte inngang.
+    ["ui.nav.modellstyring", "ui.modellstyring.tittel"],
+    ["ui.nav.epost", "ui.epost.tittel"],
+    ["ui.nav.kontinuitet", "ui.kontinuitet.tittel"],
+    ["ui.nav.driftstatus", "ui.driftstatus.tittel"],
+    ["ui.nav.datakvalitet", "ui.datakvalitet.tittel"],
+    ["ui.nav.retensjon", "ui.retensjon.tittel"],
+    ["ui.nav.kunnskap", "ui.kunnskap.tittel"],
+    ["ui.nav.avtalefrist", "ui.avtalefrist.tittel"],
   ];
   for (const navn of ["nb", "en"]) {
     const tekster = locale(navn);
@@ -323,7 +334,23 @@ test("Modulflatens lenketekst og flatens egen tittel er samme streng", () => {
   }
   // Og parene skal dekke NØYAKTIG de rutene som er modulflater: får en ny
   // flate `modulflate` uten en rad her, er den ikke låst av noe.
-  assert.deepEqual(byggRuter({ scopes: ["decisions:read"] })
+  // ALLE SCOPES, ikke bare `decisions:read` (utvidet 1/9). Porten målte
+  // før en leseøkts modulflater alene, og lot dermed de seks som ligger
+  // bak `security:read`, `epost:read` og `kontinuitet:read` stå ulåst —
+  // usynlig så lenge de bodde i toppnavigasjonen, men ikke etter at
+  // kortet ble deres eneste inngang. Den fant straks én ekte avvikelse:
+  // `ui.nav.kontinuitet` sa «Kontinuitet» mens flaten het «Kontinuitet
+  // og beredskap».
+  // Scopene leses fra KILDEN, ikke fra en håndholdt liste: en ny rute med
+  // et nytt scope skal komme med av seg selv. `BASISRUTER` er bevisst ikke
+  // eksportert, og porten utvider ikke modulens API for å slippe til.
+  const kilde = readFileSync(new URL(
+    "../static/js/sitekart.js", import.meta.url), "utf8");
+  const alleScopes = [...new Set(
+    [...kilde.matchAll(/scope:\s*"([a-z:]+)"/g)].map((m) => m[1]))];
+  assert.ok(alleScopes.length > 3,
+    "fant ikke scopene i sitekart-kilden — porten måler ingenting");
+  assert.deepEqual(byggRuter({ scopes: alleScopes })
     .filter((r) => r.modulflate).map((r) => `ui.nav.${r.nokkel}`).sort(),
   par.map(([lenke]) => lenke).sort(),
   "en modulflate mangler i likhetsporten over");

@@ -89,6 +89,30 @@
 
 /* DataTabell */
 .tablewrap { overflow-x: auto; }
+
+/* SIDESCROLLEN VIRKET ALDRI (eier, 1/9: «modulene ser ikke bra ut når man
+   klikker dem»). `.tablewrap` har hatt `overflow-x: auto` hele tiden, men
+   en tabell med `width: 100%` blir per definisjon ALDRI bredere enn
+   containeren — så scrollen hadde ingenting å scrolle, og nettleseren
+   løste plassmangelen på den eneste måten den da har igjen: den klemte
+   kolonnene ned mot min-content. Med ti kolonner og et reaper-navn som
+   `makulerer_artefakter_for_prosess` ble resultatet ett tegn per linje.
+   Feilen så ut som en stylingfeil og var en breddefeil.
+
+   `width: max-content` lar tabellen bli så bred som innholdet krever, og
+   `min-width: 100%` holder den utfylt når det er smalere enn containeren.
+   Da får `overflow-x` noe å gjøre. Regelen står på `.tablewrap > table`
+   og ikke på `table`, fordi den bare gir mening der en scroller finnes —
+   en tabell uten wrapper skal fortsatt oppføre seg som før. */
+.tablewrap > table { width: max-content; min-width: 100%; }
+
+/* …men `max-content` alene ville latt en fritekstkolonne dra tabellen
+   vilkårlig bred: `dom_begrunnelse` i retensjonsregisteret er en hel
+   setning, og uten tak blir den én linje på 400 tegn. Prosaceller får
+   derfor et lesbart mål og bryter normalt. 44ch er innenfor 45–75-tegns
+   spennet for lesbar linjelengde, i underkant fordi dette er en celle
+   ved siden av andre kolonner, ikke brødtekst i en spalte. */
+.celle-tekst { max-width: 44ch; white-space: normal; }
 /* Radhandlingene (Åpne | Rediger | Slett) sto skulder ved skulder uten
    mellomrom — eier: «det står tett i hverandre». Luften ligger på cellen,
    ikke på knappene, så en rad med én handling er upåvirket. */
