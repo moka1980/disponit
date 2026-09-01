@@ -158,7 +158,13 @@ code.celle-id { display: inline-block; vertical-align: top; }
    ------------------------------------------------------------------- */
 .kv-skjema-rutenett {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  /* `min(18rem, 100%)` og ikke bare `18rem`: en `minmax`-nedre grense er
+     et GULV sporet ikke kan krympe under, så på en skjerm smalere enn
+     288px + padding ville rutenettet flytt utover viewporten i stedet
+     for å falle til én spalte. Nøyaktig den klassen feil eier nettopp
+     rapporterte i topplinjen, og skillens «Horizontal Scroll»-regel er
+     kategorisk: innholdet skal få plass. */
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
   gap: var(--sp-3) var(--sp-4);
   align-items: start;
 }

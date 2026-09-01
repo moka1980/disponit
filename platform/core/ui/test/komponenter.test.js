@@ -1040,3 +1040,38 @@ test("AppShell: tenantbrikken utelates når den gjentar produktnavnet", () => {
     "Nordvik Regnskap AS",
     "tenantbrikken forsvant for en kunde som trenger den");
 });
+
+test("Mobilreglene gir navigasjonen sin EGEN rad", () => {
+  // 🔴 EIERS SKJERMBILDE 1/9. Én-rad-toppfeltet er riktig på en bred
+  // skjerm og brakk på telefon: `.skall-nav { flex: 1 }` KRYMPER heller
+  // enn å brekke til neste rad, så navigasjonen ble presset ned i en smal
+  // kolonne med én lenke per linje — halve skjermen til en meny på ni ord.
+  //
+  // `flex-wrap: wrap` på foreldren er IKKE nok, og det er hele poenget
+  // med denne porten: barnet må eksplisitt kreve hele bredden. jsdom har
+  // ingen layout å måle, så regelen leses fra stilarket — samme form som
+  // `.skall-bruker`-porten over.
+  const raa = readFileSync(new URL(
+    "../static/css/base.css", import.meta.url), "utf8");
+  // Kommentarene MÅ strippes først: denne blokken FORKLARER hvorfor
+  // `.skall-nav { flex: 1 }` er feil på mobil, så et naivt `indexOf`
+  // finner omtalen i prosaen før selve regelen — og porten ville målt
+  // kommentaren sin egen tekst. Den feilen fanget porten på seg selv
+  // ved første kjøring.
+  const css = raa.replace(/\/\*[\s\S]*?\*\//g, "");
+  const mobil = css.slice(css.indexOf("@media (max-width: 720px)"));
+  const navregel = mobil.slice(mobil.indexOf(".skall-nav"),
+    mobil.indexOf("}", mobil.indexOf(".skall-nav")));
+  assert.match(navregel, /flex:\s*0\s+0\s+100%/,
+    "navigasjonen krever ikke hele bredden på mobil — den krymper i stedet"
+    + " for å brekke, og hver lenke får sin egen linje");
+
+  // Og regelen skal ikke peke på klasser som ikke finnes: den gamle
+  // `.skall-ruteantall`-regelen overlevde flyttingen til profilen og
+  // gjorde ingenting, mens den skjulte at resten var utilstrekkelig.
+  const doede = ["skall-ruteantall", "skall-undertekst", "skall-brand"];
+  for (const klasse of doede) {
+    assert.ok(!css.includes(`.${klasse}`),
+      `base.css styler .${klasse}, som ikke finnes i skallet lenger`);
+  }
+});
