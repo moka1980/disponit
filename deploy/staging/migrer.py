@@ -159,6 +159,28 @@ GRANT EXECUTE ON FUNCTION m3_kvalitetsfunn_tverrgaaende(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m3_profiler(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m3_reis_funn(TEXT, TEXT, TEXT, UUID, JSONB) FROM {rolle};
 RESET ROLE;
+-- 095 (M-9): begrepsregisterets TO LESEDØRER. `begrep` og `begrepsfunn`
+-- står bevisst IKKE i noen GRANT-liste her: runtime har ingen SELECT på
+-- dem i det hele tatt (SP-7), og når dem KUN gjennom disse to dørene,
+-- som krever tenantkontekst først. Isolasjonen inne i dørene er RLS
+-- sin, ikke et WHERE-ledd — se hodekommentaren i 095.
+--
+-- SKRIVEDØRENE (`m9_registrer_begrep`, `m9_ny_begrepsversjon`) og
+-- SVEIPEN står med vilje ikke her, og REVOKEs under: v1 har INGEN
+-- HTTP-mutasjon (M-31-formen, 086), og sveipen er kryss-tenant og
+-- setter selv RLS-konteksten — et grant der ville gitt forespørsels-
+-- veien nøyaktig det vinduet `disponit_kunnskapssveip` finnes for å
+-- nekte den. En rettighet som bare slutter å bli gitt er ikke trukket
+-- tilbake (035), derfor REVOKE og ikke bare fravær.
+SET LOCAL ROLE disponit_kunnskap_eier;
+GRANT EXECUTE ON FUNCTION m9_sok(TEXT, TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m9_apne_funn(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m9_registrer_begrep(
+    TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, UUID) FROM {rolle};
+REVOKE ALL ON FUNCTION m9_ny_begrepsversjon(
+    TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, UUID) FROM {rolle};
+REVOKE ALL ON FUNCTION m9_sveip_utlopte(INT) FROM {rolle};
+RESET ROLE;
 SET LOCAL ROLE disponit_m37_claimer;
 -- SKRIVEDØRENE OG SVEIPENE ER ANDRE ROLLERS, og en rettighet som bare
 -- slutter å bli gitt er ikke trukket tilbake (035). Skrivedørene hører
@@ -772,6 +794,23 @@ REVOKE ALL ON FUNCTION m4_retensjonsfunn(TEXT) FROM {rolle};
 RESET ROLE;
 """
 
+# 095 (M-9): begrepssveipens rolle. Samme form og samme begrunnelse som
+# DRIFTSTATUS_/SELVTEST_RETTIGHETER over: nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Innsnevringen er skarpere enn den ser ut —
+# `m9_sveip_utlopte` er KRYSS-TENANT og setter selv RLS-konteksten per
+# tenant, så rollen kan reise funn i alle tenanter uten å kunne LESE en
+# eneste begrepsrad selv. Hele autoriteten står i den eier-eide
+# defineren, revidérbar på ett sted.
+KUNNSKAPSSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_kunnskap_eier;
+GRANT EXECUTE ON FUNCTION m9_sveip_utlopte(INT) TO {rolle};
+-- LESEDØRENE STÅR BEVISST IKKE HER. Sveipen skriver funn; den leser
+-- aldri ordlisten tilbake gjennom en tenantbundet dør, og en `m9_sok`
+-- den ikke trenger ville vært en lesevei den ikke skal ha.
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -949,7 +988,13 @@ def main(argv: list[str] | None = None) -> int:
                           ("disponit_selvtest", SELVTEST_RETTIGHETER),
                           ("disponit_kvalitetsmaaler",
                            KVALITETSMAALER_RETTIGHETER),
-                          ("disponit_lagermaaler", LAGERMAALER_RETTIGHETER)):
+                          ("disponit_lagermaaler", LAGERMAALER_RETTIGHETER),
+                          # 095 (M-9): begrepssveipens rolle står i samme
+                          # løkke og med samme betingelse — den har heller
+                          # ingen tabellrettigheter å nullstille, bare den
+                          # ene EXECUTEn.
+                          ("disponit_kunnskapssveip",
+                           KUNNSKAPSSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

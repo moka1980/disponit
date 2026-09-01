@@ -1864,3 +1864,42 @@ def retensjon(tjeneste, request: Request) -> Response:
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "security:read", _fn)
+# GET /v1/kunnskap — scope decisions:read (M-9, 095)
+#
+# Bedriftens egen ordliste: gjeldende begreper med EIER, KILDE og
+# GYLDIGHETSDATO, og de åpne utløpsfunnene ved siden av. `?q=` er
+# fritekstsøket (norsk stemming, eksplisitt regconfig i basen); tom `q`
+# er listingen.
+#
+# SCOPET ER `decisions:read`, ikke et nytt `kunnskap:read`, og det er et
+# valg og ikke en snarvei. Ordlisten er tenantens egen referansetekst —
+# den klassen `/v1/utrulling` og rekrutteringsrapporten alt står i («kundens
+# egen flate, derfor decisions:read, som ALLE kunderollene har»). Et nytt
+# scope måtte gis til alle seks kunderollene for å være nyttig, og ville
+# dermed vært en registrering i autorisasjonslaget som ikke skilte noe fra
+# noe. Den dagen ordlisten får en SKRIVEVEI over HTTP, er DEN en egen
+# registrering med sitt eget scope, sin egen browsermutasjonsport og sin
+# egen CSRF — og da er skillet ekte.
+#
+# Ingen mutasjon finnes som HTTP: begreper registreres og versjoneres
+# gjennom de eier-eide dørene i 095, som `migrer.py` REVOKEr fra
+# runtime-rollen (M-31-formen, 086).
+# ---------------------------------------------------------------------------
+
+def kunnskap(tjeneste, request: Request) -> Response:
+    """Ordlisten med kildekrav — søk eller listing, pluss åpne funn."""
+    from . import kunnskap as kunnskapsmodul
+
+    def _fn(conn, auth, rid):
+        grense = _grense(request)
+        if grense is None:
+            return _feilsvar("request_feilformet", rid)
+        # `_grense` klemmer alt til [1, LISTE_MAKS]; døren klemmer i
+        # tillegg til [1, 200] selv. To klemmer i API-laget ville vært
+        # én for mye — den som gjelder skal stå ETT sted, og det er
+        # basen som eier taket på hva én spørring får koste.
+        svar = kunnskapsmodul.kunnskap_svar(
+            conn, auth.tenant, request.query_params.get("q"), grense)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)

@@ -123,6 +123,12 @@ APPEND_ONLY_TRIGGERE = (
     # derfor må oppryddingen skru dem av: at den må det, er selv et
     # bevis på at ingen rolle — heller ikke eieren — kan viske ut en
     # krisehåndtering i ettertid.
+    # 095 (M-9): begge vaktene nekter DELETE — et publisert begrep
+    # erstattes av en ny versjon, og et funn lukkes. Som de skal — så
+    # oppryddingen må skru dem av, og AT den må det er selv et bevis:
+    # ingen rolle, heller ikke eieren, kan viske ut en begrepshistorikk.
+    ("begrepsfunn", "m9_funn_vakt"),
+    ("begrep", "m9_begrep_vakt"),
     ("kontinuitetshendelse_post", "m35_post_vakt"),
     ("kontinuitetshendelse", "m35_hendelse_vakt"),
     ("beredskapskontakt", "m35_kontakt_vakt"),
@@ -189,7 +195,10 @@ APPEND_ONLY_TRIGGERE = (
 #: evidensen skal overleve oppdraget. Nettopp derfor må den ryddes — et
 #: tick uten sitt oppdrag er en plan uten resultat, og sveipene ville
 #: felt en pausedom på det.
-RYDDETABELLER = ("bestillingsplan_tick", "bestillingsplan_vindu",
+#: 095 (M-9): `begrepsfunn` har kompositt-FK til `begrep` og må
+#: derfor ut FØRST — samme fremmednøkkelregel som resten av lista.
+RYDDETABELLER = ("begrepsfunn", "begrep",
+                 "bestillingsplan_tick", "bestillingsplan_vindu",
                  "bestillingsplan_hendelse",
                  "bestillingsplan_aktiv_periode", "bestillingsplan",
                  "artefakt", "artefaktkapabilitet",   # PR-014b: FK → oppdrag → FØRST

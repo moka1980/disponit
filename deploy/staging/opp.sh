@@ -63,7 +63,8 @@ disponit-m57-utsending.service disponit-m57-utsending.timer
 disponit-backupstatus.service disponit-backupstatus.timer
 disponit-selvtest.service disponit-selvtest.timer
 disponit-kvalitetsprofil.service disponit-kvalitetsprofil.timer
-disponit-lagermaaling.service disponit-lagermaaling.timer"
+disponit-lagermaaling.service disponit-lagermaaling.timer
+disponit-begrepssveip.service disponit-begrepssveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -209,6 +210,19 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_KVALITETSMAALER_URL:-}" ]
   echo "AVBRUTT: DISPONIT_KVALITETSMAALER_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_kvalitetsmaaler og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+
+# 095 (M-9): begrepssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. Uten DSN-en ville uniten startet, lest ingenting og gitt
+# exit 2 hver natt — og en utløpssveip som ikke kjører er en ordliste
+# som eldes stille. Porten står her, FØR første mutasjon: feiler den,
+# er systemet beviselig urørt.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_KUNNSKAPSSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_KUNNSKAPSSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_kunnskapssveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -769,6 +783,20 @@ if [ -z "${DISPONIT_KVALITETSMAALER_URL:-}" ]; then
 fi
 skriv_cred kvalitet DISPONIT_KVALITETSMAALER_URL "$DISPONIT_KVALITETSMAALER_URL"
 skriv_cred lagermaaler DISPONIT_LAGERMAALER_URL "$DISPONIT_LAGERMAALER_URL"
+# 095 (M-9): begrepssveipens egen katalog og egen DSN — aldri API-ets,
+# og aldri en av de andre jobbenes. Sjekken står på SAMME shell-variabel
+# som skrives, uten ny lesing av miljøfila imellom (samme felle som
+# over): preflighten beviste at variabelen fantes, men byttes fila i
+# mellomtiden, godkjente den en verdi som aldri skrives.
+install -d -m 700 /etc/disponit/kunnskapssveip
+if [ -z "${DISPONIT_KUNNSKAPSSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_KUNNSKAPSSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen begrepssveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred kunnskapssveip DISPONIT_KUNNSKAPSSVEIP_URL "$DISPONIT_KUNNSKAPSSVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -885,7 +913,8 @@ disponit-domeneverifisering.timer disponit-wcag-audit.service
 disponit-m57-utsending.timer
 disponit-backupstatus.timer disponit-selvtest.timer
 disponit-kvalitetsprofil.timer
-disponit-lagermaaling.timer"
+disponit-lagermaaling.timer
+disponit-begrepssveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1116,6 +1145,12 @@ systemctl stop disponit-kvalitetsprofil.timer \
 # ingenting utover et døgn uten et ferskt bilde.
 systemctl stop disponit-lagermaaling.timer \
     disponit-lagermaaling.service 2>/dev/null || true
+# 095 (M-9): begrepssveipen stoppes i samme vindu. Den er idempotent over
+# sin egen tilstand — et funn som ikke ble reist i natt, reises i morgen,
+# og et som alt står åpent får bare et nyere `sist_sett_sveip` — så
+# vinduet koster ingenting utover én manglende sveip i det.
+systemctl stop disponit-begrepssveip.timer disponit-begrepssveip.service \
+    2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1250,6 +1285,10 @@ systemctl enable --now disponit-selvtest.timer
 systemctl enable --now disponit-kvalitetsprofil.timer
 # 093 (M-4): retensjonsmålingen, daglig 03:17. Samme form.
 systemctl enable --now disponit-lagermaaling.timer
+# 095 (M-9): begrepssveipen, én gang i døgnet med spredning. Uten
+# credentialen står jobben med exit 2 og rører ingenting — men
+# preflighten over gater DSN-en, så det skal ikke kunne skje.
+systemctl enable --now disponit-begrepssveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.
