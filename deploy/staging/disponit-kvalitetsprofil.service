@@ -1,0 +1,59 @@
+# M-3 (092): datakvalitetsprofilering — plattformen måler sine egne
+# tenant-tabeller på tomhet, formatavvik, duplikatnøkler og døde
+# referanser.
+#
+# JOBBEN MÅLER, DEN RETTER IKKE. v1-dommen står i manifestet og er
+# håndhevet i basen: rollen under har NULL skriverettigheter i hele
+# basen og EXECUTE på nøyaktig ÉN funksjon. Den kan ikke rette et felt,
+# ikke slå sammen to rader, ikke sette noe i karantene og ikke stoppe en
+# bestilling — ikke fordi koden lar være, men fordi rettighetene ikke
+# finnes.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_kvalitetsmaaler` har EXECUTE på
+# `m3_profiler` og ingenting mer — heller ikke lesedørene. Delte den DSN
+# med runtime, ville profileringen måttet grantes til `disponit`, og hele
+# forespørselsveien kunne skrevet en grønn profil over en rød base.
+# `migrer.py` REVOKEr nettopp den funksjonen fra runtime-rollen, så en
+# stille fallback ville uansett startet jobben i «permission denied» —
+# derfor er credentialen påkrevd og fallbacken fjernet.
+#
+# INGEN TILGANG TIL PERSONDATA, MÅLT I BASEN. Profileren (den
+# SECURITY DEFINER-eide `disponit_kvalitet_eier`) har KOLONNEGRANT på de
+# kolonnene registeret profilerer, og ikke én mer: ingen kryptert
+# payload, ingen e-postadresse, ingen IdP-identitet. Porten i
+# `test_m3_datakvalitet` måler det mot
+# information_schema.column_privileges, ikke mot denne kommentaren.
+
+[Unit]
+Description=Disponit datakvalitetsprofilering (m3_profiler -> kvalitetsprofil)
+
+[Service]
+Type=oneshot
+# Samme identitet som de andre rene DB-jobbene. Ingen filsystemtilgang,
+# ingen sokkel, ingen supplerende gruppe: jobben snakker med databasen og
+# ikke med noe annet.
+User=disponit-domener
+Group=disponit-domener
+# `drift` (platform/) og `db` (platform/core/db) er søskenpakker, ikke
+# nøstet — releaseroten alene eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+NoNewPrivileges=true
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess.
+# `StateDirectory` lar systemd opprette /var/lib/disponit med riktig eier
+# FØR ExecStart og eksponerer den som $STATE_DIRECTORY — uten den leses
+# forrige feiltelling som 0 hver gang, og alarmen etter to sammenhengende
+# feil kan aldri utløses.
+StateDirectory=disponit
+StateDirectoryMode=0750
+LoadCredential=DISPONIT_KVALITETSMAALER_URL:/etc/disponit/kvalitet/DISPONIT_KVALITETSMAALER_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_kvalitetsprofilering
+# Sikkerhetsnettet over jobbens EGET tak (`RUNDEGRENSE_MS` = 120 s, satt
+# som `statement_timeout` på sesjonen). Utløses denne, er ingenting
+# halvskrevet: kjøringshodet skrives i samme transaksjon som
+# profilradene, så et avbrudd gir en runde som aldri ble registrert — og
+# neste døgn måler på nytt.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

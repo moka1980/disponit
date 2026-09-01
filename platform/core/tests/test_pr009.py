@@ -504,7 +504,9 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 090/091: driftstatusens og selvtestens EGNE DSN-er. Hver jobb
         # har sin egen rolle med nøyaktig én rettighet; en fallback til
         # runtime-DSN-en ville startet begge rett i `permission denied`.
-        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL")})
+        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL",
+        # 092 (M-3): profileringsjobbens EGNE DSN, av samme grunn.
+        "DISPONIT_KVALITETSMAALER_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -524,6 +526,12 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         encoding="utf-8") == "verdi-DISPONIT_DRIFTSTATUS_URL"
     assert (rot / "selvtest/DISPONIT_SELVTEST_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_SELVTEST_URL"
+    # 092 (M-3): profileringsjobbens EGEN DSN. Å bare legge navnet i
+    # miljølisten over ville målt at blokken IKKE STOPPET — ikke at
+    # credentialen faktisk ble skrevet, og en `skriv_cred` som aldri
+    # nås er nøyaktig feilen denne testen finnes for.
+    assert (rot / "kvalitet/DISPONIT_KVALITETSMAALER_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_KVALITETSMAALER_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -955,7 +963,9 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 090/091: driftstatusens og selvtestens EGNE DSN-er. Hver jobb
         # har sin egen rolle med nøyaktig én rettighet; en fallback til
         # runtime-DSN-en ville startet begge rett i `permission denied`.
-        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL")})
+        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL",
+        # 092 (M-3): profileringsjobbens EGNE DSN, av samme grunn.
+        "DISPONIT_KVALITETSMAALER_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

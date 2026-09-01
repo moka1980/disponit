@@ -1814,3 +1814,35 @@ def drift_selvtest(tjeneste, request: Request) -> Response:
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "security:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/datakvalitet — scope security:read (M-3, 092)
+#
+# Datakvalitetsprofilen. Registeret er globalt, kjøringshodene er
+# plattformskop, og profiltallene/funnene er TENANTENS EGNE — isolert av
+# `tenant_isolasjon` i basen, ikke av et filter her. Runtime har ingen
+# SELECT på noen av de fire tabellene i det hele tatt (SP-7) og når dem
+# kun gjennom de fire definer-dørene, som alle krever tenantkontekst
+# først (051-formen).
+#
+# `platform:admin` UTVIDER svaret med funnlisten på tvers, og
+# avgjørelsen tas INNE i endepunktet — `/v1/utrulling`-presedensen. Det
+# er en utvidelse av svaret, ikke en annen inngang: scopet på ruten er
+# `security:read`, samme klasse som model card og driftstatus.
+#
+# Ingen mutasjon finnes som HTTP: profileringen skrives av
+# `disponit-kvalitetsprofil.service` (rollen `disponit_kvalitetsmaaler`),
+# og registeret endres kun i migrasjon. Det er en sikkerhetsdom, ikke en
+# manglende funksjon.
+# ---------------------------------------------------------------------------
+
+def datakvalitet(tjeneste, request: Request) -> Response:
+    """Kvalitetsregisteret, kjøringene og funnene."""
+    from . import datakvalitet as kvalitetsmodul
+
+    def _fn(conn, auth, rid):
+        svar = kvalitetsmodul.svar(conn, auth.tenant, auth.scopes)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "security:read", _fn)
