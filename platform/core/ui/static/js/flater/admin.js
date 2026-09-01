@@ -28,8 +28,36 @@ export function visAdmin(hoved, ctx = {}) {
     ? rader
     : rader.filter((rad) => rad.id === ctx.tenant || rad.navn === ctx.tenant);
 
+  // MIN PROFIL (eiervedtak 1/9). Identiteten sto sentrert i topplinjen på
+  // hver eneste side — e-post, en 64-tegns prinsipal-id, rollelisten og et
+  // ruteantall, uten ledetekster. Eier: «masse unødvendig informasjon der
+  // oppe, bør alt plasseres under admin/profil» og «det er rotete med
+  // bid…». Den står her nå, som en definisjonsliste: hver verdi har en
+  // ledetekst som sier hva den ER, i stedet for å være en streng man må
+  // gjette på.
+  //
+  // Prinsipal-id-en er den som betyr noe for fire-øyne (`(issuer, sub)`,
+  // ikke e-posten), så den står ubeskåret her — dette er stedet den hører
+  // hjemme, der det er plass til å forklare den.
+  const profilRader = [
+    [t("ui.profil.epost"), ctx.epost],
+    [t("ui.profil.bruker_id"), ctx.bruker_id],
+    [t("ui.profil.roller"), Array.isArray(ctx.roller) && ctx.roller.length
+      ? ctx.roller.map((r) => t(`ui.rolle.${r}`, r)).join(", ") : null],
+    [t("ui.profil.tenant"), ctx.tenant],
+    [t("ui.profil.ruter"), String(ruter.size)],
+  ].filter(([, v]) => v);
+  const profil = el("section", { class: "kort" },
+    el("h2", { text: t("ui.profil.tittel") }),
+    el("dl", { class: "kv-liste" },
+      ...profilRader.flatMap(([n, v]) => [
+        el("dt", { text: n }),
+        el("dd", { class: "celle-tekst", text: v }),
+      ])));
+
   sett(hoved,
     ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
+    profil,
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.status") }),

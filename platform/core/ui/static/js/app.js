@@ -232,6 +232,14 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
 
   const ctx = {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
+    // ØKTENS EGEN IDENTITET (eiervedtak 1/9). Den sto før BARE i skallet,
+    // som fikk den som egne parametre — så da profilkortet flyttet til
+    // Admin, hadde flaten ingen kilde til den i det hele tatt og ville
+    // rendret et tomt kort uten å feile. Feltene bærer serverens navn
+    // (`bruker_id`), ikke skallets camelCase, fordi det er `/v1/sesjon`
+    // som er kilden.
+    epost: sesjon.epost, bruker_id: sesjon.bruker_id,
+    roller: sesjon.roller,
     // Tenantdata kommer fra `/v1/utrulling`, ikke fra klientpakken: serveren
     // har allerede avgjort hvilke rader økten får se. Mangler svaret (feil,
     // eller en økt uten `decisions:read`), står feltene tomme — og flatene

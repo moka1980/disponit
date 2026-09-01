@@ -257,9 +257,28 @@ test("AppShell: landemerker, nav med aria-current, main#hovedinnhold", async () 
   assert.equal(hoved.id, "hovedinnhold");
   assert.equal(rot.querySelector('a[aria-current="page"]').getAttribute("href"),
     "#/oversikt");
-  assert.ok(rot.textContent.includes(t("ui.shell.undertittel")));
-  assert.ok(rot.textContent
-    .includes(`${ruter.length} · ${t("ui.shell.ruter")}`));
+  // Undertittelen og ruteantallet er BORTE fra skallet (eiervedtak 1/9):
+  // det ene sto på hver side uten å si noe man kan handle på, det andre
+  // er en opplysning om seg selv og hører til profilen. Porten er snudd
+  // — de skal ikke komme snikende tilbake i topplinjen.
+  // Nøklene BEHOLDES i locale nettopp fordi porten under er negativ: blir
+  // de slettet, returnerer `t()` nøkkelnavnet, og en `!includes(...)` på en
+  // streng som ikke finnes noe sted er sann uansett — porten ville blitt
+  // grønn og målt ingenting. Derfor sjekkes det først at de fortsatt
+  // slår opp til ekte tekst.
+  assert.notEqual(t("ui.shell.undertittel"), "ui.shell.undertittel",
+    "locale-nøkkelen er slettet — den negative porten under måler da ingenting");
+  assert.notEqual(t("ui.shell.ruter"), "ui.shell.ruter",
+    "locale-nøkkelen er slettet — den negative porten under måler da ingenting");
+  assert.ok(!rot.textContent.includes(t("ui.shell.undertittel")),
+    "undertittelen er tilbake i topplinjen");
+  assert.ok(!rot.textContent
+    .includes(`${ruter.length} · ${t("ui.shell.ruter")}`),
+  "ruteantallet er tilbake i topplinjen — det hører til profilen");
+  // Navigasjonen ligger i SAMME rad: den er et barn av <header>, ikke en
+  // stripe under den.
+  assert.ok(rot.querySelector("header nav"),
+    "navigasjonen forlot toppfeltet");
 
   // HOPP-FORBI-LENKEN MÅ FORTSATT HOPPE FORBI NAVIGASJONEN (Cursor P2, WCAG
   // 2.4.1 / #52). `.hoppelenke` i `index.html` peker på `#hovedinnhold`, og
@@ -289,22 +308,60 @@ test("AppShell: viser bruker_id når e-post mangler, med roller", () => {
   }).rot;
   const bruker = utenEpost.querySelector(".skall-bruker");
   assert.ok(bruker, "kontrollen skal finnes uten e-post");
+  // Uten e-post er id-en det ENESTE man har, og da står den — et tomt felt
+  // ville vært verre enn en teknisk streng.
   assert.equal(bruker.querySelector(".skall-bruker-navn").textContent,
     "bid_10e5674");
-  assert.ok(bruker.textContent.includes(t("ui.rolle.godkjenner")),
-    "rollene skal vises selv om e-posten mangler");
 
-  // Med e-post: den er navnelinja, men id-en står fortsatt der — to konti kan
-  // dele en ubekreftet e-post, og da er id-en det eneste som skiller dem.
+  // MED e-post viser brikken BARE den (eiervedtak 1/9: «det er rotete med
+  // bid…»). Roller og den fulle prinsipal-id-en er flyttet til
+  // profilkortet i Admin, og låst der av `admin_profil.test.js` — kravet
+  // er det samme, målt på det nye stedet. Brikken lenker dit, så id-en er
+  // ett klikk unna midt i en attestasjonsflyt.
   const medEpost = AppShell({
     tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter,
     brukerId: "bid_10e5674", epost: "kari@acme.no", roller: ["godkjenner"],
     paaSprak: () => {}, paaLoggUt: () => {},
   }).rot;
-  assert.equal(medEpost.querySelector(".skall-bruker-navn").textContent,
+  const brikke = medEpost.querySelector(".skall-bruker");
+  assert.equal(brikke.querySelector(".skall-bruker-navn").textContent,
     "kari@acme.no");
-  assert.equal(medEpost.querySelector(".skall-bruker-id").textContent,
-    "bid_10e5674");
+  assert.ok(brikke.getAttribute("title").includes("bid_10e5674"),
+    "id-en skal fortsatt vaere naaelig ved hover");
+
+  // TO ØKTER, TO UTFALL — og forskjellen er hele poenget (CodeRabbit
+  // major). `#/admin` krever `security:read` eller plattformdrift. Har
+  // økten profilen, er id-en ETT KLIKK unna, og topplinjen kan la den
+  // være. Har den den IKKE, finnes det ingen annen visning, og da må
+  // id-en bli stående — ellers er den bare naaelig med mus, for nettopp
+  // den brukeren som attesterer.
+  const medProfil = byggRuter({ scopes: ["decisions:read", "security:read"] });
+  const utenProfil = byggRuter({ scopes: ["decisions:read"] });
+  assert.ok(medProfil.some((r) => r.nokkel === "admin"));
+  assert.ok(!utenProfil.some((r) => r.nokkel === "admin"));
+
+  const somAdmin = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter: medProfil,
+    brukerId: "bid_10e5674", epost: "kari@acme.no", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  assert.equal(somAdmin.querySelector(".skall-bruker").getAttribute("href"),
+    "#/admin", "brikken lenker ikke til profilen for en økt som HAR den");
+  assert.ok(!somAdmin.textContent.includes("bid_10e5674"),
+    "prinsipal-id-en er tilbake i topplinjen");
+  assert.ok(!somAdmin.textContent.includes(t("ui.rolle.godkjenner")),
+    "rollelisten er tilbake i topplinjen");
+
+  const somGodkjenner = AppShell({
+    tenant: "Acme AS", sprak: "nb", aktiv: "oversikt", ruter: utenProfil,
+    brukerId: "bid_10e5674", epost: "kari@acme.no", roller: ["godkjenner"],
+    paaSprak: () => {}, paaLoggUt: () => {},
+  }).rot;
+  const uten = somGodkjenner.querySelector(".skall-bruker");
+  assert.equal(uten.getAttribute("href"), null,
+    "brikken lenker til en flate økten ikke har");
+  assert.ok(somGodkjenner.textContent.includes("bid_10e5674"),
+    "id-en forsvant for en økt som ikke har noe sted å finne den");
 });
 
 // Etiketten er brukerens data, ikke vår: en gyldig OIDC-e-post kan være svært
