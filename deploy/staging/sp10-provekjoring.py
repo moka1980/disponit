@@ -44,7 +44,10 @@ SKJEMA_ROLLER = ("disponit_authenticator", "disponit_m37_claimer",
                  # ville gått fint i produksjon — altså en falsk rød.
                  "disponit_kvalitet_eier", "disponit_lager_eier",
                  "disponit_mal_eier", "disponit_kunnskap_eier",
-                 "disponit_plikt_eier")
+                 "disponit_plikt_eier",
+                 # Klynge 2 (097-100), samme grunn.
+                 "disponit_tilgang_eier", "disponit_lisens_eier",
+                 "disponit_personvern_eier", "disponit_compliance_eier")
 
 TEN = "t-sp10"
 

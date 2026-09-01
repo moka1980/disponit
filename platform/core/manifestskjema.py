@@ -900,6 +900,130 @@ KRAVGRENSER["m21-v1"] = {
 }
 
 
+# ---------------------------------------------------------------------
+# KLYNGE 2: «TILGANG, LISENS OG ETTERLEVELSE» — m12, m22, m30, m34.
+#
+# Registrert FØR byggingen (§0), fra samme commit som manifestene, og på
+# m57/m6-PARFORMEN som klynge 1. Alle fire er REGISTRE og MÅLERE: ingen
+# av dem provisjonerer, sier opp, sletter eller sender inn noe. Det er
+# den samme dommen som gjorde klynge 1 trygg å bygge parallelt, og den
+# står tydeligst her — for hver av de fire er den farlige handlingen
+# nettopp den katalogen lover:
+#   M-12 kunne provisjonert tilgang      → v1 registrerer den
+#   M-22 kunne sagt opp lisenser         → v1 varsler om utløp
+#   M-30 kunne slettet persondata        → v1 registrerer forespørselen
+#   M-34 kunne sendt inn sertifisering   → v1 registrerer kontrollen
+#
+# `punktbinding` står tom for alle fire MED VILJE: ingen
+# sjekklistepunkter er flippbare før målingene finnes. Se `m57-v1`, der
+# fem av seks fikk sine bindinger samme dag — det er formen disse skal
+# følge når utførelsesarmen gir dem tall.
+# ---------------------------------------------------------------------
+
+M12_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN som invariant, ikke som prosa: modulen SKRIVER ALDRI en
+    # tilgang. Målt statisk (ingen kall mot identitetsleverandør, ingen
+    # INSERT/UPDATE/DELETE mot fremmede tilgangstabeller) og funksjonelt
+    # (radantallet utenfor egne lagre er uendret etter en sveip). En
+    # provisjoneringsvei som glir inn ved et uhell er den ene feilen
+    # denne modulen ikke har råd til.
+    "tilgang_endret_utenfor_registeret",
+    # En tilgang uten eier er urepresenterbar. «Hvem eier denne
+    # tilgangen» er hele spørsmålet registeret finnes for.
+    "tilgang_uten_eier",
+    # …og uten hjemmel. En tilgang ingen kan begrunne er et funn selv om
+    # den har en eier.
+    "tilgang_uten_hjemmel",
+    # Gjennomgangsfristen: en tilgang som har stått urørt lenger enn sin
+    # egen frist er et FUNN, ikke en rad som stille blir gammel.
+    "utlopt_gjennomgang_uten_funn",
+    "funntype_utenfor_lukket_sett",
+    "tenantlekkasje_i_tilgangsregister",
+    "registerrad_endret_etter_innsetting",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m12-v1"] = {
+    "invarianter": M12_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M22_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SIER IKKE OPP noe. Katalogens egen guard krever
+    # unntaksregister, angrefrist og gjenopprettingsvei før en lisens kan
+    # fjernes — tre mekanismer som ikke finnes. Målt statisk og
+    # funksjonelt, som M-12s.
+    "lisens_avsluttet_av_modulen",
+    "lisens_uten_eier",
+    # Idempotensen, M-21s form: én varsling per (lisens, punkt,
+    # fornyelsesdato). Varsler som gjentar seg er varsler folk lærer seg
+    # å overse — og da forsvinner de viktige med dem.
+    "varsel_duplisert_per_varslingspunkt",
+    # DEN SKARPE, arvet fra M-21: fristsveipen er et forpass i
+    # varselsenderen, og en feil i forpasset skal ALDRI stanse den
+    # ordinære sendingen. Måles ved å injisere feil og verifisere at de
+    # ordinære varslene fortsatt går ut.
+    "forpass_stanset_ordinaer_sending",
+    "tenantlekkasje_i_lisensregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m22-v1"] = {
+    "invarianter": M22_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M30_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, og den er den viktigste i hele klyngen: modulen SLETTER
+    # INGENTING. Sletting eies av M-4s retensjonsregnskap og de seks
+    # reaperne som kjører; en ANDRE slettevei ved siden av dem er
+    # nøyaktig det M-4 ble bygget for å hindre. To veier som sletter det
+    # samme kan aldri holdes i takt.
+    "modulen_slettet_persondata",
+    "forespørsel_uten_eier",
+    # AKSEPTKRAVET: en forespørsel lukkes av et SKREVET SVAR, aldri av at
+    # fristen passerer. Strengere enn M-21s kvitteringskrav, fordi en
+    # oversittet innsynsforespørsel er et lovbrudd og ikke en forsinkelse.
+    "forespørsel_lukket_uten_svar",
+    # …og en oversittet frist er et funn, ikke en stille gammel rad.
+    "oversittet_frist_uten_funn",
+    "tenantlekkasje_i_forespørselsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m30-v1"] = {
+    "invarianter": M30_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M34_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER IKKE INN noe. Et compliance-verktøy som
+    # sender på egen hånd skaper en påstand ingen har lest.
+    "modulen_sendte_inn_evidens",
+    "kontroll_uten_eier",
+    # En kontroll er «oppfylt» BARE med skrevet evidenshenvisning og
+    # dato. Hele poenget med registeret er at «vi gjør dette» og «vi kan
+    # vise at vi gjorde dette» er to forskjellige ting.
+    "kontroll_oppfylt_uten_evidens",
+    "forbigatt_etterproving_uten_funn",
+    "tenantlekkasje_i_kontrollregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m34-v1"] = {
+    "invarianter": M34_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -1223,7 +1347,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # Klyngen «orden i eget hus»: alle fem bruker parformvalidatoren
     # uendret (_grenser_m6). Ingen av dem har en arm m6 ikke har — og en
     # egen kopi per modul ville vært fem steder å glemme en rettelse.
-    if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1"):
+    if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
+                   "m12-v1", "m22-v1", "m30-v1", "m34-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

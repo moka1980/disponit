@@ -1,0 +1,72 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m12-v1` står i manifestskjema.KRAVGRENSER fra samme commit, og
+# migrasjonsnummeret (097) er tildelt i docs/KLYNGE2-FUNDAMENT.md.
+#
+# V1 ER TILGANGSREGISTERET. Katalogteksten lover JML — joiner, mover,
+# leaver — altså at modulen OPPRETTER, FLYTTER og FJERNER tilganger
+# automatisk. Det er den farligste klassen kode en plattform kan ha: en
+# feil i provisjoneringen gir enten en ansatt tilgang hun ikke skal ha,
+# eller stenger noen ute fra jobben sin midt i arbeidsdagen.
+#
+# v1 provisjonerer ingenting. Den REGISTRERER hvem som har hvilken
+# tilgang til hva, med eier og hjemmel, og gjør avvik synlige:
+# tilganger uten eier, tilganger uten hjemmel, og tilganger som har
+# stått urørt lenger enn sin egen gjennomgangsfrist. Å se sannheten er
+# forutsetningen for å tørre å endre den — og den rekkefølgen er ikke
+# forsiktighet, den er den eneste som gir et revisjonsspor å måle mot
+# når provisjoneringen kommer.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m12_tilgang
+navn: Identitets- og tilgangsagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i v1: registeret er et tenant-skopet lager med
+# dører og en sveip. Det bestiller ingenting gjennom policyporten og
+# beslutter ingenting. Blir provisjonering v2, er m01 en REELL
+# avhengighet — hver tilgangsendring må policyvurderes — men da, ikke nå.
+avhengigheter: []
+kjerne: platform/modules/m12_tilgang
+i18n_prefiks: tilgang
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet (m02-suite-formen). Ingen
+      kode finnes; ingen måling finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et syntetisk tilgangssett med KJENT fasit for hvilke
+      avvik som skal reises — tilganger uten eier, uten hjemmel, forbi
+      gjennomgangsfrist — kjørt likt lokalt og på staging med begge
+      datasett-identitetene bundet. Uten fasit måler en avvikstelling
+      bare at spørringen ikke kastet feil.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: avklaring av hva punktet betyr for en modul som per v1
+      ikke beslutter noe. Registerets rader er append-only og sporet i
+      sitt eget lager; om det er «revisjonslogg korrekt» i punktets
+      forstand er en arkitektdom. Står nei framfor å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: gjennomgangssveipen bygget. Formen er gitt (advisory-lås,
+      hoppet_over skilt fra feil, alarm etter to sammenhengende feil),
+      men ingen kode kjører.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden under realistisk
+      tilgangsmengde, og en målt kjøring mot den. Ingen grense pinnet.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
