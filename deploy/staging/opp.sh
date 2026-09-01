@@ -841,6 +841,29 @@ skriv_cred plan DISPONIT_SEMANTIKK_MILJO "$SEMANTIKK_MILJO"
 # men hydreres til os.environ via samme LoadCredential-vei. Tomme = default.
 skriv_cred api DISPONIT_UI_PROVIDER    "${DISPONIT_UI_PROVIDER:-}"
 skriv_cred api DISPONIT_UI_IDP_ORIGINS "${DISPONIT_UI_IDP_ORIGINS:-}"
+
+# M-6 (088/PR-B): M365-kildekoblingen. Fem verdier, og TOMME DEFAULTS med
+# vilje — `epost_kilde.lag_konfig()` returnerer None når client_id eller
+# hemmeligheten mangler, og /start svarer da 503 «ikke konfigurert» i
+# stedet for å starte en halv OAuth-flyt. Fravær er altså en gyldig,
+# ærlig tilstand her, ulikt DSN-ene over som deployporten krever.
+#
+# Derfor står det heller ingen preflight-port på dem: en port ville
+# stanset hver eneste deploy til noen registrerte en Azure-app, og
+# resten av plattformen har ingenting med M-6 å gjøre.
+#
+# TENANTSEGMENTET er en URL-PATH-komponent hos Microsoft
+# (login.microsoftonline.com/<tenant>/oauth2/v2.0/...), validert mot et
+# lukket tegnsett i koden. `organizations` utelukker personlige kontoer,
+# `common` tillater begge, `consumers` bare personlige — og en katalog-
+# GUID låser til én organisasjon. Defaulten her er TOM, ikke en gjetning:
+# koden har sin egen default, og to steder som gjetter forskjellig er en
+# feil som først viser seg i en avvist innlogging.
+skriv_cred api DISPONIT_M365_CLIENT_ID     "${DISPONIT_M365_CLIENT_ID:-}"
+skriv_cred api DISPONIT_M365_CLIENT_SECRET "${DISPONIT_M365_CLIENT_SECRET:-}"
+skriv_cred api DISPONIT_M365_REDIRECT_URI  "${DISPONIT_M365_REDIRECT_URI:-}"
+skriv_cred api DISPONIT_M365_TENANT        "${DISPONIT_M365_TENANT:-}"
+skriv_cred api DISPONIT_M365_ALLOWLIST     "${DISPONIT_M365_ALLOWLIST:-}"
 # PR-045 (Codex P1): MILJØET prosessen kjører i. `platform/core/miljo` er den
 # ene tolkningen av variabelen, og TO ting leser den: hvilke policystatuser som
 # får binde en beslutning (`api.policyregister.tillatte_statuser`), og om
