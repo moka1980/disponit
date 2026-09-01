@@ -845,9 +845,10 @@ def test_m365_konfigurasjonen_er_koblet_hele_veien():
     for navn in ("DISPONIT_M365_CLIENT_ID", "DISPONIT_M365_CLIENT_SECRET",
                  "DISPONIT_M365_REDIRECT_URI", "DISPONIT_M365_TENANT",
                  "DISPONIT_M365_ALLOWLIST"):
-        assert f"skriv_cred api {navn}" in opp.replace("  ", " ") \
-            or f"skriv_cred api {navn}" in " ".join(opp.split()), \
-            f"opp.sh materialiserer ikke {navn} — fila API-et leser blir"
+        assert f"skriv_cred api {navn}" in " ".join(opp.split()), \
+            f"opp.sh materialiserer ikke {navn} — fila API-et leser blir" \
+            " da aldri skrevet, og modulen svarer «ikke konfigurert»" \
+            " uansett hva som står i miljøfila"
         assert f"LoadCredential={navn}:/etc/disponit/api/{navn}" in unit, \
             f"{navn} lastes ikke inn i API-uniten — verdien når aldri" \
             " prosessen, uansett hva som står i miljøfila"

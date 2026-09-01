@@ -1432,10 +1432,20 @@ def test_et_punkt_uten_binding_er_uflippbart():
     MUTASJONEN SOM DREPER DENNE: returner tom liste når `punktbinding`
     mangler eller er tom.
     """
-    feil = _punktbind("m57-v1", "tester_gronne_pa_staging",
-                      ["maalt.tester_totalt"])
-    assert feil, "`m57-v1` har tom binding, men punktet flippet likevel"
-    assert "UFLIPPBART" in feil[0]
+    # `m57-v1` var eksempelet her fram til 1/9, da den fikk sine seks
+    # bindinger. Regelen er den samme og måles nå på grensene som FAKTISK
+    # har tom binding — de finnes fortsatt, og det er nettopp derfor
+    # regelen må stå.
+    from manifestskjema import KRAVGRENSER
+    tomme = [k for k, g in KRAVGRENSER.items() if not g.get("punktbinding")]
+    assert tomme, ("ingen grense har tom binding lenger — porten måler"
+                   " ingenting, og regelen må da flyttes eller fjernes"
+                   " BEVISST, ikke stå igjen som en grønn attrapp")
+    for krav in tomme:
+        feil = _punktbind(krav, "tester_gronne_pa_staging",
+                          ["maalt.tester_totalt"])
+        assert feil, f"`{krav}` har tom binding, men punktet flippet likevel"
+        assert "UFLIPPBART" in feil[0]
 
     feil = _punktbind("m57-v1", "et_punkt_ingen_har_definert", [])
     assert feil, "et ukjent punkt er flippbart"
@@ -1489,23 +1499,34 @@ def test_hvert_flippet_punkt_i_repoet_staar_i_sin_binding():
     assert not feil, "flippede punkter uten binding:\n" + "\n".join(feil)
 
 
-def test_m57_punktene_er_uflippbare_med_apne_oeyne():
-    """Det TILSIKTEDE utfallet, skrevet ned så det ikke leses som en feil.
+def test_m57_punktene_bindes_til_sine_egne_maalinger():
+    """1/9: de seks punktene fikk sine grenser — og porten fulgte med.
 
-    `m57-v1` har tom binding. De seks punktene Codex felte — suitekjøring,
-    datasett-likhet, revisjonslogg, feilinjisering, flippedrill — kan derfor
-    ikke flippes før målingene finnes. M-57-aksepten skal uansett ikke kjøre
-    før utførelsesarmen har gitt dem.
+    Den forrige utgaven het `..._er_uflippbare_med_apne_oeyne` og krevde
+    `punktbinding == {}`. Meldingen sa selv hva som skulle skje: «m57-v1
+    har fått en binding — da skal denne porten OPPDATERES sammen med den,
+    ikke slettes». Det er dette.
 
-    Porten står her for at en fremtidig runde ikke skal «fikse» tomheten ved
-    å fjerne den.
+    Kravet er strengere enn før, ikke svakere. Før beviste porten at
+    punktene ikke kunne flippes I DET HELE TATT. Nå beviser den to ting:
+    at hvert punkt HAR en binding, og at bindingen fortsatt avviser en
+    vilkårlig sti — som var hele poenget med #166. Det som er borte, er
+    bare påstanden om at ingen måling finnes.
     """
     from manifestskjema import KRAVGRENSER
-    assert KRAVGRENSER["m57-v1"]["punktbinding"] == {}, \
-        "m57-v1 har fått en binding — da skal denne porten oppdateres" \
-        " sammen med den, ikke slettes"
-    for punkt in ("tester_gronne_pa_staging", "syntetisk_datasett_likt_lokalt",
-                  "revisjonslogg_korrekt", "feilinjisering_til_unntakskø",
-                  "rollback_testet"):
+    binding = KRAVGRENSER["m57-v1"]["punktbinding"]
+    for punkt in ("ytelse_bestatt", "tester_gronne_pa_staging",
+                  "syntetisk_datasett_likt_lokalt", "revisjonslogg_korrekt",
+                  "feilinjisering_til_unntakskø", "rollback_testet"):
+        assert punkt in binding, \
+            f"{punkt} mistet bindingen sin — da er det uflippbart igjen"
+        # DEN BÆRENDE HALVDELEN: en vilkårlig sti skal fortsatt avvises.
+        # Uten denne ville bindingen vært en liste uten virkning.
         assert _punktbind("m57-v1", punkt, ["maalt.hva_som_helst"]), \
             f"{punkt} er flippbart på en vilkårlig sti"
+        # …og de deklarerte stiene skal FAKTISK flippe punktet, ellers er
+        # grensen registrert uten en vei fra måling til punkt — nøyaktig
+        # tilstanden `ytelse_bestatt` sto i før denne runden: en pinnet
+        # grense som ingen måling kunne oppfylle.
+        assert not _punktbind("m57-v1", punkt, list(binding[punkt])), \
+            f"{punkt} kan ikke flippes av sine EGNE målinger"

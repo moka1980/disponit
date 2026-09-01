@@ -49,68 +49,76 @@ staging_sjekkliste:
     krav_id: m57-v1
     notat: >-
       KREVER: suitekjøring på staging med modulens andel pinnet
-      (m02-suite-formen) — suitetotaler, feiltall, modulandel og
-      stagingidentitet bundet til den aksepterte revisjonen. MÅLINGEN
-      FINNES IKKE i `m57-v1`: grensen bærer invariantpar, to ja-punkter
-      og ytelsesparet, ingen suitemålinger og ingen stagingidentitet.
-      Punktet er derfor ikke flippbart på evidens ennå (#166).
+      (m02-suite-formen). GRENSEN FINNES NÅ i `m57-v1` (registrert 1/9,
+      FØR målingen — §0): suite_min_tester 3000, suite_maks_feilet 0, og
+      modulens EGEN andel som tre tall — m57_min_tester 80,
+      m57_maks_feilet 0, m57_maks_hoppet 0. Det siste skiller «bestått»
+      fra «ikke forsøkt»: en grønn suite beviser ingenting om M-57 hvis
+      modulens egne ble hoppet over. Stagingidentiteten kreves bundet —
+      punktet heter «på staging», og uten den er en lokal kjøring like
+      god bevisverdi. Statusen er `nei` fordi kjøringen ikke er gjort,
+      ikke fordi grensen mangler.
   syntetisk_datasett_likt_lokalt:
     status: nei
     krav_id: m57-v1
     notat: >-
       KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
       lokalt (CI) og på staging, med BEGGE datasett-identitetene i
-      artefaktet og en byte-likhet mellom dem, målt sammen med
-      fasit-resultatet (m02-fordelingsformen). MÅLINGEN FINNES IKKE i
-      `m57-v1`: hverken lokal eller staging datasett-digest er med, og
-      grensen sammenlikner dem ikke. Ikke flippbart på evidens ennå
-      (#166).
+      artefaktet og byte-likhet mellom dem (m02-fordelingsformen).
+      GRENSEN FINNES NÅ i `m57-v1` (1/9, §0): datasett_min_soknader 200,
+      datasett_maks_fasitavvik 0, og krev_datasett_sha_lik — begge
+      digestene skal stå der OG være like. Én digest beviser at noe
+      kjørte, ikke at det kjørte likt to steder. Statusen er `nei` fordi
+      kjøringen ikke er gjort.
   revisjonslogg_korrekt:
     status: nei
     krav_id: m57-v1
     notat: >-
       KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
-      står i revisjonsloggen, målt som hendelser med identitet — ikke som
-      en påstand om at de gjør det. MÅLINGEN FINNES IKKE i `m57-v1`:
-      grensen bærer ingen revisjonsmålinger. Merk at avskruingsdøra selv
-      står utsatt i #159 (den er i dag selvattestert), så dette punktet
-      kan ikke bevises før #159 har gitt den en varig hendelse. Ikke
-      flippbart på evidens ennå (#166).
+      står i revisjonsloggen, målt som hendelser med identitet. GRENSEN
+      FINNES NÅ i `m57-v1` (1/9, §0): minst én av hver av de tre, og
+      null hendelser uten identitet. MEN PUNKTET KAN IKKE OPPFYLLES
+      ENNÅ, og det er en ærlig tilstand og ikke en glipp: avskruingsdøra
+      er selvattestert (#159) og etterlater ingen varig hendelse, så
+      revisjon_avskruinger står 0 til #159 har gitt den en. Grensen er
+      registrert nå nettopp derfor — den definerer hva #159 må levere, i
+      stedet for å bli skrevet etterpå av den som allerede vet hva
+      målingen ga.
   feilinjisering_til_unntakskø:
     status: nei
     krav_id: m57-v1
     notat: >-
       KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
       promotert liste (SP-3) OG at den faktisk leverte en post i
-      unntakskøen — et talt eller navngitt køelement bundet til den
-      injiserte jobben. MÅLINGEN FINNES IKKE i `m57-v1` for andre
-      halvdel: `kjoring_delvis_resultat_promotert` beviser bare at noe
-      IKKE ble promotert, og en kjøring som mister feilen helt består
-      den like godt som en som køer den. Ikke flippbart på evidens ennå
-      (#166).
+      unntakskøen. Første halvdel dekkes av invarianten
+      `kjoring_delvis_resultat_promotert`. ANDRE HALVDEL HAR GRENSE NÅ i
+      `m57-v1` (1/9, §0): min_injiserte_jobber 1, min_unntakskoe_poster
+      1, maks_koeposter_uten_jobbinding 0. Uten den består en kjøring
+      som MISTER feilen helt like godt som en som køer den. Statusen er
+      `nei` fordi injiseringen ikke er kjørt.
   ytelse_bestatt:
     status: nei
     krav_id: m57-v1
     notat: >-
       KREVER: `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
-      `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) i
-      `m57-v1` — de to SAMMEN, siden en varighet uten last er en tom
-      kjøring og en full bunt uten varighet bare er en påstand om at det
-      gikk. MÅLINGEN FINNES: dette er det ene punktet med en ekte,
-      pinnet grense i `m57-v1` (§0, før bygging). Statusen er `nei` fordi
-      prøvekjøringen ikke er kjørt, ikke fordi grensen mangler. Avvik i
-      prøvekjøringen oppdaterer klarsignalet, aldri porten. Merk at
-      240-minuttersfristen selv står utsatt i #165 (den er lengre enn
-      lease-taket som dekker den).
+      `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) — de to
+      SAMMEN, siden en varighet uten last er en tom kjøring og en full
+      bunt uten varighet bare er en påstand om at det gikk. Grensen har
+      stått siden §0; 1/9 fikk punktet også sin PUNKTBINDING, som
+      manglet: fram til da ville en gjennomført 5000-måling ikke kunnet
+      flippe punktet i det hele tatt — grensen fantes, veien fra måling
+      til punkt gjorde ikke. Statusen er `nei` fordi prøvekjøringen ikke
+      er kjørt.
   rollback_testet:
     status: nei
     krav_id: m57-v1
     notat: >-
       KREVER: 049-flippedrillen for modulens RELEASE — at forrige
-      M-57-release kan gjenoppta arbeid etter rollback, med
-      release-digest, drenering, claim og promotering målt, slik
-      `rollback-m56-v1` gjør det. MÅLINGEN FINNES IKKE i `m57-v1`: det
-      eneste M57-feltet som kan påberopes er
-      `ddl_begge_kjoringer_gronne`, og det er SP-10/DDL-idempotens — en
-      annen ting enn en releaseflipp. Ikke flippbart på evidens ennå
-      (#166).
+      M-57-release kan gjenoppta arbeid etter rollback. GRENSEN FINNES
+      NÅ i `m57-v1` (1/9, §0), speilet fra `rollback-m56-v1`:
+      min_rullback_claims 1, min_rullback_promoterte 1,
+      maks_claims_etter_drenering 0, og release-digesten bundet — uten
+      den vet vi ikke HVILKEN release som gjenopptok arbeidet.
+      `ddl_begge_kjoringer_gronne` er SP-10/DDL-idempotens, en annen
+      ting enn en releaseflipp. Statusen er `nei` fordi drillen ikke er
+      kjørt.
