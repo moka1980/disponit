@@ -37,6 +37,9 @@ jobs:
       DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_DRIFTSTATUS_DSN: postgresql://disponit_driftstatus:drift@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_SELVTEST_DSN: postgresql://disponit_selvtest:selv@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_KVALITETSMAALER_DSN: postgresql://disponit_kvalitetsmaaler:kval@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_LAGERMAALER_DSN: postgresql://disponit_lagermaaler:lagr@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_KUNNSKAPSSVEIP_DSN: postgresql://disponit_kunnskapssveip:kunn@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -67,6 +70,21 @@ jobs:
           # registreringsdør, aldri tabellrettigheter (varselsender-formen).
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_driftstatus LOGIN PASSWORD 'drift'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_selvtest LOGIN PASSWORD 'selv'"
+          # KLYNGEN «orden i eget hus» (092-096). Rollene opprettes i
+          # FUNDAMENTET, ikke med hver modul-PR: denne fila merges
+          # normalt for hånd, og fem separate endringer i den er fem
+          # sjanser til en rød CI som ikke handler om modulen som
+          # landet. Tre målere med hver sin innlogging, fem eiere som
+          # NOLOGIN — M-21 har ingen egen: fristsveipen er et forpass i
+          # varselsenderen og kjører som disponit_varselsender.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kvalitetsmaaler LOGIN PASSWORD 'kval'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lagermaaler LOGIN PASSWORD 'lagr'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kunnskapssveip LOGIN PASSWORD 'kunn'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kvalitet_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lager_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_mal_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kunnskap_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plikt_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).

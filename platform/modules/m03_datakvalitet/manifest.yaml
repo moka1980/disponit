@@ -1,0 +1,75 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m3-v1` står i manifestskjema.KRAVGRENSER fra samme commit som dette
+# manifestet, og migrasjonsnummeret (092) er tildelt i
+# docs/KLYNGE-FUNDAMENT.md. Modulen har ennå INGEN kode — dette er en
+# reservasjon med skrevne krav, ikke en leveranse.
+#
+# V1-AVGRENSNINGEN, som dom og ikke som mangel: katalogteksten lover
+# retting, sammenslåing og karantene. Alt det ENDRER kundens data, og
+# en ny endringsvei er den farligste klassen kode i huset. v1 er derfor
+# ren MÅLING: den profilerer plattformens egne tenant-tabeller på
+# tomhet, formatavvik og duplikatnøkler, skriver tallene til sine egne
+# lagre og alarmerer. Den retter ingenting, slår ingenting sammen og
+# BLOKKERER ingen bestilling. Blokkering er en policy-endring som hører
+# hjemme i en v2 med attestasjon, ikke i en måler.
+#
+# TO AKSER, ÆRLIG LEST (m16/m38-formen): `status: under_utvikling` er
+# GODKJENT-aksen — ingen aksepthendelse finnes. `driftstilstand:
+# ikke_i_drift` er bokstavelig: ingen kode, ingen release, ingen
+# arbeider.
+id: m03_datakvalitet
+navn: Datakvalitetsagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# INGEN avhengigheter i registerets forstand (m16/m38-begrunnelsen):
+# v1 MÅLER og RAPPORTERER. Den bestiller ikke gjennom policyporten og
+# skriver ingen beslutning til evidenskjeden — en oppført m01/m02 ville
+# vært lånt, ikke målt. Revurderes den dagen v2 blokkerer en bestilling
+# på kvalitetsgrunnlag; DA er m01 en reell avhengighet.
+avhengigheter: []
+kjerne: platform/modules/m03_datakvalitet
+i18n_prefiks: datakvalitet
+
+# Sjekklisteformen er LUKKET (manifest-skjema.json). Alle punkter står
+# `nei` fordi INGEN av dem er målt: modulen har ingen kode ennå.
+# «Et manifest skal aldri lese sterkere enn porten måler.»
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet (m02-suite-formen). Ingen
+      kode finnes; ingen måling finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et syntetisk datasett med KJENT antall tomme felt,
+      formatavvik og duplikater, profilert lokalt og på staging med
+      begge datasett-identitetene bundet — profilen er verdiløs som
+      bevis uten en fasit å måles mot. Ingen slik måling finnes.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: avklaring av hva punktet betyr for en modul som per v1
+      IKKE skriver til evidenskjeden (den måler; den beslutter ikke).
+      Står nei i stedet for å låne en tolkning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at målejobben finnes å injisere feil i. Formen er gitt
+      (artefaktryddingens advisory-lås, hoppet_over skilt fra feil,
+      alarm etter to sammenhengende feil), men ingen kode kjører.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for profileringskostnaden per tabell under
+      last, og en målt kjøring mot den. Ingen grense er pinnet; ingen
+      måling finnes.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

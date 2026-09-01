@@ -721,6 +721,185 @@ KRAVGRENSER["m11-v1"] = {
 }
 
 
+# ---------------------------------------------------------------------
+# KLYNGEN «ORDEN I EGET HUS» — m3, m4, m5, m9, m21.
+#
+# Alle fem grensene registreres FØR byggingen de skal måle (§0-regelen,
+# m57), fra samme commit som manifestene. Alle fem bruker m57/m6-PARFORMEN
+# (`_grenser_m6`): hver invariant måles som (forsøk, brudd), null brudd
+# UTEN forsøk er rødt, og ja-punktet krever bokstavelig `true`. Grunnen
+# til at parformen gjenbrukes uendret er at den har vunnet argumentet én
+# gang: en port som aldri kjørte har ikke målt noe, og en modul som
+# rapporterer 0 brudd fordi testen ikke gikk, lyver med et sant tall.
+#
+# `punktbinding` står tom for alle fem MED VILJE: ingen
+# sjekklistepunkter er flippbare før målingene finnes.
+# ---------------------------------------------------------------------
+
+M3_INVARIANTER: tuple[str, ...] = (
+    # SIKKERHET. Profileren har kolonnegrant KUN på det den profilerer
+    # (tenant-, nøkkel- og formatkolonner). En payloadkolonne i grantet
+    # feller porten — målt mot information_schema.column_privileges, ikke
+    # mot kildeteksten: «den leser den ikke i dag» er ikke en egenskap
+    # ved en fil som endres.
+    "profil_leser_payloadkolonne",
+    # SIKKERHET. Målerollen har null INSERT/UPDATE/DELETE/TRUNCATE
+    # utenfor modulens egne tabeller. En kompromittert profileringsjobb
+    # kan telle og ingenting annet.
+    "maaler_har_skriverett_utenfor_egne_tabeller",
+    # ÆRLIGHETEN, som i m4: en tabell som ikke kunne profileres
+    # (manglende grant, statement_timeout) rapporteres som FUNN, aldri
+    # som null. «0 tomme felt» fordi målingen ikke kjørte er ikke en
+    # grønn profil.
+    "umaalbar_tabell_talt_som_null",
+    # Lukket sett (m6-formen): en ukjent funntype er en feil, aldri en
+    # ny kategori som stille oppstår.
+    "funntype_utenfor_lukket_sett",
+    # Profilene er append-only: en måling som kan endres i ettertid er
+    # ikke evidens.
+    "profil_endret_etter_innsetting",
+    "tenantlekkasje_i_profil",
+    # V1-DOMMEN, håndhevet som invariant og ikke som disiplin: M-3
+    # BLOKKERER ALDRI en bestilling. Å la en måler stanse en
+    # kundehandling er en policyendring med attestasjon, ikke en
+    # bieffekt av at noen la til en terskel. Målt statisk og i drift.
+    "bestilling_blokkert_av_kvalitetsmaaling",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m3-v1"] = {
+    "invarianter": M3_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M4_INVARIANTER: tuple[str, ...] = (
+    # SIKKERHET. Måleren har ingen skriverett noe sted, og ingen
+    # payloadkolonne i noe grant: at måleren aldri leser persondata skal
+    # være en egenskap ved BASEN, ikke ved disiplinen.
+    "maaler_har_skriverett",
+    "maaler_har_payloadkolonne",
+    # SIKKERHET. M-4 sletter kun sine egne målerader. Ingen DELETE,
+    # ingen TRUNCATE og ingen kall til en fremmed reap_*/makuler_*/
+    # rydd_*-funksjon — modulen som fører retensjonsregnskapet skal ikke
+    # kunne bli en slettevei.
+    "sletting_utenfor_egne_tabeller",
+    "modul_kaller_fremmed_reaper",
+    "tenantlekkasje_i_beholdning",
+    # REGISTERETS INTEGRITET. Et lager kan ikke PÅSTÅ at det står under
+    # frist uten å navngi reaperen og reap-markøren, en reaper som ikke
+    # finnes i pg_proc er en løgn registeret ikke skal kunne bære, og en
+    # relasjon som ikke finnes skal felle skrivingen — ikke gi stille
+    # null ved neste måling.
+    "frist_uten_reaper",
+    "reaper_uten_funksjon",
+    "lager_uten_relasjon",
+    "lager_uten_dom_akseptert",
+    # MÅLINGENS ÆRLIGHET — modulens bærende regel. Et lager som ikke
+    # kunne måles er et funn, aldri en null; en avbrutt kjøring
+    # rapporteres som avbrutt, aldri som komplett.
+    "umaalbart_lager_talt_som_null",
+    "avbrutt_kjoring_rapportert_som_komplett",
+    "funntype_utenfor_lukket_sett",
+    "maaling_endret_etter_innsetting",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m4-v1"] = {
+    "invarianter": M4_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M5_INVARIANTER: tuple[str, ...] = (
+    # DEN BÆRENDE INVARIANTEN. Et malfelt uten dekning i inndataene
+    # merkes som manglende og fylles ALDRI — «ukjente felt markeres,
+    # aldri diktes» er katalogens eget krav, og det er det ene kravet
+    # som gjør en malmotor trygg å stole på.
+    "felt_uten_kilde_diktet",
+    # Låste klausuler er låst i DATAMODELLEN: utfyllingen kan ikke endre
+    # en klausulkomponent merket låst. Urepresenterbart, ikke usannsynlig.
+    "laast_klausul_endret",
+    # Malversjoner er append-only (079-formen, generalisert): en
+    # publisert versjon endres aldri, den etterfølges.
+    "malversjon_endret_etter_publisering",
+    "tenantlekkasje_i_malregister",
+    # V1-DOMMEN som invariant: utfyllingen RETURNERER tekst. Den lagrer
+    # ikke et dokument, sender ikke, publiserer ikke. Blir det v2, er det
+    # en bevisst utvidelse med egne porter — ikke noe som glir inn.
+    "utfylling_skrev_dokument",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m5-v1"] = {
+    "invarianter": M5_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M9_INVARIANTER: tuple[str, ...] = (
+    # «Svar uten tilstrekkelig kildegrunnlag avvises» som DATAMODELL, ikke
+    # som policy: et begrep uten kilde skal ikke kunne skrives.
+    "begrep_uten_kilde",
+    # FALLGRUVEN, målt statisk: to_tsvector og to_tsquery skal ALLTID ha
+    # eksplisitt regconfig. To-arguments-formen leser
+    # default_text_search_config fra sesjonen, og en indeks bygget under
+    # én konfigurasjon slutter stille å treffe spørringer kjørt under en
+    # annen. En søkeindeks som ikke treffer er verre enn ingen: den ser
+    # ut til å virke.
+    "sok_uten_eksplisitt_regconfig",
+    # Et begrep forbi gyldighetsdato er et FUNN, ikke en stille gammel
+    # sannhet folk fortsetter å lese.
+    "utlopt_begrep_uten_funn",
+    "tenantlekkasje_i_begrepssok",
+    "begrep_endret_uten_ny_versjon",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m9-v1"] = {
+    "invarianter": M9_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # To ja-punkter. Ytelsespunktet er med FORDI en GIN-indeks er en
+    # påstand om ytelse: 086 lærte huset at tallet skal måles (47,6 →
+    # 0,33 ms), ikke antas. Uten før/etter-tall i ms er indeksen
+    # udokumentert, og punktet regnes som nei.
+    "krav_ja": ("ddl_begge_kjoringer_gronne", "sok_ytelse_maalt_for_og_etter"),
+    "punktbinding": {},
+}
+
+M21_INVARIANTER: tuple[str, ...] = (
+    # «Plikter uten eier» er katalogens egen KPI. I v1 er den en
+    # NOT NULL, ikke en rapport — en plikt ingen eier er en plikt ingen
+    # gjør, og den skal ikke kunne registreres.
+    "plikt_uten_eier",
+    # AKSEPTKRAVET som invariant: en frist lukkes av en kvittering eller
+    # en eksplisitt skrevet status. Aldri av at tiden går forbi den.
+    "frist_lukket_uten_kvittering",
+    # Idempotensen. En frist som nærmer seg over mange sveip skal gi ETT
+    # varsel per varslingspunkt. Varsler som gjentar seg er varsler folk
+    # lærer seg å overse — og da forsvinner de viktige med dem.
+    "varsel_duplisert_per_varslingspunkt",
+    # DEN SKARPE. Fristsveipen er et FORPASS i varselsenderen, ikke en ny
+    # timer. Det er den billige plasseringen — og prisen er at en feil i
+    # forpasset ikke under noen omstendighet får stanse den ORDINÆRE
+    # varselsendingen. Måles ved å injisere feil i forpasset og verifisere
+    # at de ordinære varslene fortsatt går ut.
+    "forpass_stanset_ordinaer_sending",
+    "tenantlekkasje_i_pliktregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m21-v1"] = {
+    "invarianter": M21_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -1041,6 +1220,11 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m10(grense, art)
     if krav_id == "m11-v1":
         return feil + _grenser_m11(grense, art)
+    # Klyngen «orden i eget hus»: alle fem bruker parformvalidatoren
+    # uendret (_grenser_m6). Ingen av dem har en arm m6 ikke har — og en
+    # egen kopi per modul ville vært fem steder å glemme en rettelse.
+    if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1"):
+        return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")
     if not isinstance(m, dict):

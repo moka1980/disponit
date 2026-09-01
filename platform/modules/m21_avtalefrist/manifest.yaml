@@ -1,0 +1,87 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m21-v1` står i manifestskjema.KRAVGRENSER fra samme commit, og
+# migrasjonsnummeret (096) er tildelt i docs/KLYNGE-FUNDAMENT.md.
+#
+# V1 ER FORPLIKTELSESREGISTERET OG FRISTVARSLENE. Katalogteksten lover
+# også uttrekk av parter, datoer og plikter FRA avtaledokumenter, og
+# forberedt innsending til offentlige mottakere med kvitteringsbevis.
+# Uttrekket forutsetter dokumentanalysen modulen selv oppgir som
+# avhengighet; innsendingen forutsetter et mandat og et maskinelt
+# grensesnitt per mottaker. Ingen av delene finnes.
+#
+# v1 er den delen som gir verdi uten dem: plikter REGISTRERES manuelt
+# med eier, frist og kildehenvisning, og en sveip køer varsel i god tid
+# før hver frist. Sveipen legges som FORPASS i varselsenderen — ikke som
+# en ny timer ved siden av: en ny varslingsvei er en ny vei å miste et
+# varsel i, og varselsenderens rytme, backoff og idempotens er alt
+# vunnet argumenter.
+#
+# TRE DOMMER v1 hviler på:
+#   * En plikt UTEN EIER er urepresenterbar. «Plikter uten eier» er
+#     katalogens egen KPI; i v1 er den en NOT NULL, ikke en rapport.
+#   * En frist LUKKES ALDRI av at tiden går. Den lukkes av en skrevet
+#     kvittering eller en eksplisitt status — katalogens eget
+#     akseptkrav, håndhevet i datamodellen.
+#   * Varselet er IDEMPOTENT per (plikt, varslingspunkt). En frist som
+#     nærmer seg over mange sveip skal gi ett varsel per punkt, ikke ett
+#     per sveip — ellers lærer folk å overse dem.
+#
+# GJENBRUKER `bestilling:opprett`: registrering av en plikt er en
+# bestilling i plattformens forstand og trenger IKKE et nytt scope.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m21_avtalefrist
+navn: Avtale- og fristagent
+versjon: 0.1.0
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+# REELL, MÅLT avhengighet (m35-formen, ulikt de fire søsknene i
+# klyngen): M-21 KØER VARSEL. Varselveien er tenant- og brukerskopet og
+# hører til plattformens varselmodell; forpliktelsesregisteret er den
+# ene modulen i «orden i eget hus» som faktisk rekker ut til et
+# menneske. m02 føres fordi et fristvarsel er en handling som skal
+# kunne gjenfinnes i evidenskjeden — ikke bare i en varseltabell.
+avhengigheter:
+  - m02_revisjonslogg          # fristvarslene skal kunne gjenfinnes
+kjerne: platform/modules/m21_avtalefrist
+i18n_prefiks: avtalefrist
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et pliktsett med KJENT fasit for hvilke varsler som skal
+      køes ved hvilket tidspunkt (og hvilke som IKKE skal køes en gang
+      til), kjørt likt lokalt og på staging med begge
+      datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at koblingen mot evidenskjeden er bygget og målt — den er
+      oppført som avhengighet fordi den SKAL finnes, ikke fordi den
+      finnes. Punktet står nei til målingen er gjort.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: sveipen bygget. Den er et forpass i varselsenderen, og
+      det er nettopp derfor porten er skarp: en feil i forpasset må
+      ikke kunne stanse den ORDINÆRE varselsendingen. Uten kode er det
+      en påstand, ikke en måling.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for hva forpasset koster per sveip, og en
+      målt kjøring mot den. Et forpass i en eksisterende jobb er billig
+      å legge inn og dyrt å oppdage at ble tregt.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
