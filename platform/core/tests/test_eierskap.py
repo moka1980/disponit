@@ -25,6 +25,29 @@ pg = pytest.mark.skipif(not DSN, reason="DISPONIT_TEST_DSN ikke satt")
 REPARASJON = (Path(__file__).resolve().parents[3]
               / "deploy" / "staging" / "eierskap-reparasjon.sql")
 
+#: DE PRIVILEGERTE EIERROLLENE — én kilde, brukt tre steder i denne
+#: filen. Sto listen skrevet ut hver gang (og det gjorde den til 1/9),
+#: måtte hver ny modul redigere de samme tre stedene, og fem parallelle
+#: modul-PR-er ville kollidert i alle tre. Klyngen «orden i eget hus»
+#: (092-096) la sine fem eiere inn her, i fundamentet, én gang.
+#:
+#: En rolle står i listen fordi den er DESIGNET til å eie objekter —
+#: ikke fordi den eier noen ennå. En modul som ikke har landet eier
+#: ingenting, og audit-testen under er derfor grønn for den uansett.
+KJENTE_EIERROLLER = (
+    "disponit_authenticator",
+    "disponit_m37_claimer",
+    "disponit_policy_eier",
+    "disponit_modul_eier",
+    "disponit_domene_eier",
+    # Klyngen «orden i eget hus» — én eier per modul (#326/#327).
+    "disponit_kvalitet_eier",   # M-3, migrasjon 092
+    "disponit_lager_eier",      # M-4, migrasjon 093
+    "disponit_mal_eier",        # M-5, migrasjon 094
+    "disponit_kunnskap_eier",   # M-9, migrasjon 095
+    "disponit_plikt_eier",      # M-21, migrasjon 096
+)
+
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.
 DESIGN = {
     ("TABLE", "api_tokener"): "disponit_authenticator",
@@ -50,6 +73,12 @@ def _kjor_reparasjon(conn):
             conn.execute(stmt)
     conn.execute("DO $$" + do_del)
     conn.commit()
+
+
+def _rolleliste() -> str:
+    """KJENTE_EIERROLLER som en SQL-literalliste. Skrevet som funksjon og
+    ikke som f-streng i spørringen, så listen har ETT sted å vokse."""
+    return ",".join("'" + r + "'" for r in KJENTE_EIERROLLER)
 
 
 def _eier(conn, art, ident):
@@ -93,11 +122,20 @@ def test_designtabellen_speiler_migrasjonene():
     assert len(design) == alle, (
         f"parsingen ser {len(design)} av {alle} deklarerte rader — et"
         " semikolon i en kommentar kutter VALUES-listen")
-    assert set(design.values()) == {"disponit_authenticator",
-                                    "disponit_policy_eier",
-                                    "disponit_modul_eier",
-                                    "disponit_domene_eier",
-                                    "disponit_m37_claimer"}
+    # DELMENGDE, ikke likhet. Likheten fanget to ting: en ukjent eier i
+    # designfilen (den PORTEN beholder vi — det er den som betyr noe),
+    # og en rolle i listen uten en eneste designrad (den mister vi).
+    # Byttet er bevisst: en modul som ennå ikke har landet har ingen
+    # rader, og en likhetstest ville da tvunget hver modul-PR til å
+    # redigere den samme litteralen — nøyaktig kollisjonen fundamentet
+    # finnes for å unngå. At en designert eierrolle faktisk eier det den
+    # skal, måles av `test_ingen_privilegert_eid_utenfor_designet` under,
+    # som spør BASEN og ikke denne listen.
+    ukjente = set(design.values()) - set(KJENTE_EIERROLLER)
+    assert not ukjente, (
+        f"designfilen navngir eierroller utenfor KJENTE_EIERROLLER:"
+        f" {sorted(ukjente)} — legg rollen i konstanten øverst, eller"
+        " rett raden")
     for nokkel, eier in DESIGN.items():
         assert design.get(nokkel) == eier, f"utdraget spriker: {nokkel}"
     # …og hver signatur er skrevet slik `regprocedure` skriver den.
@@ -132,14 +170,14 @@ def test_designtabellen_dekker_alle_privilegert_eide_objekter(migrator):
         "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
         " WHERE n.nspname='public' AND c.relkind IN ('r','p')"
         "   AND pg_get_userbyid(c.relowner) IN"
-        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier','disponit_modul_eier','disponit_domene_eier')"
+        "       (" + _rolleliste() + ")"
         " UNION ALL"
         " SELECT 'FUNCTION', p.oid::regprocedure::text,"
         "        pg_get_userbyid(p.proowner)"
         "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
         " WHERE n.nspname='public'"
         "   AND pg_get_userbyid(p.proowner) IN"
-        "       ('disponit_authenticator','disponit_m37_claimer','disponit_policy_eier','disponit_modul_eier','disponit_domene_eier')"
+        "       (" + _rolleliste() + ")"
     ).fetchall()
     migrator.rollback()
     udekket = [(a, i) for a, i, e in faktisk if (a, i) not in design]
