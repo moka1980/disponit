@@ -1153,6 +1153,28 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import plikt as pliktmodul
         return pliktmodul.bortfall_endepunkt(tjeneste, request)
 
+    # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
+    # register OG de åpne funnene i ett kall; de tre skriveveiene er
+    # menneskelige registreringer i flaten. INGEN av dem provisjonerer
+    # noe — v1 registrerer hvem som har hvilken tilgang til hva, og
+    # gjør avvik synlige.
+    def tilgang_liste(request: Request) -> Response:
+        from . import tilgang as tilgangmodul
+        return tilgangmodul.tilgangsbilde(tjeneste, request)
+
+    def tilgang_objekt(request: Request) -> Response:
+        from . import tilgang as tilgangmodul
+        return tilgangmodul.registrer_objekt_endepunkt(tjeneste, request)
+
+    def tilgang_registrer(request: Request) -> Response:
+        from . import tilgang as tilgangmodul
+        return tilgangmodul.registrer_tilgang_endepunkt(tjeneste, request)
+
+    def tilgang_gjennomgang(request: Request) -> Response:
+        from . import tilgang as tilgangmodul
+        return tilgangmodul.registrer_gjennomgang_endepunkt(tjeneste,
+                                                            request)
+
     def drift_backup(request: Request) -> Response:
         return lesing.drift_backup(tjeneste, request)
 
@@ -1528,6 +1550,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/plikt/{plikt_id:uuid}/bortfall", plikt_bortfall,
               methods=["POST"]),
+        # 097 (M-12): kolleksjons- og handlingsrutene FØR mønsterruten,
+        # som ellers i fila — {tilgang_id:uuid} avviser «objekt»
+        # uansett, men rekkefølgen sier intensjonen.
+        Route("/v1/tilgang", tilgang_liste, methods=["GET"]),
+        Route("/v1/tilgang", tilgang_registrer, methods=["POST"]),
+        Route("/v1/tilgang/objekt", tilgang_objekt, methods=["POST"]),
+        Route("/v1/tilgang/{tilgang_id:uuid}/gjennomgang",
+              tilgang_gjennomgang, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2166,6 +2196,33 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/plikt"):                   "bestilling:opprett",
     ("POST", "/v1/plikt/{plikt_id:uuid}/lukk"): "bestilling:opprett",
     ("POST", "/v1/plikt/{plikt_id:uuid}/bortfall"): "bestilling:opprett",
+    # 097 (M-12): tilgangsregisteret. SCOPENE ER GJENBRUKT, IKKE NYE —
+    # men LESESCOPET ER ET ANNET ENN M-21s, og det er en dom:
+    #
+    # En pliktliste sier HVA som skal gjøres innen når; den er tenantens
+    # driftstilstand, og enhver kunderolle skal se den (`decisions:read`).
+    # Et tilgangsregister sier HVEM SOM HAR ADMIN PÅ HVA — et kart over
+    # angrepsflaten, med kritikalitet per system og eier per nøkkel. Med
+    # `decisions:read` ville hver `leser`, `godkjenner` og
+    # `policyforvalter` fått det kartet. `security:read` er scopet
+    # `admin` og `sikkerhet` har, det står i `LESESCOPES` (så en
+    # browserøkt slipper gjennom `_autentiser`), og det er samme snitt
+    # som driftstatus, datakvalitet og retensjonsregnskapet over.
+    #
+    # Registrering av objekt, tilgang og gjennomgang er BESTILLINGER i
+    # plattformens forstand og bærer `bestilling:opprett` — samme scope
+    # som stillingsprofilen og pliktregisterets skriveveier, og det står
+    # alt i BROWSER_MUTASJONSSCOPES.
+    #
+    # SVEIPEN STÅR IKKE HER, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m12_sveip_gjennomganger` er kryss-tenant og
+    # kjøres av `disponit_tilgangssveip` fra sin egen timer — en fullmakt
+    # web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/tilgang"):                 "security:read",
+    ("POST", "/v1/tilgang"):                 "bestilling:opprett",
+    ("POST", "/v1/tilgang/objekt"):          "bestilling:opprett",
+    ("POST", "/v1/tilgang/{tilgang_id:uuid}/gjennomgang"):
+        "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

@@ -353,7 +353,7 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // fiksen så ut til å virke fordi jeg testet på retensjon. Porten teller
   // nå begge deler i hver flate og krever at de er like mange.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
-    "dokumentmal"];
+    "dokumentmal", "tilgang"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

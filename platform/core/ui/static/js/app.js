@@ -29,6 +29,7 @@ import { visRetensjon } from "./flater/retensjon.js";
 import { visDokumentmal } from "./flater/dokumentmal.js";
 import { visKunnskap } from "./flater/kunnskap.js";
 import { visAvtalefrist } from "./flater/avtalefrist.js";
+import { visTilgang } from "./flater/tilgang.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -80,6 +81,13 @@ const FLATER = {
   // `bestilling:opprett`, men det er ergonomi: dørene i basen er den
   // bindende porten.
   avtalefrist: visAvtalefrist,
+  // M-12 (097): basisrute bak `security:read` (sitekart.js) —
+  // scope-gaten bor der. Registeret er sikkerhetsdata: det sier hvem som
+  // har admin på hvilket system, og det er et smalere publikum enn
+  // pliktlisten over. Skriveveiene i flaten er i tillegg gated på
+  // `bestilling:opprett`, men det er ergonomi: dørene i basen er den
+  // bindende porten.
+  tilgang: visTilgang,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

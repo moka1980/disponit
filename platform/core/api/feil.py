@@ -72,6 +72,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # basen haandhever) som sier nei, og forskjellen er hele
     # forklaringen mennesket i flaten trenger.
     Feilvei("plikt_ulovlig_tilstand", 409, ("avvis",), None),
+    # 097 (M-12): tilgangsregisterets dører nekter en registrering
+    # tilstanden ikke tillater — en eier som ikke er medlem av tenanten,
+    # et objekt som ikke finnes, en hjemmel som bare er blanktegn, eller
+    # den samme tildelingen (objekt, subjekt, nivå) en gang til. 409 av
+    # samme grunn som raden over: kroppen ER velformet, det er
+    # TILSTANDEN (eller innholdskravet basen håndhever) som sier nei, og
+    # forskjellen er hele forklaringen mennesket i flaten trenger.
+    Feilvei("tilgang_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

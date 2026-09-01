@@ -94,5 +94,6 @@
   "093_m4_retensjonsregister.sql": "0cd969d49c8fc8f8ef5e6c8ff90a3fb16541258666ed527b27a3564c98bd944a",
   "094_m5_malregister.sql": "b1df6ac4964ad80390e7487bbb31e1eaac988f52482834e94aaed47f63d882ce",
   "095_m9_begrepsregister.sql": "c41bbe8a8a8d8e9ed1eabb3dab77c43f74ff0d91ffa5dad9762d846d10280bb5",
-  "096_m21_pliktregister.sql": "fb1fb698187795fa5563ff03b7177cc228392bdd7e1d4b2236261395f4955f86"
+  "096_m21_pliktregister.sql": "fb1fb698187795fa5563ff03b7177cc228392bdd7e1d4b2236261395f4955f86",
+  "097_m12_tilgangsregister.sql": "2198f9be459510eca77726e290fc7aa2a90a026a1fee0bf56bfed468277982a0"
 }
