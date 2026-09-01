@@ -155,6 +155,24 @@ sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$ADJUDIKATOR'" 
 sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $ADJUDIKATOR TO $BRUKER WITH INHERIT FALSE, SET TRUE"
 sudo -u postgres psql -qc "GRANT $DOMAINSADMIN TO $MIGRATOR WITH INHERIT FALSE"
+# KLYNGEN «orden i eget hus» (#326 opprettet rollene, men glemte dette).
+# De fem eierrollene trenger NØYAKTIG det de fire eldre eierrollene har,
+# og av samme to grunner:
+#   * MEDLEMSKAP, fordi migrasjonen gjør `SET LOCAL ROLE <eier>` og
+#     `OWNER TO <eier>`. Uten det svarer migrasjonen «permission denied
+#     to set role» — og den feiler MIDT i kjeden, ikke i en port.
+#   * WITH INHERIT FALSE, fordi et vanlig medlemskap også gir ARVEDE
+#     rettigheter, og RLS-policyer med TO-klausul matcher på arvet
+#     medlemskap. Det er Codex' P1 nr. 2 fra PR-004, og den feilen er
+#     gjeninnført av en GRANT som så ut som en formalitet før. Den skal
+#     ikke gjeninnføres av at fem nye roller kom inn uten den.
+# De tre MÅLERROLLENE får INGENTING her: de er LOGIN-jobber med én
+# EXECUTE hver (migrer.py), aldri eierskap og aldri SET ROLE.
+sudo -u postgres psql -qc "GRANT $KVALITETEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $LAGEREIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MALEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $KUNNSKAPEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $PLIKTEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -335,6 +353,11 @@ for base in $DB ${DB}_test; do
   # førstegangsveien hadde aldri satt dem selv.
   sudo -u postgres psql -q -d "$base" -c \
     "GRANT USAGE, CREATE ON SCHEMA public TO $AUTH, $M37, $POLICYEIER, $MODULEIER, $DOMENEEIER"
+  # Samme grunn for klyngens fem eiere: migrasjonene 092-096 lager sine
+  # objekter UNDER `SET LOCAL ROLE <eier>`, og uten CREATE på public dør
+  # kjøringen med «permission denied for schema public».
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $KVALITETEIER, $LAGEREIER, $MALEIER, $KUNNSKAPEIER, $PLIKTEIER"
 done
 
 # ------------------------------------------------------------
