@@ -47,6 +47,12 @@ export const MODULSTATUS = {
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
   31: "bygges",
+  // m35_kontinuitet: under_utvikling, ikke_i_drift — registrert 31/8
+  // sammen med kontinuitetsregisteret (089), øvelseslogikken og
+  // m35-v1-grensen. Flippes av en M-35-aksept, aldri av en
+  // byggemilepæl — og aldri av at plattformens backup er verifisert:
+  // en verifisert backup er noe modulen MÅLER, ikke noe den er.
+  35: "bygges",
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
@@ -111,6 +117,15 @@ const MODULER = [
     tekst_nokkel: "site.modul.m31.tekst",
   },
   {
+    // M-35 hører til fase 4 i katalogen (it_og_drift, fase: 4) — altså
+    // `site.fase.global`, samme kilde som `katalog.js` (m16/m31-regelen:
+    // fasen leses av katalogen, den skrives aldri på nytt her).
+    id: 35,
+    navn_nokkel: "site.modul.m35.navn",
+    fase_nokkel: "site.fase.global",
+    tekst_nokkel: "site.modul.m35.tekst",
+  },
+  {
     id: 37,
     navn_nokkel: "site.modul.m37.navn",
     fase_nokkel: "site.fase.fundament",
@@ -159,7 +174,7 @@ export const KUNDEROLLER = [
     navn_nokkel: "ui.kundeadmin.rolle.leser",
     tekst_nokkel: "ui.kundeadmin.rolle.leser_tekst",
     scopes: ["decisions:read", "exceptions:read", "policy:read",
-             "epost:read"],
+             "epost:read", "kontinuitet:read"],
   },
   {
     id: "godkjenner",

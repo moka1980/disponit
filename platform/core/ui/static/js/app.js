@@ -22,6 +22,7 @@ import { visAdjudikator } from "./flater/adjudikator.js";
 import { visNokkeltall } from "./flater/nokkeltall.js";
 import { visModellstyring } from "./flater/modellstyring.js";
 import { visEpost } from "./flater/epost.js";
+import { visKontinuitet } from "./flater/kontinuitet.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -43,6 +44,11 @@ const FLATER = {
   // M-6 PR-B: kildeflaten — scope-gaten (`epost:read`) bor i
   // sitekart.js som for de andre.
   epost: visEpost,
+  // M-35 (089): basisrute bak `kontinuitet:read` (sitekart.js) —
+  // scope-gaten bor der, som for de andre flatene. Skriveveiene i
+  // flaten er i tillegg gated på `kontinuitet:write`, men det er
+  // ergonomi: dørene i basen er den bindende porten.
+  kontinuitet: visKontinuitet,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

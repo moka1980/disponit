@@ -280,13 +280,16 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # også plan-scopene fører bare til policyvurderte bestillinger.
     # M-6 PR-A: kildeforvaltningen og utkastdommen er admin-handlinger i
     # flaten (PR-B/D) — muterende scopes, samme klasse som bestillingen.
+    # 089 (M-35): kontinuitetsmutasjonene er admin-myndighet i samme
+    # klasse: retten til å REGISTRERE og FØRE, aldri en stående fullmakt
+    # (dørene håndhever append-only og etteranalyse-kravet).
     assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
         "plan:gjenoppta", "epost:kilde:administrer",
-        "epost:utkast:behandle"}
+        "epost:utkast:behandle", "kontinuitet:write"}
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read",
-                                            "epost:read"}
+                                            "epost:read", "kontinuitet:read"}
     assert "security:read" not in scopes_for_roller(["leser"])
     assert "security:read" in scopes_for_roller(["sikkerhet"])
     # Ukjent rolle → ingen scopes (default-deny).

@@ -111,6 +111,11 @@ GRANT SELECT ON inndata_artefakt TO {rolle};
 -- står bevisst IKKE her (api_tokener-formen): runtime når kapabiliteten
 -- KUN gjennom de authenticator-eide dørene under.
 GRANT SELECT ON m8_slot, m8_slotvalg TO {rolle};
+-- 089 (M-35): kontinuitetsflaten leser registeret og tidslinjen rett
+-- på tabellene (RLS-gated); ALL skriving eies av de claimer-eide
+-- definer-dørene (EXECUTE i M37_RETTIGHETER_API under).
+GRANT SELECT ON kontinuitet_tjeneste, beredskapskontakt,
+    kontinuitetshendelse, kontinuitetshendelse_post TO {rolle};
 -- De to offentlige tidsvalg-dørene er authenticator-eide og grantes som
 -- verifiser_token: migrator arver authenticator (fullt INHERIT, i
 -- motsetning til claimer-medlemskapet), så granten gis direkte her.
@@ -454,6 +459,17 @@ GRANT EXECUTE ON FUNCTION bestill_tidligsletting(TEXT, UUID) TO {rolle};
 -- kandidatkapabilitet selv.
 GRANT EXECUTE ON FUNCTION m8_opprett_slot(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m8_deaktiver_slot(TEXT, UUID) TO {rolle};
+-- 089 (M-35): kontinuitetsdørene — innloggede mennesker gjennom API-et
+-- (kontinuitet:write i flaten), samme vindu og samme eier som 057/082-
+-- dørene over. Lukkedøren krever selv at etteranalysen står i
+-- tidslinjen; append-only på postene håndheves av vakten, ikke her.
+GRANT EXECUTE ON FUNCTION m35_opprett_tjeneste(TEXT, TEXT, TEXT, TEXT, INT, INT, TEXT, TEXT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_oppdater_tjeneste(TEXT, UUID, TEXT, INT, INT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_opprett_kontakt(TEXT, TEXT, SMALLINT, TEXT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_bekreft_kontakt(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_opprett_hendelse(TEXT, TEXT, JSONB, TEXT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_legg_post(TEXT, UUID, TEXT, TEXT, TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m35_lukk_hendelse(TEXT, UUID, TEXT, TEXT) TO {rolle};
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
 -- ingenting med å føre den. Leseveien står i den DELTE blokken over, fordi

@@ -1083,6 +1083,26 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def modellstyring(request: Request) -> Response:
         return lesing.modellstyring(tjeneste, request)
 
+    # 089 (M-35): kontinuitetsflaten. Leseveien er tenantens egen
+    # beredskapstilstand; de tre skriveveiene gjør hver nøyaktig ett
+    # kall mot en claimer-eid dør i 089 — etteranalyse-kravet og
+    # append-only bor DER, aldri her.
+    def kontinuitet(request: Request) -> Response:
+        from . import kontinuitet as kontinuitetsmodul
+        return kontinuitetsmodul.kontinuitet(tjeneste, request)
+
+    def kontinuitet_hendelser(request: Request) -> Response:
+        from . import kontinuitet as kontinuitetsmodul
+        return kontinuitetsmodul.hendelser_endepunkt(tjeneste, request)
+
+    def kontinuitet_post(request: Request) -> Response:
+        from . import kontinuitet as kontinuitetsmodul
+        return kontinuitetsmodul.post_endepunkt(tjeneste, request)
+
+    def kontinuitet_lukk(request: Request) -> Response:
+        from . import kontinuitet as kontinuitetsmodul
+        return kontinuitetsmodul.lukk_endepunkt(tjeneste, request)
+
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
     # de refereres direkte i rutelisten.
@@ -1414,6 +1434,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
         Route("/v1/modellstyring", modellstyring, methods=["GET"]),
+        Route("/v1/kontinuitet", kontinuitet, methods=["GET"]),
+        Route("/v1/kontinuitet/hendelser", kontinuitet_hendelser,
+              methods=["POST"]),
+        Route("/v1/kontinuitet/hendelse/{hendelse_id:str}/post",
+              kontinuitet_post, methods=["POST"]),
+        Route("/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk",
+              kontinuitet_lukk, methods=["POST"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -1528,11 +1555,16 @@ def _rid(request: Request) -> str:
 
 
 #: PR-008: de fire lese-scopene brukersesjonen kan holde.
+# 089 (M-35): `kontinuitet:read` er et lesescope i samme klasse — det
+# åpner kun GET /v1/kontinuitet (tenantens egen beredskapstilstand).
 LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         "security:read",
                         # M-6 PR-A: leseflaten for klassifiseringer,
                         # utkast og oppfølging (PR-D) — rent lesende.
-                        "epost:read"})
+                        "epost:read",
+                        # 089 (M-35): kontinuitetsflaten leser tenantens
+                        # egen beredskapstilstand — rent lesende.
+                        "kontinuitet:read"})
 
 #: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
 #: muterende endepunkt — selv om noen skulle utstede et bruker-token med
@@ -1578,7 +1610,14 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # generelle porten; endepunktene
                                      # finnes først i PR-B/D.
                                      "epost:kilde:administrer",
-                                     "epost:utkast:behandle"})
+                                     "epost:utkast:behandle",
+                                     # 089 (M-35): hendelseshåndteringen
+                                     # er MENNESKELIG arbeid i flaten
+                                     # (registrere, føre tidslinje,
+                                     # lukke) — CSRF håndheves i
+                                     # endepunktene (policyadmin-
+                                     # formen); dørene bærer resten.
+                                     "kontinuitet:write"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -1981,6 +2020,19 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # deploy-dører (registrer_golden_sett/sett_evalueringskrav/
     # registrer_evalueringskjoring, modules_admin).
     ("GET",  "/v1/modellstyring"):           "security:read",
+    # 089 (M-35): kontinuitetsflaten. Lesing er tenantens egen
+    # beredskapstilstand (`kontinuitet:read`, samme leseklasse som
+    # beslutningene); de tre skriveveiene er MENNESKELIG kriseføring i
+    # flaten og krever `kontinuitet:write` + CSRF + Idempotency-Key.
+    # Lukkeruten er skilt fra postruten med vilje: å lukke en hendelse
+    # er en annen handling enn å skrive i den, og en flate der de delte
+    # endepunkt ville gjort lukkingen til en posttype blant andre.
+    ("GET",  "/v1/kontinuitet"):             "kontinuitet:read",
+    ("POST", "/v1/kontinuitet/hendelser"):   "kontinuitet:write",
+    ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/post"):
+        "kontinuitet:write",
+    ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk"):
+        "kontinuitet:write",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

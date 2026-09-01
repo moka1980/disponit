@@ -356,6 +356,37 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " kun lesende i v1: utkast bare i Disponit-flaten,"
                      " arkivering som forslagsliste, ingen sendevei"
                      " (dommene 31/8 pkt. 2/4/5).")),
+    # 089 (M-35): kontinuitetsøvelsen. LUKKET, minimal payload — ett
+    # felt. Øvelsen LESER (statusfil, /live, register) og skriver et
+    # rapportartefakt; den rører aldri kundedata og aldri noe eksternt.
+    # Handlingen navngis som typen, uten punktum til slutt
+    # (rekruttering.evaluering-lærdommen: et prefiks med punktum treffer
+    # aldri den nøyaktige handlingen, og eiermodulen blir `ukjent`).
+    #
+    # TYPEN ER DEKLARERT, IKKE REGISTRERT (m57-formen, #169-klassen):
+    # artefakttypen gjør rapporten registrerbar ved deploy; produsenten
+    # (registrer-m35-kjeden) og arbeider-/plan-koblingen er PR-B.
+    # Øvelseslogikken selv leveres i v1 som CLI
+    # (deploy/staging/kjor-m35-ovelse.py) og skriver artefaktet etter
+    # artefakt-m35-skjema.json.
+    "kontinuitet.ovelse": Oppdragstype(
+        navn="kontinuitet.ovelse",
+        handlingsprefikser=("kontinuitet.ovelse",),
+        felter=frozenset({"omfang"}),
+        paakrevde=frozenset({"omfang"}),
+        eiermodul="m35_kontinuitet",
+        produserer_artefakt=True,
+        rapport_artefakttype="kontinuitet.ovelse.rapport",
+        # Ingen rapportflate: kontinuitetsflaten leser registeret og
+        # (i PR-B) det promoterte artefaktet gjennom sin egen seksjon —
+        # aldri den generiske rapportrendreren. 404 er ærligere enn en
+        # 200 med et dokument rendreren ikke kan lese.
+        beskrivelse=("M-35: månedlig kontinuitetsøvelse — måler backup-"
+                     "evidensen (statusfilen fra backup-db.sh, dom 4),"
+                     " /live-helsen, kartferskheten og kontaktdekningen,"
+                     " og leverer rapporten som artefakt. Ingen ekstern"
+                     " trafikk, ingen mutasjon av kundedata; RTO-tallet"
+                     " er restore-til-isolert-base-proxyen (dom 5).")),
 }
 
 
@@ -1019,6 +1050,10 @@ FELTURLLENGDER: dict[str, dict[str, int]] = {
 UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kontroll.wcag.nettsted": ("omfang", {"enkeltside": 30 * 60,
                                           "nettsted": 60 * 60}),
+    # 089 (M-35): øvelsen er ren lesing + ett artefakt — 30 min holder
+    # med god margin, og fristen ligger godt innenfor leasetaket (037),
+    # så ingen fornyelsesvei trengs.
+    "kontinuitet.ovelse": ("omfang", {"full": 30 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
     # før modulen aksepteres; avviker det, oppdateres klarsignalet, aldri

@@ -113,6 +113,16 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm8_opprett_slot(text,uuid,timestamp with time zone,timestamp with time zone,integer,uuid)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm8_deaktiver_slot(text,uuid)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm8_utsted_tidsvalgtoken(text,uuid,uuid,text,text,integer)', 'disponit_m37_claimer'),
+    -- 089 (M-35): kontinuitetsdoerene gaar gjennom
+    -- krev_tenantkontekst-porten — samme vindu, samme eier som
+    -- 057/082-doerene.
+    ('FUNCTION', 'm35_opprett_tjeneste(text,text,text,text,integer,integer,text,text,text,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_oppdater_tjeneste(text,uuid,text,integer,integer,text,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_opprett_kontakt(text,text,smallint,text,text,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_bekreft_kontakt(text,uuid,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_opprett_hendelse(text,text,jsonb,text,text,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_legg_post(text,uuid,text,text,text,uuid)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_lukk_hendelse(text,uuid,text,text)', 'disponit_m37_claimer'),
     -- 082 (M-8): kapabilitetstabellen og de to offentlige doerene eies
     -- av authenticator (004-presedensen — konstanttiden bor i defineren,
     -- og oppslaget paa token_id alene gaar gjennom eierpolicyen).

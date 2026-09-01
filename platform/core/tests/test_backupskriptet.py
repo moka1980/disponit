@@ -564,3 +564,78 @@ def test_dumpen_strommes_og_hvert_ledd_propagerer():
     assert any(l.startswith("set ") and "pipefail" in l for l in aktive), (
         "pipefail er ikke lenger en aktiv set-kommando — tee/pg_restore-"
         "feil ville passert stille")
+
+
+def test_statusfilen_skrives_kun_ved_suksess_og_atomisk():
+    """089 (M-35, dom 4): statusfilen er RTO/RPO-EVIDENSEN — den skrives
+    KUN etter at hver port har svart og paret står publisert, og den
+    skrives atomisk (innhold → sync av fila → mv → sync av katalogen).
+
+    Tre påstander, alle posisjons-/formmålinger som resten av suiten:
+
+    1. Skrivingen står ETTER `PAR_KLAR=1` — suksesspunktet. Sto den før,
+       kunne en kjøring som feilet i finaliseringen etterlate en FERSK
+       statusfil om en backup som aldri ble publisert: nøyaktig løgnen
+       «aldri grønt uten evidens» forbyr. Feiler noe før punktet, står
+       forrige kjørings fil urørt, og konsumenten leser en ÆRLIG
+       foreldet alder i stedet.
+    2. Atomikken er parets egen: printf til `.delvis`, 0640, sync av
+       fila, mv til det endelige navnet, sync av katalogen — i den
+       rekkefølgen. Et strømbrudd midt i etterlater aldri et endelig
+       navn med halvt innhold.
+    3. Trapen rydder KUN arbeidsnavnet — det ferdige navnet røres aldri
+       av en feilet kjøring.
+
+    MUTASJONEN SOM DREPER DENNE: flytt statusfil-blokken foran
+    `PAR_KLAR=1`, dropp sync/mv-kjeden, eller la trapen slette den
+    ferdige fila.
+    """
+    status = _pos('STATUSFIL="$KATALOG/siste-verifisering.json"')
+    assert _pos("PAR_KLAR=1") < status, (
+        "statusfilen skrives før suksesspunktet — en feilet finalisering"
+        " ville etterlatt fersk evidens om en upublisert backup")
+    p_printf = SKRIPT.find('> "$STATUS_TMP"', status)
+    p_chmod = SKRIPT.find('chmod 0640 "$STATUS_TMP"', status)
+    p_sync_fil = SKRIPT.find('sync "$STATUS_TMP"', status)
+    p_mv = SKRIPT.find('mv "$STATUS_TMP" "$STATUSFIL"', status)
+    p_sync_kat = SKRIPT.find('sync "$KATALOG"', p_mv)
+    assert -1 not in (p_printf, p_chmod, p_sync_fil, p_mv, p_sync_kat), (
+        "statusfil-kjeden mangler ledd (printf/chmod/sync/mv/sync)")
+    assert p_printf < p_chmod < p_sync_fil < p_mv < p_sync_kat, (
+        "statusfil-kjeden står i feil rekkefølge — innholdet må være"
+        " holdbart FØR navnet finnes, og navnet før katalogposten festes")
+    # Trapen: arbeidsnavnet ryddes, det ferdige navnet aldri.
+    trap_start = _pos("opprydd() {")
+    trap_slutt = SKRIPT.find("trap opprydd EXIT")
+    trap_kropp = SKRIPT[trap_start:trap_slutt]
+    assert 'rm -f "$KATALOG/siste-verifisering.json.delvis"' in trap_kropp, (
+        "trapen rydder ikke statusfilens arbeidsnavn — en drept kjøring"
+        " etterlater en halvskrevet .delvis for alltid")
+    assert 'siste-verifisering.json"' not in trap_kropp.replace(
+        'siste-verifisering.json.delvis"', ""), (
+        "trapen rører det FERDIGE statusnavnet — forrige suksess er"
+        " evidens en feilet kjøring aldri skal slette")
+
+
+def test_restore_varigheten_maales_rundt_selve_passeringen():
+    """089 (M-35, dom 5): tallet i statusfilen er restore-til-isolert-
+    base-proxyen — da må klokka gå rundt NETTOPP dump→restore-
+    passeringen, ikke rundt hele skriptet (som ville talt retention og
+    arkivering som «restore-tid») og ikke rundt et delintervall.
+
+    MUTASJONEN SOM DREPER DENNE: flytt RESTORE_MS0/MS1 vekk fra
+    pipelinen, eller regn varigheten fra et annet stempel.
+    """
+    ms0 = _pos("RESTORE_MS0=$(date +%s%3N)")
+    dump = _pos("sudo -u postgres pg_dump --format=custom")
+    ms1 = _pos("RESTORE_MS1=$(date +%s%3N)")
+    assert ms0 < dump < ms1, (
+        "restore-varigheten måles ikke rundt selve passeringen — tallet"
+        " ville vært noe annet enn proxyen statusfilen lover")
+    assert "RESTORE_VARIGHET_S=$(awk" in SKRIPT, (
+        "varigheten regnes ikke lenger av de to stemplene")
+    # backup_ts er STEMPELETS øyeblikk, aldri et nytt date-kall i
+    # statusblokken: RPO regner fra da dataene ble lest.
+    assert _pos("BACKUP_TS_EPOCH=$(date -u +%s)") < dump, (
+        "backup_ts settes etter dumpen — RPO-målingen ville regnet fra"
+        " feil ende av kjøringen")
