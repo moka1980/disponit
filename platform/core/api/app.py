@@ -1102,6 +1102,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def kontinuitet_lukk(request: Request) -> Response:
         from . import kontinuitet as kontinuitetsmodul
         return kontinuitetsmodul.lukk_endepunkt(tjeneste, request)
+    def drift_backup(request: Request) -> Response:
+        return lesing.drift_backup(tjeneste, request)
+
+    def drift_selvtest(request: Request) -> Response:
+        return lesing.drift_selvtest(tjeneste, request)
 
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
@@ -1441,6 +1446,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kontinuitet_post, methods=["POST"]),
         Route("/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk",
               kontinuitet_lukk, methods=["POST"]),
+        Route("/v1/drift/backup", drift_backup, methods=["GET"]),
+        Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -2033,6 +2040,19 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "kontinuitet:write",
     ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk"):
         "kontinuitet:write",
+    # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
+    # verifiseringshistorikk og selvtestens runder, bak SAMME
+    # admin-lesescope som model card over. Ingen tenantdata i noen av
+    # svarene (begge tabellene er plattformskop, uten tenant-kolonne);
+    # tenantkonteksten kreves likevel av dørene, fordi RETTEN til å
+    # spørre er øktens selv når dataene ikke er det.
+    #
+    # Mutasjonene finnes ikke som HTTP for noen av dem: verifiseringer
+    # skrives av `disponit-backupstatus.service` (rollen
+    # `disponit_driftstatus`) og runder av `disponit-selvtest.service`
+    # (rollen `disponit_selvtest`) — to fullmakter web-API-et ikke har.
+    ("GET",  "/v1/drift/backup"):            "security:read",
+    ("GET",  "/v1/drift/selvtest"):          "security:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

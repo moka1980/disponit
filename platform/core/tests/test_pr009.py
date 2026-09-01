@@ -500,7 +500,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
         "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
         "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
-        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL")})
+        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL",
+        # 090/091: driftstatusens og selvtestens EGNE DSN-er. Hver jobb
+        # har sin egen rolle med nøyaktig én rettighet; en fallback til
+        # runtime-DSN-en ville startet begge rett i `permission denied`.
+        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -514,6 +518,12 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     # 048 (#108): plan-arbeiderens DSN, aldri API-ets — samme klasse.
     assert (rot / "plan/DISPONIT_DATABASE_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_PLAN_URL"
+    # 090/091: hver driftsjobb sin EGEN DSN, aldri API-ets og aldri
+    # hverandres — samme klasse og samme begrunnelse som de to over.
+    assert (rot / "driftstatus/DISPONIT_DRIFTSTATUS_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_DRIFTSTATUS_URL"
+    assert (rot / "selvtest/DISPONIT_SELVTEST_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_SELVTEST_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -941,7 +951,11 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         "DATABASE_URL", "DISPONIT_KEK", "DISPONIT_TOKEN_PEPPER",
         "DISPONIT_ATT_NOKLER", "DISPONIT_MAC_NOKLER",
         "DISPONIT_TOKEN_ADMIN_URL", "DISPONIT_DOMAINS_URL",
-        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL")})
+        "DISPONIT_VARSEL_URL", "DISPONIT_PLAN_URL",
+        # 090/091: driftstatusens og selvtestens EGNE DSN-er. Hver jobb
+        # har sin egen rolle med nøyaktig én rettighet; en fallback til
+        # runtime-DSN-en ville startet begge rett i `permission denied`.
+        "DISPONIT_DRIFTSTATUS_URL", "DISPONIT_SELVTEST_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

@@ -1775,3 +1775,42 @@ def modellstyring(tjeneste, request: Request) -> Response:
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "security:read", _fn)
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/drift/backup — scope security:read (M-10, 090)
+# GET /v1/drift/selvtest — scope security:read (M-11, 091)
+#
+# Plattformdriftens eget innsyn. Dataene er PLATTFORMENS (begge tabellene
+# er plattformskop, uten tenant-kolonne og uten RLS — dommen natt til
+# 1/9), men RETTEN til å spørre er øktens: begge dørene kaller
+# `krev_tenantkontekst` FØRST, og runtime har ingen SELECT-rettighet på
+# tabellene å falle tilbake på. Scopet er admin-lesescopet, samme klasse
+# som `/v1/modellstyring` — de tre er den samme flatens naboer.
+#
+# Ingen mutasjon finnes som HTTP for noen av dem: verifiseringer skrives
+# av `disponit-backupstatus.service` og runder av
+# `disponit-selvtest.service`, hver med sin egen DB-rolle som web-API-et
+# ikke har og ikke skal ha.
+# ---------------------------------------------------------------------------
+
+def drift_backup(tjeneste, request: Request) -> Response:
+    """Backupens verifiseringshistorikk — radfakta, aldri analyse."""
+    from . import driftstatus as driftsmodul
+
+    def _fn(conn, auth, rid):
+        svar = driftsmodul.backup_svar(conn, auth.tenant)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "security:read", _fn)
+
+
+def drift_selvtest(tjeneste, request: Request) -> Response:
+    """Selvtestens siste runder med probene sine."""
+    from . import driftstatus as driftsmodul
+
+    def _fn(conn, auth, rid):
+        svar = driftsmodul.selvtest_svar(conn, auth.tenant)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "security:read", _fn)

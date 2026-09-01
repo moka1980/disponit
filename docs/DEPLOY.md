@@ -15,6 +15,8 @@ sudo deploy/staging/bootstrap-token.sh demo-a  # interaktiv, KREVER TTY
 | `disponit-helse.timer` | Unix `disponit-helse` (medlem `disponit-proxy`) | ingen | /live + heartbeat-tilsyn, restart via lukket helper |
 | `disponit-rydd-pending.timer` | `disponit-helse`, DB `disponit_token_admin` | `/etc/disponit/tokenadmin/` | PENDING-TTL (30 min) |
 | `disponit-backup.timer` | root | `backup-mottaker.pub` (age) | kryptert dump + arkiv av inndata-lageret, begge restore-verifisert |
+| `disponit-backupstatus.timer` | root (hardnet: `ProtectSystem=strict`, `ReadOnlyPaths=/var/backups/disponit`), DB `disponit_driftstatus` | `/etc/disponit/driftstatus/` | M-10 (090): fører backupens verifiseringsrapport inn i `backupverifisering`, hvert 30. min |
+| `disponit-selvtest.timer` | Unix `disponit-helse` (medlem `disponit-proxy`), DB `disponit_selvtest` | `/etc/disponit/selvtest/` | M-11 (091): selvtestrunden, hver time — KUN lesende prober |
 
 **Backupen er et PAR, ikke en fil (#191).** Hver kjøring legger to
 filer i `/var/backups/disponit` under samme stempel:
@@ -46,8 +48,16 @@ samme snapshot, og klarteksten aldri ligger på noe filsystem. I
 **Ingen TCP-port (PR-009b §0).** API-et lytter KUN på
 `/run/disponit/api.sock`: eier `disponit-api`, gruppe `disponit-proxy`,
 0660; katalogen 0750. Tillitsgrensen er filsystemrettigheter — loopback
-beviser hvor, ikke hvem. Gruppemedlemmer: nginx-brukeren (PR-009b) og
-`disponit-helse` (tilsynsklient — bevisst, synlig utvidelse).
+beviser hvor, ikke hvem. Gruppemedlemmer: nginx-brukeren (PR-009b),
+`disponit-helse` (tilsynsklient — bevisst, synlig utvidelse) og
+`disponit-selvtest.service`, som kjører SOM `disponit-helse` med
+`SupplementaryGroups=disponit-proxy` (091). Det er ikke en ny
+gruppeutvidelse, men den samme: selvtestens `api_live`/`api_ready`-
+prober er tilsyn av nøyaktig samme klasse som helsesjekken, og de
+når sokkelen over `curl --unix-socket` — som krever skrivetilgang
+til den. Selvtesten har med vilje IKKE helsesjekkens sudoers-regel:
+den observerer, den griper aldri inn (destruktivitetsporten i
+`test_m11_selvtest` måler det statisk på kildeteksten).
 M-37-brukeren får EACCES (målt port); arbeiderens fase-2-kall går gjennom
 nginx over HTTPS fra PR-009b — frem til den er merget fullfører ikke
 fase 2 på staging.

@@ -121,6 +121,30 @@ GRANT SELECT ON kontinuitet_tjeneste, beredskapskontakt,
 -- motsetning til claimer-medlemskapet), så granten gis direkte her.
 GRANT EXECUTE ON FUNCTION m8_tidsvalg_oppslag(TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m8_velg_slot(TEXT, TEXT, UUID) TO {rolle};
+-- 090 (M-10) / 091 (M-11): driftstatusens LESEDØRER. Tabellene
+-- `backupverifisering`, `selvtest_kjoring` og `selvtest_probe` står
+-- bevisst IKKE i noen GRANT-liste her: runtime har ingen SELECT på dem i
+-- det hele tatt (SP-7), og når dem KUN gjennom de to definer-dørene, som
+-- krever tenantkontekst først (051-formen). Migrasjonene navngir ikke
+-- runtime-rollen (057-lærdommen); DENNE blokken er eneste rettighetskilde
+-- for den konfigurerte rollen.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION backup_status(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION selvtest_status(TEXT, INT) TO {rolle};
+-- SKRIVEDØRENE OG SVEIPENE ER ANDRE ROLLERS, og en rettighet som bare
+-- slutter å bli gitt er ikke trukket tilbake (035). Skrivedørene hører
+-- lesejobbene til (`disponit_driftstatus`/`disponit_selvtest`): et
+-- kompromittert web-API skal ikke kunne dikte en verifisering det ikke
+-- har gjort, eller en grønn selvtestrunde over en rød plattform.
+-- Sveipene hører senderen til: de tar tenanten som parameter og setter
+-- DENS RLS-kontekst, så et grant her ville gitt forespørselsveien
+-- nøyaktig det kryss-tenant-vinduet senderrollen finnes for å nekte den.
+REVOKE ALL ON FUNCTION registrer_backupverifisering(
+    TIMESTAMPTZ, TIMESTAMPTZ, NUMERIC, INT, BIGINT) FROM {rolle};
+REVOKE ALL ON FUNCTION registrer_selvtest(UUID, JSONB, TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION varsle_selvtest_uteblitt(TEXT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -525,6 +549,17 @@ RESET ROLE;
 SET LOCAL ROLE disponit_modul_eier;
 GRANT EXECUTE ON FUNCTION varsle_tokenfamilie_utlop(text) TO {rolle};
 RESET ROLE;
+-- 090/091: de to nye sveipene i senderens pre-pass. Begge er
+-- claimer-eide (samme vindu og samme port som resten av 051-dørene), og
+-- begge varsler om TAUSHET — noe som IKKE har skjedd. En taushet kan per
+-- definisjon ikke varsle om seg selv: lesejobben kjører ikke når det
+-- ikke finnes noe å lese, og selvtesten kan ikke rapportere sin egen
+-- død. Derfor bor de her, hos den ene timerdrevne prosessen som
+-- allerede eier varselkøens rytme.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION varsle_selvtest_uteblitt(TEXT) TO {rolle};
+RESET ROLE;
 -- 056: utsendingsveien — det er SENDEREN som konsumerer signerte lister:
 -- frigivelse per mottaker og frigivelsesoppdraget (tredje opphavsvei).
 SET LOCAL ROLE disponit_m37_claimer;
@@ -607,6 +642,35 @@ GRANT EXECUTE ON FUNCTION planer_med_ubehandlet_stopp() TO {rolle};
 GRANT EXECUTE ON FUNCTION pause_gjentatt_uten_resultat(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsle_plan_brudd(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION opprett_beslutningsoppdrag(TEXT, BIGINT, TEXT, TEXT, TEXT, BYTEA, TEXT, BYTEA, TIMESTAMPTZ, TIMESTAMPTZ) TO {rolle};
+RESET ROLE;
+"""
+
+# 090 (M-10): lesejobbens rolle. ÉN rettighet, og fraværet av alt annet
+# ER rollen (varselsender-modellen, ordrett): ingen tabellrettigheter,
+# ingen lesedør, ingen sveip, ingen kunderad. En kompromittert lesejobb
+# kan dikte en verifisering som ikke har skjedd — og det er alt den kan.
+# Ingen `GRANT USAGE ON SCHEMA public`: EXECUTE på en SECURITY DEFINER-
+# funksjon i public krever USAGE på skjemaet, så den ene linjen står,
+# men ikke en eneste tabell.
+DRIFTSTATUS_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION registrer_backupverifisering(
+    TIMESTAMPTZ, TIMESTAMPTZ, NUMERIC, INT, BIGINT) TO {rolle};
+-- LESEDØREN STÅR BEVISST IKKE HER. Lesejobben skriver; den leser aldri
+-- historikken tilbake, og en `backup_status` den ikke trenger ville vært
+-- en tenantsveip den ikke skal ha.
+RESET ROLE;
+"""
+
+# 091 (M-11): selvtestens rolle. Samme form og samme begrunnelse som
+# DRIFTSTATUS_RETTIGHETER over — og her er innsnevringen skarpere enn den
+# ser ut: `registrer_selvtest` køer varsler i sin egen transaksjon, så
+# rollen kan utløse et varsel uten å kunne lese en eneste varselrad.
+SELVTEST_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION registrer_selvtest(UUID, JSONB, TEXT) TO {rolle};
 RESET ROLE;
 """
 
@@ -774,6 +838,23 @@ def main(argv: list[str] | None = None) -> int:
             conn.rollback()
             print(f"hopper over {planarb}: rollen finnes ikke"
                   " (opprettes av oppsett-postgresql.sh)")
+        # 090/091: driftstatusens og selvtestens roller — betinget som de
+        # andre, av samme grunn (en GRANT til en rolle som ikke finnes er
+        # en hard feil, ikke en advarsel). Ingen NULLSTILL_TABELLER for
+        # disse to: de har ingen tabellrettigheter å nullstille, og et
+        # kall som listet tabellene ville vært den første antydningen om
+        # at de skulle hatt noen.
+        for navn, mal in (("disponit_driftstatus", DRIFTSTATUS_RETTIGHETER),
+                          ("disponit_selvtest", SELVTEST_RETTIGHETER)):
+            if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                            (navn,)).fetchone():
+                conn.execute(mal.format(rolle=navn))
+                conn.commit()
+                print(f"rettigheter satt for {navn}")
+            else:
+                conn.rollback()
+                print(f"hopper over {navn}: rollen finnes ikke"
+                      " (opprettes av oppsett-postgresql.sh)")
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.
         versjoner = conn.execute(

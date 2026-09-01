@@ -1,0 +1,30 @@
+# M-10 (090): hvert 30. minutt.
+#
+# Backupen går ÉN gang i døgnet (03:15 UTC + jitter), så kadensen her
+# avgjør ikke hvor ofte det finnes noe nytt å registrere — den avgjør
+# hvor lenge en fersk verifisering står ulest. En halvtime er valgt fordi
+# den er ubetydelig mot varselterskelen på 30 timer og likevel gir
+# ØYEBLIKKELIG innsyn etter en manuelt utløst backup: eier som kjører
+# `systemctl start disponit-backup` for å se at det virker, skal ikke
+# vente til neste natt på at flaten sier det.
+#
+# En tettere kadens ville ikke kostet noe heller: kallet er idempotent på
+# `backup_ts` (ON CONFLICT DO NOTHING), så de 47 kjøringene som leser den
+# samme dagsferske rapporten skriver ingenting. Det er nettopp derfor
+# kadensen kan velges fritt.
+#
+# `Persistent=true`: en vert som var nede da halvtimen passerte, tar
+# kjøringen igjen ved oppstart. Rapporten er tilstanden — den ligger der
+# fortsatt — så en innhentet kjøring registrerer nøyaktig det samme som
+# den utsatte ville gjort.
+
+[Unit]
+Description=Disponit backupstatus-timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

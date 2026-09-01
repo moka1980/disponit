@@ -458,6 +458,12 @@ KREVES_KIB=$((LAGER_KIB + DUMP_KIB + MARGIN_KIB))
 # skrives; `age` sitt truncate beholder modusen.
 VERIF="disponit_backup_verif_$$"
 sudo -u postgres createdb "$VERIF"
+# M-10 (090): restorens VARIGHET måles her og bare her — den er
+# `restore_varighet_s` i verifiseringsrapporten under, og skal dekke
+# nøyaktig gjenopprettingen (createdb → pg_restore → tabelltellingen),
+# ikke arkivfasen etterpå. Ett sekundstempel per ende; differansen
+# regnes én gang, av awk, fordi bash ikke kan flyttall.
+RESTORE_START=$(date +%s.%N)
 DUMPROR="$RAA_KAT/dump.fifo"
 mkfifo -m 600 "$DUMPROR"
 : > "$DELVIS"
@@ -492,6 +498,8 @@ TABELLER=$(sudo -u postgres psql -Atd "$VERIF" -c \
 }
 STORRELSE=$(stat -c%s "$DELVIS")
 [ "$STORRELSE" -gt 1024 ] || { echo "AVBRUTT: backupfilen er tom" >&2; exit 1; }
+RESTORE_VARIGHET_S=$(awk -v a="$RESTORE_START" -v b="$(date +%s.%N)" \
+  'BEGIN { printf "%.3f", b - a }')
 
 # KRAVLISTEN LESES NÅ — OG ENGANGSBASEN SLIPPES (sak #246 pkt. 4/5).
 # `$VERIF` levde før til EXIT-trapen, så under `tar` lå hele den
@@ -818,6 +826,40 @@ if [ -n "$SPART" ]; then
   SLETTET=$((SLETTET + 1))
 fi
 
+
+# ============================================================
+# VERIFISERINGSRAPPORTEN (M-10, migrasjon 090)
+#
+# Backupen visste alt dette; ingen andre gjorde det. Rapporten er den
+# ENESTE broen fra denne kjøringen til `backupverifisering`-tabellen, og
+# den skrives HER — etter at paret er publisert og fsynket — fordi en
+# rapport om en backup som ikke ble stående er en løgn.
+#
+# Tallene er kjøringens EGNE, aldri gjenlest og aldri gjettet:
+# `$TABELLER` og `$STORRELSE` er nøyaktig de verdiene portene over alt
+# har felt kjøringen på (>= 10 tabeller, > 1024 B), som er de samme
+# grensene tabellens CHECK-er håndhever. Kommer vi hit, er rapporten
+# per konstruksjon innenfor dem.
+#
+# `backup_ts` UTLEDES av `$STEMPEL` — filnavnets identitet — og leses
+# ikke av klokken en gang til: to klokkeavlesninger kunne gitt et
+# tidsstempel som ikke tilhører noen fil i katalogen, og `backup_ts` er
+# primærnøkkelen lesejobben er idempotent på.
+#
+# ATOMISK: skrives til et temp-navn i samme katalog og `mv`-es på plass,
+# så lesejobben aldri kan se en halv fil. Katalogen fsynkes, som paret.
+# 0644 med vilje: lesejobben kjører som root i dag, men rapporten bærer
+# fem tall om plattformens egen backup — ingen kundedata, ingen sti,
+# ingen hemmelighet.
+STATUSFIL="$KATALOG/siste-verifisering.json"
+STATUS_TMP="$STATUSFIL.ny.$$"
+BACKUP_TS="${STEMPEL:0:4}-${STEMPEL:4:2}-${STEMPEL:6:2}T${STEMPEL:9:2}:${STEMPEL:11:2}:${STEMPEL:13:2}Z"
+printf '{"backup_ts":"%s","verifisert_ts":"%s","restore_varighet_s":%s,"tabeller":%s,"storrelse_b":%s}\n' \
+  "$BACKUP_TS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "$RESTORE_VARIGHET_S" "$TABELLER" "$STORRELSE" > "$STATUS_TMP"
+chmod 644 "$STATUS_TMP"
+mv -f "$STATUS_TMP" "$STATUSFIL"
+sync "$KATALOG" || echo "ADVARSEL: katalog-sync etter statusfilen feilet" >&2
 
 echo "backup ok: $FIL (${STORRELSE} B), verifisert mot $VERIF_NAVN" \
      "(${TABELLER} tabeller); arkiv: $ARKIV ($(stat -c%s "$ARKIV") B," \

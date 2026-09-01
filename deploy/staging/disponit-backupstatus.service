@@ -1,0 +1,65 @@
+# M-10 (090): backupens verifisering inn i basen.
+#
+# Backupen VET at den lyktes — den restaurerte dumpen til en engangsbase,
+# talte tabellene og målte filen. Denne jobben er den eneste broen fra den
+# kunnskapen til `backupverifisering`-tabellen, og den er BARE en bro: den
+# leser rapporten `backup-db.sh` la igjen og kaller ÉN funksjon.
+#
+# ROOT, MEN NESTEN INGENTING (dommen natt til 1/9). `/var/backups/disponit`
+# eies av root og skal fortsette å gjøre det — en backupkatalog en
+# tjenestebruker kan skrive i, er en backup en kompromittert tjeneste kan
+# tømme. Prisen er at leseren må være root, og den prisen betales med
+# sandkassen under i stedet for med en løsere katalog.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_driftstatus` har nøyaktig ÉN
+# rettighet i basen: EXECUTE på `registrer_backupverifisering`. Ingen
+# tabellrettigheter, ingen lesedør, ingen sveip, ingen kunderad. En
+# kompromittert lesejobb kan derfor dikte en verifisering som ikke har
+# skjedd — og det er alt. Delte den DSN med runtime, ville skrivedøren
+# måttet grantes til `disponit`, og hele forespørselsveien kunne skrevet
+# backuphistorikk.
+
+[Unit]
+Description=Disponit backupstatus (verifisering -> backupverifisering)
+
+[Service]
+Type=oneshot
+# Root fordi katalogen er roots. Se over: eierskapet på
+# /var/backups/disponit er selve vernet om backupene, og det skal ikke
+# løses opp for å slippe en leser inn.
+User=root
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Sandkassen bærer det `User=root` ga fra seg. Prosessen skal kunne LESE
+# én katalog og SKRIVE ingen.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+# KUN LESERETT på backupkatalogen: jobben har ingen grunn til å røre en
+# eneste byte i den. Skulle en feil en dag få den til å prøve, skal
+# kjernen stoppe den — ikke en kodegjennomgang. Den motsatte direktiven
+# er med vilje fraværende, og `test_m10_backupinnsyn` måler fraværet.
+ReadOnlyPaths=/var/backups/disponit
+LoadCredential=DISPONIT_DRIFTSTATUS_URL:/etc/disponit/driftstatus/DISPONIT_DRIFTSTATUS_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_backupstatus
+# Rapporten er fem tall i én liten fil, og kallet er én funksjon. Går
+# dette over ett minutt, henger noe — og da er avbrudd riktig svar:
+# jobben er idempotent på `backup_ts`, så neste kjøring tar den igjen.
+TimeoutStartSec=1min
+
+[Install]
+WantedBy=multi-user.target
