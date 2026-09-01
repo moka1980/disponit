@@ -131,6 +131,29 @@ GRANT EXECUTE ON FUNCTION m8_velg_slot(TEXT, TEXT, UUID) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION backup_status(TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION selvtest_status(TEXT, INT) TO {rolle};
+-- 092 (M-3): datakvalitetens LESEDØRER. De fire tabellene
+-- (`kvalitetsregel`, `kvalitetskjoring`, `kvalitetsprofil`,
+-- `kvalitetsfunn`) står bevisst IKKE i noen GRANT-liste her: runtime har
+-- ingen SELECT på dem i det hele tatt (SP-7), og når dem KUN gjennom
+-- dørene, som krever tenantkontekst først (051-formen). Dørene eies av
+-- `disponit_kvalitet_eier`, så granten gis under DENS rolle.
+--
+-- `m3_kvalitetsfunn_tverrgaaende` er PLATTFORMDRIFTENS dør og står her
+-- fordi endepunktet `/v1/datakvalitet` gater den på `platform:admin`
+-- (utrullings-presedensen) — mekanismen er basens, autorisasjonen er
+-- endepunktets. `m3_profiler` står IKKE her og skal aldri gjøre det:
+-- profileringen er timerens, med sin egen rolle, og et web-API som kunne
+-- utløse en profilering kunne også skrive en grønn profil over en rød
+-- base.
+SET LOCAL ROLE disponit_kvalitet_eier;
+GRANT EXECUTE ON FUNCTION m3_regelregister(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m3_kvalitetsprofil(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m3_kvalitetsfunn(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m3_kvalitetsfunn_tverrgaaende(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m3_profiler(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m3_reis_funn(TEXT, TEXT, TEXT, UUID, JSONB) FROM {rolle};
+RESET ROLE;
+SET LOCAL ROLE disponit_m37_claimer;
 -- SKRIVEDØRENE OG SVEIPENE ER ANDRE ROLLERS, og en rettighet som bare
 -- slutter å bli gitt er ikke trukket tilbake (035). Skrivedørene hører
 -- lesejobbene til (`disponit_driftstatus`/`disponit_selvtest`): et
@@ -674,6 +697,22 @@ GRANT EXECUTE ON FUNCTION registrer_selvtest(UUID, JSONB, TEXT) TO {rolle};
 RESET ROLE;
 """
 
+# 092 (M-3): profileringsjobbens rolle. Samme form og samme begrunnelse
+# som DRIFTSTATUS_/SELVTEST_RETTIGHETER over, og her er innsnevringen
+# modulens viktigste sikkerhetsegenskap: NULL tabellrettigheter i hele
+# basen, og EXECUTE på nøyaktig ÉN funksjon. En kompromittert
+# profileringsjobb kan telle, og ingenting annet — den kan ikke engang
+# lese profilene den selv skrev.
+KVALITETSMAALER_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_kvalitet_eier;
+GRANT EXECUTE ON FUNCTION m3_profiler(INT) TO {rolle};
+-- LESEDØRENE STÅR BEVISST IKKE HER. Måleren skriver tall; den leser dem
+-- aldri tilbake, og en `m3_kvalitetsfunn_tverrgaaende` den ikke trenger
+-- ville vært et kryss-tenant-vindu i en jobb som bare skal telle.
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -844,8 +883,13 @@ def main(argv: list[str] | None = None) -> int:
         # disse to: de har ingen tabellrettigheter å nullstille, og et
         # kall som listet tabellene ville vært den første antydningen om
         # at de skulle hatt noen.
+        # 092 (M-3): profileringsjobbens rolle står i SAMME løkke og av
+        # samme grunn — ingen tabellrettigheter å nullstille, og en
+        # GRANT til en rolle som ikke finnes er en hard feil.
         for navn, mal in (("disponit_driftstatus", DRIFTSTATUS_RETTIGHETER),
-                          ("disponit_selvtest", SELVTEST_RETTIGHETER)):
+                          ("disponit_selvtest", SELVTEST_RETTIGHETER),
+                          ("disponit_kvalitetsmaaler",
+                           KVALITETSMAALER_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

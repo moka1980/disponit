@@ -278,6 +278,82 @@ def _rydd_kapabiliteter(migrator, tenanter) -> None:
     migrator.execute("RESET ROLE")
 
 
+#: 092 (M-3): datakvalitetens tre EVIDENSlagre og vaktene deres. De står
+#: IKKE i `APPEND_ONLY_TRIGGERE`/`RYDDETABELLER` over, og grunnen er den
+#: samme som for kapabilitetstabellene: de eies av NOLOGIN-rollen
+#: `disponit_kvalitet_eier`, og `ALTER TABLE ... DISABLE TRIGGER` krever
+#: EIERSKAP. Løkkene over kjører som migrator og ville feilt på første
+#: linje. Oppryddingen skjer derfor i `_rydd_kvalitet` under, med
+#: eksplisitt `SET LOCAL ROLE` — nøyaktig `_rydd_kapabiliteter`-formen.
+M3_LAGRE = (("kvalitetsfunn", "m3_funn_vakt"),
+            ("kvalitetsprofil", "m3_profil_vakt"),
+            ("kvalitetskjoring", "m3_kjoring_vakt"))
+
+
+def _rydd_kvalitet(migrator) -> None:
+    """Nullstiller M-3s profil-, funn- og kjøringslagre. Krever EIEREN.
+
+    Profileren måler ALLE tenanter som har rader i de profilerte
+    relasjonene — ikke bare suitens to — så oppryddingen kan ikke gå
+    tenant for tenant. Den tar derfor av BÅDE append-only-vakten og
+    `FORCE ROW LEVEL SECURITY` i det ene vinduet den er eier, og setter
+    begge tilbake. At den MÅ gjøre det, er i seg selv beviset: verken
+    runtime, migrator eller måleren kan røre disse radene, uansett hvor
+    mye de skulle ønske det.
+
+    Hopper stille over hvis 092 ikke er kjørt i basen — da finnes det
+    ingenting å rydde, og eksistensen av tabellen er samtidig beviset på
+    at migrator HAR medlemskapet `SET LOCAL ROLE` krever (migrasjonen
+    kunne ikke ha kjørt uten).
+
+    INGEN `commit()` OG INGEN `rollback()` HER. Funksjonen kalles MIDT I
+    `_rydd`s transaksjon, etter at `_rydd_kapabiliteter` alt har slettet
+    kapabilitetsradene. En `rollback()` i en tidlig retur ville angret
+    NABOENS opprydding — og siden den vanlige veien ut er nettopp den
+    tidlige returen (M-3 skriver bare når noen kaller profileren), ville
+    kapabilitetene aldri blitt ryddet i det hele tatt. Transaksjonen
+    eies av `_rydd`, som committer til slutt.
+    """
+    if migrator.execute(
+            "SELECT to_regclass('public.kvalitetsprofil')").fetchone()[0] \
+            is None:
+        return
+    migrator.execute("SET LOCAL ROLE disponit_kvalitet_eier")
+    # BILLIG SONDE FØRST. `_rydd` kjører for HVER test i suiten, og
+    # `ALTER TABLE` tar ACCESS EXCLUSIVE: å avvæpne og bevæpne seks
+    # sperrer per test — mot tre tabeller ingen andre tester rører — er
+    # både en unødvendig kostnad og en unødvendig låsekonflikt med
+    # API-poolen. M-3 skriver bare når noen kaller profileren, altså i
+    # M-3-suiten. Sonden leser `kvalitetskjoring` (plattformskop, ingen
+    # RLS) og `kvalitetsfunn` gjennom modulens EGET kryss-tenant-vindu —
+    # ingen ALTER, ingen lås. En committet profilrad forutsetter en
+    # kjøringsrad (fremmednøkkelen), så de to spørringene dekker alle tre.
+    migrator.execute("SELECT set_config('disponit.m3_tverrgaaende',"
+                     " 'ja', true)")
+    noe = migrator.execute(
+        "SELECT EXISTS (SELECT 1 FROM kvalitetskjoring)"
+        "    OR EXISTS (SELECT 1 FROM kvalitetsfunn)").fetchone()[0]
+    if not noe:
+        migrator.execute("RESET ROLE")
+        return
+    for tabell, trigger in M3_LAGRE:
+        migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
+        migrator.execute(f"ALTER TABLE {tabell} NO FORCE ROW LEVEL SECURITY")
+    # Rekkefølge: funn og profil PEKER på regel og kjøring.
+    migrator.execute("DELETE FROM kvalitetsfunn")
+    migrator.execute("DELETE FROM kvalitetsprofil")
+    migrator.execute("DELETE FROM kvalitetskjoring")
+    # `profil_kjoring_fk` er DEFERRABLE INITIALLY DEFERRED (092 §7):
+    # slettingen etterlater ventende triggerhendelser helt til commit, og
+    # `ALTER TABLE` nekter da med «pending trigger events» — samme sted
+    # `_rydd` under møter det for PR-007s utsatte FK.
+    migrator.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    for tabell, trigger in M3_LAGRE:
+        migrator.execute(f"ALTER TABLE {tabell} FORCE ROW LEVEL SECURITY")
+        migrator.execute(f"ALTER TABLE {tabell} ENABLE TRIGGER {trigger}")
+    migrator.execute("RESET ROLE")
+
+
 def _rydd(migrator, *tenanter: str) -> None:
     """Nullstiller tenantene. Krever EIER-rollen.
 
@@ -286,6 +362,7 @@ def _rydd(migrator, *tenanter: str) -> None:
     uansett hvor mye den skulle ønske det.
     """
     _rydd_kapabiliteter(migrator, tenanter)
+    _rydd_kvalitet(migrator)
     for tabell, trigger in APPEND_ONLY_TRIGGERE:
         migrator.execute(f"ALTER TABLE {tabell} DISABLE TRIGGER {trigger}")
     # 041: overtakelsessaker bor på PLATTFORMTENANTEN og PEKER (kompositt-FK

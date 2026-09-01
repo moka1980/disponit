@@ -24,6 +24,7 @@ import { visModellstyring } from "./flater/modellstyring.js";
 import { visEpost } from "./flater/epost.js";
 import { visKontinuitet } from "./flater/kontinuitet.js";
 import { visDriftstatus } from "./flater/driftstatus.js";
+import { visDatakvalitet } from "./flater/datakvalitet.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -53,6 +54,11 @@ const FLATER = {
   // M-10 + M-11: basisrute bak `security:read` (sitekart.js) —
   // scope-gaten bor der, som for de andre flatene.
   driftstatus: visDriftstatus,
+  // M-3 (092): basisrute bak `security:read` (sitekart.js) — scope-gaten
+  // bor der. Den tverrgående funnlisten inne på flaten er i tillegg
+  // gated på `platform:admin`, men det avgjøres av SERVEREN: flaten
+  // tegner seksjonen bare når svaret sier `plattformdrift: true`.
+  datakvalitet: visDatakvalitet,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

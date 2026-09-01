@@ -61,7 +61,8 @@ disponit-domeneverifisering.service disponit-domeneverifisering.timer
 disponit-varselsender.service disponit-varselsender.timer
 disponit-m57-utsending.service disponit-m57-utsending.timer
 disponit-backupstatus.service disponit-backupstatus.timer
-disponit-selvtest.service disponit-selvtest.timer"
+disponit-selvtest.service disponit-selvtest.timer
+disponit-kvalitetsprofil.service disponit-kvalitetsprofil.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -181,6 +182,20 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_SELVTEST_URL:-}" ] ); the
   echo "AVBRUTT: DISPONIT_SELVTEST_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_selvtest og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+
+# 092 (M-3): profileringsjobbens DSN — samme kontrakt og samme
+# plassering som driftsstatus/selvtest over. Rollen har NØYAKTIG én
+# rettighet (EXECUTE på `m3_profiler`), og `migrer.py` REVOKEr den samme
+# funksjonen fra runtime-rollen: en stille fallback til runtime-DSN-en
+# ville startet jobben rett i `permission denied`. Porten står her, FØR
+# første mutasjon — feiler den, er systemet beviselig urørt.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_KVALITETSMAALER_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_KVALITETSMAALER_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_kvalitetsmaaler og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -712,7 +727,7 @@ skriv_cred varsel DISPONIT_DATABASE_URL "$DISPONIT_VARSEL_URL"
 # shell-variabel som skrives, uten ny lesing av miljøfila imellom:
 # preflighten beviste at variabelen fantes, men byttes fila i mellomtiden,
 # godkjente den en verdi som aldri skrives.
-install -d -m 700 /etc/disponit/driftstatus /etc/disponit/selvtest
+install -d -m 700 /etc/disponit/driftstatus /etc/disponit/selvtest /etc/disponit/kvalitet
 if [ -z "${DISPONIT_DRIFTSTATUS_URL:-}" ] || [ -z "${DISPONIT_SELVTEST_URL:-}" ]; then
   echo "AVBRUTT: DISPONIT_DRIFTSTATUS_URL eller DISPONIT_SELVTEST_URL"
   echo "forsvant fra ${MILJOFIL:-/etc/disponit/staging.env} mellom preflighten"
@@ -722,6 +737,16 @@ if [ -z "${DISPONIT_DRIFTSTATUS_URL:-}" ] || [ -z "${DISPONIT_SELVTEST_URL:-}" ]
 fi
 skriv_cred driftstatus DISPONIT_DRIFTSTATUS_URL "$DISPONIT_DRIFTSTATUS_URL"
 skriv_cred selvtest DISPONIT_SELVTEST_URL "$DISPONIT_SELVTEST_URL"
+# 092 (M-3): egen katalog og egen DSN, som de to over. Sjekken står på
+# SAMME shell-variabel som skrives, uten ny lesing av miljøfila imellom.
+if [ -z "${DISPONIT_KVALITETSMAALER_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_KVALITETSMAALER_URL forsvant fra"
+  echo "${MILJOFIL:-/etc/disponit/staging.env} mellom preflighten og"
+  echo "materialiseringen — fila er byttet eller redigert mens"
+  echo "utrullingen kjørte. Ingen kvalitets-credential er skrevet."
+  exit 1
+fi
+skriv_cred kvalitet DISPONIT_KVALITETSMAALER_URL "$DISPONIT_KVALITETSMAALER_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -836,7 +861,8 @@ disponit-evidensreaper.timer disponit-plan.timer
 disponit-rydd-pending.timer disponit-backup.timer
 disponit-domeneverifisering.timer disponit-wcag-audit.service
 disponit-m57-utsending.timer
-disponit-backupstatus.timer disponit-selvtest.timer"
+disponit-backupstatus.timer disponit-selvtest.timer
+disponit-kvalitetsprofil.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1056,6 +1082,11 @@ systemctl stop disponit-m57-utsending.timer disponit-m57-utsending.service 2>/de
 # så vinduet koster ingenting utover en manglende måling i det.
 systemctl stop disponit-backupstatus.timer disponit-backupstatus.service \
     disponit-selvtest.timer disponit-selvtest.service 2>/dev/null || true
+# 092 (M-3): profileringen stoppes i samme vindu. Den er idempotent over
+# sin egen tilstand — en profil som ikke ble målt nå, måles på nytt neste
+# døgn — så vinduet koster ingenting utover den ene manglende målingen.
+systemctl stop disponit-kvalitetsprofil.timer \
+    disponit-kvalitetsprofil.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1184,6 +1215,10 @@ systemctl enable --now disponit-m57-utsending.timer
 systemctl enable --now disponit-backupstatus.timer
 # 091 (M-11): selvtestrunden, hver time. Samme form.
 systemctl enable --now disponit-selvtest.timer
+# 092 (M-3): datakvalitetsprofileringen, daglig. Samme form; uten
+# credentialen står jobben med exit 2 og rører ingenting — men
+# preflighten over gater DSN-en, så det skal ikke kunne skje.
+systemctl enable --now disponit-kvalitetsprofil.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

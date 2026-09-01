@@ -160,6 +160,28 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'registrer_selvtest(uuid,jsonb,text)',               'disponit_m37_claimer'),
     ('FUNCTION', 'selvtest_status(text,integer)',                     'disponit_m37_claimer'),
     ('FUNCTION', 'varsle_selvtest_uteblitt(text)',                    'disponit_m37_claimer'),
+    -- 092 (M-3): datakvalitetens fire tabeller og seks funksjoner. Her er
+    -- eierskapet ikke en formalitet, men selve sikkerhetsgrensen:
+    -- profileringsdoeren er SECURITY DEFINER, og det er EIERENS
+    -- kolonnegrants -- tenant + de profilerte kolonnene, aldri en
+    -- payloadkolonne -- som avgjoer hva jobben kan lese. Flyttet noen
+    -- disse til migrator, ville doeren kjoert med eierens rettigheter paa
+    -- alt, og hele modellen vaert borte uten at en eneste linje kode var
+    -- endret
+    ('TABLE',    'kvalitetsregel',                 'disponit_kvalitet_eier'),
+    ('TABLE',    'kvalitetskjoring',               'disponit_kvalitet_eier'),
+    ('TABLE',    'kvalitetsprofil',                'disponit_kvalitet_eier'),
+    ('TABLE',    'kvalitetsfunn',                  'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_profiler(integer)',                          'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_reis_funn(text,text,text,uuid,jsonb)',       'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_regelregister(text)',                        'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_kvalitetsprofil(text,integer)',              'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_kvalitetsfunn(text,integer)',                'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_kvalitetsfunn_tverrgaaende(text,integer)',   'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_regel_vakt()',                               'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_kjoring_vakt()',                             'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_profil_vakt()',                              'disponit_kvalitet_eier'),
+    ('FUNCTION', 'm3_funn_vakt()',                                'disponit_kvalitet_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

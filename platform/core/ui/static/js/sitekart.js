@@ -183,6 +183,20 @@ const BASISRUTER = [
   // tabellen finnes for å ikke gi — men her er de like, så flaten er
   // enten hel eller ikke synlig.
   { nokkel: "driftstatus", scope: "security:read" },
+  // M-3 (092): datakvalitetsflaten. BASISRUTE bak admin-lesescopet —
+  // samme presedens som `modellstyring` og `driftstatus` over, og samme
+  // eiervedtak: INGEN modulflate-flipp, så ruten bor i toppnavigasjonen
+  // og ikke bak et modulkort. Grunnen er den samme som for driftstatus:
+  // profilen måler PLATTFORMENS egne tabeller, ikke en modul kunden har
+  // kjøpt — og modulen står `ikke_i_drift` i manifestet, så et modulkort
+  // ville lovet en drift som ikke finnes.
+  //
+  // Scopet er API-ets: `GET /v1/datakvalitet` krever `security:read` i
+  // RUTESCOPE, og flaten henter nøyaktig det ene endepunktet. En ren
+  // `platform:admin`-økt har ikke lesescopet og får derfor heller ikke
+  // ruten — plattformdriftens tverrgående funnliste er en UTVIDELSE av
+  // svaret for en økt som alt har `security:read`, ikke en egen inngang.
+  { nokkel: "datakvalitet", scope: "security:read" },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

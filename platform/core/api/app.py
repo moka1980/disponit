@@ -1108,6 +1108,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def drift_selvtest(request: Request) -> Response:
         return lesing.drift_selvtest(tjeneste, request)
 
+    def datakvalitet(request: Request) -> Response:
+        return lesing.datakvalitet(tjeneste, request)
+
     # PR-011: M-1 kundeflate — same-origin, DB-fri statisk servering. UI-ets
     # egne handlere tar bare `request` (rører aldri `tjeneste`/poolen), så
     # de refereres direkte i rutelisten.
@@ -1448,6 +1451,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kontinuitet_lukk, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
+        Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
         Route("/v1/inndata/hent-for-oppdrag/{oppdrag_id:int}",
               inndata_hent, methods=["POST"]),
         Route("/v1/inndata/reserver", inndata_reserver,
@@ -2053,6 +2057,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # (rollen `disponit_selvtest`) — to fullmakter web-API-et ikke har.
     ("GET",  "/v1/drift/backup"):            "security:read",
     ("GET",  "/v1/drift/selvtest"):          "security:read",
+    # M-3 (092): datakvalitetsprofilen. Lesing er tenantens egen
+    # tilstand + det globale kvalitetsregisteret, bak SAMME admin-
+    # lesescope som model card og driftstatus over. `platform:admin`
+    # UTVIDER svaret med funnlisten på tvers, og den avgjørelsen tas
+    # inne i endepunktet (/v1/utrulling-presedensen) — scopet her er
+    # flatens svakeste ledd, som resten av tabellen.
+    #
+    # Mutasjonen finnes ikke som HTTP: profileringen kjøres av
+    # `disponit-kvalitetsprofil.service` (rollen
+    # `disponit_kvalitetsmaaler`, EXECUTE på nøyaktig én funksjon), og
+    # kvalitetsregisteret endres kun i migrasjon. v1 RETTER INGENTING og
+    # blokkerer ingen bestilling — en skriverute her ville vært det
+    # første steget bort fra den dommen.
+    ("GET",  "/v1/datakvalitet"):            "security:read",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

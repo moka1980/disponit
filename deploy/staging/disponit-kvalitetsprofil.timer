@@ -1,0 +1,40 @@
+# M-3 (092): daglig.
+#
+# KADENSEN FØLGER AV HVA SOM MÅLES. Datakvalitet endrer seg i takt med at
+# mennesker skriver rader — i timer og døgn, ikke i sekunder. En tettere
+# kadens ville ikke gitt et bedre svar, bare en dyrere full-tabellskanning
+# per svar; en glesere ville latt et kvalitetsfunn stå usett over en uke.
+#
+# `RandomizedDelaySec`: profileringen er den dyreste leseoperasjonen
+# plattformen kjører frivillig — en full skanning per regel. Jitteren
+# sprer den vekk fra faste minutter, så den ikke systematisk møter
+# backup-, reaper- eller sendervinduene på samme klokkeslett hver natt.
+#
+# `OnCalendar=daily` OG IKKE `OnBootSec`+`OnUnitActiveSec` (CodeRabbit,
+# og den hadde rett): `Persistent=` VIRKER BARE sammen med en
+# kalenderutløser. På en ren monotonisk timer er direktivet inert — det
+# ser ut som en garanti og er ingen. Kadensen er skrevet om slik at
+# løftet under faktisk holdes.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, måler én
+# gang ved oppstart. Det er riktig her — profilen måler tilstanden NÅ,
+# ikke da, og en fersk profil rett etter oppstart er nettopp det driften
+# vil se.
+#
+# TIMEREN VARSLER IKKE OM SIN EGEN DØD. En uteblitt profilering er
+# synlig på flaten (kjøringens alder står der), men det finnes ingen
+# sveip som varsler på taushet i v1 — og det står her fordi det er en
+# bevisst avgrensning, ikke en glemt en. En slik sveip hører
+# varselsenderen til (091-formen), og den skal registreres som et krav
+# før den bygges, ikke oppstå som en bieffekt.
+
+[Unit]
+Description=Disponit datakvalitetsprofilering-timer
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
