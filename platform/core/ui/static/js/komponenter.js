@@ -318,7 +318,20 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // en skjermleser — det er bare plasseringen som er strammet inn.
   const topp = el("header", { class: "skall-topp" },
     el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
-    tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
+    // TENANTBRIKKEN UTELATES NÅR DEN SIER DET SAMME SOM MERKET. Eier,
+    // to ganger: «disponit står 2 ganger». Det er ikke en feil i koden —
+    // det ene er PRODUKTNAVNET og det andre er TENANTEN, og for en kunde
+    // som heter noe annet leser begge riktig. Men når en tenant heter det
+    // samme som produktet, er den andre brikken ren gjentakelse, og en
+    // topplinje som gjentar seg selv ser ut som en feil selv når den ikke
+    // er det.
+    //
+    // Sammenligningen er lokalefri (`toLowerCase` uten språk) og trimmet:
+    // det er en visningsheuristikk, ikke en autorisasjonsavgjørelse, og
+    // ingenting går tapt om den bommer — tenanten står uansett i profilen.
+    (tenant && tenant.trim().toLowerCase()
+      !== t("app.navn", "Disponit").trim().toLowerCase())
+      ? el("span", { class: "skall-tenant", text: tenant }) : null,
     nav,
     el("div", { class: "skall-hoyre" }, brukerBrikke, velger, loggUt));
 

@@ -340,3 +340,45 @@ test("Lenketekst og flatens egen tittel er samme streng — for HVER rute", () =
       `${navn}: porten sammenlignet bare ${malt} par — oppslaget er galt`);
   }
 });
+
+test("Hver datatabell ligger i en .tablewrap", () => {
+  // 🔴 EIERS FUNN 1/9, RUNDE 3: «Datakvalitet ser ikke bra ut».
+  // `.tablewrap { overflow-x: auto }` er sidescrollens container, og
+  // `.tablewrap > table { width: max-content }` er det som lar tabellen bli
+  // bredere enn den. UTEN wrapperen gjelder `width: 100%`, og nettleseren
+  // klemmer kolonnene mot min-content — ett tegn per linje.
+  //
+  // Da forrige runde fikset CSS-en, traff den bare den ene flaten som
+  // ALLEREDE hadde wrapperen. Seks tabeller i fire flater sto uten, og
+  // fiksen så ut til å virke fordi jeg testet på retensjon. Porten teller
+  // nå begge deler i hver flate og krever at de er like mange.
+  const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
+    "dokumentmal"];
+  let sett = 0;
+  for (const navn of flater) {
+    const kilde = readFileSync(new URL(
+      `../static/js/flater/${navn}.js`, import.meta.url), "utf8");
+    const tabeller = (kilde.match(/el\("table"/g) || []).length;
+    if (!tabeller) continue;
+    const wrappere = (kilde.match(/class: "tablewrap"/g) || []).length;
+    sett += tabeller;
+    assert.ok(wrappere >= tabeller,
+      `${navn}.js: ${tabeller} tabell(er), men bare ${wrappere} .tablewrap`
+      + " — de uten klemmer kolonnene i stedet for å scrolle");
+  }
+  assert.ok(sett >= 8,
+    `porten fant bare ${sett} tabeller — oppslaget er galt`);
+});
+
+test("Skjemaets rutenett er opt-in, ikke påtvunget", () => {
+  // `.kv-skjema` deles av tre flater. To av dem legger etikett og felt som
+  // LØSE SØSKEN, og et rutenett på den felles klassen ville spredt dem i
+  // hver sin celle — verre enn før. Regelen står derfor på en egen klasse.
+  const css = readFileSync(new URL(
+    "../static/css/komponenter.css", import.meta.url), "utf8");
+  assert.match(css, /\.kv-skjema-rutenett\s*\{[^}]*display:\s*grid/,
+    "rutenettregelen mangler på opt-in-klassen");
+  assert.ok(!/^\.kv-skjema\s*\{[^}]*display:\s*grid/m.test(css),
+    "rutenettet står på den DELTE klassen og treffer skjemaer som ikke"
+    + " er bygget for det");
+});

@@ -113,6 +113,73 @@
    spennet for lesbar linjelengde, i underkant fordi dette er en celle
    ved siden av andre kolonner, ikke brødtekst i en spalte. */
 .celle-tekst { max-width: 44ch; white-space: normal; }
+
+/* IDENTIFIKATORER SKAL BRYTE, IKKE SKYVE. `beredskap.bekrefter.lever`,
+   `makulerer_artefakter_for_prosess`, `bid_c612864ad46e…` — alle er én
+   ubrutt streng uten et eneste naturlig brytepunkt, og en tabellcelle er
+   «aldri smalere enn innholdet». Da blir sidescrollen like bred som den
+   lengste identifikatoren i hele tabellen, uansett hvor lite annet det
+   er å vise.
+   `anywhere`, ikke `break-word`: BARE `anywhere` teller med når
+   nettleseren regner min-content-bredden, og det er nettopp DEN som
+   bestemmer hvor bred tabellen minst må bli. `break-word` ville brutt
+   linjen visuelt og latt tabellen være like bred — altså latt feilen
+   stå. Samme token og samme begrunnelse som `.rekrut-kandidat` i
+   base.css; egen klasse fordi de to er låst av hver sin port. */
+.celle-id { overflow-wrap: anywhere; max-width: 22ch; }
+/* …og på et INLINE-element gjør `max-width` ingenting. Retensjonsflaten
+   setter klassen på `<code>`, som er inline — der virket bare
+   `overflow-wrap`, mens breddetaket stille falt bort. Nøyaktig samme
+   felle som `celle-tekst` på et `<span>` sist runde, og den ser like
+   riktig ut i diffen begge ganger. `inline-block` gir elementet en
+   boks å begrense, og `vertical-align: top` holder den på linje med
+   resten av cellen. */
+code.celle-id { display: inline-block; vertical-align: top; }
+
+/* SKJEMAENE HADDE INGEN LAYOUT I DET HELE TATT. `.kv-skjema` ble brukt av
+   tre flater (avtalefrist, dokumentmal, kontinuitet) og hadde ikke én
+   eneste regel i noe stilark — så etiketter, felt og hjelpetekster
+   stablet seg i dokumentrekkefølge over hele bredden, med et skjema som
+   ble like høyt som antallet felt. Eier: «feltene og knappene bør stå
+   ved siden av hverandre».
+
+   `auto-fit` + `minmax` framfor et fast kolonneantall: skjemaet legger
+   seg selv i én, to eller tre spalter etter hvor mye plass det har, og
+   trenger ingen mediaspørring. 18rem er valgt så et datofelt og et
+   tekstfelt begge er komfortable — smalere, og etikettene begynner å
+   brytes.
+
+   OPT-IN, IKKE PÅTVUNGET. Regelen står på en EGEN klasse ved siden av
+   `.kv-skjema`, som tre flater deler. De to andre (dokumentmal,
+   kontinuitet) legger etikett og felt som LØSE SØSKEN, og et rutenett på
+   den felles klassen ville spredt dem i hver sin celle — altså gjort dem
+   verre, ikke bedre. De kan ta i bruk `.felt`-strukturen når noen faktisk
+   ser på dem; til da er de urørt.
+   ------------------------------------------------------------------- */
+.kv-skjema-rutenett {
+  display: grid;
+  /* `min(18rem, 100%)` og ikke bare `18rem`: en `minmax`-nedre grense er
+     et GULV sporet ikke kan krympe under, så på en skjerm smalere enn
+     288px + padding ville rutenettet flytt utover viewporten i stedet
+     for å falle til én spalte. Nøyaktig den klassen feil eier nettopp
+     rapporterte i topplinjen, og skillens «Horizontal Scroll»-regel er
+     kategorisk: innholdet skal få plass. */
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: var(--sp-3) var(--sp-4);
+  align-items: start;
+}
+/* Etikett, felt og hjelpetekst hører sammen og skal ALDRI havne i hver
+   sin rutenettcelle — da mister etiketten den visuelle koblingen til
+   feltet sitt, uansett hva `for`-attributtet sier. Feltgruppen er derfor
+   sitt eget rutenett. */
+.kv-skjema-rutenett .felt { display: grid; gap: var(--sp-1); min-width: 0; }
+.kv-skjema-rutenett .felt > .muted { font-size: .88rem; }
+/* Knapperaden får hele bredden og står sist — en knapp midt i en
+   feltkolonne leses som «send inn dette feltet». */
+.kv-skjema-rutenett .skjema-bunn {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
+}
 /* Radhandlingene (Åpne | Rediger | Slett) sto skulder ved skulder uten
    mellomrom — eier: «det står tett i hverandre». Luften ligger på cellen,
    ikke på knappene, så en rad med én handling er upåvirket. */

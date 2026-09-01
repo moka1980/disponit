@@ -151,7 +151,36 @@ a { color: var(--info); }
 }
 
 @media (max-width: 720px) {
-  .skall-topp { flex-wrap: wrap; }
-  .skall-ruteantall { order: 4; width: 100%; }
+  /* MOBILEN BRAKK AV ÉN-RAD-ENDRINGEN (eier, skjermbilde 1/9).
+     `.skall-nav { flex: 1; min-width: 0 }` er riktig på en bred skjerm —
+     navigasjonen tar plassen som blir til overs. På en telefon er det
+     ingen plass til overs: merket, tenanten og kontrollene spiser raden,
+     og navigasjonen ble presset ned i en smal kolonne til høyre der hver
+     lenke fikk sin egen linje. Halve skjermen gikk med til en meny på
+     ni ord.
+
+     `flex-wrap: wrap` på foreldren alene hjalp ikke — et flex-barn med
+     `flex: 1` KRYMPER heller enn å brekke til neste rad. Navigasjonen må
+     derfor eksplisitt kreve hele bredden (`flex: 0 0 100%`), og da faller
+     den ned på sin egen rad og bruker den.
+
+     Rekkefølgen er bevisst: merke og kontroller på rad én (det man
+     trenger for å vite hvor man er og komme seg ut), navigasjonen under.
+
+     MERK at `.skall-ruteantall` sto her og pekte på en klasse som ikke
+     finnes lenger — ruteantallet flyttet til profilen samme runde.
+     Regelen gjorde ingenting og skjulte at resten var utilstrekkelig. */
+  .skall-topp {
+    flex-wrap: wrap;
+    row-gap: var(--sp-2); column-gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+  }
+  .skall-hoyre { order: 2; }
+  .skall-nav { order: 3; flex: 0 0 100%; gap: var(--sp-1) var(--sp-2); }
+  /* E-posten er brukerens data og kan være lang: den skal krympe, ikke
+     dytte språkvelgeren og «Logg ut» ut av raden. */
+  .skall-bruker { min-width: 0; }
+  .skall-bruker-navn { overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
   .skall-hoved { padding: var(--sp-4) var(--sp-3); }
 }

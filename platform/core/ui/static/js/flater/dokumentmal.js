@@ -268,7 +268,11 @@ function versjonstabell(familie) {
         : el("span", { text: t("ui.dokumentmal.ikke_publisert") }))));
   }
   tabell.append(tbody);
-  return tabell;
+  // `.tablewrap` er sidescrollens container — uten den er tabellen
+  // bundet til `width: 100%` og klemmer kolonnene mot min-content i
+  // stedet for å kunne bli bredere (se komponenter.css). Den manglet
+  // på alle tabellene her; eier så det som «ser ikke bra ut».
+  return el("div", { class: "tablewrap" }, tabell);
 }
 
 function familieSeksjon(familie, ctx, last) {

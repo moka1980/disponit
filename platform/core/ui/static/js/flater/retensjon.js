@@ -105,7 +105,9 @@ function lagerrad(l) {
   const tr = el("tr");
   for (const kol of KOLONNER) {
     let innhold;
-    if (kol.nokkel === "lager_id") innhold = el("code", { text: l.lager_id });
+    if (kol.nokkel === "lager_id") {
+      innhold = el("code", { class: "celle-id", text: l.lager_id });
+    }
     else if (kol.nokkel === "klasse") {
       innhold = el("span", { text: t(`ui.retensjon.klasse.${l.klasse}`,
                                      l.klasse) });
@@ -114,7 +116,7 @@ function lagerrad(l) {
       el("br"),
       el("span", { class: "muted", text: tekst(l.fristkilde) }));
     else if (kol.nokkel === "reaper") {
-      innhold = l.reaper ? el("code", { text: l.reaper })
+      innhold = l.reaper ? el("code", { class: "celle-id", text: l.reaper })
         : el("span", { class: "muted", text: t("ui.retensjon.reaper_ingen") });
     } else if (kol.nokkel === "dom") {
       // Dommen som TEKST, og begrunnelsen med den. En dom uten
