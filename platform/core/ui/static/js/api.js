@@ -579,3 +579,30 @@ export const fornyLisens = (lisensId, fornyelsesdato, idem) =>
 export const avsluttLisens = (lisensId, begrunnelse, idem) =>
   _muter(`/v1/lisens/${encodeURIComponent(lisensId)}/avslutt`, "POST",
          { begrunnelse }, idem || nyIdempotensnokkel());
+
+// M-30 (099): forespørselsregisteret. Registreringen bærer en SP-2-nøkkel
+// — serveren UTLEDER sak-id-en av den, så en tapt respons + nytt klikk
+// gjenspiller i stedet for å føde forespørselen en gang til. Svaret,
+// avslaget og forlengelsen er idempotente av tilstanden sin (dørene
+// avviser en sak som ikke er åpen), men bærer nøkkelen likevel: serveren
+// krever den på alle fire, og formen skal være den samme.
+//
+// INGEN AV DEM SLETTER NOE. Å registrere at en sletteforespørsel er
+// besvart er ikke det samme som å slette: sletting eies av M-4s
+// retensjonsregnskap, og svaret her er henvisningen til at det ble gjort.
+export const registrerPersonvernsak = (sak, idem) =>
+  _muter("/v1/personvern", "POST", sak, idem || nyIdempotensnokkel());
+
+export const besvarPersonvernsak = (sakId, svarRef, idem) =>
+  _muter(`/v1/personvern/${encodeURIComponent(sakId)}/svar`, "POST",
+         { svar_ref: svarRef }, idem || nyIdempotensnokkel());
+
+export const avvisPersonvernsak = (sakId, begrunnelse, idem) =>
+  _muter(`/v1/personvern/${encodeURIComponent(sakId)}/avvis`, "POST",
+         { begrunnelse }, idem || nyIdempotensnokkel());
+
+export const forlengPersonvernfrist = (sakId, forlengetTil, begrunnelse,
+                                       idem) =>
+  _muter(`/v1/personvern/${encodeURIComponent(sakId)}/forleng`, "POST",
+         { forlenget_til: forlengetTil, begrunnelse },
+         idem || nyIdempotensnokkel());

@@ -357,6 +357,7 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // nå begge deler i hver flate og krever at de er like mange.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
     "dokumentmal", "tilgang"];
+    "dokumentmal", "personvern"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

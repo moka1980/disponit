@@ -90,6 +90,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # flatens forklaring til mennesket en gjetning om hvilket register
     # som sa nei.
     Feilvei("lisens_ulovlig_tilstand", 409, ("avvis",), None),
+    # 099 (M-30): forespoerselsregisterets doerer nekter en overgang
+    # tilstanden ikke tillater — et svar uten svarhenvisning, et avslag
+    # uten begrunnelse, en eier som ikke er medlem av tenanten, en
+    # forlengelse forbi art. 12-taket paa to maaneder, et lager som ikke
+    # staar i M-4s retensjonsregister, eller en sak som alt er
+    # besvart/avvist. 409 av samme grunn som radene over: kroppen ER
+    # velformet, det er TILSTANDEN (eller lovkravet basen haandhever)
+    # som sier nei.
+    Feilvei("personvernsak_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

@@ -167,6 +167,16 @@ APPEND_ONLY_TRIGGERE = (
     # ingen vakt: varslingspunktene er innstillinger, ikke evidens.
     ("lisensvarsel_sendt", "m22_anker_vakt"),
     ("lisens", "m22_lisens_vakt"),
+    # 099 (M-30): saken besvares eller avvises, den slettes aldri; funnet
+    # lukkes, det slettes aldri; og dekningslisten er append-only fordi
+    # hvilke lagre en forespørsel dekket er det et tilsyn etterprøver
+    # svaret mot. Alle tre nekter DELETE, som de skal, så oppryddingen må
+    # skru dem av — og AT den må det er selv et bevis: ingen rolle,
+    # heller ikke eieren, kan viske ut en personvernforespørsel i
+    # ettertid.
+    ("personvernfunn", "m30_funn_vakt"),
+    ("personvernsak_lager", "m30_lager_vakt"),
+    ("personvernsak", "m30_sak_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -301,6 +311,14 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # selv peker på den GLOBALE `brukeridentitet` (eieren),
                  # som ikke ryddes herfra, så familien er fri for øvrig.
                  "lisensvarsel_sendt", "lisensvarsling", "lisens",
+                 # 099 (M-30): funnene og dekningslisten peker begge på
+                 # `personvernsak` — barna først, saken etter. Saken selv
+                 # peker på den GLOBALE `brukeridentitet` (eieren), som
+                 # ikke ryddes herfra, og dekningslisten peker på det
+                 # GLOBALE `retensjonslager` gjennom en VAKT og ikke en
+                 # fremmednøkkel (099 §1.2), så familien er fri for
+                 # øvrig.
+                 "personvernfunn", "personvernsak_lager", "personvernsak",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

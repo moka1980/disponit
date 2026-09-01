@@ -31,6 +31,7 @@ import { visKunnskap } from "./flater/kunnskap.js";
 import { visAvtalefrist } from "./flater/avtalefrist.js";
 import { visTilgang } from "./flater/tilgang.js";
 import { visLisens } from "./flater/lisens.js";
+import { visPersonvern } from "./flater/personvern.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -94,6 +95,7 @@ const FLATER = {
   // flaten er i tillegg gated på `bestilling:opprett`, men det er
   // ergonomi: dørene i basen er den bindende porten.
   lisens: visLisens,
+  personvern: visPersonvern,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

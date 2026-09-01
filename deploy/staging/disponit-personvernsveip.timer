@@ -1,0 +1,45 @@
+# M-30 (099): én gang i døgnet.
+#
+# Kadensen og varselvinduet hører sammen og skal endres sammen:
+# `m30_sveip_frister` reiser `frist_naermer_seg` 7 døgn før den
+# gjeldende fristen, altså 7 × kadensen.
+#
+# VINDUET ER SJU DØGN, IKKE M-9s TRETTI, og det er en dom og ikke en
+# forglemmelse. Hele fristen her er ÉN MÅNED (GDPR art. 12 nr. 3), ikke
+# et år: et 30-døgnsvindu ville reist funnet i samme øyeblikk saken ble
+# registrert, og et funn som alltid står er et funn ingen leser. Sju
+# døgn er den siste uka — tidsnok til å gjøre noe, sent nok til at det
+# betyr noe.
+#
+# TETTERE VILLE IKKE GITT BEDRE SVAR. `frist` og `forlenget_til` er
+# DATOER. En sveip hver time ville stilt det samme spørsmålet 24 ganger
+# om dagen og fått det samme svaret 23 av dem — funnene er idempotente,
+# så det ville vært billig, men det ville ikke vært informasjon. Det som
+# endrer seg raskere enn et døgn i denne modulen — at noen svarer, avviser
+# eller forlenger — lukker de åpne funnene i SAMME transaksjon som
+# handlingen (099 §4), nettopp for at flaten ikke skal vise et funn som
+# er et døgn på etterskudd.
+#
+# `RandomizedDelaySec=30min`: sveipen leser alle tenanters åpne saker i
+# sitt første steg. Fyrer den på nøyaktig samme sekund som resten av
+# nattens jobber (backup 03:15, lagermåling 03:17, begrepssveip 04:20),
+# legger den seg oppå deres I/O uten grunn — den har ingen frist å rekke.
+# Spredningen er også grunnen til at klokkeslettet er 04:35 og ikke et
+# rundt tall: nabotimerne står på hele og halve timer.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
+# sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
+# frister er oversittet i dag»), ikke da, og en oversittet
+# innsynsforespørsel ingen har fått funn på er nøyaktig det denne
+# timeren finnes for.
+
+[Unit]
+Description=Disponit personvernsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 04:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

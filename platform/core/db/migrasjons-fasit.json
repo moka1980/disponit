@@ -96,5 +96,6 @@
   "095_m9_begrepsregister.sql": "c41bbe8a8a8d8e9ed1eabb3dab77c43f74ff0d91ffa5dad9762d846d10280bb5",
   "096_m21_pliktregister.sql": "fb1fb698187795fa5563ff03b7177cc228392bdd7e1d4b2236261395f4955f86",
   "097_m12_tilgangsregister.sql": "2198f9be459510eca77726e290fc7aa2a90a026a1fee0bf56bfed468277982a0",
-  "098_m22_lisensregister.sql": "19c6a1bfbb7fcddc11ac3bd2b810047e0622c11bc70e2e19953515db7ccce287"
+  "098_m22_lisensregister.sql": "19c6a1bfbb7fcddc11ac3bd2b810047e0622c11bc70e2e19953515db7ccce287",
+  "099_m30_personvernregister.sql": "b72b7ba6a295cb6c94588b3fbc28e297798a14f6d41e4de812b7bc30c6b7fb7f"
 }
