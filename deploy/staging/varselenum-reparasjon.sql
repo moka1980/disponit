@@ -18,10 +18,16 @@
 --    WHERE conrelid = 'varsel'::regclass
 --      AND pg_get_constraintdef(oid) LIKE '%ressurs_type%'
 --
--- Fra PostgreSQL 17 har en NOT NULL-begrensning sin EGEN rad i
--- pg_constraint (contype 'n'), og definisjonen er bokstavelig
+-- Paa PostgreSQL 18.6 -- versjonen bade riggen og produksjonen kjoerer,
+-- maalt med SHOW server_version -- har en NOT NULL-begrensning sin EGEN
+-- rad i pg_constraint (contype 'n'), med definisjonen bokstavelig
 -- «NOT NULL ressurs_type». Sporringen treffer derfor TO rader, og
 -- SELECT ... INTO uten ORDER BY plukker en vilkaarlig av dem.
+--
+-- Katalogfoerte NOT NULL-begrensninger er en NYERE egenskap enn 044 ble
+-- skrevet for. 044 var altsaa riktig da den ble skrevet, og ble feil av
+-- at basen under den endret seg -- verdt aa merke seg foer noen leser
+-- dette som slurv.
 --
 -- Traff den NOT NULL-raden, ble def = 'NOT NULL ressurs_type',
 -- replace() fant ingenting aa bytte, og 044 DROPPET og la tilbake
@@ -95,9 +101,18 @@ BEGIN
   SET LOCAL enable_indexscan = off;
   SET LOCAL enable_indexonlyscan = off;
   FOR r IN
-    SELECT 'varsel_art_chk' AS navn, 'art' AS kolonne, v_art AS sett
+    -- `monster` er 090/091s EGET LIKE-moenster, ordrett. Det er ikke en
+    -- detalj: art-oppslaget deres soeker paa '%attestering_venter%', som
+    -- BARE CHECKen inneholder, mens ressurstype-oppslaget soeker paa
+    -- '%ressurs_type%', som ogsaa treffer NOT NULL-raden. Derfor er art
+    -- aldri i fare og ressurstype alltid — og en port som maalte
+    -- '%art%' ville maalt noe HELT ANNET enn migrasjonene gjoer, og
+    -- krevd en gjenskaping ingen trenger.
+    SELECT 'varsel_art_chk' AS navn, 'art' AS kolonne, v_art AS sett,
+           '%attestering_venter%' AS monster
     UNION ALL
-    SELECT 'varsel_ressurs_type_chk', 'ressurs_type', v_ressurs
+    SELECT 'varsel_ressurs_type_chk', 'ressurs_type', v_ressurs,
+           '%ressurs_type%'
   LOOP
     -- DETERMINISTISK oppslag: paa navn OG contype='c'. Det er denne ene
     -- linjen som gjoer at NOT NULL-raden aldri kan bli plukket i stedet.
@@ -124,7 +139,7 @@ BEGIN
     -- rad (se blokken nederst).
     SELECT conname INTO v_forst FROM pg_constraint
      WHERE conrelid = 'public.varsel'::regclass
-       AND pg_get_constraintdef(oid) LIKE '%' || r.kolonne || '%';
+       AND pg_get_constraintdef(oid) LIKE r.monster;
     CONTINUE WHEN v_def = v_onsket AND v_forst = r.navn;
 
     -- Kanoniseringen er en UTVIDELSE: ingen eksisterende rad skal kunne
@@ -170,8 +185,9 @@ END $$;
 --    WHERE conrelid = 'varsel'::regclass
 --      AND pg_get_constraintdef(oid) LIKE '%ressurs_type%'
 --
--- Det treffer TO rader — CHECKen og NOT NULL-raden (PostgreSQL 17+) — og
--- SELECT ... INTO tar den FOERSTE planen gir, uten ORDER BY.
+-- Det treffer TO rader — CHECKen og NOT NULL-raden, som paa PostgreSQL
+-- 18.6 er en egen katalograd — og SELECT ... INTO tar den FOERSTE planen
+-- gir, uten ORDER BY.
 --
 -- HVILKEN som kommer foerst avhenger av PLANEN, og det er dette som gjoer
 -- feilen saa vanskelig aa se:
@@ -221,13 +237,16 @@ BEGIN
   SET LOCAL enable_indexscan = off;
   SET LOCAL enable_indexonlyscan = off;
   FOR r IN
-    SELECT 'ressurs_type' AS kolonne, 'varsel_ressurs_type_chk' AS forventet
+    SELECT 'ressurs_type' AS kolonne, 'varsel_ressurs_type_chk' AS forventet,
+           '%ressurs_type%' AS monster
     UNION ALL
-    SELECT 'art', 'varsel_art_chk'
+    SELECT 'art', 'varsel_art_chk', '%attestering_venter%'
   LOOP
+    -- Moensteret er migrasjonenes EGET. Porten skal maale det 090/091
+    -- faktisk spoer om — ikke noe som ligner.
     SELECT conname INTO v_navn FROM pg_constraint
      WHERE conrelid = 'public.varsel'::regclass
-       AND pg_get_constraintdef(oid) LIKE '%' || r.kolonne || '%';
+       AND pg_get_constraintdef(oid) LIKE r.monster;
     IF v_navn IS DISTINCT FROM r.forventet THEN
       RAISE EXCEPTION
         'varselenum: 090/091 ville plukket % i stedet for % — CHECKen'
