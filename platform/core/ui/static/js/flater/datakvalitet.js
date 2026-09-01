@@ -107,7 +107,7 @@ function regelseksjon(regler) {
       el("td", { text: `${r.relasjon}.${r.kolonne}` }),
       el("td", { text: regeltypeTekst(r.regeltype) }),
       el("td", { text: alvorlighetTekst(r.alvorlighet) }),
-      el("td", { text: r.begrunnelse })));
+      el("td", { class: "celle-tekst", text: r.begrunnelse })));
   }
   tabell.append(tbody);
   seksjon.append(tabell);

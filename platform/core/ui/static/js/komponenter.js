@@ -236,40 +236,61 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     text: t("ui.logg_ut") });
   if (paaLoggUt) loggUt.addEventListener("click", paaLoggUt);
 
-  const topp = el("header", { class: "skall-topp" },
-    el("div", { class: "skall-brand" },
-      el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
-      el("span", { class: "skall-undertekst", text: t("ui.shell.undertittel") })),
-    tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
-    // HVEM ER JEG. Skallet viste tenant og et ruteantall, men aldri hvilken
-    // bruker økten tilhørte. Fire øyne krever at TO FORSKJELLIGE prinsipaler
-    // attesterer, og med to konti i samme nettleser kunne eier attestert to
-    // ganger som samme bruker og først fått vite det av primærnøkkelen.
-    // Rollene står ved siden av: «hvilken rolle har jeg» skal ikke kreve at
-    // man leser en policy for å finne ut av.
-    //
-    // PRINSIPALEN ER `bruker_id`, IKKE E-POSTEN (Codex P2). `api/oidc.py`
-    // lagrer `epost` som None når utstederen utelater kravet — da forsvant
-    // hele kontrollen, roller og alt, for nettopp den brukeren som ikke har
-    // noe annet å kjenne seg igjen på. E-posten er dessuten ikke nøkkelen:
-    // den kan være ubekreftet og delt av flere `(issuer, sub)`, så to konti
-    // med samme e-post ville sett identiske ut i fire-øyne-flyten. Derfor
-    // vises `bruker_id` alltid, med e-posten i tillegg når den finnes.
-    (epost || brukerId)
-      ? el("span", { class: "skall-bruker",
+  // ÉN RAD (eiervedtak 1/9, runde 2). Toppfeltet var tre etasjer:
+  // merke + undertittel, en sentrert identitetsblokk med e-post,
+  // 64-tegns bruker-id, rolleliste og et ruteantall, og til slutt
+  // navigasjonen i en egen stripe under. Eier: «mye unødvendig ...
+  // masse unødvendig informasjon der oppe, bør alt plasseres under
+  // admin/profil» og «plasser språk og logg ut på samme rad i
+  // toppmenyen og flytt toppmenyen helt opp».
+  //
+  // Nå er det én rad: merke, tenant, navigasjonen, og til høyre
+  // brukerbrikken, språk og utlogging. Undertittelen er borte — den sto
+  // på hver eneste side og fortalte ingenting man kan handle på.
+  // Ruteantallet og den fulle identiteten er FLYTTET, ikke slettet: de
+  // står i Admin-flaten, som er stedet man går for å se på seg selv.
+  //
+  // BRUKERBRIKKEN BLIR IGJEN, men bare det et MENNESKE kjenner seg igjen
+  // på: e-posten. Den rå prinsipal-id-en (`bid_c612864ad46e…`) er teknisk
+  // støy i en topplinje — eier, ordrett: «det er rotete med bid…» — og
+  // står nå i Admin, sammen med roller og ruteantall, under egne
+  // ledetekster.
+  //
+  // HVA DET KOSTER, sagt åpent. Blokken sto her fordi fire-øyne krever at
+  // TO FORSKJELLIGE prinsipaler attesterer, og med to konti i samme
+  // nettleser kunne man ellers attestert to ganger som samme bruker.
+  // E-posten fanger det VANLIGE tilfellet: to attestasjoner på rad med
+  // samme adresse er synlig. Den fanger ikke det patologiske — to
+  // `(issuer, sub)` som DELER e-post — og det er byttet: id-en er ett
+  // klikk unna (brikken lenker til Admin) og ligger i `title` ved hover.
+  // Håndhevelsen har uansett aldri vært i topplinjen; den er
+  // primærnøkkelen i basen.
+  //
+  // Uten e-post (`api/oidc.py` lagrer None når utstederen utelater
+  // kravet) viser brikken id-en likevel — da er den det eneste man har,
+  // og et tomt felt ville vært verre enn en teknisk streng.
+  // …MEN BARE NÅR PROFILEN FAKTISK ER NÅELIG. `#/admin` krever
+  // `security:read` eller plattformdrift (sitekart.js), og en `godkjenner`
+  // med bare `decisions:read` har den ikke. For DEN økten ville en lenke
+  // pekt på en flate den ikke får — og id-en, som hele resonnementet over
+  // hviler på, ville vært utilgjengelig unntatt som `title` ved hover.
+  // Altså ikke naaelig med tastatur, for nettopp den brukeren som
+  // attesterer.
+  //
+  // Derfor: har økten profilen, viser brikken bare e-posten og lenker dit.
+  // Har den den ikke, står id-en i brikken som før. Vi skjuler den bare
+  // når det finnes et sted å finne den.
+  const harProfil = ruter.some((r) => r.nokkel === "admin");
+  const brukerBrikke = (epost || brukerId)
+    ? el(harProfil ? "a" : "span",
+      { class: "skall-bruker",
+        ...(harProfil ? { href: "#/admin" } : {}),
         title: [epost, brukerId].filter(Boolean).join(" · ") },
-        el("span", { class: "skall-bruker-navn", text: epost || brukerId }),
-        epost && brukerId
-          ? el("span", { class: "skall-bruker-id", text: brukerId })
-          : null,
-        Array.isArray(roller) && roller.length
-          ? el("span", { class: "skall-bruker-roller",
-            text: roller.map((r) => t(`ui.rolle.${r}`, r)).join(", ") })
-          : null)
-      : null,
-    el("span", { class: "skall-ruteantall",
-      text: `${ruter.length} · ${t("ui.shell.ruter")}` }),
-    el("div", { class: "skall-hoyre" }, velger, loggUt));
+      el("span", { class: "skall-bruker-navn", text: epost || brukerId }),
+      (!harProfil && epost && brukerId)
+        ? el("span", { class: "skall-bruker-id", text: brukerId })
+        : null)
+    : null;
 
   const lenker = new Map();
   // HVILKEN FLATE STÅR JEG PÅ (Codex P2). `lenker` er det eneste `settAktiv`
@@ -291,6 +312,15 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
       lenker.set(r.nokkel, a);
       return a;
     }));
+
+  // Navigasjonen bor INNE i toppfeltet nå, ikke i en stripe under det.
+  // `<nav>` beholder sin egen `aria-label`, så landemerket er uendret for
+  // en skjermleser — det er bare plasseringen som er strammet inn.
+  const topp = el("header", { class: "skall-topp" },
+    el("span", { class: "skall-merke", text: t("app.navn", "Disponit") }),
+    tenant ? el("span", { class: "skall-tenant", text: tenant }) : null,
+    nav,
+    el("div", { class: "skall-hoyre" }, brukerBrikke, velger, loggUt));
 
   const hoved = el("main", { id: "hovedinnhold", class: "skall-hoved",
     tabindex: "-1" });
@@ -609,7 +639,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
 
   const kropp = el("div", { class: "skall-kropp", "data-meny": "apen" },
     venstre, hoved, kontekst);
-  const rot = el("div", { class: "skall" }, topp, nav, sok, skjul, kropp,
+  // `nav` står ikke her lenger — den er et barn av `topp` (én rad).
+  const rot = el("div", { class: "skall" }, topp, sok, skjul, kropp,
     statuslinje);
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
   // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete

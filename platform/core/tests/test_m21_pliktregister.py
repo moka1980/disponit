@@ -1190,7 +1190,11 @@ def test_rutene_og_flaten_er_registrert():
     assert "decisions:read" in ROLLE_TIL_SCOPES["leser"]
     sitekart = (ROT / "platform" / "core" / "ui" / "static" / "js"
                 / "sitekart.js").read_text(encoding="utf-8")
-    assert '{ nokkel: "avtalefrist", scope: "decisions:read" }' in sitekart
+    # Eiervedtak 1/9: ruten flyttet fra toppnavigasjonen til
+    # venstremenyen (modul 21). Bindingen står, men mot den nye formen —
+    # `modulflate` er en del av ruteoppføringen, ikke en tilleggslinje.
+    assert ('{ nokkel: "avtalefrist", scope: "decisions:read",'
+            ' modulflate: 21 }') in sitekart
 
 
 # ---------------------------------------------------------------------------

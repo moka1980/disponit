@@ -113,9 +113,7 @@ a { color: var(--info); }
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: var(--z-topplinje);
 }
-.skall-merke { font-weight: 700; font-size: 1.15rem; }
-.skall-brand { display: grid; gap: 0; }
-.skall-undertekst { color: var(--muted); font-size: .88rem; }
+.skall-merke { font-weight: 700; font-size: 1.15rem; white-space: nowrap; }
 .skall-tenant {
   color: var(--ink);
   background: rgba(229,239,246,.88);
@@ -123,17 +121,16 @@ a { color: var(--info); }
   border-radius: 999px;
   padding: var(--sp-1) var(--sp-3);
 }
-.skall-ruteantall {
-  color: var(--muted);
-  font-size: .88rem;
-  white-space: nowrap;
-}
 .skall-hoyre { margin-left: auto; display: flex; gap: var(--sp-2);
-  align-items: center; }
+  align-items: center; flex-shrink: 0; }
 
+/* Navigasjonen ligger i SAMME rad som merket og kontrollene (eiervedtak
+   1/9). Den hadde sin egen stripe under toppfeltet, med egen bakgrunn og
+   egen bunnkant — tre etasjer før innholdet begynte. `flex: 1` lar den ta
+   plassen som blir til overs, og `min-width: 0` lar den krympe i stedet
+   for å skyve språkvelgeren og utloggingen ut av raden. */
 .skall-nav { display: flex; gap: var(--sp-1); flex-wrap: wrap;
-  padding: 0 var(--sp-4); background: rgba(255,255,255,.84);
-  border-bottom: 1px solid var(--line); }
+  flex: 1; min-width: 0; }
 .skall-nav a {
   display: inline-block; padding: var(--sp-2) var(--sp-3);
   margin: var(--sp-2) 0;

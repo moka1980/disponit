@@ -119,7 +119,12 @@ function lagerrad(l) {
     } else if (kol.nokkel === "dom") {
       // Dommen som TEKST, og begrunnelsen med den. En dom uten
       // begrunnelse er en påstand, og registeret nekter å bære en.
-      innhold = el("span", {},
+      // `celle-tekst` på den YTRE beholderen, og den er `div` og ikke
+      // `span`: `max-width` gjør ingenting på et inline-element, så
+      // klassen på begrunnelses-spannet alene ville sett riktig ut i
+      // diffen og ikke begrenset noe som helst. Dommen og begrunnelsen
+      // deler tak, som de deler celle.
+      innhold = el("div", { class: "celle-tekst" },
         el("span", { text: t(`ui.retensjon.dom.${l.dom}`, l.dom) }),
         el("br"),
         el("span", { class: "muted", text: tekst(l.dom_begrunnelse) }));

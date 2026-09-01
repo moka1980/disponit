@@ -992,7 +992,10 @@ def test_rutene_og_scopene_henger_sammen():
         assert RUTESCOPE[("POST", sti)] == "kontinuitet:write"
     sitekart = (ROT / "platform" / "core" / "ui" / "static" / "js"
                 / "sitekart.js").read_text(encoding="utf-8")
-    assert '{ nokkel: "kontinuitet", scope: "kontinuitet:read" }' in sitekart
+    # Eiervedtak 1/9: flyttet til venstremenyen (modul 35), samme
+    # binding mot den nye formen.
+    assert ('{ nokkel: "kontinuitet", scope: "kontinuitet:read",'
+            ' modulflate: 35 }') in sitekart
 
 
 # ---------------------------------------------------------------------------

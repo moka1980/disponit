@@ -65,7 +65,7 @@ function begrepstabell(begreper) {
       // Termen NAVNGIR raden: uten `th scope="row"` mister en
       // skjermleser i kilde- og datokolonnene hvilket begrep den leser.
       el("th", { scope: "row", text: b.term }),
-      el("td", { text: b.forklaring }),
+      el("td", { class: "celle-tekst", text: b.forklaring }),
       el("td", { text: b.eier }),
       // Kilden er RÅ TEKST, aldri en lenke. Den er en referanse kunden
       // selv har skrevet («kilde://intern/…», et saksnummer, et
