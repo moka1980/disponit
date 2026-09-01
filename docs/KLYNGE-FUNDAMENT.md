@@ -36,10 +36,17 @@ Tre erfaringer fra de foregående rundene:
 | 095 | M-9 | `095_m9_begrepsregister.sql` |
 | 096 | M-21 | `096_m21_pliktregister.sql` |
 
-Kjøreren krever **ubrutt sekvens**. Et spor som bygger i egen worktree
-før et lavere nummer er merget, må derfor midlertidig bruke neste
-ledige der — og renummerere til sitt tildelte nummer ved PR-tid.
-Lander sporene i rekkefølge 092 → 096, oppstår situasjonen ikke.
+Kjøreren krever IKKE ubrutt sekvens — det trodde jeg da denne fila ble
+skrevet, og to byggespor fant påstanden feil hver for seg (M-5 her,
+M-34 i klynge 2). `db/kjorer.py` itererer
+`sorted(glob("[0-9][0-9][0-9]_*.sql"))` og hopper over det som alt står
+i `migrasjoner`-registeret. Et hull i nummerrekka kjører grønt.
+
+Numrene tildeles likevel på forhånd, og merge-rekkefølgen holdes — men
+grunnen er en annen enn jeg skrev: en fasit som vokser i rekkefølge er
+lettere å lese i git-historikken, og to spor som velger samme nummer
+kolliderer i `migrasjons-fasit.json`. Det er kollisjonen som koster,
+ikke hullet. Et spor kan altså bruke sitt tildelte nummer med én gang.
 
 ## Hva fundamentet eier (denne PR-en)
 

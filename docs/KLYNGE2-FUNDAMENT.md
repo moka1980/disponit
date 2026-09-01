@@ -35,9 +35,19 @@ holdes i takt.
 | 099 | M-30 | `099_m30_personvernregister.sql` |
 | 100 | M-34 | `100_m34_kontrollregister.sql` |
 
-Kjøreren krever ubrutt sekvens. Bygger et spor i egen worktree før et
-lavere nummer er merget, brukes neste ledige der og renummereres ved
-PR-tid. Lander sporene 097 → 100, oppstår situasjonen ikke.
+Kjøreren krever IKKE ubrutt sekvens — det trodde jeg da klynge 1
+startet, og to byggespor fant påstanden feil hver for seg (M-5 i klynge
+1, M-34 i klynge 2). `db/kjorer.py` itererer `sorted(glob("[0-9][0-9][0-9]_*.sql"))`
+og hopper over det som alt står i `migrasjoner`-registeret. Et hull i
+nummerrekka kjører grønt.
+
+Numrene tildeles likevel på forhånd, og merge-rekkefølgen holdes — men
+grunnen er en annen enn jeg skrev: en fasit som vokser i rekkefølge er
+lettere å lese i git-historikken, og to spor som velger samme nummer
+kolliderer i `migrasjons-fasit.json`. Det er kollisjonen som koster,
+ikke hullet. Et spor som bygger før et lavere nummer er merget kan
+altså bruke sitt tildelte nummer med én gang — ingen midlertidig
+renummerering trengs.
 
 ## Grensene mot hverandre, sagt eksplisitt
 
