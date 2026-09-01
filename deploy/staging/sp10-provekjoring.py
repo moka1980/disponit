@@ -37,7 +37,14 @@ import psycopg  # noqa: E402
 # eierrollene må kunne CREATE (funksjonseierskap i migrasjonene).
 SKJEMA_ROLLER = ("disponit_authenticator", "disponit_m37_claimer",
                  "disponit_policy_eier", "disponit_modul_eier",
-                 "disponit_domene_eier")
+                 "disponit_domene_eier",
+                 # Klyngen «orden i eget hus» (092-096). Prøvekjøringen
+                 # etterligner deployens vei; mangler en eierrolle CREATE
+                 # på public her, stopper SP-10-porten på en migrasjon som
+                 # ville gått fint i produksjon — altså en falsk rød.
+                 "disponit_kvalitet_eier", "disponit_lager_eier",
+                 "disponit_mal_eier", "disponit_kunnskap_eier",
+                 "disponit_plikt_eier")
 
 TEN = "t-sp10"
 

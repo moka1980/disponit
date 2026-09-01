@@ -123,6 +123,16 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_adjudicator NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_adjudicator TO disponit WITH INHERIT FALSE, SET TRUE"
+          # Klyngens fem eierroller (#326 opprettet dem, men glemte
+          # medlemskapet). Migrasjonene 092-096 gjør SET LOCAL ROLE og
+          # OWNER TO; uten dette svarer de «permission denied to set
+          # role». WITH INHERIT FALSE av samme grunn som over: arvet
+          # medlemskap matcher RLS-policyers TO-klausul.
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_kvalitet_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_lager_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_mal_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_kunnskap_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_plikt_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
@@ -130,6 +140,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_policy_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_modul_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_domene_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_kvalitet_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_lager_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_mal_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_kunnskap_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_plikt_eier"
           # GO-vilkaar V3: event-triggeren som hindrer at retention-vakten
           # DEAKTIVERES. Den kan bare lages av superbruker — derfor her og
           # ikke i en migrasjon, noeyaktig som rollene. CI maa speile
