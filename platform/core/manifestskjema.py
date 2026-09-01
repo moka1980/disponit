@@ -2036,6 +2036,62 @@ def _grenser_m35(grense: dict, art: dict) -> list[str]:
     Tallene er ÆRLIG NAVNGITT (dom 5): `maalt_restoretid_s` er
     restore-til-isolert-base-proxyen fra backupskriptets egen
     verifisering — aldri en påstand om full tjeneste-RTO."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for navn in grense["invarianter"]:
+        forsok, f1 = _teller(m, f"{navn}_forsok", f"{navn}_forsok")
+        brudd, f2 = _teller(m, f"{navn}_brudd", f"{navn}_brudd")
+        for melding in (f1, f2):
+            if melding:
+                feil.append(melding)
+        if f1 or f2:
+            continue
+        if forsok < grense["min_forsok"]:
+            feil.append(f"{navn}_forsok={forsok}, krever >="
+                        f" {grense['min_forsok']} — en port som aldri"
+                        " kjørte har ikke målt noe")
+        if brudd > grense["maks_brudd"]:
+            feil.append(f"{navn}_brudd={brudd}, krever <="
+                        f" {grense['maks_brudd']}")
+    for navn in grense["krav_ja"]:
+        if m.get(navn) is not True:
+            feil.append(f"{navn}={m.get(navn)!r}, krever bokstavelig true"
+                        " — et punkt uten målbar grense regnes som nei")
+    # RTO-proxyen: et positivt, målt tall — 0 eller fravær er «aldri
+    # målt», og en rapport uten målingen er skjemaavvist uansett.
+    rto, f_rto = _positiv(m, "maalt.maalt_restoretid_s",
+                          "maalt_restoretid_s")
+    if f_rto:
+        feil.append(f_rto)
+    elif rto <= grense["rto_min_restoretid_s"]:
+        feil.append(f"maalt_restoretid_s={rto:g}, krever >"
+                    f" {grense['rto_min_restoretid_s']} — en restore"
+                    " som aldri ble målt er ingen evidens")
+    # RPO: avstanden fra siste VERIFISERTE backup. Eldre enn 2 døgn
+    # betyr minst én feilet nattkjøring — rødt, aldri grønt.
+    alder, f_alder = _tall(m, "maalt.maalt_backupalder_s",
+                           "maalt_backupalder_s")
+    if f_alder:
+        feil.append(f_alder)
+    elif alder < 0 or alder > grense["rpo_maks_backupalder_s"]:
+        feil.append(f"maalt_backupalder_s={alder:g}, krever 0..="
+                    f" {grense['rpo_maks_backupalder_s']} —"
+                    " backup-evidensen er foreldet (eller fra"
+                    " fremtiden)")
+    # Rytmen (dom 2): siste grønne øvelse innenfor kvartalsgulvet.
+    gronn, f_gronn = _tall(m, "maalt.siste_gronne_alder_dogn",
+                           "siste_gronne_alder_dogn")
+    if f_gronn:
+        feil.append(f_gronn)
+    elif gronn < 0 or gronn > grense["ovelse_maks_gronn_alder_dogn"]:
+        feil.append(f"siste_gronne_alder_dogn={gronn:g}, krever 0..="
+                    f" {grense['ovelse_maks_gronn_alder_dogn']} —"
+                    " øvelsesrytmen er månedlig (dom 2)")
+    return feil
+
+
 def _grenser_parform(grense: dict, art: dict) -> list[str]:
     """Parformen, én gang: hver invariant måles som (forsøk, brudd).
 

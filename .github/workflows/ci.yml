@@ -35,6 +35,8 @@ jobs:
       # verifiser_token.
       DISPONIT_TEST_TOKEN_ADMIN_DSN: postgresql://disponit_token_admin:tok@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VARSEL_DSN: postgresql://disponit_varselsender:var@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_DRIFTSTATUS_DSN: postgresql://disponit_driftstatus:drift@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_SELVTEST_DSN: postgresql://disponit_selvtest:selv@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -60,6 +62,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_token_admin LOGIN PASSWORD 'tok'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_varselsender LOGIN PASSWORD 'var'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plan_arbeider LOGIN PASSWORD 'pla'"
+          # M-10/M-11 (090/091): driftstatus-ingesten og selvtesten har
+          # hver sin smale innlogging — begge har KUN EXECUTE på sin ene
+          # registreringsdør, aldri tabellrettigheter (varselsender-formen).
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_driftstatus LOGIN PASSWORD 'drift'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_selvtest LOGIN PASSWORD 'selv'"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
