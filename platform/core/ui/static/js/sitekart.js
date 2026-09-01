@@ -299,6 +299,25 @@ const BASISRUTER = [
   // endre den: å lese hvilke frister som løper er tilsyn, å svare på
   // vegne av virksomheten er myndighet.
   { nokkel: "personvern", scope: "security:read", modulflate: 30 },
+  // M-34 (100): kontrollregisteret. MODULFLATE bak `security:read` —
+  // scopet API-et bak flaten krever (`GET /v1/compliance` i RUTESCOPE),
+  // som resten av tabellen: menyen lover aldri en flate serveren svarer
+  // 403 på.
+  //
+  // SCOPET ER SNEVRERE ENN NABOENS, OG DET ER EN DOM. Fristregisteret
+  // over står bak `decisions:read` fordi «hvilke frister løper» ikke er
+  // administratorens hemmelighet. Kontrollregisteret er en annen ting:
+  // avviksbeskrivelser og evidenshenvisninger er revisjonsmateriale, og
+  // PR-008 §1 beskriver nettopp `security:read` som den valgfrie
+  // ops/compliance-scopen på en tenantbundet brukersesjon —
+  // `autorisasjon.py` kaller rollen `sikkerhet` for «Compliance/ops»
+  // med rene ord. Dette er flaten det scopet ble laget for.
+  //
+  // Regelen om flatens SVAKESTE ledd (wcagkontroll-regelen) er fortsatt
+  // den som gjelder: lesingen krever `security:read`, og de tre
+  // skriveveiene er gatet både inne på flaten og i `RUTESCOPE` på
+  // `bestilling:opprett`.
+  { nokkel: "compliance", scope: "security:read", modulflate: 34 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

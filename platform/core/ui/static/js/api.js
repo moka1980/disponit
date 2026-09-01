@@ -606,3 +606,27 @@ export const forlengPersonvernfrist = (sakId, forlengetTil, begrunnelse,
   _muter(`/v1/personvern/${encodeURIComponent(sakId)}/forleng`, "POST",
          { forlenget_til: forlengetTil, begrunnelse },
          idem || nyIdempotensnokkel());
+// M-34 (100): kontrollregisteret. Registreringen OG etterprøvingen bærer
+// hver sin SP-2-nøkkel — serveren UTLEDER id-en av den, så en tapt
+// respons + nytt klikk gjenspiller i stedet for å føde en kontroll (eller,
+// verre, en etterprøving) til. En dobbelt bokført etterprøving ville vært
+// et revisjonsspor som lyver om hvor mange ganger noe faktisk ble
+// kontrollert.
+//
+// DET FINNES INGEN INNSENDINGSFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover innsending til sertifiseringsorgan, v1 registrerer
+// kontrollen. Et compliance-verktøy som sender inn noe på egen hånd
+// skaper en påstand ingen har lest.
+export const registrerKontroll = (kontroll, idem) =>
+  _muter("/v1/compliance/kontroll", "POST", kontroll,
+         idem || nyIdempotensnokkel());
+
+export const registrerEtterproving = (kontrollId, etterproving, idem) =>
+  _muter(
+    `/v1/compliance/kontroll/${encodeURIComponent(kontrollId)}/etterproving`,
+    "POST", etterproving, idem || nyIdempotensnokkel());
+
+export const markerIkkeRelevant = (kontrollId, begrunnelse, idem) =>
+  _muter(
+    `/v1/compliance/kontroll/${encodeURIComponent(kontrollId)}/ikke-relevant`,
+    "POST", { begrunnelse }, idem || nyIdempotensnokkel());

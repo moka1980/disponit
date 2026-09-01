@@ -206,6 +206,14 @@ APPEND_ONLY_TRIGGERE = (
     ("bestillingsplan_aktiv_periode", "periode_ingen_delete"),
     ("bestillingsplan_vindu", "vindu_ingen_delete"),
     ("bestillingsplan", "plan_ingen_delete"),
+    # 100 (M-34): alle tre vaktene nekter DELETE — kontrollen markeres
+    # ikke_relevant, etterprøvingshistorikken er append-only mot BÅDE
+    # UPDATE og DELETE, og funnet lukkes. Som de skal — så oppryddingen
+    # må skru dem av. At `etterproving` må stå her er i seg selv en
+    # bekreftelse på at evidensen ikke kan viskes ut.
+    ("kontroll", "m34_kontroll_vakt"),
+    ("etterproving", "m34_etterproving_vakt"),
+    ("kontrollfunn", "m34_funn_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -319,6 +327,13 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # fremmednøkkel (099 §1.2), så familien er fri for
                  # øvrig.
                  "personvernfunn", "personvernsak_lager", "personvernsak",
+                 # 100 (M-34): funnene og etterprøvingshistorikken peker
+                 # begge på `kontroll`, og kontrollen på `rammeverk` —
+                 # barna først, kontrollen, rammeverket sist. Kontrollen
+                 # peker i tillegg på den GLOBALE `brukeridentitet`
+                 # (eieren), som ikke ryddes herfra, så familien er fri
+                 # for øvrig.
+                 "kontrollfunn", "etterproving", "kontroll", "rammeverk",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.
