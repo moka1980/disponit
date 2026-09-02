@@ -370,6 +370,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm18_malene(text)',                                    'disponit_onboarding_eier'),
     ('FUNCTION', 'm18_funnkandidater(text,date,integer)',               'disponit_onboarding_eier'),
     ('FUNCTION', 'm18_sveip_onboarding(integer,integer)',               'disponit_onboarding_eier'),
+    -- 104 (M-23): fordringsregisterets doerer og fordringssveipen.
+    -- Vaktene `m23_purretrinn_vakt`, `m23_fordring_vakt`,
+    -- `m23_hendelse_vakt` og `m23_funn_vakt` staar bevisst IKKE her: de
+    -- opprettes utenfor SET ROLE-vinduet og er migrators
+    ('FUNCTION', 'm23_evidens(text,uuid,text,text,jsonb)',              'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_sett_purreplan(text,jsonb,text)',                 'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_registrer_fordring(text,uuid,text,text,bigint,date,date,text)', 'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_registrer_betaling(text,uuid,uuid,bigint,date,text)', 'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_neste_trinn(text,uuid,uuid,text,text)',           'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_ettergi(text,uuid,uuid,text,text)',               'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_fordringsstatus(text)',                           'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_aldersfordeling(text)',                           'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_fordringene(text,integer)',                       'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_purreplanen(text)',                               'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_hendelsene(text,uuid)',                           'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_funnkandidater(text,date)',                       'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_sveip_fordringer(integer)',                       'disponit_fordring_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

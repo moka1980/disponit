@@ -135,6 +135,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # velformet, det er BASEN som sier nei. «Vi er ikke der ennaa» er en
     # annen setning enn «noe gikk galt».
     Feilvei("onboarding_ulovlig_tilstand", 409, ("avvis",), None),
+    # 104 (M-23): fordringsregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — et trinnhopp, en eskalering paa et
+    # avsluttet krav, en overbetaling, en purreplan der eskaleringen gaar
+    # bakover, en ettergivelse uten begrunnelse. 409 av samme grunn som
+    # radene over: kroppen ER velformet, det er BASEN som sier nei. For
+    # en kunde er forskjellen mellom en paaminnelse og et inkassovarsel
+    # hele saken, og «det trinnet er ikke naadd» er en annen setning enn
+    # «noe gikk galt».
+    Feilvei("fordring_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

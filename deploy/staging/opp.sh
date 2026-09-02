@@ -70,7 +70,8 @@ disponit-personvernsveip.service disponit-personvernsveip.timer
 disponit-compliancesveip.service disponit-compliancesveip.timer
 disponit-avstemmingssveip.service disponit-avstemmingssveip.timer
 disponit-henvendelsessveip.service disponit-henvendelsessveip.timer
-disponit-onboardingsveip.service disponit-onboardingsveip.timer"
+disponit-onboardingsveip.service disponit-onboardingsveip.timer
+disponit-fordringssveip.service disponit-fordringssveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -304,6 +305,16 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_ONBOARDINGSVEIP_URL:-}" ]
   echo "AVBRUTT: DISPONIT_ONBOARDINGSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_onboardingsveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 104 (M-23): fordringssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En fordringssveip som ikke kjører er utestående som eldes
+# uten at noen ser det — og for penger er tiden selve skaden.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_FORDRINGSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_FORDRINGSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_fordringssveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -955,6 +966,16 @@ if [ -z "${DISPONIT_ONBOARDINGSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred onboardingsveip DISPONIT_ONBOARDINGSVEIP_URL "$DISPONIT_ONBOARDINGSVEIP_URL"
+# 104 (M-23): fordringssveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/fordringssveip
+if [ -z "${DISPONIT_FORDRINGSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_FORDRINGSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen fordringssveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred fordringssveip DISPONIT_FORDRINGSVEIP_URL "$DISPONIT_FORDRINGSVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1101,7 +1122,8 @@ disponit-personvernsveip.timer
 disponit-compliancesveip.timer
 disponit-avstemmingssveip.timer
 disponit-henvendelsessveip.timer
-disponit-onboardingsveip.timer"
+disponit-onboardingsveip.timer
+disponit-fordringssveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1371,6 +1393,10 @@ systemctl stop disponit-henvendelsessveip.timer \
 # idempotente over sin egen tilstand.
 systemctl stop disponit-onboardingsveip.timer \
     disponit-onboardingsveip.service 2>/dev/null || true
+# 104 (M-23): fordringssveipen stoppes i samme vindu — funnene er
+# idempotente over sin egen tilstand.
+systemctl stop disponit-fordringssveip.timer \
+    disponit-fordringssveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1531,6 +1557,8 @@ systemctl enable --now disponit-avstemmingssveip.timer
 systemctl enable --now disponit-henvendelsessveip.timer
 # 103 (M-18): onboardingsveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-onboardingsveip.timer
+# 104 (M-23): fordringssveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-fordringssveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

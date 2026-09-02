@@ -241,6 +241,14 @@ APPEND_ONLY_TRIGGERE = (
     ("lopsteg", "m18_steg_vakt"),
     ("onboardinglop", "m18_lop_vakt"),
     ("onboardingmalsteg", "m18_malsteg_vakt"),
+    # 104 (M-23): alle fire vaktene nekter DELETE — et krav ettergis med
+    # begrunnelse, en registrert innbetaling forsvinner ikke fordi noen
+    # ombestemte seg, og funnet lukkes. Purretrinnene er unntaket: planen
+    # REDIGERES ved at trinnene skrives om.
+    ("fordringsfunn", "m23_funn_vakt"),
+    ("fordringshendelse", "m23_hendelse_vakt"),
+    ("fordring", "m23_fordring_vakt"),
+    ("purretrinn", "m23_purretrinn_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -380,6 +388,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # så malstegene, malen sist.
                  "onboardingfunn", "lopsteg", "onboardinglop",
                  "onboardingmalsteg", "onboardingmal",
+                 # 104 (M-23): funnene og hendelsene peker på fordringen,
+                 # og purretrinnene på purreplanen. Barna først,
+                 # fordringen, så trinnene, planen sist.
+                 "fordringsfunn", "fordringshendelse", "fordring",
+                 "purretrinn", "purreplan",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

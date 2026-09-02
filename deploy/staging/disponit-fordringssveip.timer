@@ -1,0 +1,29 @@
+# M-23 (104): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: purretrinnene måles i DØGN etter
+# forfall, og et trinn blir ikke modent midt på dagen.
+#
+# SVEIPEN FLYTTER INGEN TRINN. Den kunne — den vet hvilke fordringer som
+# er modne — men et trinn er en ESKALERING MOT EN KUNDE, og en jobb som
+# eskalerer om natten er nøyaktig den fullmakten v1 ikke gir seg selv.
+# Den skriver funn; et menneske flytter trinnet.
+#
+# KLOKKESLETTET ER 05:50 fordi 03:15, 04:20, 04:35, 04:50, 05:05, 05:20
+# og 05:35 alt er tatt. Sveipens første steg leser ALLE tenanters
+# fordringer, og to slike skann på samme sekund legger seg oppå
+# hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene. Sveipen måler NÅ («hvilke krav har passert sitt trinn i
+# dag»), ikke da.
+
+[Unit]
+Description=Disponit fordringssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 05:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

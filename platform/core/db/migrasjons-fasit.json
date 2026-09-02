@@ -101,5 +101,6 @@
   "100_m34_kontrollregister.sql": "21d5c5e140dd0a13c2db1bae897a3477358db728d7eacc77a7123032fa8e0c5b",
   "101_m13_avstemmingsregister.sql": "288b424667972445af3c2d6dbeb9bc899fb7df51824ae21cfcf9ee65d6c36b19",
   "102_m17_henvendelsesregister.sql": "3e0b234822ac6f26ee7d6c6e472b1c3b00b93536246842da4d7c8b5cafc802ea",
-  "103_m18_onboardingregister.sql": "2c417042e7b8e7c1aeb791685793d54f89062b3cb7c24e328f02892a24f3b9aa"
+  "103_m18_onboardingregister.sql": "2c417042e7b8e7c1aeb791685793d54f89062b3cb7c24e328f02892a24f3b9aa",
+  "104_m23_fordringsregister.sql": "8f6312c7fae126365ff6ade48fe1917267caef4a6d6dbe430b9f9ca1fff73b25"
 }

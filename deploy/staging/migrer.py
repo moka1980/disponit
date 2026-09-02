@@ -351,6 +351,19 @@ GRANT EXECUTE ON FUNCTION m18_stegene(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m18_malene(TEXT) TO {rolle};
 REVOKE ALL ON FUNCTION m18_sveip_onboarding(INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m18_funnkandidater(TEXT, DATE, INT) FROM {rolle};
+
+-- 104 (M-23): fordringsregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7). Skrivedørene ligger i
+-- M37_RETTIGHETER_API; SVEIPEN hører sveiperollen til
+-- (FORDRINGSVEIP_RETTIGHETER) og er kryss-tenant.
+SET LOCAL ROLE disponit_fordring_eier;
+GRANT EXECUTE ON FUNCTION m23_fordringsstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_aldersfordeling(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_fordringene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_purreplanen(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_hendelsene(TEXT, UUID) TO {rolle};
+REVOKE ALL ON FUNCTION m23_sveip_fordringer(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m23_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -812,6 +825,15 @@ GRANT EXECUTE ON FUNCTION m18_start_lop(TEXT, UUID, UUID, TEXT, TEXT, DATE, TEXT
 GRANT EXECUTE ON FUNCTION m18_sett_stegeier(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m18_fullfor_steg(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m18_avslutt_lop(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+-- 104 (M-23): fordringsregisterets fem skrivedører. At trinnet går ETT
+-- hakk framover, at overbetaling avvises og at en ettergivelse koster en
+-- begrunnelse, håndheves i dørene og i vaktene — aldri her.
+SET LOCAL ROLE disponit_fordring_eier;
+GRANT EXECUTE ON FUNCTION m23_sett_purreplan(TEXT, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_registrer_fordring(TEXT, UUID, TEXT, TEXT, BIGINT, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_registrer_betaling(TEXT, UUID, UUID, BIGINT, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_neste_trinn(TEXT, UUID, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m23_ettergi(TEXT, UUID, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1172,6 +1194,18 @@ GRANT EXECUTE ON FUNCTION m18_sveip_onboarding(INT, INT) TO {rolle};
 RESET ROLE;
 """
 
+
+# 104 (M-23): fordringssveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den FLYTTER INGEN TRINN: en jobb som eskalerte mot
+# en kunde om natten er nøyaktig den fullmakten v1 ikke gir seg selv.
+FORDRINGSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_fordring_eier;
+GRANT EXECUTE ON FUNCTION m23_sveip_fordringer(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1389,7 +1423,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 103 (M-18): onboardingsveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_onboardingsveip",
-                           ONBOARDINGSVEIP_RETTIGHETER)):
+                           ONBOARDINGSVEIP_RETTIGHETER),
+                          # 104 (M-23): fordringssveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_fordringssveip",
+                           FORDRINGSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

@@ -361,6 +361,15 @@ const BASISRUTER = [
   // kundenavn og interne bruker-id-er. De seks skriveveiene er gatet
   // både inne på flaten og i `RUTESCOPE` på `bestilling:opprett`.
   { nokkel: "onboarding", scope: "decisions:read", modulflate: 18 },
+  // M-23 (104): fordringsregisteret. MODULFLATE bak `okonomi:read` —
+  // scopet M-13 (101) innførte, GJENBRUKT og ikke nytt. Dette er
+  // nøyaktig kretsen det ble laget for: hvem som skylder oss hva er
+  // virksomhetens pengestrøm, ikke allmenn tilstandsinnsikt, og
+  // `admin` er alene om det i v1.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`.
+  { nokkel: "fordring", scope: "okonomi:read", modulflate: 23 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
