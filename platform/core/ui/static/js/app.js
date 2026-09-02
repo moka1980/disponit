@@ -36,6 +36,7 @@ import { visCompliance } from "./flater/compliance.js";
 import { visAvstemming } from "./flater/avstemming.js";
 import { visKundeservice } from "./flater/kundeservice.js";
 import { visOnboarding } from "./flater/onboarding.js";
+import { visFordring } from "./flater/fordring.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -108,6 +109,7 @@ const FLATER = {
   avstemming: visAvstemming,
   kundeservice: visKundeservice,
   onboarding: visOnboarding,
+  fordring: visFordring,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

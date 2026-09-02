@@ -1295,6 +1295,41 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import onboarding as obmodul
         return obmodul.avslutt_endepunkt(tjeneste, request)
 
+    # 104 (M-23): fordringsregisteret. To leseveier og fem skriveveier —
+    # alle menneskelige handlinger i flaten.
+    #
+    # OG DET FINNES INGEN SENDEVEI. Katalogteksten lover et forslag om
+    # nedbetalingsplan til kunden; v1 registrerer fordringen. Fraværet er
+    # dommen, og den er den strengeste i klyngen: en purring til feil
+    # kunde kan ikke trekkes tilbake.
+    def fordring_bilde(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.fordringsbilde(tjeneste, request)
+
+    def fordring_hendelser(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.hendelsene_endepunkt(tjeneste, request)
+
+    def fordring_purreplan(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.purreplan_endepunkt(tjeneste, request)
+
+    def fordring_registrer(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.registrer_endepunkt(tjeneste, request)
+
+    def fordring_betaling(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.betaling_endepunkt(tjeneste, request)
+
+    def fordring_neste_trinn(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.neste_trinn_endepunkt(tjeneste, request)
+
+    def fordring_ettergi(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.ettergi_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1831,6 +1866,22 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               onboarding_fullfor, methods=["POST"]),
         Route("/v1/onboarding/lop/{lop_id:uuid}/avslutt",
               onboarding_avslutt, methods=["POST"]),
+        # 104 (M-23): kolleksjonsruten FØRST, og `purreplan` FØR
+        # mønsterruten — {fordring_id:uuid} avviser ordet uansett, men
+        # rekkefølgen sier intensjonen. STIENE STÅR PÅ ÉN LINJE (102s
+        # lærdom: porten i test_pr008 parser kilden med regex).
+        Route("/v1/fordring", fordring_bilde, methods=["GET"]),
+        Route("/v1/fordring", fordring_registrer, methods=["POST"]),
+        Route("/v1/fordring/purreplan", fordring_purreplan,
+              methods=["POST"]),
+        Route("/v1/fordring/{fordring_id:uuid}/hendelser",
+              fordring_hendelser, methods=["GET"]),
+        Route("/v1/fordring/{fordring_id:uuid}/betaling",
+              fordring_betaling, methods=["POST"]),
+        Route("/v1/fordring/{fordring_id:uuid}/neste-trinn",
+              fordring_neste_trinn, methods=["POST"]),
+        Route("/v1/fordring/{fordring_id:uuid}/ettergi", fordring_ettergi,
+              methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2612,6 +2663,25 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/onboarding/lop/{lop_id:uuid}/steg/{steg_nr:int}/fullfor"):
         "bestilling:opprett",
     ("POST", "/v1/onboarding/lop/{lop_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    # 104 (M-23): fordringsregisteret. LESINGEN bærer `okonomi:read` —
+    # scopet M-13 (101) innførte, og dette er nøyaktig kretsen det ble
+    # laget for: hvem som skylder oss hva er virksomhetens pengestrøm,
+    # ikke allmenn tilstandsinnsikt. GJENBRUKT, ikke nytt.
+    # SKRIVINGEN bærer `bestilling:opprett`.
+    #
+    # Sveipen står IKKE her: `m23_sveip_fordringer` er kryss-tenant og
+    # kjøres av `disponit_fordringssveip` fra sin egen timer. Sveipen
+    # FLYTTER dessuten ingen trinn — den skriver funn.
+    ("GET",  "/v1/fordring"):                "okonomi:read",
+    ("GET",  "/v1/fordring/{fordring_id:uuid}/hendelser"): "okonomi:read",
+    ("POST", "/v1/fordring"):                "bestilling:opprett",
+    ("POST", "/v1/fordring/purreplan"):      "bestilling:opprett",
+    ("POST", "/v1/fordring/{fordring_id:uuid}/betaling"):
+        "bestilling:opprett",
+    ("POST", "/v1/fordring/{fordring_id:uuid}/neste-trinn"):
+        "bestilling:opprett",
+    ("POST", "/v1/fordring/{fordring_id:uuid}/ettergi"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

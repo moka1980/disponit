@@ -1,0 +1,74 @@
+# M-23 (104): fordringssveipen for kundefordringene.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (104): en åpen fordring som har passert et HØYERE purretrinn enn den
+# står på er et `trinn_forfalt`-funn; en forfalt fordring i en tenant
+# uten purreplan er `ingen_purreplan`; og en fordring forfalt mer enn 90
+# døgn og fortsatt på trinn 0 er `forfalt_uten_trinn` — der er det ikke
+# eskaleringen som henger etter, det er hele oppfølgingen.
+#
+# SVEIPEN FLYTTER INGEN TRINN OG SENDER INGENTING. Den kunne flyttet dem
+# — den vet hvilke som er modne — men et trinn er en ESKALERING MOT EN
+# KUNDE. En purring sendt for tidlig eller på et krav som alt er betalt
+# kan ikke trekkes tilbake, og en jobb som eskalerer om natten er
+# nøyaktig den fullmakten v1 ikke gir seg selv. Den skriver funn; et
+# menneske flytter trinnet. `RestrictAddressFamilies` slipper AF_INET
+# fordi DATABASEN nås over TCP — ikke fordi noe skal ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille fordringssveip
+# er utestående som eldes uten at noen ser det — og for penger er det
+# nettopp tiden som er skaden.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_fordringssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m23_sveip_fordringer`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit fordringssveip (fordringer som har passert sitt purretrinn -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_FORDRINGSVEIP_URL:/etc/disponit/fordringssveip/DISPONIT_FORDRINGSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_fordringssveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`fordring_apne`, `fordringsfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig svar:
+# funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

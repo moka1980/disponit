@@ -732,3 +732,37 @@ export const avsluttOnboardinglop = (lopId, status, begrunnelse, idem) =>
   _muter(`/v1/onboarding/lop/${encodeURIComponent(lopId)}/avslutt`,
          "POST", { status, begrunnelse },
          idem || nyIdempotensnokkel());
+// M-23 (104): fordringsregisteret. FORDRINGEN og hver HENDELSE bærer sin
+// egen SP-2-nøkkel — serveren utleder id-en av den. En dobbelt registrert
+// innbetaling ville gjort «hvor mye skylder de» til et tall som er for
+// lavt, og et krav ville blitt lukket for tidlig.
+//
+// `nesteTrinn` TAR INGEN TRINNPARAMETER, og det er dommen: døren flytter
+// til NESTE trinn. En funksjon som lot kalleren be om «sett trinn 3»
+// ville invitert til nettopp det hoppet vakten i 104 finnes for å
+// hindre — og for kunden er forskjellen mellom en påminnelse og et
+// inkassovarsel hele saken.
+//
+// DET FINNES INGEN SENDEFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover et forslag om nedbetalingsplan til kunden, v1
+// registrerer fordringen. En purring til feil kunde kan ikke trekkes
+// tilbake.
+export const settPurreplan = (trinn, idem) =>
+  _muter("/v1/fordring/purreplan", "POST", { trinn },
+         idem || nyIdempotensnokkel());
+
+export const registrerFordring = (fordring, idem) =>
+  _muter("/v1/fordring", "POST", fordring, idem || nyIdempotensnokkel());
+
+export const registrerBetaling = (fordringId, belopOre, inntruffet, idem) =>
+  _muter(`/v1/fordring/${encodeURIComponent(fordringId)}/betaling`,
+         "POST", { belop_ore: belopOre, inntruffet },
+         idem || nyIdempotensnokkel());
+
+export const nesteTrinn = (fordringId, begrunnelse, idem) =>
+  _muter(`/v1/fordring/${encodeURIComponent(fordringId)}/neste-trinn`,
+         "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+export const ettergiFordring = (fordringId, begrunnelse, idem) =>
+  _muter(`/v1/fordring/${encodeURIComponent(fordringId)}/ettergi`,
+         "POST", { begrunnelse }, idem || nyIdempotensnokkel());
