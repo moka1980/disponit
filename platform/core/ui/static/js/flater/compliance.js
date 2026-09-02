@@ -100,8 +100,14 @@ function kontrollrad(k, ctx, apneEtterproving, apneIkkeRelevant) {
   }
   rad.append(eiercelle);
 
+  // EN IKKE-RELEVANT KONTROLL HAR INGEN LØPENDE FRIST. `m34_kontrollbilde`
+  // regner `dogn_over_frist` for HVER rad — også de som er formelt vurdert
+  // ut — så uten dette sa cellen «forbigått for 12 døgn» om en beslutning
+  // som står skrevet ned. `erForbigatt` holdt allerede merket borte;
+  // setningen ved siden av motsa det.
   const fristcelle = el("td", {},
-    el("span", { text: fristTekst(k.dogn_over_frist) }));
+    el("span", { text: k.status === "ikke_relevant"
+      ? fristTekst(null) : fristTekst(k.dogn_over_frist) }));
   fristcelle.append(" ", el("span", { class: "muted",
     text: t("ui.compliance.intervall").replace(
       "{dogn}", String(k.etterproving_dogn)) }));

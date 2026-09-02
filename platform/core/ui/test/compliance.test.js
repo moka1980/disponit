@@ -161,6 +161,15 @@ test("Compliance: forbigått som TEKST med antall døgn, axe rent",
       [...h.querySelectorAll("strong")].filter(
         (e) => e.textContent === t("ui.compliance.merke_forbigatt")).length,
       1, "en ikke-relevant kontroll ble merket forbigått");
+    // OG SETNINGEN VED SIDEN AV MERKET SIER DET SAMME. Merket ble holdt
+    // borte av `erForbigatt`, men fristcellen regnet videre og sa
+    // «forbigått for 240 døgn» om nøyaktig den beslutningen — to svar på
+    // samme spørsmål i samme rad. `m34_kontrollbilde` regner
+    // `dogn_over_frist` for HVER rad, så tallet finnes; det er flaten som
+    // skal la være å lese det.
+    assert.ok(!tekst.includes(
+      t("ui.compliance.forbigatt_for").replace("{dogn}", "240")),
+      "en ikke-relevant kontroll fikk fristcellen sin regnet som forbigått");
     assert.ok(tekst.includes("Vi har ingen egne lokaler."),
       "begrunnelsen for ikke-relevant vises ikke");
 
