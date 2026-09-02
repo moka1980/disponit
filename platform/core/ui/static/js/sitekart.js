@@ -396,6 +396,12 @@ const BASISRUTER = [
   // De seks skriveveiene er gatet både inne på flaten og i
   // `RUTESCOPE` på `bestilling:opprett`. Ingen av dem fakturerer noe.
   { nokkel: "prosjekt", scope: "okonomi:read", modulflate: 25 },
+  // M-26 (108): prisboka. MODULFLATE bak `okonomi:read` — hva vi tar
+  // betalt er virksomhetens pengestrøm. `admin` er alene om det i v1.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem genererer et tilbud.
+  { nokkel: "prisbok", scope: "okonomi:read", modulflate: 26 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

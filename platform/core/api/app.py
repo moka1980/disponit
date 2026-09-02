@@ -1450,6 +1450,44 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import prosjekt as prosjektmodul
         return prosjektmodul.avslutt_endepunkt(tjeneste, request)
 
+    # 108 (M-26): prisboka. Tre leseveier og fem skriveveier.
+    #
+    # OG DET FINNES INGEN TILBUDSVEI. Alle tre bransjemalene navngir
+    # modulen som `v_prisbok` og bruker `priser_fra_prisbok` til å la
+    # `tilbud.generer` gå automatisk. v1 er boka; et tilbud er et
+    # bindende utspill mot en kunde, og det lages ikke her.
+    def prisbok_bilde(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.prisbokbilde(tjeneste, request)
+
+    def prisbok_historikk(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.historikk_endepunkt(tjeneste, request)
+
+    def prisbok_paa_dato(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.paa_dato_endepunkt(tjeneste, request)
+
+    def prisbok_terskler(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.terskler_endepunkt(tjeneste, request)
+
+    def prisbok_produkt(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.registrer_produkt_endepunkt(tjeneste, request)
+
+    def prisbok_pris(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.sett_pris_endepunkt(tjeneste, request)
+
+    def prisbok_klausul(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.sett_klausul_endepunkt(tjeneste, request)
+
+    def prisbok_aktiv(request: Request) -> Response:
+        from . import prisbok as prisbokmodul
+        return prisbokmodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2049,6 +2087,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/prosjekt/{prosjekt_id:uuid}/arbeid", prosjekt_arbeid,
               methods=["POST"]),
         Route("/v1/prosjekt/{prosjekt_id:uuid}/avslutt", prosjekt_avslutt,
+              methods=["POST"]),
+        # 108 (M-26): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `produkt`, `klausul`) FØR mønsterruten. STIENE STÅR PÅ ÉN LINJE
+        # (102s lærdom).
+        Route("/v1/prisbok", prisbok_bilde, methods=["GET"]),
+        Route("/v1/prisbok/terskler", prisbok_terskler, methods=["POST"]),
+        Route("/v1/prisbok/produkt", prisbok_produkt, methods=["POST"]),
+        Route("/v1/prisbok/klausul", prisbok_klausul, methods=["POST"]),
+        Route("/v1/prisbok/{produkt_id:uuid}/historikk",
+              prisbok_historikk, methods=["GET"]),
+        Route("/v1/prisbok/{produkt_id:uuid}/paa-dato", prisbok_paa_dato,
+              methods=["GET"]),
+        Route("/v1/prisbok/{produkt_id:uuid}/pris", prisbok_pris,
+              methods=["POST"]),
+        Route("/v1/prisbok/{produkt_id:uuid}/aktiv", prisbok_aktiv,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -2904,6 +2957,19 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/arbeid"):
         "bestilling:opprett",
     ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    # 108 (M-26): prisboka. LESINGEN bærer `okonomi:read` — hva vi tar
+    # betalt er virksomhetens pengestrøm. SKRIVINGEN bærer
+    # `bestilling:opprett`. Ingen av dem genererer et tilbud.
+    ("GET",  "/v1/prisbok"):                      "okonomi:read",
+    ("GET",  "/v1/prisbok/{produkt_id:uuid}/historikk"): "okonomi:read",
+    ("GET",  "/v1/prisbok/{produkt_id:uuid}/paa-dato"): "okonomi:read",
+    ("POST", "/v1/prisbok/terskler"):             "bestilling:opprett",
+    ("POST", "/v1/prisbok/produkt"):              "bestilling:opprett",
+    ("POST", "/v1/prisbok/klausul"):              "bestilling:opprett",
+    ("POST", "/v1/prisbok/{produkt_id:uuid}/pris"):
+        "bestilling:opprett",
+    ("POST", "/v1/prisbok/{produkt_id:uuid}/aktiv"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

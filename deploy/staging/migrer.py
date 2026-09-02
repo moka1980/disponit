@@ -416,6 +416,24 @@ GRANT EXECUTE ON FUNCTION m25_arbeidet(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m25_tersklene(TEXT) TO {rolle};
 REVOKE ALL ON FUNCTION m25_sveip_prosjekter(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m25_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 108 (M-26): prisbokas LESEDØRER. De fem tabellene står bevisst IKKE i
+-- noen GRANT-liste her (SP-7).
+--
+-- `m26_pris_paa_dato` og `m26_innenfor_rabatt` er med fordi de er
+-- oppslagene `priser_fra_prisbok` til slutt må hvile på: hva sto i boka
+-- DEN dagen, og ligger tallet innenfor tenantens grense. Ingen av dem
+-- SETTER en pris.
+SET LOCAL ROLE disponit_prisbok_eier;
+GRANT EXECUTE ON FUNCTION m26_prisbokstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_produktene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_prishistorikken(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_klausulene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_tersklene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_pris_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_innenfor_rabatt(TEXT, UUID, DATE, BIGINT) TO {rolle};
+REVOKE ALL ON FUNCTION m26_sveip_prisbok(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m26_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -917,6 +935,16 @@ GRANT EXECUTE ON FUNCTION m25_sett_betalingsplan(TEXT, UUID, JSONB, TEXT) TO {ro
 GRANT EXECUTE ON FUNCTION m25_naa_milepael(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m25_registrer_arbeid(TEXT, UUID, UUID, DATE, INT, BIGINT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m25_avslutt_prosjekt(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 108 (M-26): prisbokas fem skrivedører. At en pris ikke skrives
+-- bakover, at en skrevet pris er frosset, og at klausulhashen regnes av
+-- teksten selv, håndheves i dørene og i vaktene — aldri her. INGEN AV
+-- DEM BEREGNER EN PRIS.
+SET LOCAL ROLE disponit_prisbok_eier;
+GRANT EXECUTE ON FUNCTION m26_sett_terskler(TEXT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_registrer_produkt(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_sett_pris(TEXT, UUID, BIGINT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_sett_klausul(TEXT, TEXT, TEXT, TEXT, BOOLEAN, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m26_sett_produktaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1325,6 +1353,17 @@ GRANT EXECUTE ON FUNCTION m25_sveip_prosjekter(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 108 (M-26): prisboksveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den FORLENGER INGEN PRIS: en pris er det
+# virksomheten tjener, og den settes av et menneske med en begrunnelse.
+PRISBOKSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_prisbok_eier;
+GRANT EXECUTE ON FUNCTION m26_sveip_prisbok(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1558,7 +1597,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 107 (M-25): prosjektsveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_prosjektsveip",
-                           PROSJEKTSVEIP_RETTIGHETER)):
+                           PROSJEKTSVEIP_RETTIGHETER),
+                          # 108 (M-26): prisboksveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_prisboksveip",
+                           PRISBOKSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
