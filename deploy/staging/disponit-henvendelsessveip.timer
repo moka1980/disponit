@@ -1,0 +1,35 @@
+# M-17 (102): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: grensene sveipen måler mot er antall
+# DØGN uten klassifisering og uten svar. Ingen av dem skifter svar
+# oftere enn ved døgnskiftet, og en sveip hver time ville stilt de samme
+# spørsmålene 24 ganger og fått det samme svaret 23 av gangene.
+#
+# ÉN FUNNTYPE HAR LIKEVEL INGEN ALDERSGRENSE: en henvendelse klassifisert
+# som `mistenkelig` og ikke satt i sikkerhetskøen blir et funn ved FØRSTE
+# sveip. Det er så raskt en daglig timer kan være, og det er en kjent
+# svakhet: mellom klassifiseringen og neste sveip kan det gå et døgn.
+# Den dagen det er for lenge, er svaret et forpass i en hyppigere jobb —
+# ikke å skru opp kadensen på alt det andre.
+#
+# KLOKKESLETTET ER 05:20 fordi 03:15, 04:20, 04:35, 04:50 og 05:05 alt
+# er tatt av nabotimerne. Sveipens første steg leser ALLE tenanters
+# henvendelser, og to slike skann på samme sekund legger seg oppå
+# hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min`: samme begrunnelse mot jobber vi ikke eier
+# klokka til. Sveipen har ingen frist å rekke.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
+# sveip ved oppstart. Sveipen måler NÅ, ikke da.
+
+[Unit]
+Description=Disponit henvendelsessveip-timer
+
+[Timer]
+OnCalendar=*-*-* 05:20:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

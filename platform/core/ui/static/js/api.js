@@ -660,3 +660,40 @@ export const opphevAvstemming = (avstemmingId, begrunnelse, idem) =>
   _muter(
     `/v1/avstemming/match/${encodeURIComponent(avstemmingId)}/opphev`,
     "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+// M-17 (102): henvendelsesregisteret. INNTAKET og UTKASTET bærer hver
+// sin SP-2-nøkkel — serveren utleder id-en av den, så en tapt respons +
+// nytt klikk gjenspiller i stedet for å føde en henvendelse til. En
+// dobbelt registrert henvendelse ville sett ut som at kunden spurte to
+// ganger, og da svarer noen to ganger.
+//
+// DET FINNES INGEN SENDEFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover automatiske svar, v1 lagrer et utkast. Et
+// automatisk svar til en kunde er en uttalelse på firmaets vegne.
+// `avgjorUtkast` har to lovlige verdier — `forkastet` og
+// `brukt_manuelt` — og ingen av dem heter `sendt`.
+export const taImotHenvendelse = (henvendelse, idem) =>
+  _muter("/v1/kundeservice/henvendelse", "POST", henvendelse,
+         idem || nyIdempotensnokkel());
+
+export const klassifiserHenvendelse = (id, klassifisering, idem) =>
+  _muter(
+    `/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/klassifiser`,
+    "POST", klassifisering, idem || nyIdempotensnokkel());
+
+export const henvendelseTilUnntakskoe = (id, begrunnelse, idem) =>
+  _muter(
+    `/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/unntakskoe`,
+    "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+export const lagreUtkast = (id, utkast, idem) =>
+  _muter(
+    `/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/utkast/ny`,
+    "POST", utkast, idem || nyIdempotensnokkel());
+
+export const avgjorUtkast = (utkastId, status, idem) =>
+  _muter(`/v1/kundeservice/utkast/${encodeURIComponent(utkastId)}/dom`,
+         "POST", { status }, idem || nyIdempotensnokkel());
+
+export const lukkHenvendelse = (id, utfall, idem) =>
+  _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/lukk`,
+         "POST", { utfall }, idem || nyIdempotensnokkel());

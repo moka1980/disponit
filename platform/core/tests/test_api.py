@@ -224,6 +224,14 @@ APPEND_ONLY_TRIGGERE = (
     ("bilag", "m13_bilag_vakt"),
     ("avstemming", "m13_avstemming_vakt"),
     ("avstemmingsfunn", "m13_funn_vakt"),
+    # 102 (M-17): alle fire vaktene nekter DELETE — en tapt henvendelse
+    # er verre enn en uklassifisert, klassifiseringen rettes og slettes
+    # ikke, utkastet er historikk, og funnet lukkes. Som de skal — så
+    # oppryddingen må skru dem av.
+    ("henvendelse", "m17_henvendelse_vakt"),
+    ("klassifisering", "m17_klassifisering_vakt"),
+    ("svarutkast", "m17_utkast_vakt"),
+    ("henvendelsesfunn", "m17_funn_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -351,6 +359,13 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # kontoen sist.
                  "avstemmingsfunn", "avstemming", "bankpost", "bilag",
                  "bankkonto",
+                 # 102 (M-17): funnene, utkastene og klassifiseringen
+                 # peker alle på `henvendelse`, som selv peker på
+                 # `unntak` (køkoblingen) og `tenant_nokler` (DEK-en).
+                 # Barna først, henvendelsen etter — og henvendelsen FØR
+                 # `unntak`, som ryddes lenger ned.
+                 "henvendelsesfunn", "svarutkast", "klassifisering",
+                 "henvendelse",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

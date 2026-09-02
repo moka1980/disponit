@@ -332,6 +332,26 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm13_apne_bilag(text,integer)',                        'disponit_avstemming_eier'),
     ('FUNCTION', 'm13_funnkandidater(text,date,integer)',               'disponit_avstemming_eier'),
     ('FUNCTION', 'm13_sveip_avstemming(integer,integer)',               'disponit_avstemming_eier'),
+    -- 102 (M-17): henvendelsesregisterets doerer og henvendelsessveipen.
+    -- NOLOGIN-eieren `disponit_kundeservice_eier` eier funksjonene, ikke
+    -- tabellene. Eierskapet ER skrivetilgangen (057-radenes begrunnelse):
+    -- runtime har ingen tabellrettighet paa registeret i det hele tatt
+    -- Vaktene `m17_henvendelse_vakt`, `m17_klassifisering_vakt`,
+    -- `m17_utkast_vakt` og `m17_funn_vakt` staar bevisst IKKE her: de
+    -- opprettes utenfor SET ROLE-vinduet og er migrators
+    ('FUNCTION', 'm17_evidens(text,uuid,text,text,jsonb)',              'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_ta_imot(text,uuid,text,text,timestamp with time zone,text,bytea,bytea,bytea,bytea,text,text)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_klassifiser(text,uuid,text,text,text,text,text,text)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_til_unntakskoe(text,uuid,text,bytea,bytea,text,text)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_lagre_utkast(text,uuid,uuid,bytea,bytea,text,text[],text,text,text)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_avgjor_utkast(text,uuid,text,text)',              'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_lukk(text,uuid,text,text)',                       'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_kostatus(text)',                                  'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_koen(text,integer)',                              'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_hent_innhold(text,uuid)',                         'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_utkastene(text,uuid)',                            'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_funnkandidater(text,date,integer,integer)',       'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_sveip_henvendelser(integer,integer,integer)',     'disponit_kundeservice_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

@@ -337,6 +337,21 @@ const BASISRUTER = [
   // skriveveiene er gatet både inne på flaten og i `RUTESCOPE` på
   // `bestilling:opprett`.
   { nokkel: "avstemming", scope: "okonomi:read", modulflate: 13 },
+  // M-17 (102): kundeservicekøen. MODULFLATE bak `decisions:read` —
+  // scopet API-et bak flaten krever (`GET /v1/kundeservice` i
+  // RUTESCOPE), som resten av tabellen.
+  //
+  // SCOPET ER DET BREDESTE I TABELLEN, og det er en dom og ikke slurv:
+  // kundeservicekøen er tenantens alminnelige arbeidsflate, ikke
+  // revisjonsmateriale (M-34) og ikke virksomhetens pengestrøm (M-13).
+  // Den som svarer kunder skal se den.
+  //
+  // SELVE INNHOLDET LIGGER LIKEVEL BAK `kundeservice:innhold`, som
+  // hentes av et eget endepunkt inne på flaten. Regelen om flatens
+  // SVAKESTE ledd (wcagkontroll-regelen) gjelder MENYOPPFØRINGEN: den
+  // lover at listen kan vises, ikke at hver celle kan åpnes — og flaten
+  // gater innholdsknappen på sitt eget scope.
+  { nokkel: "kundeservice", scope: "decisions:read", modulflate: 17 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

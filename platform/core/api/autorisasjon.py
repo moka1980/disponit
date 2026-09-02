@@ -24,12 +24,27 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # samme leseklasse som beslutningene. Lesescopet gis derfor til alle
     # kunderollene som leser tilstand; SKRIVINGEN (hendelser, poster,
     # lukking) er admin-myndighet alene.
+    # 102 (M-17): kundeservicekøen er tenantens alminnelige
+    # arbeidsflate og ligger under `decisions:read`, som `leser` alt har.
+    # `kundeservice:innhold` er DERIMOT en egen rett: den som svarer
+    # kunder trenger den, og derfor står den her — men den er skilt ut
+    # nettopp for at en tenant som vil ha en rolle som ser køen UTEN å
+    # kunne lese innholdet, kan lage den uten skjemaendring.
     "leser": frozenset({"decisions:read", "exceptions:read", "policy:read",
-                        "epost:read", "kontinuitet:read"}),
+                        "epost:read", "kontinuitet:read",
+                        "kundeservice:innhold"}),
     # Compliance/ops: i tillegg sikkerhetsinnsyn.
+    # 102 (M-17): `kundeservice:innhold` er OGSÅ `sikkerhet`s, av to
+    # grunner. Den ene er strukturell: `sikkerhet` har alltid vært en
+    # SUPERMENGDE av `leser`, og et hull i den containment-en ville vært
+    # en endring i rollemodellen skjult i en modul-PR. Den andre er
+    # saklig: en henvendelse klassifisert som `mistenkelig` blir en
+    # SIKKERHETSSAK i M-37s kø, og den som skal behandle den må kunne
+    # lese hva som faktisk sto der.
     "sikkerhet": frozenset({"decisions:read", "exceptions:read",
                             "policy:read", "security:read",
-                            "epost:read", "kontinuitet:read"}),
+                            "epost:read", "kontinuitet:read",
+                            "kundeservice:innhold"}),
     # Administrator: alt lesende (v1 er rent lese-API; mutasjon er senere).
     # 038: administratoren bestiller kontroller på tenantens egne,
     # verifiserte mål. Scopet gir retten til å FORSØKE — målautorisasjon,
@@ -72,7 +87,20 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
                         # skjemaendring. M-23 (104) og M-24 (105)
                         # GJENBRUKER scopet — det oppstår her fordi
                         # M-13 kommer først.
-                        "okonomi:read"}),
+                        "okonomi:read",
+                        # 102 (M-17): å LESE hva en kunde skrev er en
+                        # annen handling enn å se køen, og bare den ene
+                        # er persondata. Administratoren har begge.
+                        #
+                        # NAVNET HAR INGEN UNDERSTREK, og det er ikke
+                        # smak: husets scopevokabular er
+                        # kolon-separerte små bokstaver, og porten i
+                        # `test_ui_kontrakt.py` leser rolleguiden med
+                        # `"([a-z:]+)"`. Et scope med understrek ville
+                        # blitt STILLE DROPPET av den porten — altså en
+                        # rolleguide som lovet mindre enn rollen har,
+                        # uten at noe ble rødt.
+                        "kundeservice:innhold"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).

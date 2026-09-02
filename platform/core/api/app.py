@@ -1212,6 +1212,50 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import avstemming as avstemmingmodul
         return avstemmingmodul.opphev_endepunkt(tjeneste, request)
 
+    # 102 (M-17): henvendelsesregisteret. To leseveier for KØEN og
+    # INNHOLDET (ulike scopes, fordi bare det ene er persondata) og seks
+    # skriveveier — alle menneskelige handlinger i flaten, bak
+    # `bestilling:opprett` + CSRF + Idempotency-Key.
+    #
+    # OG DET FINNES INGEN SENDEVEI. Katalogteksten lover automatiske
+    # svar; v1 lagrer et utkast. Fraværet er dommen, ikke en manglende
+    # rute — og `m17_avgjor_utkast` har ingen status som heter `sendt`.
+    def kundeservice_koe(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.kobilde(tjeneste, request)
+
+    def kundeservice_innhold(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.innhold_endepunkt(tjeneste, request)
+
+    def kundeservice_utkastene(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.utkastene_endepunkt(tjeneste, request)
+
+    def kundeservice_ta_imot(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.ta_imot_endepunkt(tjeneste, request)
+
+    def kundeservice_klassifiser(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.klassifiser_endepunkt(tjeneste, request)
+
+    def kundeservice_unntakskoe(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.unntakskoe_endepunkt(tjeneste, request)
+
+    def kundeservice_utkast(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.utkast_endepunkt(tjeneste, request)
+
+    def kundeservice_utkastdom(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.utkastdom_endepunkt(tjeneste, request)
+
+    def kundeservice_lukk(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.lukk_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1708,6 +1752,30 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/avstemming/match", avstemming_match, methods=["POST"]),
         Route("/v1/avstemming/match/{avstemming_id:uuid}/opphev",
               avstemming_opphev, methods=["POST"]),
+        # 102 (M-17): kolleksjonsruten FØRST, som ellers i fila.
+        Route("/v1/kundeservice", kundeservice_koe, methods=["GET"]),
+        Route("/v1/kundeservice/henvendelse", kundeservice_ta_imot,
+              methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold",
+              kundeservice_innhold, methods=["GET"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast",
+              kundeservice_utkastene, methods=["GET"]),
+        # STIEN STÅR PÅ ÉN LINJE, og det er ikke stil: porten i
+        # `test_pr008.py` parser KILDEN med et regex som ikke forstår
+        # implisitt strengsammenslåing. En sti brutt over to linjer blir
+        # en «død deklarasjon» i RUTESCOPE — altså en rute porten ikke
+        # kan se at finnes. `/klassifiser` og ikke `/klassifisering` for
+        # at linjen skal få plass.
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
+              kundeservice_klassifiser, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
+              kundeservice_unntakskoe, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
+              kundeservice_utkast, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk",
+              kundeservice_lukk, methods=["POST"]),
+        Route("/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
+              kundeservice_utkastdom, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -1844,7 +1912,11 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         # eget bank- og bilagsregister — rent lesende.
                         # Begrunnelsen for at scopet er nytt står i
                         # `autorisasjon.py`.
-                        "okonomi:read"})
+                        "okonomi:read",
+                        # 102 (M-17): henvendelsens innhold — rent
+                        # lesende, og skilt fra køens `decisions:read`
+                        # fordi bare det ene er persondata.
+                        "kundeservice:innhold"})
 
 #: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
 #: muterende endepunkt — selv om noen skulle utstede et bruker-token med
@@ -2441,6 +2513,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/avstemming/bilag"):        "bestilling:opprett",
     ("POST", "/v1/avstemming/match"):        "bestilling:opprett",
     ("POST", "/v1/avstemming/match/{avstemming_id:uuid}/opphev"):
+        "bestilling:opprett",
+    # 102 (M-17): henvendelsesregisteret. KØEN bærer `decisions:read` —
+    # tenantens alminnelige arbeidsflate, samme klasse som beslutningene.
+    # INNHOLDET bærer `kundeservice:innhold`, og det skillet er
+    # dommen: å se hvem som spurte og hvor gammelt det er, er noe annet
+    # enn å lese hva de skrev. Skrivingen bærer `bestilling:opprett`.
+    #
+    # Sveipen står IKKE her: `m17_sveip_henvendelser` er kryss-tenant og
+    # kjøres av `disponit_henvendelsessveip` fra sin egen timer.
+    ("GET",  "/v1/kundeservice"):            "decisions:read",
+    ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold"):
+        "kundeservice:innhold",
+    ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast"):
+        "kundeservice:innhold",
+    ("POST", "/v1/kundeservice/henvendelse"): "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe"):
+        "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny"):
+        "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/kundeservice/utkast/{utkast_id:uuid}/dom"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

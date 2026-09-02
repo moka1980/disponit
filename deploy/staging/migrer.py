@@ -320,6 +320,24 @@ GRANT EXECUTE ON FUNCTION m13_uavstemte_poster(TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m13_apne_bilag(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m13_sveip_avstemming(INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m13_funnkandidater(TEXT, DATE, INT) FROM {rolle};
+
+-- 102 (M-17): henvendelsesregisterets LESEDØRER, samme snitt og samme
+-- begrunnelse som M-13-blokken over. `henvendelse`, `klassifisering`,
+-- `svarutkast` og `henvendelsesfunn` står bevisst IKKE i noen GRANT-liste
+-- her: runtime har ingen SELECT på dem i det hele tatt (SP-7).
+-- Skrivedørene ligger i M37_RETTIGHETER_API; SVEIPEN hører sveiperollen
+-- til (HENVENDELSESVEIP_RETTIGHETER) og er kryss-tenant.
+--
+-- `m17_funnkandidater` er et INTERNT ledd i sveipen. Den grantes ingen,
+-- og REVOKE-en står fordi en rettighet som bare slutter å bli gitt ikke
+-- er trukket tilbake.
+SET LOCAL ROLE disponit_kundeservice_eier;
+GRANT EXECUTE ON FUNCTION m17_kostatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_koen(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_hent_innhold(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_utkastene(TEXT, UUID) TO {rolle};
+REVOKE ALL ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m17_funnkandidater(TEXT, DATE, INT, INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -758,6 +776,19 @@ GRANT EXECUTE ON FUNCTION m13_registrer_post(TEXT, UUID, UUID, TEXT, DATE, BIGIN
 GRANT EXECUTE ON FUNCTION m13_registrer_bilag(TEXT, UUID, TEXT, TEXT, BIGINT, TEXT, DATE, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m13_avstem(TEXT, UUID, UUID, UUID, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m13_opphev_avstemming(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 102 (M-17): henvendelsesregisterets seks skrivedører — inntak,
+-- klassifisering, køveien inn i M-37, utkast, utkastdom og lukking.
+-- Menneskelige handlinger i flaten, samme vindu som M-13-dørene over,
+-- men en ANNEN eier — derfor sin egen rolleblokk. At «besvart» krever et
+-- brukt utkast, og at det ikke finnes en `sendt`-status, håndheves i
+-- dørene og i vaktene, aldri her.
+SET LOCAL ROLE disponit_kundeservice_eier;
+GRANT EXECUTE ON FUNCTION m17_ta_imot(TEXT, UUID, TEXT, TEXT, TIMESTAMPTZ, TEXT, BYTEA, BYTEA, BYTEA, BYTEA, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_klassifiser(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_til_unntakskoe(TEXT, UUID, TEXT, BYTEA, BYTEA, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_lagre_utkast(TEXT, UUID, UUID, BYTEA, BYTEA, TEXT, TEXT[], TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_avgjor_utkast(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_lukk(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1093,6 +1124,20 @@ GRANT EXECUTE ON FUNCTION m13_sveip_avstemming(INT, INT) TO {rolle};
 RESET ROLE;
 """
 
+
+# 102 (M-17): henvendelsessveipens rolle. Samme form og samme begrunnelse
+# som sveiperollene over: nøyaktig ÉN EXECUTE, ingen tabellrettigheter.
+# `m17_sveip_henvendelser` er KRYSS-TENANT og setter selv RLS-konteksten
+# per tenant, så rollen kan reise funn i alle tenanter uten å kunne LESE
+# en eneste henvendelse selv — og en henvendelse er persondata, så det
+# snittet er strengere her enn noe annet sted i klyngen.
+HENVENDELSESVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_kundeservice_eier;
+GRANT EXECUTE ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1300,7 +1345,13 @@ def main(argv: list[str] | None = None) -> int:
                           # tabellrettigheter å nullstille, bare den ene
                           # EXECUTEn.
                           ("disponit_avstemmingssveip",
-                           AVSTEMMINGSVEIP_RETTIGHETER)):
+                           AVSTEMMINGSVEIP_RETTIGHETER),
+                          # 102 (M-17): henvendelsessveipens rolle, samme
+                          # løkke og samme betingelse — ingen
+                          # tabellrettigheter å nullstille, bare den ene
+                          # EXECUTEn.
+                          ("disponit_henvendelsessveip",
+                           HENVENDELSESVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
