@@ -1357,7 +1357,14 @@ def test_enheten_er_registrert_i_utrullingen():
     aldri fundamentet, ellers stopper fundamentets egen deploy."""
     opp = (ROT / "deploy" / "staging" / "opp.sh").read_text(encoding="utf-8")
     assert "disponit-begrepssveip.service disponit-begrepssveip.timer" in opp
-    assert "disponit-begrepssveip.timer\"" in opp, \
+    # MEDLEMSKAP I BLOKKEN, ikke «står sist i den». Asserten var
+    # `"disponit-begrepssveip.timer\"" in opp` — altså at timeren var den
+    # SISTE linjen i `SELVREVERS_ENHETER`, målt på det avsluttende
+    # anførselstegnet. Den var grønn helt til M-12 (097) la sin egen
+    # timer etter, og da ble en test om M-9 rød av en endring i en annen
+    # modul. Blokken leses nå ut og medlemskapet måles i den.
+    selvrevers = opp.split("SELVREVERS_ENHETER=")[1].split('"')[1]
+    assert "disponit-begrepssveip.timer" in selvrevers.split(), \
         "enheten mangler i SELVREVERS_ENHETER"
     assert "DISPONIT_KUNNSKAPSSVEIP_URL" in opp, "DSN-porten mangler"
     assert "systemctl enable --now disponit-begrepssveip.timer" in opp

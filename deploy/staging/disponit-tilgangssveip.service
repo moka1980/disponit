@@ -1,0 +1,99 @@
+# M-12 (097): gjennomgangssveipen for tilgangsregisteret.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen:
+# `m12_sveip_gjennomganger(500)` reiser ETT funn per (tilgang, funntype)
+# for tilganger som har stått lenger enn sin egen `gjennomgang_dogn`
+# uten at noen navngitt har etterprøvd dem, oppdaterer `sist_sett_sveip`
+# på dem som alt finnes, og lukker dem som ikke lenger gjelder. Sveipen
+# bestemmer ikke hva som er utløpt — den kaller funksjonen som vet det.
+#
+# DEN OBSERVERER, DEN PROVISJONERER IKKE. Katalogteksten for M-12 lover
+# JML — joiner, mover, leaver — altså at modulen oppretter, flytter og
+# fjerner tilganger automatisk. v1 gjør ingen av delene, og denne
+# uniten er stedet det ville vært lettest å snike det inn: en timer med
+# databaserettigheter som kjører hver natt uten at noen ser på den. Den
+# har derfor ingen nettverksfullmakt utover databasen, ingen
+# identitetsklient i koden, og INGEN skriverettighet utenfor modulens
+# egne tre tabeller — heller ikke på evidenskjeden. Porten
+# `tilgang_endret_utenfor_registeret` teller radene utenfor egne lagre
+# før og etter en kjøring.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, ikke her: en
+# daglig sveip over en tilgang som ikke er etterprøvd på et år gir ETT
+# funn, ikke 365. En funnliste som vokser med kadensen er en funnliste
+# folk lærer seg å overse — og da forsvinner de viktige med dem.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# gjennomgangssveip er et tilgangsregister som eldes uten at noen ser
+# det, altså nøyaktig tilstanden modulen finnes for å gjøre synlig — og
+# den tilgangen ingen har sett på er den som lar en tidligere ansatt
+# beholde en nøkkel hun ikke skulle hatt.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_tilgangssveip` har nøyaktig ÉN
+# rettighet i basen: EXECUTE på `m12_sveip_gjennomganger`. INGEN
+# tabellrettigheter, ingen lesedør, ingen skrivedør — funnene skrives av
+# den eier-eide defineren, aldri av rollen direkte. Delte den DSN med
+# runtime, ville sveipen måttet grantes til `disponit`; sveipen er
+# KRYSS-TENANT og setter selv RLS-konteksten, så det ville gitt hele
+# forespørselsveien nøyaktig det vinduet denne rollen finnes for å nekte
+# den. 097 REVOKEr den derfor eksplisitt fra `disponit` — en rettighet
+# som bare slutter å bli gitt er ikke trukket tilbake.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener` — den samme
+# `disponit-artefaktrydding`, `disponit-evidensreaper`,
+# `disponit-domenerevalidering` og `disponit-begrepssveip` har, og av
+# samme grunn: dette er en ren driftstimer uten filsystemfullmakter.
+# Autoriteten ligger IKKE i Unix-brukeren; den ligger i DB-rollen over,
+# som er sveipens egen og ingen annens. En ny Unix-identitet ville
+# flyttet null autoritet og lagt én identitet til å forvalte.
+
+[Unit]
+Description=Disponit tilgangssveip (utlopte gjennomganger -> tilgangsfunn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som artefaktryddingen og begrepssveipen — de
+# deler Unix-identitet, så et eget navn ville bare gitt to kataloger med
+# samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_TILGANGSSVEIP_URL:/etc/disponit/tilgangssveip/DISPONIT_TILGANGSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_tilgangssveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# dekket av `tilgang_frist` — indeksen på den GENERERTE
+# `gjennomgang_frist`-kolonnen, som finnes nettopp fordi
+# `coalesce(sist_gjennomgatt, opprettet_dato) + gjennomgang_dogn` som
+# uttrykk i WHERE ikke er et indeksbart predikat. Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

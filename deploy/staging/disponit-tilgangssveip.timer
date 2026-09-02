@@ -1,0 +1,34 @@
+# M-12 (097): én gang i døgnet.
+#
+# KADENSEN ER DØGNET FORDI FRISTEN ER EN DATO. `gjennomgang_frist` er en
+# DATE, regnet av `sist_gjennomgatt` (eller registreringsdagen) pluss
+# tilgangens egen `gjennomgang_dogn`. En sveip hver time ville stilt det
+# samme spørsmålet 24 ganger om dagen og fått det samme svaret 23 av
+# dem — funnene er idempotente, så det ville vært billig, men det ville
+# ikke vært informasjon. Det som endrer seg raskere enn et døgn i denne
+# modulen — at noen registrerer en gjennomgang — flytter fristen i SAMME
+# transaksjon, og flaten leser alltid registeret direkte.
+#
+# `RandomizedDelaySec=30min`: sveipen leser alle tenanters tilganger i
+# sitt første steg. Fyrer den på nøyaktig samme sekund som resten av
+# nattens jobber (backup 03:15, retensjonsmålingen 03:17, m57-utsending,
+# evidensreaperen, begrepssveipen 04:20), legger den seg oppå deres I/O
+# uten grunn — den har ingen frist å rekke. Spredningen er også grunnen
+# til at klokkeslettet er 04:35 og ikke et rundt tall: nabotimerne står
+# på hele og halve timer, og 04:20 er begrepssveipens.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
+# sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
+# tilganger står uetterprøvd i dag»), ikke da, og en tilgang ingen har
+# fått funn på er nøyaktig det denne timeren finnes for.
+
+[Unit]
+Description=Disponit tilgangssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 04:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -256,6 +256,20 @@ const BASISRUTER = [
   // `under_utvikling` i katalogen, og en modulkort-inngang ville lovet
   // en modul kunden kan kjøpe.
   { nokkel: "avtalefrist", scope: "decisions:read", modulflate: 21 },
+  // M-12 (097): tilgangsregisteret. MODULFLATE bak `security:read` —
+  // scopet API-et bak flatens svakeste ledd krever (`GET /v1/tilgang` i
+  // RUTESCOPE), som resten av tabellen: menyen lover aldri en flate
+  // serveren svarer 403 på.
+  //
+  // OG SCOPET ER ET ANNET ENN NABOENS, med vilje. `avtalefrist` over
+  // står bak `decisions:read` fordi en fristliste er tenantens egen
+  // driftstilstand. Et tilgangsregister er noe annet: det er kartet over
+  // hvem som har admin på hvilket system, med kritikalitet per objekt.
+  // Med `decisions:read` ville hver `leser`, `godkjenner` og
+  // `policyforvalter` fått det kartet — og en sammenslått oppføring skal
+  // aldri UTVIDE tilgang like lite som den skal inndra den.
+  // Skriveveiene er gatet på `bestilling:opprett` i `RUTESCOPE`.
+  { nokkel: "tilgang", scope: "security:read", modulflate: 12 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

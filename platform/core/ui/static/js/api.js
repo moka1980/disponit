@@ -538,3 +538,24 @@ export const lukkPlikt = (pliktId, kvitteringRef, idem) =>
 export const bortfallPlikt = (pliktId, begrunnelse, idem) =>
   _muter(`/v1/plikt/${encodeURIComponent(pliktId)}/bortfall`, "POST",
          { begrunnelse }, idem || nyIdempotensnokkel());
+// M-12 (097): tilgangsregisteret. Objekt- og tilgangsregistreringen
+// bærer en SP-2-nøkkel — serveren UTLEDER id-en av den, så en tapt
+// respons + nytt klikk gjenspiller i stedet for å føde raden en gang
+// til. Gjennomgangen er idempotent av sin egen dato (døren returnerer
+// samme frist for en gjennomgang som alt er registrert i dag), men
+// bærer nøkkelen likevel: serveren krever den på alle tre, og formen
+// skal være den samme.
+//
+// MERK HVA SOM IKKE STÅR HER: ingen `fjernTilgang`, ingen `flyttTilgang`,
+// ingen `opprettTilgangISystem`. v1 registrerer; den provisjonerer
+// ingenting. En klientfunksjon for noe serveren ikke har en dør til
+// ville vært det første steget bort fra den dommen.
+export const registrerTilgangsobjekt = (objekt, idem) =>
+  _muter("/v1/tilgang/objekt", "POST", objekt, idem || nyIdempotensnokkel());
+
+export const registrerTilgang = (tilgang, idem) =>
+  _muter("/v1/tilgang", "POST", tilgang, idem || nyIdempotensnokkel());
+
+export const registrerGjennomgang = (tilgangId, idem) =>
+  _muter(`/v1/tilgang/${encodeURIComponent(tilgangId)}/gjennomgang`,
+         "POST", {}, idem || nyIdempotensnokkel());

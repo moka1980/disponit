@@ -228,6 +228,28 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm21_plikter(text,integer)',                          'disponit_plikt_eier'),
     ('FUNCTION', 'm21_koe_for_tenant(text,integer)',                   'disponit_plikt_eier'),
     ('FUNCTION', 'm21_koe_fristvarsler(integer)',                      'disponit_plikt_eier'),
+    -- 097 (M-12): tilgangsregisterets doerer og gjennomgangssveipen.
+    -- Samme form som 096-blokken over: NOLOGIN-eieren
+    -- `disponit_tilgang_eier` eier funksjonene, ikke tabellene -- de tre
+    -- tabellene er migrators, som resten av 089-096-familien. Eierskapet
+    -- ER skrivetilgangen: runtime har ingen tabellrettighet paa
+    -- registeret i det hele tatt og naar det KUN gjennom disse doerene.
+    -- `m12_sveip_gjennomganger` er den innelukkede
+    -- kryss-tenant-autoriteten sveiperollen alene faar kalle, og
+    -- `m12_sveip_for_tenant` er armen den bruker innenfra -- ingen av
+    -- dem er grantet til runtime.
+    -- Trigger-vaktene `m12_objekt_vakt`, `m12_tilgang_vakt` og
+    -- `m12_funn_vakt` staar bevisst IKKE her: de opprettes utenfor
+    -- SET ROLE-vinduet og er migrators, som resten av husets radvakter.
+    ('FUNCTION', 'm12_evidens(text,uuid,text,text,jsonb)',             'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_registrer_objekt(text,uuid,text,text,text,text)', 'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_registrer_tilgang(text,uuid,uuid,text,text,text,text,text,integer,text)', 'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_registrer_gjennomgang(text,uuid,text)',          'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_tilgangsbilde(text,integer)',                    'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_objekter(text,integer)',                         'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_apne_funn(text,integer)',                        'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_sveip_for_tenant(text,integer)',                 'disponit_tilgang_eier'),
+    ('FUNCTION', 'm12_sveip_gjennomganger(integer)',                   'disponit_tilgang_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

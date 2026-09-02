@@ -227,6 +227,28 @@ SET LOCAL ROLE disponit_plikt_eier;
 GRANT EXECUTE ON FUNCTION m21_plikter(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m21_koe_fristvarsler(INT) FROM {rolle};
 RESET ROLE;
+-- 097 (M-12): tilgangsregisterets TO LESEDØRER — tilgangsbildet og den
+-- åpne funnlisten. Samme snitt og samme begrunnelse som de over:
+-- `tilgangsobjekt`, `tilgang` og `tilgangsfunn` står bevisst IKKE i noen
+-- GRANT-liste her — runtime har ingen SELECT på dem i det hele tatt
+-- (SP-7) og når registeret KUN gjennom dørene, som krever
+-- tenantkontekst først.
+--
+-- SVEIPEN REVOKEs, og det er en sikkerhetsdom og ikke en formalitet:
+-- `m12_sveip_gjennomganger` er kryss-tenant og setter selv
+-- RLS-konteksten per tenant — altså nøyaktig det vinduet
+-- `disponit_tilgangssveip` finnes for å nekte forespørselsveien. Samme
+-- snitt som 038-reaperen. Per-tenant-armen REVOKEs sammen med den: en
+-- rolle som kunne kalle `m12_sveip_for_tenant` direkte ville kunnet
+-- reise og lukke funn på kommando, utenom den ene inngangen som er
+-- tenkt.
+SET LOCAL ROLE disponit_tilgang_eier;
+GRANT EXECUTE ON FUNCTION m12_tilgangsbilde(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m12_objekter(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m12_apne_funn(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m12_sveip_gjennomganger(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m12_sveip_for_tenant(TEXT, INT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -603,6 +625,21 @@ SET LOCAL ROLE disponit_plikt_eier;
 GRANT EXECUTE ON FUNCTION m21_registrer_plikt(TEXT, UUID, TEXT, TEXT, TEXT, TIMESTAMPTZ, TEXT, INT[], TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m21_lukk_plikt(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m21_marker_bortfalt(TEXT, UUID, TEXT, TEXT) TO {rolle};
+RESET ROLE;
+-- 097 (M-12): tilgangsregisterets tre skrivedører — objektet, tilgangen
+-- og gjennomgangen. Menneskelige handlinger i flaten
+-- (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu som
+-- 057/082/089/096-dørene over, men en ANNEN eier — derfor sin egen
+-- rolleblokk.
+--
+-- MERK HVA SOM IKKE STÅR HER, og at fraværet er hele v1-dommen: det
+-- finnes ingen dør som OPPRETTER, FLYTTER eller FJERNER en tilgang i et
+-- fremmed system. Registeret registrerer; det provisjonerer ikke. Kravet
+-- om eier og hjemmel håndheves i dørene og i CHECK-ene, ikke her.
+SET LOCAL ROLE disponit_tilgang_eier;
+GRANT EXECUTE ON FUNCTION m12_registrer_objekt(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m12_registrer_tilgang(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m12_registrer_gjennomgang(TEXT, UUID, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -848,6 +885,30 @@ GRANT EXECUTE ON FUNCTION m9_sveip_utlopte(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 097 (M-12): gjennomgangssveipens rolle. Samme form og samme begrunnelse
+# som KUNNSKAPSSVEIP_RETTIGHETER over: NØYAKTIG én EXECUTE, ingen
+# tabellrettigheter noe sted i basen. Innsnevringen er skarpere enn den
+# ser ut — `m12_sveip_gjennomganger` er KRYSS-TENANT og setter selv
+# RLS-konteksten per tenant, så rollen kan reise funn i alle tenanter
+# uten å kunne LESE en eneste tilgangsrad selv. Hele autoriteten står i
+# den eier-eide defineren, revidérbar på ett sted.
+#
+# PER-TENANT-ARMEN STÅR BEVISST IKKE HER. `m12_sveip_for_tenant` er
+# inngangen sveipen bruker INNENFRA, etter at den har bundet konteksten
+# til radens tenant; en jobb som kunne kalle den direkte kunne reise og
+# lukke funn i én valgt tenant på kommando. Sveipen har én inngang, og
+# den er den som ser hele basen og derfor er den som er revidert.
+TILGANGSSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_tilgang_eier;
+GRANT EXECUTE ON FUNCTION m12_sveip_gjennomganger(INT) TO {rolle};
+-- LESEDØRENE STÅR BEVISST IKKE HER. Sveipen skriver funn; den leser
+-- aldri tilgangsbildet tilbake gjennom en tenantbundet dør, og et
+-- `m12_tilgangsbilde` den ikke trenger ville vært en lesevei inn i
+-- hvem-har-tilgang-til-hva som ingen jobb skal ha.
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1031,7 +1092,13 @@ def main(argv: list[str] | None = None) -> int:
                           # ingen tabellrettigheter å nullstille, bare den
                           # ene EXECUTEn.
                           ("disponit_kunnskapssveip",
-                           KUNNSKAPSSVEIP_RETTIGHETER)):
+                           KUNNSKAPSSVEIP_RETTIGHETER),
+                          # 097 (M-12): gjennomgangssveipens rolle står i
+                          # samme løkke og med samme betingelse — heller
+                          # ingen tabellrettigheter å nullstille, bare
+                          # den ene EXECUTEn.
+                          ("disponit_tilgangssveip",
+                           TILGANGSSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

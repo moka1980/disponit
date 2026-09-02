@@ -150,6 +150,16 @@ APPEND_ONLY_TRIGGERE = (
     # ingen vakt: varslingspunktene er innstillinger, ikke evidens.
     ("pliktvarsel_sendt", "m21_anker_vakt"),
     ("plikt", "m21_plikt_vakt"),
+    # 097 (M-12): alle tre vaktene nekter DELETE. Objektet er TOTALT
+    # append-only (et system som skifter navn er et NYTT objekt),
+    # tilgangsraden er frosset i hele sin substans og kan bare få et
+    # gjennomgangsmerke framover, og funnet lukkes i stedet for å
+    # slettes. At oppryddingen MÅ skru dem av er selv beviset: ingen
+    # rolle, heller ikke eieren, kan viske ut hvem som hadde hvilken
+    # tilgang.
+    ("tilgangsfunn", "m12_funn_vakt"),
+    ("tilgang", "m12_tilgang_vakt"),
+    ("tilgangsobjekt", "m12_objekt_vakt"),
     ("reparasjonsoperasjoner", "reparasjon_vakt"),
     # PR-007: bevis og konflikt er append-only, generasjonen har
     # overgangsvakt. Alle tre nekter DELETE — som de skal.
@@ -273,6 +283,12 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # peker på den GLOBALE `brukeridentitet` (eieren), som
                  # ikke ryddes herfra, så familien er fri for øvrig.
                  "pliktvarsel_sendt", "pliktvarsling", "plikt",
+                 # 097 (M-12): funnet peker på tilgangen, tilgangen på
+                 # objektet — barna først, objektet sist. Tilgangen
+                 # peker i tillegg på den GLOBALE `brukeridentitet`
+                 # (eieren), som ikke ryddes herfra, så familien er fri
+                 # for øvrig.
+                 "tilgangsfunn", "tilgang", "tilgangsobjekt",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

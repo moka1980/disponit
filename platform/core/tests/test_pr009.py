@@ -516,7 +516,12 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # har nøyaktig én EXECUTE og ingen tabellrettigheter, og en
         # fallback til runtime-DSN-en ville startet sveipen rett i
         # `permission denied` hver natt.
-        "DISPONIT_KUNNSKAPSSVEIP_URL")})
+        "DISPONIT_KUNNSKAPSSVEIP_URL",
+        # 097 (M-12): gjennomgangssveipens EGEN DSN, samme klasse og
+        # samme begrunnelse — nøyaktig én EXECUTE, ingen
+        # tabellrettigheter, og en fallback til runtime-DSN-en ville
+        # startet sveipen rett i `permission denied` hver natt.
+        "DISPONIT_TILGANGSSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -547,6 +552,8 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         encoding="utf-8") == "verdi-DISPONIT_LAGERMAALER_URL"
     assert (rot / "kunnskapssveip/DISPONIT_KUNNSKAPSSVEIP_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_KUNNSKAPSSVEIP_URL"
+    assert (rot / "tilgangssveip/DISPONIT_TILGANGSSVEIP_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_TILGANGSSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -990,7 +997,12 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # har nøyaktig én EXECUTE og ingen tabellrettigheter, og en
         # fallback til runtime-DSN-en ville startet sveipen rett i
         # `permission denied` hver natt.
-        "DISPONIT_KUNNSKAPSSVEIP_URL")})
+        "DISPONIT_KUNNSKAPSSVEIP_URL",
+        # 097 (M-12): gjennomgangssveipens EGEN DSN, samme klasse og
+        # samme begrunnelse — nøyaktig én EXECUTE, ingen
+        # tabellrettigheter, og en fallback til runtime-DSN-en ville
+        # startet sveipen rett i `permission denied` hver natt.
+        "DISPONIT_TILGANGSSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):
