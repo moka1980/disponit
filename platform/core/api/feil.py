@@ -153,6 +153,16 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # ikke gjaldt den dagen er et tall uten dom, og «avtalen gjaldt ikke
     # da» er en annen setning enn «noe gikk galt».
     Feilvei("leverandor_ulovlig_tilstand", 409, ("avvis",), None),
+    # 106 (M-14): fakturaregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — den EKSAKTE dubletten (samme leverandoer
+    # og samme fakturanummer), en faktura der netto + mva ikke gaar opp i
+    # brutto, to overlappende mvasatsperioder, en avgjoerelse uten
+    # begrunnelse, en manuell kontroll uten notat, og et forsoek paa aa
+    # gjenaapne en avgjort faktura. 409: kroppen ER velformet, det er
+    # BASEN som sier nei. «Denne fakturaen har vi alt» er en annen
+    # setning enn «noe gikk galt» — og det er nettopp den kontrollen
+    # modulen er navngitt for i policyen.
+    Feilvei("faktura_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

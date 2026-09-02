@@ -1371,6 +1371,41 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import leverandor as leverandormodul
         return leverandormodul.avslutt_avtale_endepunkt(tjeneste, request)
 
+    # 106 (M-14): fakturakontrollen. To leseveier og fem skriveveier.
+    #
+    # OG DET FINNES INGEN BOKFØRINGSVEI OG INGEN ATTESTASJONSVEI.
+    # Policyen vi sender ut navngir modulen som `v_regnskap`, betrodd
+    # for `faktura_godkjent` — og bruker den attestasjonen til å la
+    # `faktura.bokfor` gå automatisk. v1 registrerer hva kontrollene SÅ;
+    # den signerer ingenting, og ingen av rutene under er en bokføring.
+    def faktura_bilde(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.fakturabilde(tjeneste, request)
+
+    def faktura_kontroller(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.kontrollene_endepunkt(tjeneste, request)
+
+    def faktura_terskler(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.terskler_endepunkt(tjeneste, request)
+
+    def faktura_mvasats(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.mvasats_endepunkt(tjeneste, request)
+
+    def faktura_registrer(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.registrer_endepunkt(tjeneste, request)
+
+    def faktura_kontroll(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.kontroll_endepunkt(tjeneste, request)
+
+    def faktura_avgjor(request: Request) -> Response:
+        from . import faktura as fakturamodul
+        return fakturamodul.avgjor_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1940,6 +1975,19 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               leverandor_leveranse, methods=["POST"]),
         Route("/v1/leverandor/{avtale_id:uuid}/avslutt",
               leverandor_avslutt, methods=["POST"]),
+        # 106 (M-14): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `mvasats`) FØR mønsterruten. STIENE STÅR PÅ ÉN LINJE (102s
+        # lærdom: porten i test_pr008 parser kilden med regex).
+        Route("/v1/faktura", faktura_bilde, methods=["GET"]),
+        Route("/v1/faktura", faktura_registrer, methods=["POST"]),
+        Route("/v1/faktura/terskler", faktura_terskler, methods=["POST"]),
+        Route("/v1/faktura/mvasats", faktura_mvasats, methods=["POST"]),
+        Route("/v1/faktura/{faktura_id:uuid}/kontroller",
+              faktura_kontroller, methods=["GET"]),
+        Route("/v1/faktura/{faktura_id:uuid}/kontroll", faktura_kontroll,
+              methods=["POST"]),
+        Route("/v1/faktura/{faktura_id:uuid}/avgjor", faktura_avgjor,
+              methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2760,6 +2808,21 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/leverandor/{avtale_id:uuid}/leveranse"):
         "bestilling:opprett",
     ("POST", "/v1/leverandor/{avtale_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    # 106 (M-14): fakturakontrollen. LESINGEN bærer `okonomi:read` —
+    # scopet M-13 (101) innførte og M-23/M-24 gjenbrukte. Hva noen
+    # krever av oss er virksomhetens pengestrøm.
+    #
+    # SKRIVINGEN bærer `bestilling:opprett`. Ingen av dem bokfører noe,
+    # og ingen av dem attesterer: den handlingen finnes ikke i v1.
+    ("GET",  "/v1/faktura"):                      "okonomi:read",
+    ("GET",  "/v1/faktura/{faktura_id:uuid}/kontroller"): "okonomi:read",
+    ("POST", "/v1/faktura"):                      "bestilling:opprett",
+    ("POST", "/v1/faktura/terskler"):             "bestilling:opprett",
+    ("POST", "/v1/faktura/mvasats"):              "bestilling:opprett",
+    ("POST", "/v1/faktura/{faktura_id:uuid}/kontroll"):
+        "bestilling:opprett",
+    ("POST", "/v1/faktura/{faktura_id:uuid}/avgjor"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

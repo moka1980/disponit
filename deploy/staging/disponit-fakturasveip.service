@@ -1,0 +1,80 @@
+# M-14 (106): fakturasveipen for inngående fakturaer.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (106): et mva-avvik større enn tenantens slingringsmonn er et
+# `mva_avvik`-funn; en faktura uten en mvasats som gjaldt fakturadatoen
+# er `ingen_mvasats`; samme leverandør, samme beløp, ulikt nummer
+# innenfor tenantens vindu er `naer_dublett`; en leverandør uten rad i
+# M-24 er `ukjent_leverandor`; en faktura over beløpsgrensen uten en
+# manuell kontroll er `over_belopsgrense`; en faktura eldre enn
+# kontrollfristen er `ukontrollert`; og en tenant uten grenser er
+# `ingen_terskel`.
+#
+# SVEIPEN BOKFØRER INGEN OG GODKJENNER INGEN FAKTURA. Den kunne, teknisk
+# — den vet hvilke som er kontrollert uten avvik. Men en bokføring er en
+# skriving i regnskapet, og en godkjenning er FULLMAKTEN som slipper den
+# gjennom: policyen vi sender ut bruker `faktura_godkjent` til å la
+# `faktura.bokfor` gå automatisk. Den fullmakten tas ikke av en jobb som
+# kjører om natten, og ikke av v1 i det hele tatt.
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille fakturasveip er
+# en faktura som forfaller mens den venter — den dyreste raden i
+# registeret.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_fakturasveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m14_sveip_fakturaer`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit fakturasveip (mva-avvik, dubletter og ukontrollerte fakturaer -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_FAKTURASVEIP_URL:/etc/disponit/fakturasveip/DISPONIT_FAKTURASVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_fakturasveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`faktura_apne`, `faktura_naerdublett`,
+# `fakturakontroll_pr_faktura`, `fakturafunn_apne`). Går dette over ti
+# minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

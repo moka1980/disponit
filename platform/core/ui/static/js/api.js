@@ -800,3 +800,31 @@ export const registrerLeveranse = (avtaleId, maling, idem) =>
 export const avsluttAvtale = (avtaleId, begrunnelse, idem) =>
   _muter(`/v1/leverandor/${encodeURIComponent(avtaleId)}/avslutt`,
          "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+// M-14 (106): fakturakontrollen. FAKTURAEN og hver KONTROLL bærer sin
+// egen SP-2-nøkkel — serveren utleder id-en av den. En dobbelt
+// registrert faktura er nøyaktig det modulen finnes for å hindre.
+//
+// DET FINNES INGEN BOKFØRINGSFUNKSJON HER, OG INGEN SIGNERING. Policyen
+// vi sender ut navngir modulen som verifikatoren `v_regnskap`, betrodd
+// for `faktura_godkjent`, og bruker den attestasjonen til å la
+// `faktura.bokfor` gå automatisk. `avgjorFaktura` tar to utfall —
+// `kontrollert` og `avvist` — og ingen av dem er en bokføring.
+export const settFakturaterskler = (terskler, idem) =>
+  _muter("/v1/faktura/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const settMvasats = (sats, idem) =>
+  _muter("/v1/faktura/mvasats", "POST", sats,
+         idem || nyIdempotensnokkel());
+
+export const registrerFaktura = (faktura, idem) =>
+  _muter("/v1/faktura", "POST", faktura, idem || nyIdempotensnokkel());
+
+export const registrerFakturakontroll = (fakturaId, utfall, notat, idem) =>
+  _muter(`/v1/faktura/${encodeURIComponent(fakturaId)}/kontroll`,
+         "POST", { utfall, notat }, idem || nyIdempotensnokkel());
+
+export const avgjorFaktura = (fakturaId, status, begrunnelse, idem) =>
+  _muter(`/v1/faktura/${encodeURIComponent(fakturaId)}/avgjor`,
+         "POST", { status, begrunnelse }, idem || nyIdempotensnokkel());

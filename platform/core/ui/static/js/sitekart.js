@@ -380,6 +380,15 @@ const BASISRUTER = [
   // på `bestilling:opprett`. Ingen av dem betaler noe — den handlingen
   // finnes ikke i v1.
   { nokkel: "leverandor", scope: "okonomi:read", modulflate: 24 },
+  // M-14 (106): fakturakontrollen. MODULFLATE bak `okonomi:read` —
+  // samme scope som M-13 (101) innførte og M-23/M-24 gjenbrukte, og av
+  // samme grunn: hva noen krever av oss er virksomhetens pengestrøm.
+  // `admin` er alene om det i v1.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem bokfører noe og ingen av dem
+  // attesterer — de handlingene finnes ikke i v1.
+  { nokkel: "faktura", scope: "okonomi:read", modulflate: 14 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

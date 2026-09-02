@@ -383,6 +383,27 @@ GRANT EXECUTE ON FUNCTION m24_leverandorene(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m24_bryter_sla(TEXT, INT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m24_sveip_leverandorer(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m24_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 106 (M-14): fakturaregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7). Skrivedørene ligger i
+-- M37_RETTIGHETER_API; SVEIPEN hører sveiperollen til
+-- (FAKTURASVEIP_RETTIGHETER) og er kryss-tenant.
+--
+-- `m14_forventet_mva` og `m14_sats_paa_dato` er med fordi et menneske
+-- skal kunne spørre basen om hva mva-en BURDE vært, uten å gjette — og
+-- fordi flaten aldri skal regne den selv: en andre avrundingsregel å
+-- holde i takt er slik en mva-kontroll blir stille gal.
+SET LOCAL ROLE disponit_faktura_eier;
+GRANT EXECUTE ON FUNCTION m14_fakturastatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_treffrate(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_fakturaene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_kontrollene(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_tersklene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_satsene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_forventet_mva(BIGINT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_sats_paa_dato(TEXT, TEXT, DATE) TO {rolle};
+REVOKE ALL ON FUNCTION m14_sveip_fakturaer(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m14_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -863,6 +884,16 @@ GRANT EXECUTE ON FUNCTION m24_registrer_leverandor(TEXT, UUID, TEXT, TEXT, TEXT)
 GRANT EXECUTE ON FUNCTION m24_registrer_avtale(TEXT, UUID, UUID, TEXT, TEXT, INT, BIGINT, DATE, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m24_registrer_leveranse(TEXT, UUID, UUID, DATE, INT, BIGINT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m24_avslutt_avtale(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 106 (M-14): fakturaregisterets fem skrivedører. At den eksakte
+-- dubletten avvises, at netto + mva må gå opp i brutto, og at en
+-- avgjørelse koster en begrunnelse, håndheves i dørene og i vaktene —
+-- aldri her. INGEN AV DEM BOKFØRER OG INGEN AV DEM ATTESTERER.
+SET LOCAL ROLE disponit_faktura_eier;
+GRANT EXECUTE ON FUNCTION m14_sett_terskler(TEXT, BIGINT, BIGINT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_sett_mvasats(TEXT, TEXT, INT, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_registrer_faktura(TEXT, UUID, TEXT, TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, DATE, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_registrer_kontroll(TEXT, UUID, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m14_avgjor_faktura(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1248,6 +1279,18 @@ GRANT EXECUTE ON FUNCTION m24_sveip_leverandorer(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 106 (M-14): fakturasveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den BOKFØRER INGEN og GODKJENNER INGEN faktura: en
+# godkjenning er fullmakten som slipper en automatisk bokføring gjennom,
+# og den tas ikke av en nattjobb.
+FAKTURASVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_faktura_eier;
+GRANT EXECUTE ON FUNCTION m14_sveip_fakturaer(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1473,7 +1516,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 105 (M-24): leverandørsveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_leverandorsveip",
-                           LEVERANDORSVEIP_RETTIGHETER)):
+                           LEVERANDORSVEIP_RETTIGHETER),
+                          # 106 (M-14): fakturasveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_fakturasveip",
+                           FAKTURASVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
