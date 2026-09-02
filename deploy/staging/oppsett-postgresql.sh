@@ -139,12 +139,40 @@ FORDRINGEIER=disponit_fordring_eier        # M-23 eier fordringsregisteret
 FORDRINGSVEIP=disponit_fordringssveip      # M-23s forfallssveip
 LEVERANDOREIER=disponit_leverandor_eier    # M-24 eier leverandørregisteret
 LEVERANDORSVEIP=disponit_leverandorsveip   # M-24s SLA-sveip
+# KLYNGE 4 (106-110), samme forhåndsoppretting og av samme grunn: én
+# kjøring av dette skriptet framfor fem stoppede deployer.
+#
+# Med denne klyngen er plattformen oppe i FJORTEN nattlige sveip. Det
+# tallet er nå stort nok til at planlegging og observerbarhet er en egen
+# driftssak — men det er fortsatt ikke en grunn til å slå sveiperollene
+# sammen. En delt rolle måtte hatt EXECUTE på alle kryss-tenant-
+# defienerne, og en feil i én sveip ville da båret alle de andres
+# fullmakt. Å bytte en driftssak mot en sikkerhetssvekkelse er ikke en
+# forenkling.
+FAKTURAEIER=disponit_faktura_eier          # M-14 eier fakturaregisteret
+FAKTURASVEIP=disponit_fakturasveip         # M-14s ukontrollert-sveip
+PROSJEKTEIER=disponit_prosjekt_eier        # M-25 eier prosjektregisteret
+PROSJEKTSVEIP=disponit_prosjektsveip       # M-25s budsjettsveip
+PRISBOKEIER=disponit_prisbok_eier          # M-26 eier prisboka
+PRISBOKSVEIP=disponit_prisboksveip         # M-26s utlopt-pris-sveip
+# `disponit_lager_eier` ER M-4s (retensjonsregisteret, migrasjon 093 og
+# 099), og shellvariabelen LAGEREIER er alt i bruk lenger opp. M-27 får
+# derfor sitt eget navn. Det er ikke kosmetikk: to moduler som deler
+# eierrolle er nøyaktig den fullmaktsdelingen «én rolle per modul»
+# finnes for å hindre — og `CREATE ROLE` to ganger hadde dessuten gjort
+# CI rød. (CodeRabbit, klynge 4-fundamentet.)
+BEHOLDNINGEIER=disponit_beholdning_eier    # M-27 eier lagerregisteret
+LAGERSVEIP=disponit_lagersveip             # M-27s bestillingspunktsveip
+KONTOVAKTEIER=disponit_kontovakt_eier      # M-42 eier kontoregisteret
+KONTOVAKTSVEIP=disponit_kontovaktsveip     # M-42s kontoendringssveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
          "$TILGANGSSVEIP" "$PERSONVERNSVEIP" "$COMPLIANCESVEIP" \
          "$AVSTEMMINGSVEIP" "$HENVENDELSESVEIP" "$ONBOARDINGSVEIP" \
-         "$FORDRINGSVEIP" "$LEVERANDORSVEIP"; do
+         "$FORDRINGSVEIP" "$LEVERANDORSVEIP" "$FAKTURASVEIP" \
+         "$PROSJEKTSVEIP" "$PRISBOKSVEIP" "$LAGERSVEIP" \
+         "$KONTOVAKTSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -154,7 +182,8 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$KUNNSKAPEIER" "$PLIKTEIER" "$TILGANGEIER" "$LISENSEIER" \
          "$PERSONVERNEIER" "$COMPLIANCEEIER" "$AVSTEMMINGEIER" \
          "$KUNDESERVICEEIER" "$ONBOARDINGEIER" "$FORDRINGEIER" \
-         "$LEVERANDOREIER"; do
+         "$LEVERANDOREIER" "$FAKTURAEIER" "$PROSJEKTEIER" \
+         "$PRISBOKEIER" "$BEHOLDNINGEIER" "$KONTOVAKTEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done

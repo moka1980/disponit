@@ -1,0 +1,86 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m14-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 106
+# tildelt i docs/KLYNGE4-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: `bransjemal-tjenestebedrift.yaml` navngir
+# denne modulen som verifikatoren `v_regnskap`, betrodd for
+# `dublettsjekk`, `mva_validert` og `faktura_godkjent` — og bruker de
+# tre til å slippe `faktura.bokfor` gjennom som `modus: auto`. Motoren
+# feiler lukket, så handlingen har aldri fyrt; men den står der, merket
+# auto, og det står ingen steder i policyfila at den ikke kan skje.
+#
+# v1 ER FAKTURAKONTROLLEN SOM IKKE BOKFØRER OG IKKE ATTESTERER.
+#
+# DOMMEN, OG DEN ER KLYNGENS NYE: de tre foregående klyngene holdt igjen
+# på å UTFØRE en handling. Her holder vi igjen på å AUTORISERE en. En
+# attestasjon er nettopp det som slipper en automatisk bokføring med
+# penger i andre enden gjennom, og å ta den fullmakten før treffraten
+# under den er målt er å la modulen definere sin egen troverdighet.
+#
+# v1 kontrollerer den inngående fakturaen — dublett mot det som alt er
+# registrert, at mva-beløpet stemmer med satsen og grunnlaget, at
+# leverandøren finnes i M-24 — og MÅLER hvor ofte kontrollen treffer.
+# Den signerer ingen attestasjon, og den skriver ingenting i noen
+# hovedbok, fordi det ikke finnes noen.
+#
+# GRENSEN MOT M-13: M-13 eier BANKPOSTENE, det som har skjedd på konto.
+# M-14 eier den INNGÅENDE FAKTURAEN, det noen krever av oss. En betalt
+# bankpost uten en kontrollert faktura er et funn å se på — aldri en
+# kobling basen feller selv.
+#
+# GRENSEN MOT M-23: M-23 eier det VI krever av noen. Samme form, motsatt
+# retning, to registre.
+#
+# MVA-SATSENE ER IKKE MODULENS. En sats kodet inn er en fullmakt
+# modulen ga seg selv over et tall staten setter og som endres.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m14_fakturakontroll
+navn: Fakturakontrollagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m14-v1` bærer invarianten
+# `mvasats_hardkodet` — satsene SKAL være policyverdier, ikke konstanter
+# i koden, av samme grunn som M-23s purretrinn og M-24s terskler. Da er
+# m01_policy en reell avhengighet og ikke en høflighet.
+avhengigheter:
+  - m01_policy                 # mva-satsene er policy, ikke konstanter
+  - m02_revisjonslogg          # hver kontroll i evidenskjeden
+kjerne: platform/modules/m14_fakturakontroll
+i18n_prefiks: fakturakontroll
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et fakturasett med KJENT fasit for hvilke som er
+      dubletter og hvilke mva-beløp som er gale, kjørt likt lokalt og
+      på staging. Treffraten er hele poenget: en dublettsjekk ingen har
+      målt er ikke en kontroll, det er en påstand.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver kontroll faktisk står i evidenskjeden, målt som
+      hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: kontrollsveipen bygget, og at en feil i den ikke lar en
+      ukontrollert faktura forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
