@@ -258,6 +258,15 @@ APPEND_ONLY_TRIGGERE = (
     ("leveranseavtale", "m24_avtale_vakt"),
     ("leverandorpart", "m24_part_vakt"),
     ("leverandorterskel", "m24_terskel_vakt"),
+    # 106 (M-14): alle fem vaktene nekter DELETE — en faktura avvises
+    # med begrunnelse, en kjørt kontroll forsvinner ikke fordi utfallet
+    # ble ubehagelig, en slettet mvasats gjør hver kontroll mot den til
+    # et tall uten dom, og funnet lukkes.
+    ("fakturafunn", "m14_funn_vakt"),
+    ("fakturakontroll", "m14_kontroll_vakt"),
+    ("inngaaende_faktura", "m14_faktura_vakt"),
+    ("fakturaterskel", "m14_terskel_vakt"),
+    ("mvasats", "m14_sats_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -407,6 +416,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # leverandøren; tersklene står fritt og kan komme sist.
                  "leverandorfunn", "leveranse", "leveranseavtale",
                  "leverandorpart", "leverandorterskel",
+                 # 106 (M-14): funnene og kontrollene peker på fakturaen.
+                 # Barna først, fakturaen, så satsene og tersklene, som
+                 # står fritt.
+                 "fakturafunn", "fakturakontroll", "inngaaende_faktura",
+                 "mvasats", "fakturaterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

@@ -72,7 +72,8 @@ disponit-avstemmingssveip.service disponit-avstemmingssveip.timer
 disponit-henvendelsessveip.service disponit-henvendelsessveip.timer
 disponit-onboardingsveip.service disponit-onboardingsveip.timer
 disponit-fordringssveip.service disponit-fordringssveip.timer
-disponit-leverandorsveip.service disponit-leverandorsveip.timer"
+disponit-leverandorsveip.service disponit-leverandorsveip.timer
+disponit-fakturasveip.service disponit-fakturasveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -327,6 +328,16 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_LEVERANDORSVEIP_URL:-}" ]
   echo "AVBRUTT: DISPONIT_LEVERANDORSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_leverandorsveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 106 (M-14): fakturasveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# En fakturasveip som ikke kjører er en faktura som forfaller mens den
+# venter — den dyreste raden i registeret.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_FAKTURASVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_FAKTURASVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_fakturasveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -998,6 +1009,16 @@ if [ -z "${DISPONIT_LEVERANDORSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred leverandorsveip DISPONIT_LEVERANDORSVEIP_URL "$DISPONIT_LEVERANDORSVEIP_URL"
+# 106 (M-14): fakturasveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/fakturasveip
+if [ -z "${DISPONIT_FAKTURASVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_FAKTURASVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen fakturasveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred fakturasveip DISPONIT_FAKTURASVEIP_URL "$DISPONIT_FAKTURASVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1146,7 +1167,8 @@ disponit-avstemmingssveip.timer
 disponit-henvendelsessveip.timer
 disponit-onboardingsveip.timer
 disponit-fordringssveip.timer
-disponit-leverandorsveip.timer"
+disponit-leverandorsveip.timer
+disponit-fakturasveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1424,6 +1446,10 @@ systemctl stop disponit-fordringssveip.timer \
 # idempotente over sin egen tilstand.
 systemctl stop disponit-leverandorsveip.timer \
     disponit-leverandorsveip.service 2>/dev/null || true
+# 106 (M-14): fakturasveipen stoppes i samme vindu — funnene er
+# idempotente over sin egen tilstand.
+systemctl stop disponit-fakturasveip.timer \
+    disponit-fakturasveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1588,6 +1614,8 @@ systemctl enable --now disponit-onboardingsveip.timer
 systemctl enable --now disponit-fordringssveip.timer
 # 105 (M-24): leverandørsveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-leverandorsveip.timer
+# 106 (M-14): fakturasveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-fakturasveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

@@ -37,6 +37,7 @@ DRIFT = ROT / "platform" / "drift"
 #: låsen og opplåsingen — ikke for å låse SQL-teksten fast.
 SVEIPENE = (
     ("avstemmingssveip", "m13_sveip_avstemming"),
+    ("fakturasveip", "m14_sveip_fakturaer"),
     ("begrepssveip", "m9_sveip_utlopte"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),

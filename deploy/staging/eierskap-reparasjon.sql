@@ -406,6 +406,27 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm24_leverandorene(text)',                             'disponit_leverandor_eier'),
     ('FUNCTION', 'm24_funnkandidater(text,date)',                       'disponit_leverandor_eier'),
     ('FUNCTION', 'm24_sveip_leverandorer(integer)',                     'disponit_leverandor_eier'),
+    -- 106 (M-14): fakturaregisterets doerer og fakturasveipen. Vaktene
+    -- staar bevisst IKKE her: de opprettes utenfor SET ROLE-vinduet og
+    -- er migrators.
+    ('FUNCTION', 'm14_forventet_mva(bigint,integer)',                   'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_sats_paa_dato(text,text,date)',                   'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_utled_kontroll(uuid,text)',                       'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_leverandor_kjent(text,text)',                     'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_evidens(text,uuid,text,text,jsonb)',              'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_sett_terskler(text,bigint,bigint,integer,integer,text)', 'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_sett_mvasats(text,text,integer,date,date,text)',  'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_registrer_faktura(text,uuid,text,text,bigint,bigint,bigint,text,text,date,date,date,text)', 'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_registrer_kontroll(text,uuid,uuid,text,text,text)', 'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_avgjor_faktura(text,uuid,text,text,text)',        'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_fakturastatus(text)',                             'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_treffrate(text)',                                 'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_fakturaene(text,integer)',                        'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_kontrollene(text,uuid)',                          'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_tersklene(text)',                                 'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_satsene(text)',                                   'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_funnkandidater(text,date)',                       'disponit_faktura_eier'),
+    ('FUNCTION', 'm14_sveip_fakturaer(integer)',                        'disponit_faktura_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
