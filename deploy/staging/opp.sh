@@ -74,7 +74,8 @@ disponit-onboardingsveip.service disponit-onboardingsveip.timer
 disponit-fordringssveip.service disponit-fordringssveip.timer
 disponit-leverandorsveip.service disponit-leverandorsveip.timer
 disponit-fakturasveip.service disponit-fakturasveip.timer
-disponit-prosjektsveip.service disponit-prosjektsveip.timer"
+disponit-prosjektsveip.service disponit-prosjektsveip.timer
+disponit-prisboksveip.service disponit-prisboksveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -349,6 +350,15 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_PROSJEKTSVEIP_URL:-}" ] )
   echo "AVBRUTT: DISPONIT_PROSJEKTSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_prosjektsveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 108 (M-26): prisboksveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# En stille prisboksveip er en pris som går ut uten at noen merker det.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_PRISBOKSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_PRISBOKSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_prisboksveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -1040,6 +1050,16 @@ if [ -z "${DISPONIT_PROSJEKTSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred prosjektsveip DISPONIT_PROSJEKTSVEIP_URL "$DISPONIT_PROSJEKTSVEIP_URL"
+# 108 (M-26): prisboksveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/prisboksveip
+if [ -z "${DISPONIT_PRISBOKSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_PRISBOKSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen prisboksveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred prisboksveip DISPONIT_PRISBOKSVEIP_URL "$DISPONIT_PRISBOKSVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1190,7 +1210,8 @@ disponit-onboardingsveip.timer
 disponit-fordringssveip.timer
 disponit-leverandorsveip.timer
 disponit-fakturasveip.timer
-disponit-prosjektsveip.timer"
+disponit-prosjektsveip.timer
+disponit-prisboksveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1476,6 +1497,10 @@ systemctl stop disponit-fakturasveip.timer \
 # idempotente over sin egen tilstand.
 systemctl stop disponit-prosjektsveip.timer \
     disponit-prosjektsveip.service 2>/dev/null || true
+# 108 (M-26): prisboksveipen stoppes i samme vindu — funnene er
+# idempotente over sin egen tilstand.
+systemctl stop disponit-prisboksveip.timer \
+    disponit-prisboksveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1644,6 +1669,8 @@ systemctl enable --now disponit-leverandorsveip.timer
 systemctl enable --now disponit-fakturasveip.timer
 # 107 (M-25): prosjektsveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-prosjektsveip.timer
+# 108 (M-26): prisboksveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-prisboksveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

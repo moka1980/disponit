@@ -442,6 +442,22 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm25_tersklene(text)',                                 'disponit_prosjekt_eier'),
     ('FUNCTION', 'm25_funnkandidater(text,date)',                       'disponit_prosjekt_eier'),
     ('FUNCTION', 'm25_sveip_prosjekter(integer)',                       'disponit_prosjekt_eier'),
+    -- 108 (M-26): prisbokas doerer og prisboksveipen.
+    ('FUNCTION', 'm26_evidens(text,uuid,text,text,jsonb)',              'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_sett_terskler(text,integer,integer,integer,text)', 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_registrer_produkt(text,uuid,text,text,text,text)', 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_sett_pris(text,uuid,bigint,text,date,text,text)',  'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_sett_klausul(text,text,text,text,boolean,date,text)', 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_sett_produktaktiv(text,uuid,boolean,text)',        'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_pris_paa_dato(text,uuid,date)',                    'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_innenfor_rabatt(text,uuid,date,bigint)',           'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_prisbokstatus(text)',                              'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_produktene(text,integer)',                         'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_prishistorikken(text,uuid)',                       'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_klausulene(text)',                                 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_tersklene(text)',                                  'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_funnkandidater(text,date)',                        'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_sveip_prisbok(integer)',                           'disponit_prisbok_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

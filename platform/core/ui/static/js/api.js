@@ -863,3 +863,35 @@ export const registrerArbeid = (prosjektId, arbeid, idem) =>
 export const avsluttProsjekt = (prosjektId, begrunnelse, idem) =>
   _muter(`/v1/prosjekt/${encodeURIComponent(prosjektId)}/avslutt`,
          "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+// M-26 (108): prisboka. PRODUKTET bærer sin egen SP-2-nøkkel; prisen og
+// klausulen gjør det ikke — versjonen ER nøkkelen der, og en gjentatt
+// prisendring gir en ny versjon fordi den ER en ny beslutning.
+//
+// DET FINNES INGEN TILBUDSFUNKSJON HER, og fraværet er dommen: alle tre
+// bransjemalene navngir modulen som `v_prisbok` og bruker
+// `priser_fra_prisbok` til å la `tilbud.generer` gå automatisk. v1 er
+// boka; et tilbud er et bindende utspill mot en kunde.
+//
+// OG `settKlausul` SENDER INGEN HASH. Den regnes i basen, av teksten
+// selv — en hash flaten oppga ville vært en påstand om innholdet, ikke
+// en måling av det.
+export const settPrisbokterskler = (terskler, idem) =>
+  _muter("/v1/prisbok/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerProdukt = (produkt, idem) =>
+  _muter("/v1/prisbok/produkt", "POST", produkt,
+         idem || nyIdempotensnokkel());
+
+export const settKlausul = (klausul, idem) =>
+  _muter("/v1/prisbok/klausul", "POST", klausul,
+         idem || nyIdempotensnokkel());
+
+export const settPris = (produktId, pris, idem) =>
+  _muter(`/v1/prisbok/${encodeURIComponent(produktId)}/pris`,
+         "POST", pris, idem || nyIdempotensnokkel());
+
+export const settProduktAktiv = (produktId, aktiv, idem) =>
+  _muter(`/v1/prisbok/${encodeURIComponent(produktId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

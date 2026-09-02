@@ -1,0 +1,25 @@
+# M-26 (108): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: både `utlop_varsel_dogn` og
+# `uten_pris_dogn` måles i DØGN, og en pris går ikke ut midt på dagen.
+#
+# SVEIPEN FORLENGER INGEN PRIS. En pris er det virksomheten tjener, og
+# den settes av et menneske med en begrunnelse.
+#
+# KLOKKESLETTET ER 06:50 fordi 03:15 til 06:35 alt er tatt. Sveipens
+# første steg leser ALLE tenanters produkter, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit prisboksveip-timer
+
+[Timer]
+OnCalendar=*-*-* 06:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

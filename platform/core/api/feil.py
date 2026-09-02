@@ -173,6 +173,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # gikk galt» — og en automatisk faktura paa en udokumentert milepael
     # er penger krevd for arbeid som kanskje ikke er gjort.
     Feilvei("prosjekt_ulovlig_tilstand", 409, ("avvis",), None),
+    # 108 (M-26): prisbokas doerer og vakter nekter det tilstanden ikke
+    # tillater — en pris skrevet BAKOVER, en prisendring uten
+    # begrunnelse, et forsoek paa aa endre en frosset pris, to
+    # overlappende versjoner, og en klausulhash som ikke stemmer med
+    # teksten. 409: kroppen ER velformet, det er BASEN som sier nei.
+    # «En pris skrives ikke bakover» er en annen setning enn «noe gikk
+    # galt» — og «hva sto her da» er hele spoersmaalet boka finnes for aa
+    # svare paa.
+    Feilvei("prisbok_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

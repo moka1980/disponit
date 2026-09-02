@@ -279,6 +279,14 @@ APPEND_ONLY_TRIGGERE = (
     ("milepael", "m25_milepael_vakt"),
     ("prosjekt", "m25_prosjekt_vakt"),
     ("prosjektterskel", "m25_terskel_vakt"),
+    # 108 (M-26): alle fem vaktene nekter DELETE. `pris` og `klausul`
+    # gjør det ubetinget: en versjon ERSTATTES, den slettes aldri —
+    # «hva sto her da» er hele spørsmålet boka finnes for å svare på.
+    ("prisbokfunn", "m26_funn_vakt"),
+    ("pris", "m26_pris_vakt"),
+    ("klausul", "m26_klausul_vakt"),
+    ("produkt", "m26_produkt_vakt"),
+    ("prisbokterskel", "m26_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -437,6 +445,10 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # prosjektet. Barna først, prosjektet, tersklene sist.
                  "prosjektfunn", "prosjektarbeid", "milepael",
                  "prosjekt", "prosjektterskel",
+                 # 108 (M-26): funnene og prisene peker på produktet.
+                 # Klausulene står fritt.
+                 "prisbokfunn", "pris", "produkt", "klausul",
+                 "prisbokterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

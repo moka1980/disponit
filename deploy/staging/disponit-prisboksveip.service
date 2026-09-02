@@ -1,0 +1,71 @@
+# M-26 (108): prisboksveipen for priser og klausuler.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (108): et aktivt produkt uten gyldig pris på tenantens grense er
+# `uten_gyldig_pris`; en gjeldende pris som utløper innenfor
+# `utlop_varsel_dogn` er `pris_utloper_snart`; og en tenant uten grenser
+# er `ingen_terskel`.
+#
+# SVEIPEN SETTER INGEN PRIS OG FORLENGER INGEN GYLDIGHET. Den kunne —
+# den vet hvilke priser som er i ferd med å gå ut — men en pris er DET
+# VIRKSOMHETEN TJENER, og en jobb som forlenget den om natten ville tatt
+# den beslutningen på ingens vegne. `RestrictAddressFamilies` slipper
+# AF_INET fordi DATABASEN nås over TCP — ikke fordi noe skal ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille prisboksveip er
+# en pris som går ut uten at noen merker det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_prisboksveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m26_sveip_prisbok`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit prisboksveip (produkter uten pris og priser som utloper -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_PRISBOKSVEIP_URL:/etc/disponit/prisboksveip/DISPONIT_PRISBOKSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_prisboksveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`produkt_aktive`, `pris_oppslag`, `prisbokfunn_apne`).
+# Går dette over ti minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
