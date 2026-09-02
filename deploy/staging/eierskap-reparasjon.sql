@@ -267,6 +267,30 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm22_lisenser(text,integer)',                         'disponit_lisens_eier'),
     ('FUNCTION', 'm22_koe_for_tenant(text,integer)',                   'disponit_lisens_eier'),
     ('FUNCTION', 'm22_koe_utlopsvarsler(integer)',                     'disponit_lisens_eier'),
+    -- 099 (M-30): forespoerselsregisterets doerer, fristsveipen og
+    -- M-4-vakten. NOLOGIN-eieren `disponit_personvern_eier` eier
+    -- funksjonene, ikke tabellene -- de tre tabellene er migrators, som
+    -- 089/090/091/096-familien. Eierskapet ER skrivetilgangen her
+    -- (057-radenes begrunnelse): runtime har ingen tabellrettighet paa
+    -- registeret i det hele tatt og naar det KUN gjennom disse doerene,
+    -- og sveipen er den innelukkede kryss-tenant-autoriteten
+    -- sveiperollen alene faar kalle.
+    -- `m30_lager_vakt` STAAR her, til forskjell fra radvaktene
+    -- `m30_sak_vakt`/`m30_funn_vakt` som er migrators: den er SECURITY
+    -- DEFINER og leser M-4s `retensjonslager` paa vegne av hvem som
+    -- helst som skriver koblingen, og eierskapet ER den lesetilgangen
+    -- (093s egen begrunnelse for sine to registervakter, ordrett)
+    ('FUNCTION', 'm30_evidens(text,uuid,text,text,jsonb)',              'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_ordinaer_frist(date)',                           'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_lager_vakt()',                                   'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_registrer_sak(text,uuid,text,text,date,text,text[],text)', 'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_besvar_sak(text,uuid,text,text)',                'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_avvis_sak(text,uuid,text,text)',                 'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_forleng_frist(text,uuid,date,text,text)',        'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_saker(text,integer)',                            'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_apne_funn(text,integer)',                        'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_sveipkandidater(text,date,integer)',             'disponit_personvern_eier'),
+    ('FUNCTION', 'm30_sveip_frister(integer)',                         'disponit_personvern_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

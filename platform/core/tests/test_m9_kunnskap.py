@@ -1357,14 +1357,25 @@ def test_enheten_er_registrert_i_utrullingen():
     aldri fundamentet, ellers stopper fundamentets egen deploy."""
     opp = (ROT / "deploy" / "staging" / "opp.sh").read_text(encoding="utf-8")
     assert "disponit-begrepssveip.service disponit-begrepssveip.timer" in opp
-    # MEDLEMSKAP I BLOKKEN, ikke «står sist i den». Asserten var
-    # `"disponit-begrepssveip.timer\"" in opp` — altså at timeren var den
-    # SISTE linjen i `SELVREVERS_ENHETER`, målt på det avsluttende
-    # anførselstegnet. Den var grønn helt til M-12 (097) la sin egen
-    # timer etter, og da ble en test om M-9 rød av en endring i en annen
-    # modul. Blokken leses nå ut og medlemskapet måles i den.
-    selvrevers = opp.split("SELVREVERS_ENHETER=")[1].split('"')[1]
-    assert "disponit-begrepssveip.timer" in selvrevers.split(), \
+    # MEDLEMSKAP I BLOKKEN, ikke «står sist i den».
+    #
+    # Asserten var `"disponit-begrepssveip.timer\"" in opp` — altså et
+    # krav om at timeren sto NEDERST i `SELVREVERS_ENHETER`, målt på det
+    # avsluttende anførselstegnet rett bak den. Den var grønn helt til
+    # neste modul la sin egen timer i den samme lista, og da ble en test
+    # om M-9 rød av en endring M-9 ikke hadde noe med. «Fiksen» ville
+    # vært å skyve sin egen oppføring foran — altså å la rekkefølgen i en
+    # delt liste bli en kontrakt ingen har skrevet ned.
+    #
+    # TRE BYGGESPOR RETTET DETTE UAVHENGIG (M-12, M-30, M-34, 1/9), hver
+    # med sin egen variant. Dette er den ene som ble stående; de to andre
+    # målte det samme og er fjernet i fletten. At tre spor traff den
+    # samme fella sier at rekkefølgeavhengige asserts i delte lister er
+    # verdt å lete etter, ikke bare å rette når de smeller.
+    import re as _re
+    selvrevers = _re.search(r'SELVREVERS_ENHETER="(.*?)"', opp, _re.S)
+    assert selvrevers, "fant ikke SELVREVERS_ENHETER i opp.sh"
+    assert "disponit-begrepssveip.timer" in selvrevers.group(1).split(), \
         "enheten mangler i SELVREVERS_ENHETER"
     assert "DISPONIT_KUNNSKAPSSVEIP_URL" in opp, "DSN-porten mangler"
     assert "systemctl enable --now disponit-begrepssveip.timer" in opp

@@ -260,6 +260,26 @@ REVOKE ALL ON FUNCTION m12_sveip_for_tenant(TEXT, INT) FROM {rolle};
 SET LOCAL ROLE disponit_lisens_eier;
 GRANT EXECUTE ON FUNCTION m22_lisenser(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m22_koe_utlopsvarsler(INT) FROM {rolle};
+-- 099 (M-30): forespørselsregisterets TO LESEDØRER — sakslisten og
+-- funnlisten. Samme snitt og samme begrunnelse som 093/096 over:
+-- `personvernsak`, `personvernsak_lager` og `personvernfunn` står
+-- bevisst IKKE i noen GRANT-liste her, runtime har ingen SELECT på dem
+-- i det hele tatt (SP-7) og når registeret KUN gjennom dørene, som
+-- krever tenantkontekst først. Skrivedørene ligger i
+-- M37_RETTIGHETER_API (menneskelige handlinger i flaten); SVEIPEN
+-- hører sveiperollen til (PERSONVERNSVEIP_RETTIGHETER) og er
+-- kryss-tenant — et grant her ville gitt forespørselsveien nøyaktig
+-- det vinduet sveiperollen finnes for å nekte den. En rettighet som
+-- bare slutter å bli gitt er ikke trukket tilbake (035), derfor REVOKE
+-- og ikke bare fravær.
+SET LOCAL ROLE disponit_personvern_eier;
+GRANT EXECUTE ON FUNCTION m30_saker(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m30_apne_funn(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m30_sveip_frister(INT) FROM {rolle};
+-- Kandidatpredikatet er sveipens indre og ingen andres: det leser
+-- registeret UTEN å kreve tenantkontekst (sveipen setter den selv), og
+-- en runtime som kunne kalle det ville hatt en lesevei rundt SP-1.
+REVOKE ALL ON FUNCTION m30_sveipkandidater(TEXT, DATE, INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -664,6 +684,18 @@ SET LOCAL ROLE disponit_lisens_eier;
 GRANT EXECUTE ON FUNCTION m22_registrer_lisens(TEXT, UUID, TEXT, TEXT, TEXT, INT, NUMERIC, TEXT, DATE, TEXT, INT, TEXT, INT[], TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m22_registrer_fornyelse(TEXT, UUID, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m22_marker_avsluttet(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 099 (M-30): forespørselsregisterets FIRE skrivedører — registrering,
+-- svar, avslag og fristforlengelse. Menneskelige handlinger i flaten
+-- (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu som
+-- 057/082/089/096-dørene over, men en ANNEN eier — derfor sin egen
+-- rolleblokk. At en sak ikke kan lukkes uten et skrevet svar, at et
+-- avslag koster en begrunnelse og at forlengelsen har et tak på to
+-- måneder håndheves i dørene og i CHECK-ene, ikke her.
+SET LOCAL ROLE disponit_personvern_eier;
+GRANT EXECUTE ON FUNCTION m30_registrer_sak(TEXT, UUID, TEXT, TEXT, DATE, TEXT, TEXT[], TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m30_besvar_sak(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m30_avvis_sak(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m30_forleng_frist(TEXT, UUID, DATE, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -945,6 +977,26 @@ GRANT EXECUTE ON FUNCTION m12_sveip_gjennomganger(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 099 (M-30): fristsveipens rolle. Samme form og samme begrunnelse som
+# KUNNSKAPSSVEIP_RETTIGHETER over: nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. `m30_sveip_frister` er KRYSS-TENANT og setter selv
+# RLS-konteksten per tenant, så rollen kan reise funn i alle tenanter
+# uten å kunne LESE en eneste sak selv — og et forespørselsregister er
+# husets mest sensitive lager, fordi det sier hvem som har krevd innsyn
+# i sine egne personopplysninger. Hele autoriteten står i den eier-eide
+# defineren, revidérbar på ett sted.
+PERSONVERNSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_personvern_eier;
+GRANT EXECUTE ON FUNCTION m30_sveip_frister(INT) TO {rolle};
+-- LESEDØRENE STÅR BEVISST IKKE HER. Sveipen reiser funn; den leser
+-- aldri sakslisten tilbake gjennom en tenantbundet dør, og et
+-- `m30_saker` den ikke trenger ville vært en lesevei den ikke skal ha.
+-- Kandidatpredikatet nås gjennom defineren, aldri direkte.
+REVOKE ALL ON FUNCTION m30_sveipkandidater(TEXT, DATE, INT) FROM {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1134,7 +1186,13 @@ def main(argv: list[str] | None = None) -> int:
                           # ingen tabellrettigheter å nullstille, bare
                           # den ene EXECUTEn.
                           ("disponit_tilgangssveip",
-                           TILGANGSSVEIP_RETTIGHETER)):
+                           TILGANGSSVEIP_RETTIGHETER),
+                          # 099 (M-30): fristsveipens rolle, samme
+                          # løkke og samme betingelse — ingen
+                          # tabellrettigheter å nullstille, bare den
+                          # ene EXECUTEn.
+                          ("disponit_personvernsveip",
+                           PERSONVERNSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

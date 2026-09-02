@@ -521,7 +521,14 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # samme begrunnelse — nøyaktig én EXECUTE, ingen
         # tabellrettigheter, og en fallback til runtime-DSN-en ville
         # startet sveipen rett i `permission denied` hver natt.
-        "DISPONIT_TILGANGSSVEIP_URL")})
+        "DISPONIT_TILGANGSSVEIP_URL",
+        # 099 (M-30): fristsveipens EGEN DSN, av samme grunn. Rollen har
+        # nøyaktig én EXECUTE og ingen tabellrettigheter i det hele
+        # tatt, og en fallback til runtime-DSN-en ville startet sveipen
+        # rett i `permission denied` hver natt — altså et
+        # forespørselsregister der en oversittet innsynsfrist aldri blir
+        # et funn.
+        "DISPONIT_PERSONVERNSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -554,6 +561,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         encoding="utf-8") == "verdi-DISPONIT_KUNNSKAPSSVEIP_URL"
     assert (rot / "tilgangssveip/DISPONIT_TILGANGSSVEIP_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_TILGANGSSVEIP_URL"
+    # 099 (M-30): fristsveipens egen, i sin egen katalog. Samme klasse:
+    # å bare legge navnet i miljølisten over ville målt at blokken IKKE
+    # STOPPET, ikke at credentialen faktisk ble skrevet.
+    assert (rot / "personvernsveip/DISPONIT_PERSONVERNSVEIP_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_PERSONVERNSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -1002,7 +1014,14 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # samme begrunnelse — nøyaktig én EXECUTE, ingen
         # tabellrettigheter, og en fallback til runtime-DSN-en ville
         # startet sveipen rett i `permission denied` hver natt.
-        "DISPONIT_TILGANGSSVEIP_URL")})
+        "DISPONIT_TILGANGSSVEIP_URL",
+        # 099 (M-30): fristsveipens EGEN DSN, av samme grunn. Rollen har
+        # nøyaktig én EXECUTE og ingen tabellrettigheter i det hele
+        # tatt, og en fallback til runtime-DSN-en ville startet sveipen
+        # rett i `permission denied` hver natt — altså et
+        # forespørselsregister der en oversittet innsynsfrist aldri blir
+        # et funn.
+        "DISPONIT_PERSONVERNSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

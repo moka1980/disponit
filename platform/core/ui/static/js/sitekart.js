@@ -280,6 +280,25 @@ const BASISRUTER = [
   // `policyforvalter` — som alle har lov til å SE hva virksomheten
   // betaler for og når det må besluttes.
   { nokkel: "lisens", scope: "decisions:read", modulflate: 22 },
+  // M-30 (099): forespørselsregisteret. BASISRUTE bak `security:read`
+  // — scopet API-et bak flaten krever (`GET /v1/personvern` i
+  // RUTESCOPE), som resten av tabellen: menyen lover aldri en flate
+  // serveren svarer 403 på.
+  //
+  // OG SCOPET ER MED VILJE IKKE `decisions:read`, til forskjell fra
+  // naboen over. Det scopet har ALLE kunderollene, og dette registeret
+  // sier hvem i virksomheten som har krevd innsyn i, retting av eller
+  // sletting av sine egne personopplysninger. `security:read` er
+  // compliance/ops-klassen (`sikkerhet` og `admin`) — den samme
+  // `retensjon` og `datakvalitet` over ligger i, og et personvernombuds
+  // arbeidsflate hører hjemme nettopp der. Her ville en bredere
+  // oppføring ikke bevart tilgang, den ville UTVIDET den.
+  //
+  // De fire skriveveiene er gatet både inne på flaten og i registeret
+  // (`bestilling:opprett`), så `sikkerhet` ser listen uten å kunne
+  // endre den: å lese hvilke frister som løper er tilsyn, å svare på
+  // vegne av virksomheten er myndighet.
+  { nokkel: "personvern", scope: "security:read", modulflate: 30 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

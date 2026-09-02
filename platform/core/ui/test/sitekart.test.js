@@ -355,8 +355,11 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // ALLEREDE hadde wrapperen. Seks tabeller i fire flater sto uten, og
   // fiksen så ut til å virke fordi jeg testet på retensjon. Porten teller
   // nå begge deler i hver flate og krever at de er like mange.
+  // Listen er FELLES og skal UTVIDES, aldri dupliseres: M-12 og M-30 la
+  // hver sin flate her samtidig, og en naiv fletting beholdt begge
+  // halelinjene — som ga en syntaksfeil i stedet for to lister.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
-    "dokumentmal", "tilgang"];
+    "dokumentmal", "tilgang", "personvern"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

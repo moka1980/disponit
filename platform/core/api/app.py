@@ -1197,6 +1197,32 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def lisens_avslutt(request: Request) -> Response:
         from . import lisens as lisensmodul
         return lisensmodul.avslutt_endepunkt(tjeneste, request)
+    # 099 (M-30): forespørselsregisteret. Leseveien er tenantens eget
+    # register bak compliance-lesescopet; de fire skriveveiene er
+    # menneskelige handlinger i flaten, bak `bestilling:opprett` + CSRF
+    # + Idempotency-Key. Fristsveipen finnes IKKE som HTTP — den er
+    # kryss-tenant og kjøres av `disponit_personvernsveip` fra sin egen
+    # timer, med sitt eget grant. Og INGEN av rutene sletter noe:
+    # sletting eies av M-4s retensjonsregnskap (093).
+    def personvern_liste(request: Request) -> Response:
+        from . import personvern as personvernmodul
+        return personvernmodul.saker(tjeneste, request)
+
+    def personvern_registrer(request: Request) -> Response:
+        from . import personvern as personvernmodul
+        return personvernmodul.registrer_endepunkt(tjeneste, request)
+
+    def personvern_svar(request: Request) -> Response:
+        from . import personvern as personvernmodul
+        return personvernmodul.besvar_endepunkt(tjeneste, request)
+
+    def personvern_avvis(request: Request) -> Response:
+        from . import personvern as personvernmodul
+        return personvernmodul.avvis_endepunkt(tjeneste, request)
+
+    def personvern_forleng(request: Request) -> Response:
+        from . import personvern as personvernmodul
+        return personvernmodul.forleng_endepunkt(tjeneste, request)
 
     def drift_backup(request: Request) -> Response:
         return lesing.drift_backup(tjeneste, request)
@@ -1588,6 +1614,17 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/lisens/{lisens_id:uuid}/fornyelse", lisens_fornyelse,
               methods=["POST"]),
         Route("/v1/lisens/{lisens_id:uuid}/avslutt", lisens_avslutt,
+              methods=["POST"]),
+        # 099 (M-30): kolleksjonsrutene FØR mønsterrutene, som ellers i
+        # fila — {sak_id:uuid} avviser «svar»/«avvis»/«forleng» uansett,
+        # men rekkefølgen sier intensjonen.
+        Route("/v1/personvern", personvern_liste, methods=["GET"]),
+        Route("/v1/personvern", personvern_registrer, methods=["POST"]),
+        Route("/v1/personvern/{sak_id:uuid}/svar", personvern_svar,
+              methods=["POST"]),
+        Route("/v1/personvern/{sak_id:uuid}/avvis", personvern_avvis,
+              methods=["POST"]),
+        Route("/v1/personvern/{sak_id:uuid}/forleng", personvern_forleng,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -2321,6 +2358,41 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # `kunnskap:read` står i `lesing.kunnskap`. Ingen skriverute finnes:
     # dørene i 095 er REVOKEt fra runtime-rollen i `migrer.py`.
     ("GET",  "/v1/kunnskap"):                "decisions:read",
+    # M-30 (099): forespørselsregisteret — hvem som har krevd innsyn i,
+    # retting av eller sletting av sine egne personopplysninger, med
+    # frist, eier og skrevet svar.
+    #
+    # LESESCOPET ER `security:read`, IKKE `decisions:read`, og det er en
+    # dom og ikke en avskrift av M-21-raden over. `decisions:read` har
+    # ALLE kunderollene i `autorisasjon.py` — også `leser`,
+    # `godkjenner` og `policyforvalter` — og det scopet er «kundens egen
+    # tilstandsflate»: beslutninger, rapporter, utrullingsplanen,
+    # ordlisten, pliktregisteret. Å legge DETTE registeret der ville
+    # gitt hver eneste innlogget bruker lesetilgang til hvem i
+    # virksomheten som har bedt om sletting av sine personopplysninger.
+    # `security:read` har `sikkerhet` og `admin` — compliance/ops-
+    # klassen, den samme `/v1/drift/*`, `/v1/datakvalitet` og
+    # `/v1/retensjon` alt ligger i, og et personvernombuds arbeidsflate
+    # hører hjemme nettopp der. Scopet står dessuten i `LESESCOPES`, som
+    # er det `_autentiser` krever av en browserøkt; `platform:admin`
+    # gjør ikke det og ville gitt 403 for hver eneste innlogging
+    # (093-raden over sier det samme).
+    #
+    # SKRIVEVEIENE GJENBRUKER `bestilling:opprett` — samme scope som
+    # pliktregisterets tre, og det står alt i BROWSER_MUTASJONSSCOPES.
+    # Konsekvensen er tilsiktet: `sikkerhet` kan SE registeret og kan
+    # IKKE endre det. Å lese hvilke frister som løper er tilsyn; å svare
+    # på vegne av virksomheten er myndighet.
+    #
+    # Sveipen står IKKE her, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m30_sveip_frister` er kryss-tenant og kjøres
+    # av `disponit_personvernsveip` fra sin egen timer — en fullmakt
+    # web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/personvern"):              "security:read",
+    ("POST", "/v1/personvern"):              "bestilling:opprett",
+    ("POST", "/v1/personvern/{sak_id:uuid}/svar"): "bestilling:opprett",
+    ("POST", "/v1/personvern/{sak_id:uuid}/avvis"): "bestilling:opprett",
+    ("POST", "/v1/personvern/{sak_id:uuid}/forleng"): "bestilling:opprett",
     # PR-013: policyadministrasjon. write/activate er ADSKILTE (V6); lesing er
     # policy:read. Verifiseres per-endepunkt av _autentiser + CSRF.
     ("GET",  "/v1/policymaler"):             "policy:read",

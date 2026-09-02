@@ -14,9 +14,18 @@
 #
 # v1 registrerer derfor forespørslene: hvem som har bedt om hva, når
 # fristen går ut (GDPR art. 12: én måned), hvem som eier den, og hva
-# svaret ble. Den varsler før fristen og gjør en oversittet frist til
-# et funn. SELVE UTFØRELSEN gjøres av den som eier lageret — og
+# svaret ble. SELVE UTFØRELSEN gjøres av den som eier lageret — og
 # registeret er det som gjør at noen kan se at den ble gjort.
+#
+# RETTELSE 2/9: hodekommentaren sa «den varsler før fristen». Det var
+# for sterkt, og byggesporet nektet å bygge en varselvei det ikke hadde
+# en grense for — riktig avgjørelse. v1 gjør en frist som nærmer seg og
+# en som er oversittet til FUNN i registeret; ingen får e-post, og
+# eieren må lese flaten. Grensen `m30-v1` ble registrert før koden og
+# bærer ingen invariant om varselidempotens (til forskjell fra m21-v1s
+# `varsel_duplisert_per_varslingspunkt`), så en varselvei ville vært
+# ubeskyttet av porten som skal vokte den. Den bør felles som en egen
+# dom før den bygges.
 #
 # DOMMEN v1 hviler på: en forespørsel lukkes av et SKREVET SVAR, aldri
 # av at fristen passerer. Det er samme regel som M-21s kvitteringskrav,
