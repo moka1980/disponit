@@ -1,0 +1,82 @@
+# M-24 (105): leverandørsveipen for avtaler, SLA og innkjøpspris.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (105): en aktiv avtale med like mange bruddleveranser som tenantens
+# `sla_brudd_grense` er et `sla_brudd`-funn; en siste pris mer enn
+# `prisstigning_promille` over den avtalte er `pris_over_terskel`; en
+# avtale som er utløpt eller nær utløp er `avtale_utlopt`; en aktiv
+# avtale uten en eneste måling på `maling_stillhet_dogn` er
+# `avtale_uten_maling`; og en tenant uten terskler i det hele tatt er
+# `ingen_terskel` — da vet ingen hva «for dyrt» eller «for dårlig»
+# betyr, og hvert av de andre funnene ville vært en gjetning.
+#
+# SVEIPEN BETALER INGEN OG AVSLUTTER INGEN AVTALE. Den kunne — den vet
+# hvilke avtaler som er utløpt og hvilke priser som har steget — men en
+# utgående betaling er den ene handlingen i katalogen som er umulig å
+# angre, og en jobb som betalte om natten er nøyaktig den fullmakten v1
+# ikke gir seg selv. Den skriver funn; et menneske handler.
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut.
+#
+# OG DEN SETTER INGEN PRIS. Katalogen deler marginbeskyttelsen: M-24
+# oppdager kostnadsøkningen, M-26 foreslår ny pris. Sveipen holder seg
+# på sin side av det snittet.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille leverandørsveip
+# er en avtale som glir ut, en pris som stiger, og et SLA ingen måler —
+# alle tre koster penger i det stille.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_leverandorsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m24_sveip_leverandorer`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit leverandorsveip (SLA-brudd, prisstigning og utlopte avtaler -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_LEVERANDORSVEIP_URL:/etc/disponit/leverandorsveip/DISPONIT_LEVERANDORSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_leverandorsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`leveranseavtale_tenant_status`, `leveranse_avtale_levert`,
+# `leverandorfunn_apne`). Går dette over ti minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

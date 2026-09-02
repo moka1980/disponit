@@ -1330,6 +1330,47 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import fordring as fordringmodul
         return fordringmodul.ettergi_endepunkt(tjeneste, request)
 
+    # 105 (M-24): leverandør- og SLA-registeret. To leseveier og fem
+    # skriveveier — alle menneskelige handlinger i flaten.
+    #
+    # OG DET FINNES INGEN BETALINGSVEI. Katalogteksten lover
+    # leverandørbetaling innen policygrenser; v1 registrerer avtalen og
+    # måler leveransen mot den. Fraværet er dommen: en utgående betaling
+    # er den ene handlingen i katalogen som er umulig å angre — pengene
+    # er borte, og de er borte hos noen andre.
+    #
+    # OG INGEN PRISVEI: katalogen deler marginbeskyttelsen, M-24
+    # oppdager og M-26 foreslår. Ingen av rutene under setter en pris.
+    def leverandor_bilde(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.leverandorbilde(tjeneste, request)
+
+    def leverandor_leveranser(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.leveransene_endepunkt(tjeneste, request)
+
+    def leverandor_terskler(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.terskler_endepunkt(tjeneste, request)
+
+    def leverandor_part(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.registrer_part_endepunkt(tjeneste, request)
+
+    def leverandor_avtale(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.registrer_avtale_endepunkt(tjeneste,
+                                                          request)
+
+    def leverandor_leveranse(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.registrer_leveranse_endepunkt(tjeneste,
+                                                             request)
+
+    def leverandor_avslutt(request: Request) -> Response:
+        from . import leverandor as leverandormodul
+        return leverandormodul.avslutt_avtale_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1882,6 +1923,23 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               fordring_neste_trinn, methods=["POST"]),
         Route("/v1/fordring/{fordring_id:uuid}/ettergi", fordring_ettergi,
               methods=["POST"]),
+        # 105 (M-24): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `part`, `avtale`) FØR mønsterruten — {avtale_id:uuid} avviser
+        # ordene uansett, men rekkefølgen sier intensjonen. STIENE STÅR
+        # PÅ ÉN LINJE (102s lærdom: porten i test_pr008 parser kilden
+        # med regex).
+        Route("/v1/leverandor", leverandor_bilde, methods=["GET"]),
+        Route("/v1/leverandor/terskler", leverandor_terskler,
+              methods=["POST"]),
+        Route("/v1/leverandor/part", leverandor_part, methods=["POST"]),
+        Route("/v1/leverandor/avtale", leverandor_avtale,
+              methods=["POST"]),
+        Route("/v1/leverandor/{avtale_id:uuid}/leveranser",
+              leverandor_leveranser, methods=["GET"]),
+        Route("/v1/leverandor/{avtale_id:uuid}/leveranse",
+              leverandor_leveranse, methods=["POST"]),
+        Route("/v1/leverandor/{avtale_id:uuid}/avslutt",
+              leverandor_avslutt, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2682,6 +2740,26 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/fordring/{fordring_id:uuid}/neste-trinn"):
         "bestilling:opprett",
     ("POST", "/v1/fordring/{fordring_id:uuid}/ettergi"):
+        "bestilling:opprett",
+    # 105 (M-24): leverandør- og SLA-registeret. LESINGEN bærer
+    # `okonomi:read` — scopet M-13 (101) innførte og M-23 (104)
+    # gjenbrukte. Hva vi har AVTALT å betale, og hva vi FAKTISK betaler,
+    # er virksomhetens pengestrøm; ikke allmenn tilstandsinnsikt.
+    # Gjenbrukt, ikke nytt: et eget `leverandor:read` ville delt den
+    # samme kretsen i to uten at noen kunne si hvorfor.
+    #
+    # SKRIVINGEN bærer `bestilling:opprett`, samme presedens som
+    # 096/100/101/102/103/104. Ingen av dem betaler noe — den handlingen
+    # finnes ikke i v1.
+    ("GET",  "/v1/leverandor"):                   "okonomi:read",
+    ("GET",  "/v1/leverandor/{avtale_id:uuid}/leveranser"):
+        "okonomi:read",
+    ("POST", "/v1/leverandor/terskler"):          "bestilling:opprett",
+    ("POST", "/v1/leverandor/part"):              "bestilling:opprett",
+    ("POST", "/v1/leverandor/avtale"):            "bestilling:opprett",
+    ("POST", "/v1/leverandor/{avtale_id:uuid}/leveranse"):
+        "bestilling:opprett",
+    ("POST", "/v1/leverandor/{avtale_id:uuid}/avslutt"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

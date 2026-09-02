@@ -249,6 +249,15 @@ APPEND_ONLY_TRIGGERE = (
     ("fordringshendelse", "m23_hendelse_vakt"),
     ("fordring", "m23_fordring_vakt"),
     ("purretrinn", "m23_purretrinn_vakt"),
+    # 105 (M-24): alle fem vaktene nekter DELETE — en avtale avsluttes
+    # med begrunnelse, en registrert måling forsvinner ikke fordi den
+    # ble ubehagelig, en leverandør deaktiveres, funnet lukkes, og en
+    # tenant kan ikke slette seg til en tilstand uten terskler.
+    ("leverandorfunn", "m24_funn_vakt"),
+    ("leveranse", "m24_leveranse_vakt"),
+    ("leveranseavtale", "m24_avtale_vakt"),
+    ("leverandorpart", "m24_part_vakt"),
+    ("leverandorterskel", "m24_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -393,6 +402,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # fordringen, så trinnene, planen sist.
                  "fordringsfunn", "fordringshendelse", "fordring",
                  "purretrinn", "purreplan",
+                 # 105 (M-24): funnene og målingene peker på avtalen, og
+                 # avtalen på leverandøren. Barna først, avtalen, så
+                 # leverandøren; tersklene står fritt og kan komme sist.
+                 "leverandorfunn", "leveranse", "leveranseavtale",
+                 "leverandorpart", "leverandorterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

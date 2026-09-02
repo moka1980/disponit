@@ -766,3 +766,37 @@ export const nesteTrinn = (fordringId, begrunnelse, idem) =>
 export const ettergiFordring = (fordringId, begrunnelse, idem) =>
   _muter(`/v1/fordring/${encodeURIComponent(fordringId)}/ettergi`,
          "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+// M-24 (105): leverandør- og SLA-registeret. LEVERANDØREN, AVTALEN og
+// hver MÅLING bærer sin egen SP-2-nøkkel — serveren utleder id-en av
+// den. En dobbelt registrert måling ville telt det samme bruddet to
+// ganger, og et funn som sier «tre brudd» der det var to er et funn
+// ingen kan handle på.
+//
+// DET FINNES INGEN BETALINGSFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover leverandørbetaling innen policygrenser, v1
+// registrerer avtalen og måler leveransen. En utgående betaling er den
+// ene handlingen i katalogen som er umulig å angre.
+//
+// OG INGEN PRISFUNKSJON: M-24 oppdager kostnadsøkningen, M-26 foreslår
+// ny pris. `prisavvik` som kommer TILBAKE er et avvik mellom to målte
+// tall, ikke et forslag.
+export const settTerskler = (terskler, idem) =>
+  _muter("/v1/leverandor/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerLeverandor = (leverandor, idem) =>
+  _muter("/v1/leverandor/part", "POST", leverandor,
+         idem || nyIdempotensnokkel());
+
+export const registrerAvtale = (avtale, idem) =>
+  _muter("/v1/leverandor/avtale", "POST", avtale,
+         idem || nyIdempotensnokkel());
+
+export const registrerLeveranse = (avtaleId, maling, idem) =>
+  _muter(`/v1/leverandor/${encodeURIComponent(avtaleId)}/leveranse`,
+         "POST", maling, idem || nyIdempotensnokkel());
+
+export const avsluttAvtale = (avtaleId, begrunnelse, idem) =>
+  _muter(`/v1/leverandor/${encodeURIComponent(avtaleId)}/avslutt`,
+         "POST", { begrunnelse }, idem || nyIdempotensnokkel());

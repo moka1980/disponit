@@ -364,6 +364,25 @@ GRANT EXECUTE ON FUNCTION m23_purreplanen(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m23_hendelsene(TEXT, UUID) TO {rolle};
 REVOKE ALL ON FUNCTION m23_sveip_fordringer(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m23_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 105 (M-24): leverandørregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7). Skrivedørene ligger i
+-- M37_RETTIGHETER_API; SVEIPEN hører sveiperollen til
+-- (LEVERANDORSVEIP_RETTIGHETER) og er kryss-tenant.
+--
+-- `m24_bryter_sla` er med fordi FLATENS lesedører kaller den gjennom
+-- sine definere, og fordi et menneske skal kunne spørre basen om
+-- retningen uten å gjette. Den er IMMUTABLE og rører ingen tabell.
+SET LOCAL ROLE disponit_leverandor_eier;
+GRANT EXECUTE ON FUNCTION m24_leverandorstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_slaoversikt(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_avtalene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_leveransene(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_tersklene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_leverandorene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_bryter_sla(TEXT, INT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m24_sveip_leverandorer(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m24_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -834,6 +853,16 @@ GRANT EXECUTE ON FUNCTION m23_registrer_fordring(TEXT, UUID, TEXT, TEXT, BIGINT,
 GRANT EXECUTE ON FUNCTION m23_registrer_betaling(TEXT, UUID, UUID, BIGINT, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m23_neste_trinn(TEXT, UUID, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m23_ettergi(TEXT, UUID, UUID, TEXT, TEXT) TO {rolle};
+-- 105 (M-24): leverandørregisterets fem skrivedører. At en måling må
+-- ligge innenfor avtalens gyldighet, at en avsluttet avtale ikke tar
+-- imot målinger, og at en avslutning koster en begrunnelse, håndheves i
+-- dørene og i vaktene — aldri her. INGEN AV DEM BETALER NOE.
+SET LOCAL ROLE disponit_leverandor_eier;
+GRANT EXECUTE ON FUNCTION m24_sett_terskler(TEXT, INT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_registrer_leverandor(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_registrer_avtale(TEXT, UUID, UUID, TEXT, TEXT, INT, BIGINT, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_registrer_leveranse(TEXT, UUID, UUID, DATE, INT, BIGINT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m24_avslutt_avtale(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1206,6 +1235,19 @@ GRANT EXECUTE ON FUNCTION m23_sveip_fordringer(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 105 (M-24): leverandørsveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den BETALER INGEN og AVSLUTTER INGEN AVTALE: en
+# utgående betaling er den ene handlingen i katalogen som er umulig å
+# angre, og en jobb som betalte om natten er nøyaktig den fullmakten v1
+# ikke gir seg selv.
+LEVERANDORSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_leverandor_eier;
+GRANT EXECUTE ON FUNCTION m24_sveip_leverandorer(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1427,7 +1469,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 104 (M-23): fordringssveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_fordringssveip",
-                           FORDRINGSVEIP_RETTIGHETER)):
+                           FORDRINGSVEIP_RETTIGHETER),
+                          # 105 (M-24): leverandørsveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_leverandorsveip",
+                           LEVERANDORSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
