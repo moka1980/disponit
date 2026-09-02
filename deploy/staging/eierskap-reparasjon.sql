@@ -352,6 +352,24 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_utkastene(text,uuid)',                            'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_funnkandidater(text,date,integer,integer)',       'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_sveip_henvendelser(integer,integer,integer)',     'disponit_kundeservice_eier'),
+    -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.
+    -- NOLOGIN-eieren `disponit_onboarding_eier` eier funksjonene, ikke
+    -- tabellene. Vaktene `m18_malsteg_vakt`, `m18_lop_vakt`,
+    -- `m18_steg_vakt` og `m18_funn_vakt` staar bevisst IKKE her: de
+    -- opprettes utenfor SET ROLE-vinduet og er migrators
+    ('FUNCTION', 'm18_evidens(text,uuid,text,text,jsonb)',              'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_registrer_mal(text,uuid,text,text)',              'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_sett_malsteg(text,uuid,jsonb,text)',              'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_start_lop(text,uuid,uuid,text,text,date,text)',   'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_sett_stegeier(text,uuid,integer,text,text)',      'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_fullfor_steg(text,uuid,integer,text,text)',       'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_avslutt_lop(text,uuid,text,text,text)',           'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_onboardingstatus(text)',                          'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_lopene(text,integer)',                            'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_stegene(text,uuid)',                              'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_malene(text)',                                    'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_funnkandidater(text,date,integer)',               'disponit_onboarding_eier'),
+    ('FUNCTION', 'm18_sveip_onboarding(integer,integer)',               'disponit_onboarding_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

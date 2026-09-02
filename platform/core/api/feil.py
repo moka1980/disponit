@@ -127,6 +127,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # som sier nei. «Vi kan ikke vise at noen svarte» er en annen setning
     # enn «noe gikk galt».
     Feilvei("henvendelse_ulovlig_tilstand", 409, ("avvis",), None),
+    # 103 (M-18): onboardingregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — et steg fullfoert foer sitt
+    # forgjengersteg, et loep merket «fullfoert» med obligatoriske steg
+    # ugjort, en eier som ikke er aktivt medlem, et avbrutt loep uten
+    # begrunnelse. 409 av samme grunn som radene over: kroppen ER
+    # velformet, det er BASEN som sier nei. «Vi er ikke der ennaa» er en
+    # annen setning enn «noe gikk galt».
+    Feilvei("onboarding_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

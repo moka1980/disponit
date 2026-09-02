@@ -697,3 +697,38 @@ export const avgjorUtkast = (utkastId, status, idem) =>
 export const lukkHenvendelse = (id, utfall, idem) =>
   _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/lukk`,
          "POST", { utfall }, idem || nyIdempotensnokkel());
+// M-18 (103): onboardingregisteret. MALEN og LØPET bærer hver sin
+// SP-2-nøkkel — serveren utleder id-en av den, så en tapt respons + nytt
+// klikk gjenspiller i stedet for å starte et løp til. Et dobbelt startet
+// løp ville gitt to sett steg for den samme kunden, og «hvor står vi» to
+// svar.
+//
+// DET FINNES INGEN PROVISJONERINGSFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover 0 minutter per ny kunde, v1 registrerer løpet.
+// En automatisk provisjonering forutsetter at man vet hva et fullført
+// løp er.
+export const registrerOnboardingmal = (mal, idem) =>
+  _muter("/v1/onboarding/mal", "POST", mal, idem || nyIdempotensnokkel());
+
+export const settMalsteg = (malId, steg, idem) =>
+  _muter(`/v1/onboarding/mal/${encodeURIComponent(malId)}/steg`,
+         "POST", { steg }, idem || nyIdempotensnokkel());
+
+export const startOnboardinglop = (lop, idem) =>
+  _muter("/v1/onboarding/lop", "POST", lop, idem || nyIdempotensnokkel());
+
+export const settStegeier = (lopId, stegNr, eierBrukerId, idem) =>
+  _muter(
+    `/v1/onboarding/lop/${encodeURIComponent(lopId)}/steg/${stegNr}/eier`,
+    "POST", { eier_bruker_id: eierBrukerId },
+    idem || nyIdempotensnokkel());
+
+export const fullforSteg = (lopId, stegNr, notat, idem) =>
+  _muter(
+    `/v1/onboarding/lop/${encodeURIComponent(lopId)}/steg/${stegNr}/fullfor`,
+    "POST", { notat }, idem || nyIdempotensnokkel());
+
+export const avsluttOnboardinglop = (lopId, status, begrunnelse, idem) =>
+  _muter(`/v1/onboarding/lop/${encodeURIComponent(lopId)}/avslutt`,
+         "POST", { status, begrunnelse },
+         idem || nyIdempotensnokkel());

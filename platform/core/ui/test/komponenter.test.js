@@ -921,7 +921,11 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
   // svarer kunder skal se den. TALLET UNDER UTVIDES, det dupliseres ikke.
   assert.ok(kortene(nordvik.rot).includes("#/kundeservice"),
     "kundeservicekøen har ingen inngang i det hele tatt for en ekte tenant");
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 11,
+  // M-18 (103): onboardingløpene er den neste modulflaten en LESEØKT
+  // har rute til. TALLET UNDER UTVIDES, det dupliseres ikke.
+  assert.ok(kortene(nordvik.rot).includes("#/onboarding"),
+    "onboardingregisteret har ingen inngang for en ekte tenant");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 12,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -932,7 +936,8 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
     ["#/avtalefrist", "#/dokumentmal", "#/kundeservice", "#/kunnskap",
-      "#/lisens", "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
+      "#/lisens", "#/nokkeltall", "#/onboarding", "#/rekruttering",
+      "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),

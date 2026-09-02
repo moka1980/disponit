@@ -100,7 +100,8 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
       "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
-      "kunnskap", "avtalefrist", "lisens", "kundeservice"]);
+      "kunnskap", "avtalefrist", "lisens", "kundeservice",
+      "onboarding"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.
@@ -367,7 +368,7 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // halelinjene — som ga en syntaksfeil i stedet for to lister.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
     "dokumentmal", "tilgang", "personvern", "compliance", "avstemming",
-    "kundeservice"];
+    "kundeservice", "onboarding"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

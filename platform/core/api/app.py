@@ -1256,6 +1256,45 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.lukk_endepunkt(tjeneste, request)
 
+    # 103 (M-18): onboardingregisteret. To leseveier (løpene og ett løps
+    # steg) og seks skriveveier — alle menneskelige handlinger i flaten,
+    # bak `bestilling:opprett` + CSRF + Idempotency-Key.
+    #
+    # OG DET FINNES INGEN PROVISJONERINGSVEI. Katalogteksten lover 0
+    # minutter per ny kunde; v1 registrerer løpet. Fraværet er dommen,
+    # ikke en manglende rute.
+    def onboarding_bilde(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.onboardingbilde(tjeneste, request)
+
+    def onboarding_stegene(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.stegene_endepunkt(tjeneste, request)
+
+    def onboarding_mal(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.mal_endepunkt(tjeneste, request)
+
+    def onboarding_malsteg(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.malsteg_endepunkt(tjeneste, request)
+
+    def onboarding_start(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.start_endepunkt(tjeneste, request)
+
+    def onboarding_stegeier(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.stegeier_endepunkt(tjeneste, request)
+
+    def onboarding_fullfor(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.fullfor_endepunkt(tjeneste, request)
+
+    def onboarding_avslutt(request: Request) -> Response:
+        from . import onboarding as obmodul
+        return obmodul.avslutt_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1776,6 +1815,22 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_lukk, methods=["POST"]),
         Route("/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
               kundeservice_utkastdom, methods=["POST"]),
+        # 103 (M-18): kolleksjonsruten FØRST. STIENE STÅR PÅ ÉN LINJE —
+        # porten i `test_pr008.py` parser kilden med et regex som ikke
+        # forstår implisitt strengsammenslåing (102s lærdom).
+        Route("/v1/onboarding", onboarding_bilde, methods=["GET"]),
+        Route("/v1/onboarding/mal", onboarding_mal, methods=["POST"]),
+        Route("/v1/onboarding/mal/{mal_id:uuid}/steg", onboarding_malsteg,
+              methods=["POST"]),
+        Route("/v1/onboarding/lop", onboarding_start, methods=["POST"]),
+        Route("/v1/onboarding/lop/{lop_id:uuid}/steg", onboarding_stegene,
+              methods=["GET"]),
+        Route("/v1/onboarding/lop/{lop_id:uuid}/steg/{steg_nr:int}/eier",
+              onboarding_stegeier, methods=["POST"]),
+        Route("/v1/onboarding/lop/{lop_id:uuid}/steg/{steg_nr:int}/fullfor",
+              onboarding_fullfor, methods=["POST"]),
+        Route("/v1/onboarding/lop/{lop_id:uuid}/avslutt",
+              onboarding_avslutt, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2537,6 +2592,26 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/utkast/{utkast_id:uuid}/dom"):
+        "bestilling:opprett",
+    # 103 (M-18): onboardingregisteret. LESINGEN bærer `decisions:read` —
+    # hvem som gjør hva for en ny kunde er tenantens alminnelige
+    # arbeidsflate, ikke administratorens hemmelighet, og det er ingen
+    # persondata her utover et kundenavn og interne bruker-id-er.
+    # SKRIVINGEN bærer `bestilling:opprett`.
+    #
+    # Sveipen står IKKE her: `m18_sveip_onboarding` er kryss-tenant og
+    # kjøres av `disponit_onboardingsveip` fra sin egen timer.
+    ("GET",  "/v1/onboarding"):              "decisions:read",
+    ("GET",  "/v1/onboarding/lop/{lop_id:uuid}/steg"): "decisions:read",
+    ("POST", "/v1/onboarding/mal"):          "bestilling:opprett",
+    ("POST", "/v1/onboarding/mal/{mal_id:uuid}/steg"):
+        "bestilling:opprett",
+    ("POST", "/v1/onboarding/lop"):          "bestilling:opprett",
+    ("POST", "/v1/onboarding/lop/{lop_id:uuid}/steg/{steg_nr:int}/eier"):
+        "bestilling:opprett",
+    ("POST", "/v1/onboarding/lop/{lop_id:uuid}/steg/{steg_nr:int}/fullfor"):
+        "bestilling:opprett",
+    ("POST", "/v1/onboarding/lop/{lop_id:uuid}/avslutt"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

@@ -1,0 +1,76 @@
+# M-18 (103): onboardingsveipen for kundeløpene.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (103): et pågående løp uten framdrift på lenge er et
+# `stoppet_lop`-funn; et ufullført steg forbi sin egen frist er
+# `steg_over_frist`; og et pågående løp hvis eier ikke lenger er aktivt
+# medlem er `lop_uten_aktiv_eier` — den siste UTEN aldersgrense, fordi
+# et foreldreløst løp ikke blir mindre foreldreløst av å vente.
+#
+# STILLE MÅLES FRA SISTE FULLFØRING, ikke fra starten. Uten det ville et
+# løp der noen jobbet i går blitt et funn fordi det ble startet for en
+# måned siden — og funnlisten ville fylt seg med løp som går som de skal.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille onboardingsveip
+# er en ny kunde som blir liggende uten at noen ser det.
+#
+# SVEIPEN PROVISJONERER INGENTING. Den kaller én definer og får fem tall
+# tilbake. Katalogteksten lover 0 minutter per ny kunde; v1 registrerer
+# løpet, og denne enheten er et av stedene fraværet er lettest å se:
+# ingen identitetsleverandør, ingen kontooppretting, ingen utgående vei.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_onboardingsveip` har nøyaktig ÉN
+# rettighet i basen: EXECUTE på `m18_sveip_onboarding`. INGEN
+# tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`. Autoriteten
+# ligger i DB-rollen, ikke i Unix-brukeren.
+
+[Unit]
+Description=Disponit onboardingsveip (stoppede loep og forsinkede steg -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_ONBOARDINGSVEIP_URL:/etc/disponit/onboardingsveip/DISPONIT_ONBOARDINGSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_onboardingsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`onboardinglop_paagaende`, `lopsteg_apne`, `onboardingfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig svar:
+# funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
