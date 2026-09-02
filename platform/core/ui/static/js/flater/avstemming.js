@@ -216,7 +216,7 @@ function felt(id, tekst, kontroll, hjelp) {
 // knappelås, feilvisning og gjenlasting. Fem nesten like kopier er fire
 // steder å glemme at en 4xx FORBRUKER nøkkelen.
 function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
-                                  tilbakestill, okNokkel }) {
+                                  tilbakestill, okNokkel, kvitter }) {
   // Én nøkkel per intensjon (PR-014 R1): nullstilles når innholdet
   // endres, og ved 4xx — et avvist forsøk har FORBRUKT nøkkelen, og et
   // rettet skjema er en ny intensjon som skal ha sin egen.
@@ -244,8 +244,16 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     knapp.disabled = false;
     if (tilbakestill) tilbakestill();
     meldLive(t(okNokkel));
-    sett(utfall, el("span", { text: t(okNokkel) }));
-    last();
+    // KVITTERINGEN SKAL OVERLEVE TEGNINGEN. `last()` bygger listen,
+    // panelet og skjemaene på nytt, og en melding satt i skjemaets eget
+    // `utfall` forsvant i samme øyeblikk den ble satt — brukeren trykket,
+    // så skjermen blinke, og satt igjen uten å vite om det gikk bra.
+    // Suksessen går derfor til flatens egen kvitteringslinje, som lever
+    // utenfor tegningen. FEILEN blir stående i skjemaet, der den hører
+    // hjemme: den veien tegner ikke om. (CodeRabbit på M-24, samme feil
+    // i alle fem flatene i klyngen.)
+    kvitter(t(okNokkel));
+    await last();
   });
 }
 
@@ -260,7 +268,7 @@ function tilOre(verdi) {
   return Math.round(n * 100);
 }
 
-function kontoSkjema(ctx, last) {
+function kontoSkjema(ctx, last, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const navn = el("input", { id: "avst-konto-navn", name: "navn",
@@ -281,7 +289,7 @@ function kontoSkjema(ctx, last) {
     felt("avst-konto-valuta", "ui.avstemming.skjema.konto_valuta", valuta),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.avstemming.skjema.konto_ok",
     send: (idem) => registrerKonto({
       navn: navn.value, kontonummer: nummer.value,
@@ -294,7 +302,7 @@ function kontoSkjema(ctx, last) {
     skjema, utfall);
 }
 
-function bankpostSkjema(ctx, last, kontoer) {
+function bankpostSkjema(ctx, last, kontoer, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const konto = el("select", { id: "avst-post-konto", name: "konto_id",
@@ -336,7 +344,7 @@ function bankpostSkjema(ctx, last, kontoer) {
          motpart),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.avstemming.skjema.post_ok",
     send: (idem) => registrerBankpost({
       konto_id: konto.value, ekstern_ref: ref.value,
@@ -353,7 +361,7 @@ function bankpostSkjema(ctx, last, kontoer) {
     skjema, utfall);
 }
 
-function bilagSkjema(ctx, last) {
+function bilagSkjema(ctx, last, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const nummer = el("input", { id: "avst-bilag-nummer",
@@ -390,7 +398,7 @@ function bilagSkjema(ctx, last) {
          forfall),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.avstemming.skjema.bilag_ok",
     send: (idem) => registrerBilag({
       bilagsnummer: nummer.value, retning: retning.value,
@@ -413,7 +421,7 @@ function bilagSkjema(ctx, last) {
 // FORTEGNET FILTRERER LISTEN: en inngående post kan bare dekke et
 // `inn`-bilag. Døren og vakten feller dommen uansett; filteret her er
 // ergonomi, ikke sikkerhet — det fjerner valgene som garantert blir 409.
-function matchdialog(ctx, last, bilag) {
+function matchdialog(ctx, last, bilag, kvitter) {
   // UTFALLET LIGGER UTENFOR DET SOM SKJULES (M-34-lærdommen): boksen
   // lukker seg når matchen er registrert — og lå live-regionen inne i
   // den, ble bekreftelsen både usynlig og uannonsert i nøyaktig det
@@ -454,7 +462,7 @@ function matchdialog(ctx, last, bilag) {
   innhold.hidden = true;
 
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.avstemming.dialog.ok",
     send: (idem) => avstem({
       post_id: gjeldende.post_id, bilag_id: valg.value,
@@ -526,17 +534,26 @@ export function visAvstemming(hoved, ctx) {
   const hode = () => flateHode(t("ui.avstemming.tittel"),
     t("ui.avstemming.undertittel"));
   sett(hoved, ...hode());
+  // KVITTERINGEN LEVER UTENFOR TEGNINGEN. Alt inne i `kropp` bygges på
+  // nytt ved hver `last()`, og før dette forsvant kvitteringen i samme
+  // øyeblikk den ble satt — brukeren trykket, så skjermen blinke, og
+  // satt igjen uten å vite om det gikk bra.
+  //
+  // INGEN `aria-live` her: `meldLive` eier opplesningen, og to regioner
+  // ville lest den samme setningen to ganger.
+  const kvittering = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
-  hoved.append(kropp);
+  hoved.append(kvittering, kropp);
+  const kvitter = (tekst) => { kvittering.textContent = tekst; };
   const last = () => medStatus(hoved, ctx,
     () => hentJson("/v1/avstemming"),
     (d) => {
-      sett(hoved, ...hode(), kropp);
+      sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
       const kontoer = d.kontoer || [];
       const poster = d.poster || [];
       const bilag = d.bilag || [];
-      const match = matchdialog(ctx, last, bilag);
+      const match = matchdialog(ctx, last, bilag, kvitter);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.avstemming.oversikt.tittel") }),
@@ -567,8 +584,9 @@ export function visAvstemming(hoved, ctx) {
 
       const deler = [oversikt, postseksjon, bilagsseksjon];
       if (harScope(ctx, "bestilling:opprett")) {
-        deler.push(match.node, kontoSkjema(ctx, last),
-          bankpostSkjema(ctx, last, kontoer), bilagSkjema(ctx, last));
+        deler.push(match.node, kontoSkjema(ctx, last, kvitter),
+          bankpostSkjema(ctx, last, kontoer, kvitter),
+          bilagSkjema(ctx, last, kvitter));
       }
       sett(kropp, ...deler);
     });

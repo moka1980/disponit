@@ -367,3 +367,36 @@ test("Onboarding: kilden bærer ingen provisjoneringsvei", () => {
     join(HER, "..", "static", "js", "api.js"), "utf8");
   assert.ok(!/export const provisjoner/.test(api));
 });
+
+
+// KVITTERINGEN SKAL OVERLEVE TEGNINGEN.
+//
+// Porten finnes fordi det var galt i alle fem flatene i klyngen:
+// suksessmeldingen ble satt i skjemaets eget `utfall`, og `last()` bygde
+// straks både panelet og skjemaet på nytt. Brukeren trykket, så skjermen
+// blinke, og satt igjen uten å vite om det gikk bra. Skjermleseren hørte
+// det (`meldLive`), men en seende bruker fikk ingenting.
+//
+// MUTASJONEN SOM DREPER DENNE: flytt kvitteringen tilbake inn i `kropp`.
+test("Onboarding: kvitteringen og panelet overlever tegningen",
+  async () => {
+    SVAR = fullSvar();
+    SISTE = null;
+    const h = nyHoved();
+    visOnboarding(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length >= 2);
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.onboarding.knapp.apne")).click();
+    await vent(() => h.textContent.includes("Workspace"));
+    [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.onboarding.knapp.fullfor")).click();
+    await vent(() => SISTE !== null);
+    // `assert.ok(await vent(...))`, ikke bare `await vent(...)`: en
+    // `vent()` som gir opp returnerer falskt uten å kaste, og en port
+    // som ikke ser på svaret er alltid grønn. (CodeRabbit.)
+    assert.ok(await vent(() => h.textContent.includes(
+      t("ui.onboarding.steg_ok"))), "kvitteringen forsvant i tegningen");
+    // …OG PANELET STÅR ÅPENT PÅ SAMME LØP.
+    assert.ok(await vent(() => h.textContent.includes("Workspace")),
+      "panelet lukket seg etter et fullført steg");
+  });

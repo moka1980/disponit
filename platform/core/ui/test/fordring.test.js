@@ -617,3 +617,36 @@ test("Fordring: ingen hardkodet tekst", async () => {
     settI18nForTest(NB, "nb");
   }
 });
+
+
+// KVITTERINGEN SKAL OVERLEVE TEGNINGEN.
+//
+// Porten finnes fordi det var galt i alle fem flatene i klyngen:
+// suksessmeldingen ble satt i skjemaets eget `utfall`, og `last()` bygde
+// straks både panelet og skjemaet på nytt. Brukeren trykket, så skjermen
+// blinke, og satt igjen uten å vite om det gikk bra. Skjermleseren hørte
+// det (`meldLive`), men en seende bruker fikk ingenting.
+//
+// MUTASJONEN SOM DREPER DENNE: flytt kvitteringen tilbake inn i `kropp`.
+test("Fordring: kvitteringen og panelet overlever tegningen", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visFordring(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 3);
+  [...h.querySelectorAll("table")[1].querySelectorAll("tbody tr")][0]
+    .querySelector("button").click();
+  await vent(() => h.querySelectorAll("li").length >= 2);
+  h.querySelector("#fo-bet-belop").value = "12";
+  h.querySelector("#fo-bet-dato").value = "2026-08-11";
+  h.querySelector("#fo-bet-belop").closest("form")
+    .dispatchEvent(new window.Event("submit", { cancelable: true }));
+  await vent(() => SISTE && SISTE.sti.includes("betaling"));
+  // Det ANDRE kallet mot `hendelser` ER gjenåpningen.
+  assert.ok(await vent(() => KALL.filter(
+    (k) => k.sti.includes("/hendelser")).length >= 2),
+    "panelet ble aldri gjenåpnet — porten måler ingenting");
+  assert.ok(h.textContent.includes(t("ui.fordring.skjema.betaling_ok")),
+    "kvitteringen forsvant i tegningen");
+  assert.ok(h.textContent.includes("Nordvik AS · F-1001"),
+    "panelet lukket seg etter en innbetaling");
+});

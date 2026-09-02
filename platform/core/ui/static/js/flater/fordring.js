@@ -198,7 +198,7 @@ function felt(id, tekst, kontroll, hjelp) {
 }
 
 function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
-                                  tilbakestill, okNokkel }) {
+                                  tilbakestill, okNokkel, kvitter }) {
   // Én nøkkel per intensjon (PR-014 R1): nullstilles ved endring og ved
   // 4xx — et avvist forsøk har FORBRUKT nøkkelen.
   let idem = null;
@@ -225,8 +225,16 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     knapp.disabled = false;
     if (tilbakestill) tilbakestill();
     meldLive(t(okNokkel));
-    sett(utfall, el("span", { text: t(okNokkel) }));
-    last();
+    // KVITTERINGEN SKAL OVERLEVE TEGNINGEN. `last()` bygger listen,
+    // panelet og skjemaene på nytt, og en melding satt i skjemaets eget
+    // `utfall` forsvant i samme øyeblikk den ble satt — brukeren trykket,
+    // så skjermen blinke, og satt igjen uten å vite om det gikk bra.
+    // Suksessen går derfor til flatens egen kvitteringslinje, som lever
+    // utenfor tegningen. FEILEN blir stående i skjemaet, der den hører
+    // hjemme: den veien tegner ikke om. (CodeRabbit på M-24, samme feil
+    // i alle fem flatene i klyngen.)
+    kvitter(t(okNokkel));
+    await last();
   });
 }
 
@@ -268,7 +276,7 @@ export function parsePlanlinjer(tekst) {
 }
 
 // DETALJPANELET: historikken, og de tre handlingene.
-function detaljpanel(ctx, last) {
+function detaljpanel(ctx, last, kvitter, settApen) {
   const boks = el("div", { class: "skjemaboks" });
   const innhold = el("div", {});
   const utfall = el("p", { "aria-live": "polite" });
@@ -291,7 +299,7 @@ function detaljpanel(ctx, last) {
     felt("fo-bet-dato", "ui.fordring.skjema.betaling_dato", bDato),
     el("div", { class: "skjema-bunn" }, bKnapp));
   skjemaramme(ctx, last, {
-    skjema: bSkjema, knapp: bKnapp, utfall,
+    skjema: bSkjema, knapp: bKnapp, utfall, kvitter,
     okNokkel: "ui.fordring.skjema.betaling_ok",
     send: (idem) => registrerBetaling(gjeldende.fordring_id,
                                       tilOre(bBelop.value), bDato.value,
@@ -312,7 +320,7 @@ function detaljpanel(ctx, last) {
          "ui.fordring.skjema.trinn_hjelp"),
     el("div", { class: "skjema-bunn" }, tKnapp));
   skjemaramme(ctx, last, {
-    skjema: tSkjema, knapp: tKnapp, utfall,
+    skjema: tSkjema, knapp: tKnapp, utfall, kvitter,
     okNokkel: "ui.fordring.skjema.trinn_ok",
     send: (idem) => nesteTrinn(gjeldende.fordring_id,
                                tGrunn.value || null, idem),
@@ -330,11 +338,15 @@ function detaljpanel(ctx, last) {
          eGrunn, "ui.fordring.skjema.ettergi_hjelp"),
     el("div", { class: "skjema-bunn" }, eKnapp));
   skjemaramme(ctx, last, {
-    skjema: eSkjema, knapp: eKnapp, utfall,
+    skjema: eSkjema, knapp: eKnapp, utfall, kvitter,
     okNokkel: "ui.fordring.skjema.ettergi_ok",
     send: (idem) => ettergiFordring(gjeldende.fordring_id, eGrunn.value,
                                     idem),
-    tilbakestill: () => { eGrunn.value = ""; innhold.hidden = true; },
+    // ET ETTERGITT KRAV SKAL IKKE GJENÅPNES. Å tilby tre knapper som
+    // alle er døde ville vært verre enn å lukke panelet.
+    tilbakestill: () => {
+      eGrunn.value = ""; innhold.hidden = true; settApen(null);
+    },
   });
 
   const skriver = harScope(ctx, "bestilling:opprett");
@@ -365,6 +377,7 @@ function detaljpanel(ctx, last) {
     node: boks,
     async apne(f) {
       gjeldende = f;
+      settApen(f.fordring_id);
       sett(utfall);
       sett(historikk);
       merkelinje.textContent = `${f.kunde_ref} · ${f.fakturanummer} · `
@@ -405,7 +418,7 @@ function detaljpanel(ctx, last) {
   };
 }
 
-function nySkjema(ctx, last) {
+function nySkjema(ctx, last, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const kunde = el("input", { id: "fo-ny-kunde", name: "kunde_ref",
@@ -428,7 +441,7 @@ function nySkjema(ctx, last) {
     felt("fo-ny-forfall", "ui.fordring.skjema.forfall", forfall),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.fordring.skjema.ny_ok",
     send: (idem) => registrerFordring({
       kunde_ref: kunde.value, fakturanummer: faktura.value,
@@ -443,7 +456,7 @@ function nySkjema(ctx, last) {
     el("h3", { text: t("ui.fordring.skjema.ny_tittel") }), skjema, utfall);
 }
 
-function planSkjema(ctx, last) {
+function planSkjema(ctx, last, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const linjer = el("textarea", { id: "fo-plan-linjer", name: "trinn",
@@ -455,7 +468,7 @@ function planSkjema(ctx, last) {
          "ui.fordring.skjema.plan_hjelp"),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.fordring.skjema.plan_ok",
     send: (idem) => {
       const trinn = parsePlanlinjer(linjer.value);
@@ -509,16 +522,30 @@ export function visFordring(hoved, ctx) {
   const hode = () => flateHode(t("ui.fordring.tittel"),
     t("ui.fordring.undertittel"));
   sett(hoved, ...hode());
+  // KVITTERINGEN LEVER UTENFOR TEGNINGEN. Alt inne i `kropp` bygges på
+  // nytt ved hver `last()`, og før dette forsvant kvitteringen i samme
+  // øyeblikk den ble satt — brukeren trykket, så skjermen blinke, og
+  // satt igjen uten å vite om det gikk bra.
+  //
+  // INGEN `aria-live` her: `meldLive` eier opplesningen, og to regioner
+  // ville lest den samme setningen to ganger.
+  const kvittering = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
-  hoved.append(kropp);
+  hoved.append(kvittering, kropp);
+  const kvitter = (tekst) => { kvittering.textContent = tekst; };
+  // …OG DEN ÅPNE RADEN OGSÅ. Uten dette lukket detaljpanelet seg ved
+  // hver skriving, og neste handling krevde at brukeren fant fram til
+  // raden igjen.
+  let apenRad = null;
+  const settApen = (id) => { apenRad = id; };
   const last = () => medStatus(hoved, ctx,
     () => hentJson("/v1/fordring"),
     (d) => {
-      sett(hoved, ...hode(), kropp);
+      sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
       const fordringer = d.fordringer || [];
       const plan = d.purreplan || [];
-      const detalj = detaljpanel(ctx, last);
+      const detalj = detaljpanel(ctx, last, kvitter, settApen);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.fordring.oversikt.tittel") }),
@@ -552,9 +579,17 @@ export function visFordring(hoved, ctx) {
 
       const deler = [oversikt, alder, liste, planseksjon, detalj.node];
       if (harScope(ctx, "bestilling:opprett")) {
-        deler.push(nySkjema(ctx, last), planSkjema(ctx, last));
+        deler.push(nySkjema(ctx, last, kvitter),
+                   planSkjema(ctx, last, kvitter));
       }
       sett(kropp, ...deler);
+      // GJENÅPNE PANELET på raden som sto åpen. Finnes den ikke lenger
+      // i listen — avsluttet, eller falt utenfor avkortingen — slippes
+      // den, framfor å åpne et panel på en rad ingen ser.
+      if (apenRad) {
+        const rad = fordringer.find((x) => x.fordring_id === apenRad);
+        if (rad) detalj.apne(rad); else apenRad = null;
+      }
     });
   last();
 }
