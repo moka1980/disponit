@@ -352,6 +352,15 @@ const BASISRUTER = [
   // lover at listen kan vises, ikke at hver celle kan åpnes — og flaten
   // gater innholdsknappen på sitt eget scope.
   { nokkel: "kundeservice", scope: "decisions:read", modulflate: 17 },
+  // M-18 (103): onboardingløpene. MODULFLATE bak `decisions:read` —
+  // scopet API-et bak flaten krever (`GET /v1/onboarding` i RUTESCOPE).
+  //
+  // SCOPET ER DET BREDE, og det er en dom: hvem som gjør hva for en ny
+  // kunde er tenantens alminnelige arbeidsflate, ikke administratorens
+  // hemmelighet — og det finnes ingen persondata her utover et
+  // kundenavn og interne bruker-id-er. De seks skriveveiene er gatet
+  // både inne på flaten og i `RUTESCOPE` på `bestilling:opprett`.
+  { nokkel: "onboarding", scope: "decisions:read", modulflate: 18 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

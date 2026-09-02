@@ -232,6 +232,15 @@ APPEND_ONLY_TRIGGERE = (
     ("klassifisering", "m17_klassifisering_vakt"),
     ("svarutkast", "m17_utkast_vakt"),
     ("henvendelsesfunn", "m17_funn_vakt"),
+    # 103 (M-18): alle fire vaktene nekter DELETE — et løp som ble
+    # avbrutt er også historikk, et steg som ble hoppet over likeså, og
+    # funnet lukkes. Malstegene er unntaket: de SKAL kunne slettes (en
+    # mal redigeres ved at stegene skrives om), men vakten nekter det
+    # mens malen har pågående løp — og i oppryddingen finnes ingen.
+    ("onboardingfunn", "m18_funn_vakt"),
+    ("lopsteg", "m18_steg_vakt"),
+    ("onboardinglop", "m18_lop_vakt"),
+    ("onboardingmalsteg", "m18_malsteg_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -366,6 +375,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # `unntak`, som ryddes lenger ned.
                  "henvendelsesfunn", "svarutkast", "klassifisering",
                  "henvendelse",
+                 # 103 (M-18): funnene og stegene peker på løpet, løpet
+                 # på malen, og malstegene på malen. Barna først, løpet,
+                 # så malstegene, malen sist.
+                 "onboardingfunn", "lopsteg", "onboardinglop",
+                 "onboardingmalsteg", "onboardingmal",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

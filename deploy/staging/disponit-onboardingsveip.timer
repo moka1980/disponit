@@ -1,0 +1,25 @@
+# M-18 (103): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: grensene sveipen måler mot er antall
+# DØGN uten framdrift og antall døgn over en stegfrist. Ingen av dem
+# skifter svar oftere enn ved døgnskiftet.
+#
+# KLOKKESLETTET ER 05:35 fordi 03:15, 04:20, 04:35, 04:50, 05:05 og
+# 05:20 alt er tatt av nabotimerne. Sveipens første steg leser ALLE
+# tenanters løp, og to slike skann på samme sekund legger seg oppå
+# hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene. Sveipen måler NÅ («hvilke løp står stille i dag»), ikke
+# da, og en vert som var nede da døgnet passerte skal ta det igjen.
+
+[Unit]
+Description=Disponit onboardingsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 05:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

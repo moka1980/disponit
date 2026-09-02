@@ -338,6 +338,19 @@ GRANT EXECUTE ON FUNCTION m17_hent_innhold(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_utkastene(TEXT, UUID) TO {rolle};
 REVOKE ALL ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m17_funnkandidater(TEXT, DATE, INT, INT) FROM {rolle};
+
+-- 103 (M-18): onboardingregisterets LESEDØRER, samme snitt og samme
+-- begrunnelse som blokkene over. De fem tabellene står bevisst IKKE i
+-- noen GRANT-liste her: runtime har ingen SELECT på dem i det hele tatt
+-- (SP-7). Skrivedørene ligger i M37_RETTIGHETER_API; SVEIPEN hører
+-- sveiperollen til (ONBOARDINGSVEIP_RETTIGHETER) og er kryss-tenant.
+SET LOCAL ROLE disponit_onboarding_eier;
+GRANT EXECUTE ON FUNCTION m18_onboardingstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_lopene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_stegene(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_malene(TEXT) TO {rolle};
+REVOKE ALL ON FUNCTION m18_sveip_onboarding(INT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m18_funnkandidater(TEXT, DATE, INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -789,6 +802,16 @@ GRANT EXECUTE ON FUNCTION m17_til_unntakskoe(TEXT, UUID, TEXT, BYTEA, BYTEA, TEX
 GRANT EXECUTE ON FUNCTION m17_lagre_utkast(TEXT, UUID, UUID, BYTEA, BYTEA, TEXT, TEXT[], TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_avgjor_utkast(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_lukk(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 103 (M-18): onboardingregisterets seks skrivedører. Sekvensregelen,
+-- fullført-kravet og eierkravet håndheves i dørene og i vaktene, aldri
+-- her.
+SET LOCAL ROLE disponit_onboarding_eier;
+GRANT EXECUTE ON FUNCTION m18_registrer_mal(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_sett_malsteg(TEXT, UUID, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_start_lop(TEXT, UUID, UUID, TEXT, TEXT, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_sett_stegeier(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_fullfor_steg(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m18_avslutt_lop(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1138,6 +1161,17 @@ GRANT EXECUTE ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) TO {rolle};
 RESET ROLE;
 """
 
+
+# 103 (M-18): onboardingsveipens rolle. Samme form: nøyaktig ÉN EXECUTE,
+# ingen tabellrettigheter. `m18_sveip_onboarding` er KRYSS-TENANT og
+# setter selv RLS-konteksten per tenant.
+ONBOARDINGSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_onboarding_eier;
+GRANT EXECUTE ON FUNCTION m18_sveip_onboarding(INT, INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1351,7 +1385,11 @@ def main(argv: list[str] | None = None) -> int:
                           # tabellrettigheter å nullstille, bare den ene
                           # EXECUTEn.
                           ("disponit_henvendelsessveip",
-                           HENVENDELSESVEIP_RETTIGHETER)):
+                           HENVENDELSESVEIP_RETTIGHETER),
+                          # 103 (M-18): onboardingsveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_onboardingsveip",
+                           ONBOARDINGSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
