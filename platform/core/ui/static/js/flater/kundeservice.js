@@ -154,7 +154,7 @@ function felt(id, tekst, kontroll, hjelp) {
 // Rammen skjemaene deler: idempotensnøkkel per intensjon, knappelås,
 // feilvisning og gjenlasting.
 function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
-                                  tilbakestill, okNokkel }) {
+                                  tilbakestill, okNokkel, kvitter }) {
   // Én nøkkel per intensjon (PR-014 R1): nullstilles når innholdet
   // endres, og ved 4xx — et avvist forsøk har FORBRUKT nøkkelen.
   let idem = null;
@@ -181,8 +181,16 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     knapp.disabled = false;
     if (tilbakestill) tilbakestill();
     meldLive(t(okNokkel));
-    sett(utfall, el("span", { text: t(okNokkel) }));
-    last();
+    // KVITTERINGEN SKAL OVERLEVE TEGNINGEN. `last()` bygger listen,
+    // panelet og skjemaene på nytt, og en melding satt i skjemaets eget
+    // `utfall` forsvant i samme øyeblikk den ble satt — brukeren trykket,
+    // så skjermen blinke, og satt igjen uten å vite om det gikk bra.
+    // Suksessen går derfor til flatens egen kvitteringslinje, som lever
+    // utenfor tegningen. FEILEN blir stående i skjemaet, der den hører
+    // hjemme: den veien tegner ikke om. (CodeRabbit på M-24, samme feil
+    // i alle fem flatene i klyngen.)
+    kvitter(t(okNokkel));
+    await last();
   });
 }
 
@@ -194,7 +202,7 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
 // og købeslutning er arbeid som ikke krever å lese teksten, og en flate
 // som skjulte hele panelet ville sagt at den som ikke får lese heller
 // ikke får jobbe. Setningen i stedet for teksten er den ærlige formen.
-function detaljpanel(ctx, last) {
+function detaljpanel(ctx, last, kvitter, settApen) {
   const boks = el("div", { class: "skjemaboks" });
   const innhold = el("div", {});
   const utfall = el("p", { "aria-live": "polite" });
@@ -239,7 +247,7 @@ function detaljpanel(ctx, last) {
          handlingstype, "ui.kundeservice.skjema.handlingstypehjelp"),
     el("div", { class: "skjema-bunn" }, kKnapp));
   skjemaramme(ctx, last, {
-    skjema: kSkjema, knapp: kKnapp, utfall,
+    skjema: kSkjema, knapp: kKnapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.skjema.klassifisering_ok",
     send: (idem) => klassifiserHenvendelse(gjeldende.henvendelse_id, {
       prioritet: prioritet.value, tema: tema.value,
@@ -258,7 +266,7 @@ function detaljpanel(ctx, last) {
          "ui.kundeservice.skjema.utkast_teksthjelp"),
     el("div", { class: "skjema-bunn" }, uKnapp));
   skjemaramme(ctx, last, {
-    skjema: uSkjema, knapp: uKnapp, utfall,
+    skjema: uSkjema, knapp: uKnapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.skjema.utkast_ok",
     send: (idem) => lagreUtkast(gjeldende.henvendelse_id,
                                 { tekst: utkasttekst.value }, idem),
@@ -276,7 +284,7 @@ function detaljpanel(ctx, last) {
          qBegrunnelse, "ui.kundeservice.skjema.unntakskoe_hjelp"),
     el("div", { class: "skjema-bunn" }, qKnapp));
   skjemaramme(ctx, last, {
-    skjema: qSkjema, knapp: qKnapp, utfall,
+    skjema: qSkjema, knapp: qKnapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.skjema.unntakskoe_ok",
     send: (idem) => henvendelseTilUnntakskoe(gjeldende.henvendelse_id,
                                              qBegrunnelse.value, idem),
@@ -303,9 +311,12 @@ function detaljpanel(ctx, last) {
       }
       b.disabled = false;
       innhold.hidden = true;
+      settApen(null);
       meldLive(t("ui.kundeservice.lukk_ok"));
-      sett(utfall, el("span", { text: t("ui.kundeservice.lukk_ok") }));
-      last();
+      // SAMME DOM SOM I `skjemaramme`: kvitteringen hører til flaten,
+      // ikke til panelet som lukker seg i neste linje.
+      kvitter(t("ui.kundeservice.lukk_ok"));
+      await last();
     });
     return b;
   };
@@ -380,7 +391,8 @@ function detaljpanel(ctx, last) {
               return;
             }
             meldLive(t("ui.kundeservice.utkast_ok"));
-            last();
+            kvitter(t("ui.kundeservice.utkast_ok"));
+            await last();
           });
           kort.append(b);
         }
@@ -393,6 +405,7 @@ function detaljpanel(ctx, last) {
     node: boks,
     async apne(h) {
       gjeldende = h;
+      settApen(h.henvendelse_id);
       sett(utfall);
       merkelinje.textContent = `${h.ekstern_ref} · `
         + `${t(`ui.kundeservice.kanal.${h.kanal}`)} · `
@@ -454,15 +467,29 @@ export function visKundeservice(hoved, ctx) {
   const hode = () => flateHode(t("ui.kundeservice.tittel"),
     t("ui.kundeservice.undertittel"));
   sett(hoved, ...hode());
+  // KVITTERINGEN LEVER UTENFOR TEGNINGEN. Alt inne i `kropp` bygges på
+  // nytt ved hver `last()`, og før dette forsvant kvitteringen i samme
+  // øyeblikk den ble satt — brukeren trykket, så skjermen blinke, og
+  // satt igjen uten å vite om det gikk bra.
+  //
+  // INGEN `aria-live` her: `meldLive` eier opplesningen, og to regioner
+  // ville lest den samme setningen to ganger.
+  const kvittering = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
-  hoved.append(kropp);
+  hoved.append(kvittering, kropp);
+  const kvitter = (tekst) => { kvittering.textContent = tekst; };
+  // …OG DEN ÅPNE RADEN OGSÅ. Uten dette lukket detaljpanelet seg ved
+  // hver skriving, og neste handling krevde at brukeren fant fram til
+  // raden igjen.
+  let apenRad = null;
+  const settApen = (id) => { apenRad = id; };
   const last = () => medStatus(hoved, ctx,
     () => hentJson("/v1/kundeservice"),
     (d) => {
-      sett(hoved, ...hode(), kropp);
+      sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
       const koe = d.koe || [];
-      const detalj = detaljpanel(ctx, last);
+      const detalj = detaljpanel(ctx, last, kvitter, settApen);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.oversikt.tittel") }),
@@ -477,6 +504,13 @@ export function visKundeservice(hoved, ctx) {
         koseksjon.append(koTabell(koe, ctx, detalj.apne));
       }
       sett(kropp, oversikt, koseksjon, detalj.node);
+      // GJENÅPNE PANELET på raden som sto åpen. Finnes den ikke lenger
+      // i listen — avsluttet, eller falt utenfor avkortingen — slippes
+      // den, framfor å åpne et panel på en rad ingen ser.
+      if (apenRad) {
+        const rad = koe.find((x) => x.henvendelse_id === apenRad);
+        if (rad) detalj.apne(rad); else apenRad = null;
+      }
     });
   last();
 }

@@ -380,3 +380,34 @@ test("Avstemming: kilden bærer ingen bokføringsvei", () => {
     join(HER, "..", "static", "js", "api.js"), "utf8");
   assert.ok(!/export const bokfor/.test(api));
 });
+
+
+// KVITTERINGEN SKAL OVERLEVE TEGNINGEN.
+//
+// Porten finnes fordi det var galt i alle fem flatene i klyngen:
+// suksessmeldingen ble satt i skjemaets eget `utfall`, og `last()` bygde
+// straks både panelet og skjemaet på nytt. Brukeren trykket, så skjermen
+// blinke, og satt igjen uten å vite om det gikk bra. Skjermleseren hørte
+// det (`meldLive`), men en seende bruker fikk ingenting.
+//
+// MUTASJONEN SOM DREPER DENNE: flytt kvitteringen tilbake inn i `kropp`.
+test("Avstemming: kvitteringen overlever tegningen", async () => {
+  SVAR = { "/v1/avstemming": BILDE };
+  SISTE = null;
+  const h = nyHoved();
+  visAvstemming(h, ctx());
+  await vent(() => h.querySelector("#avst-bilag-belop") !== null);
+  h.querySelector("#avst-bilag-nummer").value = "F-2001";
+  h.querySelector("#avst-bilag-belop").value = "8.15";
+  h.querySelector("#avst-bilag-motpart").value = "Kunde AS";
+  h.querySelector("#avst-bilag-utstedt").value = "2026-09-01";
+  h.querySelector("#avst-bilag-belop").closest("form")
+    .dispatchEvent(new window.Event("submit", { cancelable: true }));
+  await vent(() => SISTE !== null);
+  // Vent til listen er tegnet på nytt — det er DA meldingen forsvant.
+  assert.ok(await vent(() => h.querySelector("#avst-bilag-belop") !== null
+    && h.querySelector("#avst-bilag-belop").value === ""),
+    "skjemaet ble aldri tegnet på nytt — porten måler ingenting");
+  assert.ok(h.textContent.includes(t("ui.avstemming.skjema.bilag_ok")),
+    "kvitteringen forsvant i tegningen");
+});

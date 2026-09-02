@@ -248,8 +248,7 @@ function velger(id, navn, verdier, prefiks) {
 }
 
 function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
-                                  tilbakestill, okNokkel, kvitter,
-                                  etterpaa }) {
+                                  tilbakestill, okNokkel, kvitter }) {
   // Én nøkkel per intensjon (PR-014 R1): nullstilles ved endring og ved
   // 4xx — et avvist forsøk har FORBRUKT nøkkelen.
   let idem = null;
@@ -284,7 +283,6 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     // kvitteringslinje, som lever utenfor tegningen. FEILEN blir
     // stående i skjemaet, der den hører hjemme: den veien tegner ikke om.
     // (CodeRabbit, PR M-24.)
-    if (etterpaa) etterpaa();
     kvitter(t(okNokkel));
     await last();
   });
@@ -376,11 +374,12 @@ function detaljpanel(ctx, last, kvitter, settApen) {
     skjema: aSkjema, knapp: aKnapp, utfall, kvitter,
     okNokkel: "ui.leverandor.skjema.avslutt_ok",
     send: (idem) => avsluttAvtale(gjeldende.avtale_id, aGrunn.value, idem),
-    tilbakestill: () => { aGrunn.value = ""; innhold.hidden = true; },
     // …og AVTALEN LUKKES OGSÅ I FLATEN. Å gjenåpne panelet på en avtale
     // som nettopp ble avsluttet ville tilbudt to knapper som begge er
     // døde.
-    etterpaa: () => settApen(null),
+    tilbakestill: () => {
+      aGrunn.value = ""; innhold.hidden = true; settApen(null);
+    },
   });
 
   const skriver = harScope(ctx, "bestilling:opprett");
@@ -611,9 +610,9 @@ export function visLeverandor(hoved, ctx) {
   const kvittering = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
   hoved.append(kvittering, kropp);
-  let apenAvtale = null;
+  let apenRad = null;
   const kvitter = (tekst) => { kvittering.textContent = tekst; };
-  const settApen = (id) => { apenAvtale = id; };
+  const settApen = (id) => { apenRad = id; };
   const last = () => medStatus(hoved, ctx,
     () => hentJson("/v1/leverandor"),
     (d) => {
@@ -663,9 +662,9 @@ export function visLeverandor(hoved, ctx) {
       // GJENÅPNE PANELET på den avtalen som sto åpen. Finnes den ikke
       // lenger i listen — avsluttet, eller falt utenfor avkortingen —
       // slippes den, framfor å åpne et panel på en rad ingen ser.
-      if (apenAvtale) {
-        const a = avtaler.find((x) => x.avtale_id === apenAvtale);
-        if (a) detalj.apne(a); else apenAvtale = null;
+      if (apenRad) {
+        const rad = avtaler.find((x) => x.avtale_id === apenRad);
+        if (rad) detalj.apne(rad); else apenRad = null;
       }
     });
   last();

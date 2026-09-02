@@ -26,6 +26,11 @@ Formen er `avstemmingssveip.py` sin, ordrett, og av de samme grunnene:
   * **Advisory-lås.** To sveip overlapper aldri. En kjøring som fant
     nøkkelen opptatt har verken lyktes eller feilet — `hoppet_over` står
     PÅ resultatet så kalleren vet at feiltelleren skal stå urørt.
+  * **Kontrakten valideres FØR commit**, og på ALLE radene:
+    nøyaktig én rad, ellers rulles det tilbake og kjøringen sier
+    feilet. Den forrige formen committet først og oppdaget så at raden
+    manglet — en transaksjon som ble stående mens kjøringen rapporterte
+    feilet.
   * **To sammenhengende feilede kjøringer → alarm.** En stille
     henvendelsessveip er en kø som eldes uten at noen ser det.
   * **Én JSON-linje per kjøring, exit 1 ved feil.** En jobb som ikke
@@ -97,22 +102,38 @@ def kjor(conn, *, grense: int = GRENSE,
         res.hoppet_over = True
         return res
     try:
+        # KONTRAKTEN VALIDERES FØR COMMIT, og på ALLE radene.
+        #
+        # Døren returnerer NØYAKTIG ÉN rad. Ingen rad er ikke «null
+        # funn» — det er en dør som ikke oppførte seg som kontrakten, og
+        # da skal kjøringen si feilet framfor å rapportere nuller den
+        # ikke har målt («en jobb som ikke kunne måle rapporterer FUNN,
+        # aldri null»). FLERE rader er den samme feilen fra motsatt
+        # kant, og `fetchone()` tidde om den.
+        #
+        # REKKEFØLGEN ER DOMMEN: den forrige formen committet FØRST og
+        # oppdaget så at raden manglet — altså en transaksjon som ble
+        # stående mens kjøringen rapporterte feilet. Nå rulles den
+        # tilbake, og bare en validert kontrakt committes.
         try:
-            rad = conn.execute(
+            rader = conn.execute(
                 "SELECT * FROM m17_sveip_henvendelser(%s, %s, %s)",
-                (grense, dogn_uklassifisert, dogn_ubesvart)).fetchone()
-            conn.commit()
+                (grense, dogn_uklassifisert, dogn_ubesvart)).fetchall()
         except Exception:
             _rull_tilbake(conn)
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        # Døren returnerer nøyaktig én rad. Ingen rad er ikke «null
-        # funn» — det er en dør som ikke oppførte seg som kontrakten, og
-        # da skal kjøringen si feilet framfor å rapportere nuller den
-        # ikke har målt («en jobb som ikke kunne måle rapporterer FUNN,
-        # aldri null»).
-        if rad is None:
+        if len(rader) != 1:
+            _rull_tilbake(conn)
+            res.feilet = True
+            res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
+            return res
+        rad = rader[0]
+        try:
+            conn.commit()
+        except Exception:
+            _rull_tilbake(conn)
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res

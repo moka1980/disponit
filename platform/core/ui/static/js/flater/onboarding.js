@@ -180,7 +180,7 @@ function felt(id, tekst, kontroll, hjelp) {
 }
 
 function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
-                                  tilbakestill, okNokkel }) {
+                                  tilbakestill, okNokkel, kvitter }) {
   // Én nøkkel per intensjon (PR-014 R1): nullstilles når innholdet
   // endres, og ved 4xx — et avvist forsøk har FORBRUKT nøkkelen.
   let idem = null;
@@ -207,8 +207,16 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     knapp.disabled = false;
     if (tilbakestill) tilbakestill();
     meldLive(t(okNokkel));
-    sett(utfall, el("span", { text: t(okNokkel) }));
-    last();
+    // KVITTERINGEN SKAL OVERLEVE TEGNINGEN. `last()` bygger listen,
+    // panelet og skjemaene på nytt, og en melding satt i skjemaets eget
+    // `utfall` forsvant i samme øyeblikk den ble satt — brukeren trykket,
+    // så skjermen blinke, og satt igjen uten å vite om det gikk bra.
+    // Suksessen går derfor til flatens egen kvitteringslinje, som lever
+    // utenfor tegningen. FEILEN blir stående i skjemaet, der den hører
+    // hjemme: den veien tegner ikke om. (CodeRabbit på M-24, samme feil
+    // i alle fem flatene i klyngen.)
+    kvitter(t(okNokkel));
+    await last();
   });
 }
 
@@ -245,7 +253,7 @@ export function parseSteglinjer(tekst) {
 }
 
 // DETALJPANELET: løpets steg, med fullføringsknapp per steg.
-function detaljpanel(ctx, last) {
+function detaljpanel(ctx, last, kvitter, settApen) {
   const boks = el("div", { class: "skjemaboks" });
   const innhold = el("div", {});
   const utfall = el("p", { "aria-live": "polite" });
@@ -264,12 +272,13 @@ function detaljpanel(ctx, last) {
          avbrytGrunn, "ui.onboarding.skjema.avbryt_hjelp"),
     el("div", { class: "skjema-bunn" }, avbrytKnapp));
   skjemaramme(ctx, last, {
-    skjema: avbrytSkjema, knapp: avbrytKnapp, utfall,
+    skjema: avbrytSkjema, knapp: avbrytKnapp, utfall, kvitter,
     okNokkel: "ui.onboarding.avslutt_ok",
     send: (idem) => avsluttOnboardinglop(gjeldende.lop_id, "avbrutt",
                                          avbrytGrunn.value, idem),
+    // ET AVBRUTT LØP SKAL IKKE GJENÅPNES.
     tilbakestill: () => {
-      avbrytGrunn.value = ""; innhold.hidden = true;
+      avbrytGrunn.value = ""; innhold.hidden = true; settApen(null);
     },
   });
 
@@ -291,9 +300,12 @@ function detaljpanel(ctx, last) {
     }
     fullforKnapp.disabled = false;
     innhold.hidden = true;
+    settApen(null);
     meldLive(t("ui.onboarding.avslutt_ok"));
-    sett(utfall, el("span", { text: t("ui.onboarding.avslutt_ok") }));
-    last();
+    // SAMME DOM SOM I `skjemaramme`: kvitteringen hører til flaten, ikke
+    // til panelet som lukker seg i linjen over.
+    kvitter(t("ui.onboarding.avslutt_ok"));
+    await last();
   });
 
   const skriver = harScope(ctx, "bestilling:opprett");
@@ -347,7 +359,8 @@ function detaljpanel(ctx, last) {
           return;
         }
         meldLive(t("ui.onboarding.steg_ok"));
-        last();
+        kvitter(t("ui.onboarding.steg_ok"));
+        await last();
       });
       handling.append(knapp);
     }
@@ -359,6 +372,7 @@ function detaljpanel(ctx, last) {
     node: boks,
     async apne(l) {
       gjeldende = l;
+      settApen(l.lop_id);
       sett(utfall);
       sett(stegliste);
       merkelinje.textContent = `${l.kunde_ref} · ${l.mal_navn} `
@@ -392,7 +406,7 @@ function detaljpanel(ctx, last) {
   };
 }
 
-function malSkjema(ctx, last) {
+function malSkjema(ctx, last, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const navn = el("input", { id: "ob-mal-navn", name: "navn",
@@ -403,7 +417,7 @@ function malSkjema(ctx, last) {
     felt("ob-mal-navn", "ui.onboarding.skjema.mal_navn", navn),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.onboarding.skjema.mal_ok",
     send: (idem) => registrerOnboardingmal({ navn: navn.value }, idem),
     tilbakestill: () => { navn.value = ""; },
@@ -413,7 +427,7 @@ function malSkjema(ctx, last) {
     skjema, utfall);
 }
 
-function stegSkjema(ctx, last, maler) {
+function stegSkjema(ctx, last, maler, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const mal = el("select", { id: "ob-steg-mal", name: "mal_id",
@@ -439,7 +453,7 @@ function stegSkjema(ctx, last, maler) {
          "ui.onboarding.skjema.steg_jsonhjelp"),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.onboarding.skjema.steg_ok",
     send: (idem) => {
       const steg = parseSteglinjer(linjer.value);
@@ -469,7 +483,7 @@ function stegSkjema(ctx, last, maler) {
     skjema, utfall);
 }
 
-function startSkjema(ctx, last, maler) {
+function startSkjema(ctx, last, maler, kvitter) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const mal = el("select", { id: "ob-start-mal", name: "mal_id",
@@ -504,7 +518,7 @@ function startSkjema(ctx, last, maler) {
     felt("ob-start-dato", "ui.onboarding.skjema.start_dato", dato),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
-    skjema, knapp, utfall,
+    skjema, knapp, utfall, kvitter,
     okNokkel: "ui.onboarding.skjema.start_ok",
     send: (idem) => startOnboardinglop({
       mal_id: mal.value, kunde_ref: kunde.value,
@@ -542,16 +556,30 @@ export function visOnboarding(hoved, ctx) {
   const hode = () => flateHode(t("ui.onboarding.tittel"),
     t("ui.onboarding.undertittel"));
   sett(hoved, ...hode());
+  // KVITTERINGEN LEVER UTENFOR TEGNINGEN. Alt inne i `kropp` bygges på
+  // nytt ved hver `last()`, og før dette forsvant kvitteringen i samme
+  // øyeblikk den ble satt — brukeren trykket, så skjermen blinke, og
+  // satt igjen uten å vite om det gikk bra.
+  //
+  // INGEN `aria-live` her: `meldLive` eier opplesningen, og to regioner
+  // ville lest den samme setningen to ganger.
+  const kvittering = el("p", { class: "muted" });
   const kropp = el("div", { class: "kpi-kort-liste" });
-  hoved.append(kropp);
+  hoved.append(kvittering, kropp);
+  const kvitter = (tekst) => { kvittering.textContent = tekst; };
+  // …OG DEN ÅPNE RADEN OGSÅ. Uten dette lukket detaljpanelet seg ved
+  // hver skriving, og neste handling krevde at brukeren fant fram til
+  // raden igjen.
+  let apenRad = null;
+  const settApen = (id) => { apenRad = id; };
   const last = () => medStatus(hoved, ctx,
     () => hentJson("/v1/onboarding"),
     (d) => {
-      sett(hoved, ...hode(), kropp);
+      sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
       const lop = d.lop || [];
       const maler = d.maler || [];
-      const detalj = detaljpanel(ctx, last);
+      const detalj = detaljpanel(ctx, last, kvitter, settApen);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.onboarding.oversikt.tittel") }),
@@ -579,10 +607,18 @@ export function visOnboarding(hoved, ctx) {
 
       const deler = [oversikt, lopseksjon, malseksjon, detalj.node];
       if (harScope(ctx, "bestilling:opprett")) {
-        deler.push(startSkjema(ctx, last, maler), malSkjema(ctx, last),
-                   stegSkjema(ctx, last, maler));
+        deler.push(startSkjema(ctx, last, maler, kvitter),
+                   malSkjema(ctx, last, kvitter),
+                   stegSkjema(ctx, last, maler, kvitter));
       }
       sett(kropp, ...deler);
+      // GJENÅPNE PANELET på raden som sto åpen. Finnes den ikke lenger
+      // i listen — avsluttet, eller falt utenfor avkortingen — slippes
+      // den, framfor å åpne et panel på en rad ingen ser.
+      if (apenRad) {
+        const rad = lop.find((x) => x.lop_id === apenRad);
+        if (rad) detalj.apne(rad); else apenRad = null;
+      }
     });
   last();
 }

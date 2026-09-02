@@ -381,3 +381,43 @@ test("Kundeservice: kilden bærer ingen sendevei", () => {
     join(HER, "..", "static", "js", "api.js"), "utf8");
   assert.ok(!/export const sendSvar/.test(api));
 });
+
+
+// KVITTERINGEN SKAL OVERLEVE TEGNINGEN.
+//
+// Porten finnes fordi det var galt i alle fem flatene i klyngen:
+// suksessmeldingen ble satt i skjemaets eget `utfall`, og `last()` bygde
+// straks både panelet og skjemaet på nytt. Brukeren trykket, så skjermen
+// blinke, og satt igjen uten å vite om det gikk bra. Skjermleseren hørte
+// det (`meldLive`), men en seende bruker fikk ingenting.
+//
+// MUTASJONEN SOM DREPER DENNE: flytt kvitteringen tilbake inn i `kropp`.
+test("Kundeservice: kvitteringen og panelet overlever tegningen",
+  async () => {
+    SVAR = fullSvar();
+    SISTE = null;
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    await vent(() => h.querySelector("#ks-handlingstype") !== null);
+    h.querySelector("#ks-prioritet").value = "hoy";
+    h.querySelector("#ks-tema").value = "faktura";
+    h.querySelector("#ks-handlingstype").value = "svar_kreves";
+    h.querySelector("#ks-handlingstype").closest("form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE !== null);
+    // NØKKELEN ER `klassifisering_ok`, ikke `klassifiser_ok`. Første
+    // utgave ventet på en streng som aldri kom — og siden `vent()` bare
+    // RETURNERER falskt uten å kaste, var porten grønn på en flate der
+    // kvitteringen aldri ble vist. En `vent()` uten `assert` etterpå er
+    // ingen port. (CodeRabbit.)
+    assert.ok(await vent(() => h.textContent.includes(
+      t("ui.kundeservice.skjema.klassifisering_ok"))),
+      "kvitteringen forsvant i tegningen");
+    // …OG PANELET STÅR ÅPENT PÅ SAMME RAD. Uten dette måtte brukeren
+    // finne fram til raden igjen for hver eneste handling.
+    assert.ok(await vent(() => h.querySelector("#ks-handlingstype") !== null),
+      "panelet lukket seg etter en klassifisering");
+  });

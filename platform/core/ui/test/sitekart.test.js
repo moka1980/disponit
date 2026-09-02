@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { byggRuter, harScope, hashForDypLenke, synligeSakstyper,
@@ -396,4 +396,41 @@ test("Skjemaets rutenett er opt-in, ikke påtvunget", () => {
   assert.ok(!/^\.kv-skjema\s*\{[^}]*display:\s*grid/m.test(css),
     "rutenettet står på den DELTE klassen og treffer skjemaer som ikke"
     + " er bygget for det");
+});
+
+// HVER KVITTERINGSNØKKEL SKAL FINNES I BEGGE SPRÅK.
+//
+// Porten finnes fordi en av dem ikke gjorde det: `skjemaramme` fikk
+// `okNokkel: "…klassifisering_ok"`, og testen ventet på
+// `"…klassifiser_ok"` — en nøkkel ingen hadde skrevet. `t()` gir da
+// nøkkelen rå tilbake, så FLATEN ville vist «ui.kundeservice.skjema.
+// klassifiser_ok» til brukeren i stedet for en setning.
+//
+// Dette måler ALLE flatene på én gang, ikke bare de fem i klynge 3: en
+// nøkkel som ikke finnes er den samme feilen uansett hvem som skrev den.
+test("Hver okNokkel i en flate finnes i begge locale-settene", () => {
+  const flatemappe = join(HER, "..", "static", "js", "flater");
+  const sett = {};
+  for (const sprak of ["nb", "en"]) {
+    sett[sprak] = JSON.parse(readFileSync(
+      join(HER, "..", "..", "..", "..", "locales", `${sprak}.json`),
+      "utf-8"));
+  }
+  const talte = new Set();
+  for (const fil of readdirSync(flatemappe)) {
+    if (!fil.endsWith(".js")) continue;
+    const kilde = readFileSync(join(flatemappe, fil), "utf8");
+    for (const m of kilde.matchAll(/okNokkel:\s*"([^"]+)"/g)) {
+      talte.add(m[1]);
+      for (const sprak of ["nb", "en"]) {
+        assert.ok(sett[sprak][m[1]],
+          `${fil}: ${m[1]} mangler i locales/${sprak}.json`);
+      }
+    }
+  }
+  // …og porten skal måle noe. Null treff ville vært grønt på en tom
+  // katalog like godt som på en riktig. FORSKJELLIGE nøkler telles, ikke
+  // forekomster: tjue kall med samme nøkkel er én nøkkel målt tjue
+  // ganger, og en terskel på forekomster ville vært grønn på det.
+  assert.ok(talte.size >= 20, `fant bare ${talte.size} kvitteringsnøkler`);
 });
