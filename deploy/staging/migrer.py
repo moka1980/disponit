@@ -299,6 +299,27 @@ SET LOCAL ROLE disponit_compliance_eier;
 GRANT EXECUTE ON FUNCTION m34_kontrollbilde(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m34_sveip_etterprovinger(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m34_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 101 (M-13): avstemmingsregisterets LESEDØRER, samme snitt og samme
+-- begrunnelse som M-34-blokken over. `bankkonto`, `bankpost`, `bilag`,
+-- `avstemming` og `avstemmingsfunn` står bevisst IKKE i noen GRANT-liste
+-- her: runtime har ingen SELECT på dem i det hele tatt (SP-7) og når
+-- registeret KUN gjennom dørene, som krever tenantkontekst først.
+-- Skrivedørene ligger i M37_RETTIGHETER_API (menneskelige handlinger i
+-- flaten); SVEIPEN hører sveiperollen til (AVSTEMMINGSVEIP_RETTIGHETER)
+-- og er kryss-tenant — et grant her ville gitt forespørselsveien
+-- nøyaktig det vinduet sveiperollen finnes for å nekte den.
+--
+-- `m13_funnkandidater` er et INTERNT ledd i sveipen, ikke en lesedør.
+-- Den grantes ingen, og REVOKE-en står fordi en rettighet som bare
+-- slutter å bli gitt ikke er trukket tilbake.
+SET LOCAL ROLE disponit_avstemming_eier;
+GRANT EXECUTE ON FUNCTION m13_avstemmingsstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_kontoer(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_uavstemte_poster(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_apne_bilag(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m13_sveip_avstemming(INT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m13_funnkandidater(TEXT, DATE, INT) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -725,6 +746,18 @@ SET LOCAL ROLE disponit_compliance_eier;
 GRANT EXECUTE ON FUNCTION m34_registrer_kontroll(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, INT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m34_registrer_etterproving(TEXT, UUID, UUID, DATE, TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m34_marker_ikke_relevant(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 101 (M-13): avstemmingsregisterets fem skrivedører — konto, bankpost,
+-- bilag, match og oppheving. Menneskelige handlinger i flaten
+-- (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu som
+-- M-34-dørene over, men en ANNEN eier — derfor sin egen rolleblokk.
+-- Fortegnsregelen, overdekningen og én-match-per-post håndheves i
+-- dørene, i vakten og i den partielle unike indeksen, aldri her.
+SET LOCAL ROLE disponit_avstemming_eier;
+GRANT EXECUTE ON FUNCTION m13_registrer_konto(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_registrer_post(TEXT, UUID, UUID, TEXT, DATE, BIGINT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_registrer_bilag(TEXT, UUID, TEXT, TEXT, BIGINT, TEXT, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_avstem(TEXT, UUID, UUID, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m13_opphev_avstemming(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1046,6 +1079,20 @@ REVOKE ALL ON FUNCTION m34_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 """
 
+
+# 101 (M-13): avstemmingssveipens rolle. Samme form og samme begrunnelse
+# som COMPLIANCESVEIP_RETTIGHETER over: nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. `m13_sveip_avstemming` er KRYSS-TENANT og setter selv
+# RLS-konteksten per tenant, så rollen kan reise funn i alle tenanter uten
+# å kunne LESE en eneste bankpost selv. Hele autoriteten står i den
+# eier-eide defineren, revidérbar på ett sted.
+AVSTEMMINGSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_avstemming_eier;
+GRANT EXECUTE ON FUNCTION m13_sveip_avstemming(INT, INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1247,7 +1294,13 @@ def main(argv: list[str] | None = None) -> int:
                           # tabellrettigheter å nullstille, bare den ene
                           # EXECUTEn.
                           ("disponit_compliancesveip",
-                           COMPLIANCESVEIP_RETTIGHETER)):
+                           COMPLIANCESVEIP_RETTIGHETER),
+                          # 101 (M-13): avstemmingssveipens rolle, samme
+                          # løkke og samme betingelse — ingen
+                          # tabellrettigheter å nullstille, bare den ene
+                          # EXECUTEn.
+                          ("disponit_avstemmingssveip",
+                           AVSTEMMINGSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

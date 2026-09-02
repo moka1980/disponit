@@ -318,6 +318,25 @@ const BASISRUTER = [
   // skriveveiene er gatet både inne på flaten og i `RUTESCOPE` på
   // `bestilling:opprett`.
   { nokkel: "compliance", scope: "security:read", modulflate: 34 },
+  // M-13 (101): avstemmingsregisteret. MODULFLATE bak `okonomi:read` —
+  // scopet API-et bak flaten krever (`GET /v1/avstemming` i RUTESCOPE),
+  // som resten av tabellen: menyen lover aldri en flate serveren svarer
+  // 403 på.
+  //
+  // SCOPET ER NYTT, og det er den eneste oppføringen i denne tabellen som
+  // ikke gjenbruker et eksisterende. Begrunnelsen står i
+  // `autorisasjon.py` og gjentas ikke her, men den korte formen er at
+  // ingen av de to kandidatene passet: `decisions:read` har ALLE
+  // kunderollene, og et avstemmingsregister sier hvor pengene til
+  // virksomheten går; `security:read` er «Compliance/ops», og økonomi er
+  // noe annet enn drift. Kretsen er `admin` alene i v1 — smalere enn
+  // noen annen flate her.
+  //
+  // Regelen om flatens SVAKESTE ledd (wcagkontroll-regelen) er fortsatt
+  // den som gjelder: lesingen krever `okonomi:read`, og de fem
+  // skriveveiene er gatet både inne på flaten og i `RUTESCOPE` på
+  // `bestilling:opprett`.
+  { nokkel: "avstemming", scope: "okonomi:read", modulflate: 13 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

@@ -1178,6 +1178,40 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import compliance as compliancemodul
         return compliancemodul.ikke_relevant_endepunkt(tjeneste, request)
 
+    # 101 (M-13): avstemmingsregisteret. Leseveien er tenantens eget
+    # bank- og bilagsregister; de fem skriveveiene er menneskelige
+    # handlinger i flaten, bak `bestilling:opprett` + CSRF +
+    # Idempotency-Key. Avstemmingssveipen finnes IKKE som HTTP — den har
+    # sin egen LOGIN-rolle (`disponit_avstemmingssveip`) og sin egen
+    # daglige timer, og runtime er eksplisitt REVOKEt fra den i 101.
+    #
+    # OG DET FINNES INGEN BOKFØRINGSVEI. Katalogteksten lover automatisk
+    # bokføring ved full match; v1 avstemmer og viser. Fraværet er
+    # dommen, ikke en manglende rute.
+    def avstemming_bilde(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.avstemmingsbilde(tjeneste, request)
+
+    def avstemming_konto(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.konto_endepunkt(tjeneste, request)
+
+    def avstemming_bankpost(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.bankpost_endepunkt(tjeneste, request)
+
+    def avstemming_bilag(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.bilag_endepunkt(tjeneste, request)
+
+    def avstemming_match(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.match_endepunkt(tjeneste, request)
+
+    def avstemming_opphev(request: Request) -> Response:
+        from . import avstemming as avstemmingmodul
+        return avstemmingmodul.opphev_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -1661,6 +1695,19 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               compliance_etterproving, methods=["POST"]),
         Route("/v1/compliance/kontroll/{kontroll_id:uuid}/ikke-relevant",
               compliance_ikke_relevant, methods=["POST"]),
+        # 101 (M-13): kolleksjonsruten FØRST, som ellers i fila. De fire
+        # registreringsveiene er egne stier og ikke ett endepunkt med et
+        # typefelt — en konto, en bankpost, et bilag og en match har
+        # ulike kropper, ulike dommer og ulike feilmeldinger, og ett
+        # endepunkt med fire former ville gjort hver av dem uleselig.
+        Route("/v1/avstemming", avstemming_bilde, methods=["GET"]),
+        Route("/v1/avstemming/konto", avstemming_konto, methods=["POST"]),
+        Route("/v1/avstemming/bankpost", avstemming_bankpost,
+              methods=["POST"]),
+        Route("/v1/avstemming/bilag", avstemming_bilag, methods=["POST"]),
+        Route("/v1/avstemming/match", avstemming_match, methods=["POST"]),
+        Route("/v1/avstemming/match/{avstemming_id:uuid}/opphev",
+              avstemming_opphev, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -1792,7 +1839,12 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         "epost:read",
                         # 089 (M-35): kontinuitetsflaten leser tenantens
                         # egen beredskapstilstand — rent lesende.
-                        "kontinuitet:read"})
+                        "kontinuitet:read",
+                        # 101 (M-13): avstemmingsflaten leser tenantens
+                        # eget bank- og bilagsregister — rent lesende.
+                        # Begrunnelsen for at scopet er nytt står i
+                        # `autorisasjon.py`.
+                        "okonomi:read"})
 
 #: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
 #: muterende endepunkt — selv om noen skulle utstede et bruker-token med
@@ -2370,6 +2422,25 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/compliance/kontroll/{kontroll_id:uuid}/etterproving"):
         "bestilling:opprett",
     ("POST", "/v1/compliance/kontroll/{kontroll_id:uuid}/ikke-relevant"):
+        "bestilling:opprett",
+    # 101 (M-13): avstemmingsregisteret. LESINGEN bærer `okonomi:read`,
+    # og det er det ene nye scopet i klynge 3 — begrunnelsen står i
+    # `autorisasjon.py`: `decisions:read` er for vid (enhver `leser`
+    # har den) og `security:read` er beskrevet som «Compliance/ops»,
+    # altså noe annet enn økonomi. SKRIVINGEN bærer `bestilling:opprett`,
+    # samme scope som M-21s og M-34s skriveveier, alt i
+    # BROWSER_MUTASJONSSCOPES.
+    #
+    # Sveipen står IKKE her, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m13_sveip_avstemming` er kryss-tenant og
+    # kjøres av `disponit_avstemmingssveip` fra sin egen timer — en
+    # fullmakt web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/avstemming"):              "okonomi:read",
+    ("POST", "/v1/avstemming/konto"):        "bestilling:opprett",
+    ("POST", "/v1/avstemming/bankpost"):     "bestilling:opprett",
+    ("POST", "/v1/avstemming/bilag"):        "bestilling:opprett",
+    ("POST", "/v1/avstemming/match"):        "bestilling:opprett",
+    ("POST", "/v1/avstemming/match/{avstemming_id:uuid}/opphev"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

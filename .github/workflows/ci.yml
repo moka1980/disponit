@@ -45,9 +45,9 @@ jobs:
       DISPONIT_TEST_COMPLIANCESVEIP_DSN: postgresql://disponit_compliancesveip:comp@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_AVSTEMMINGSVEIP_DSN: postgresql://disponit_avstemmingssveip:avst@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_HENVENDELSESVEIP_DSN: postgresql://disponit_henvendelsessveip:henv@127.0.0.1:5432/disponit_test
-      DISPONIT_TEST_ONBOARDINGSVEIP_DSN: postgresql://disponit_onboardingssveip:onbo@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_ONBOARDINGSVEIP_DSN: postgresql://disponit_onboardingsveip:onbo@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_FORDRINGSVEIP_DSN: postgresql://disponit_fordringssveip:ford@127.0.0.1:5432/disponit_test
-      DISPONIT_TEST_LEVERANDORSVEIP_DSN: postgresql://disponit_leverandorssveip:leve@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_LEVERANDORSVEIP_DSN: postgresql://disponit_leverandorsveip:leve@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -103,9 +103,9 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_compliancesveip LOGIN PASSWORD 'comp'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_avstemmingssveip LOGIN PASSWORD 'avst'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_henvendelsessveip LOGIN PASSWORD 'henv'"
-          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_onboardingssveip LOGIN PASSWORD 'onbo'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_onboardingsveip LOGIN PASSWORD 'onbo'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_fordringssveip LOGIN PASSWORD 'ford'"
-          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_leverandorssveip LOGIN PASSWORD 'leve'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_leverandorsveip LOGIN PASSWORD 'leve'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilgang_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lisens_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_personvern_eier NOLOGIN"

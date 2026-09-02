@@ -114,6 +114,20 @@
    ved siden av andre kolonner, ikke brødtekst i en spalte. */
 .celle-tekst { max-width: 44ch; white-space: normal; }
 
+/* PENGEKOLONNER (M-13, 101). To egenskaper, og begge er nødvendige for at
+   en beløpskolonne skal kunne SKUMMES: høyrejustering setter enerne under
+   hverandre, og `tabular-nums` gir hvert siffer samme bredde slik at også
+   tierne og hundrerne står i linje. Uten den andre danser kolonnen på en
+   proporsjonal font selv om den er høyrejustert, og en avstemmingsflate
+   der tallene ikke står under hverandre er en flate ingen leser tall i.
+   `white-space: nowrap` fordi et beløp aldri skal brytes over to linjer —
+   «1 234,» på én linje og «56» på neste er et annet tall. */
+.celle-tall {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* IDENTIFIKATORER SKAL BRYTE, IKKE SKYVE. `beredskap.bekrefter.lever`,
    `makulerer_artefakter_for_prosess`, `bid_c612864ad46e…` — alle er én
    ubrutt streng uten et eneste naturlig brytepunkt, og en tabellcelle er

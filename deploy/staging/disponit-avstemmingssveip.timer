@@ -1,0 +1,38 @@
+# M-13 (101): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: aldersgrensen på en uavstemt bankpost
+# er et antall DØGN, og forfallsdatoen på et bilag er en dato. Ingen av
+# de to spørsmålene skifter svar oftere enn ved døgnskiftet, og en sveip
+# hver time ville stilt dem 24 ganger og fått det samme svaret 23 av
+# gangene — billig, siden funnene er idempotente, men ikke informasjon.
+#
+# DET SOM ENDRER SEG RASKERE ENN ET DØGN, ENDRER SEG I SAMME
+# TRANSAKSJON. Avstemmer noen en post, forsvinner den fra
+# `m13_uavstemte_poster` med én gang, og `alder_dogn` og
+# `dogn_over_forfall` regnes fra `current_date` ved hvert oppslag. Flaten
+# viser altså aldri en stale alder — sveipen finnes for FUNNENE, som er
+# den varige, delte tilstanden, ikke for tallet i tabellen.
+#
+# KLOKKESLETTET ER 05:05 fordi 03:15 (backup), 04:20 (begrepssveip),
+# 04:35 og 04:50 alt er tatt av nabotimerne. En egen tid er ikke pynt:
+# sveipens første steg leser ALLE tenanters bankposter, og to slike
+# skann på samme sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min`: samme begrunnelse en gang til, mot jobber
+# vi ikke eier klokka til. Sveipen har ingen frist å rekke.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
+# sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
+# poster står uavstemt i dag»), ikke da, og en uavstemt post som ingen
+# har fått funn på er nøyaktig det denne timeren finnes for.
+
+[Unit]
+Description=Disponit avstemmingssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 05:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

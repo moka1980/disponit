@@ -1,0 +1,95 @@
+# M-13 (101): avstemmingssveipen for bank- og bilagsregisteret.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen:
+# `m13_sveip_avstemming(500, 30)` reiser ETT funn per (objekt, funntype)
+# for bankposter som har stått uavstemt lenger enn aldersgrensen
+# (`uavstemt_post_over_grense`), for forfalte bilag uten en eneste krone
+# dekket (`forfalt_bilag_uten_dekning`), og for forfalte bilag med
+# delvis dekning (`delvis_dekket_bilag`). Den oppdaterer
+# `sist_sett_sveip` på dem som alt finnes, og lukker dem som ikke lenger
+# gjelder. Sveipen bestemmer ikke hva som er uavstemt — den kaller
+# funksjonen som vet det.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, ikke her: en
+# daglig sveip over en post som har stått uavstemt i et år gir ETT funn,
+# ikke 365. En funnliste som vokser med kadensen er en funnliste folk
+# lærer seg å overse — og da forsvinner de viktige med dem.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# avstemmingssveip er et register som eldes uten at noen ser det, altså
+# nøyaktig tilstanden modulen finnes for å gjøre synlig. Et register der
+# ingenting er uavstemt fordi ingen målte, er ikke et grønt register.
+#
+# SVEIPEN BOKFØRER INGENTING, OG DEN SENDER INGENTING. Den skriver funn
+# i basen, og funnene leses i flaten. Katalogteksten lover automatisk
+# bokføring ved full match; v1 gjør det ikke, og denne enheten er et av
+# stedene fraværet er lettest å se: ingen hovedbokskobling, ingen
+# nettverksmottaker, ingen kø ut. `RestrictAddressFamilies` under
+# slipper AF_INET fordi DATABASEN nås over TCP i staging — ikke fordi
+# noe skal ut.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_avstemmingssveip` har nøyaktig ÉN
+# rettighet i basen: EXECUTE på `m13_sveip_avstemming`. INGEN
+# tabellrettigheter, ingen lesedør, ingen skrivedør, ingen kunderad —
+# funnene skrives av den eier-eide defineren, aldri av rollen direkte.
+# Delte den DSN med runtime, ville sveipen måttet grantes til
+# `disponit`; sveipen er KRYSS-TENANT og setter selv RLS-konteksten, så
+# det ville gitt hele forespørselsveien nøyaktig det vinduet denne
+# rollen finnes for å nekte den. 101 REVOKEr den derfor eksplisitt fra
+# `disponit` — en rettighet som bare slutter å bli gitt er ikke trukket
+# tilbake.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener` — den samme
+# `disponit-artefaktrydding`, `disponit-evidensreaper`,
+# `disponit-begrepssveip` og `disponit-compliancesveip` har, og av samme
+# grunn: dette er en ren driftstimer uten filsystemfullmakter.
+# Autoriteten ligger IKKE i Unix-brukeren; den ligger i DB-rollen over,
+# som er sveipens egen og ingen annens. En ny Unix-identitet ville
+# flyttet null autoritet og lagt én identitet til å forvalte.
+
+[Unit]
+Description=Disponit avstemmingssveip (uavstemte poster og forfalte bilag -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_AVSTEMMINGSVEIP_URL:/etc/disponit/avstemmingssveip/DISPONIT_AVSTEMMINGSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_avstemmingssveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`bankpost_alder`, `bilag_forfall`, `avstemmingsfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig svar:
+# funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

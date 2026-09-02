@@ -630,3 +630,33 @@ export const markerIkkeRelevant = (kontrollId, begrunnelse, idem) =>
   _muter(
     `/v1/compliance/kontroll/${encodeURIComponent(kontrollId)}/ikke-relevant`,
     "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+// M-13 (101): avstemmingsregisteret. Alle fire registreringsveiene bærer
+// hver sin SP-2-nøkkel — serveren UTLEDER id-en av den, så en tapt
+// respons + nytt klikk gjenspiller i stedet for å føde en rad til. En
+// dobbelt registrert innbetaling er nøyaktig den feilen som får et
+// regnskap til å stemme på papiret og ikke i virkeligheten.
+//
+// DET FINNES INGEN BOKFØRINGSFUNKSJON HER, og fraværet er dommen:
+// katalogteksten lover automatisk bokføring ved full match, v1 avstemmer
+// og viser. En automatisk bokføring er en skriving i regnskapet, og et
+// regnskap som endres av noe ingen leste er ikke et regnskap.
+export const registrerKonto = (konto, idem) =>
+  _muter("/v1/avstemming/konto", "POST", konto,
+         idem || nyIdempotensnokkel());
+
+export const registrerBankpost = (post, idem) =>
+  _muter("/v1/avstemming/bankpost", "POST", post,
+         idem || nyIdempotensnokkel());
+
+export const registrerBilag = (bilag, idem) =>
+  _muter("/v1/avstemming/bilag", "POST", bilag,
+         idem || nyIdempotensnokkel());
+
+export const avstem = (match, idem) =>
+  _muter("/v1/avstemming/match", "POST", match,
+         idem || nyIdempotensnokkel());
+
+export const opphevAvstemming = (avstemmingId, begrunnelse, idem) =>
+  _muter(
+    `/v1/avstemming/match/${encodeURIComponent(avstemmingId)}/opphev`,
+    "POST", { begrunnelse }, idem || nyIdempotensnokkel());
