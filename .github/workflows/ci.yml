@@ -227,6 +227,36 @@ jobs:
           # tester CI en annen vei enn den staging og produksjon bruker.
           DISPONIT_MIGRATOR_URL="postgresql://disponit_migrator:mig@127.0.0.1:5432/disponit_test" \
             python deploy/staging/migrer.py disponit
+          # VARSELENUM-REPARASJONEN, SOM PÅ STAGING. Uten denne kjører CI
+          # en ANNEN provisjoneringsvei enn staging og produksjon, og det
+          # er nettopp den forskjellen den herdede kjøreren over finnes
+          # for å hindre.
+          #
+          # HVORFOR DEN TRENGS: 044 finner sin CHECK med
+          # `LIKE '%ressurs_type%'` — uten ORDER BY og uten
+          # `contype = 'c'`. På PG18 har NOT NULL-constrainten SIN EGEN
+          # rad i `pg_constraint`, med definisjonen `NOT NULL
+          # ressurs_type`, og den matcher like godt. Hvilken rad som
+          # kommer tilbake avhenger av SPØRREPLANEN: under en index scan
+          # treffer den CHECKen, under en bitmap heap scan kan den treffe
+          # NOT NULL-raden. Treffer den feil, gjør 044 ingenting i
+          # stillhet — og migrasjon 090 feiler senere med «uventet
+          # definisjonsform», på noe som ikke handler om modulen som
+          # landet.
+          #
+          # Det skjedde i produksjon (to måneder med varsler avvist i
+          # stillhet) og det skjedde på riggen 2/9. CI har vært grønn
+          # fordi basen er liten nok til at planleggeren velger index
+          # scan — altså av flaks, ikke av konstruksjon.
+          #
+          # `varselenum-reparasjon.sql` er husets forward-fix: den
+          # deklarerer de kanoniske settene og gjenskaper constraintene
+          # med et DETERMINISTISK oppslag (navn OG contype). Den er
+          # idempotent, `oppsett-postgresql.sh` kjører den på staging, og
+          # migrasjonene kan ikke rettes (append-only-porten).
+          PGPASSWORD=mig psql -h 127.0.0.1 -U disponit_migrator \
+            -d disponit_test -v ON_ERROR_STOP=1 \
+            -f deploy/staging/varselenum-reparasjon.sql
       - name: "SP-10: backfill-migrasjonen prøvekjøres mot BEBODD base"
         # Tom base er halvparten av porten: 047-prod-stoppet (utsatte
         # DEFERRABLE-hendelser foran ALTER) er per konstruksjon usynlig
