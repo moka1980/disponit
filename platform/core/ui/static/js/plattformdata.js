@@ -62,6 +62,18 @@ export const MODULSTATUS = {
   22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
   30: "bygges",     // m30_personvern: under_utvikling, ikke_i_drift
   34: "bygges",     // m34_compliance: under_utvikling, ikke_i_drift
+  // KLYNGE 3 «kundens livsløp og pengene» (101-105) — registrert 2/9
+  // sammen med grensene m13-v1…m24-v1. Samme register-først-form som
+  // klynge 1 og 2, men med en HARDERE grunn: tre av de fem rører
+  // penger og to av dem rører en kunde direkte, og en purring eller en
+  // postering kan ikke trekkes tilbake ved å slette raden som laget
+  // den. Ordet er `bygges` fordi manifestet finnes; ingen har kode
+  // ennå, og ingen flippes av en byggemilepæl.
+  13: "bygges",     // m13_avstemming: under_utvikling, ikke_i_drift
+  17: "bygges",     // m17_kundeservice: under_utvikling, ikke_i_drift
+  18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift
+  23: "bygges",     // m23_fordring: under_utvikling, ikke_i_drift
+  24: "bygges",     // m24_leverandor: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -191,6 +203,39 @@ const MODULER = [
     navn_nokkel: "site.modul.m34.navn",
     fase_nokkel: "site.fase.operasjoner",
     tekst_nokkel: "site.modul.m34.tekst",
+  },
+  // KLYNGE 3. Fasene leses fra `katalog.js` (m16/m31-regelen: katalogen
+  // er kilden, ikke en gjetning her): M-13/17/18 er fase 2 →
+  // `operasjoner`, M-23/24 er fase 3 → `autopiloter`.
+  {
+    id: 13,
+    navn_nokkel: "site.modul.m13.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m13.tekst",
+  },
+  {
+    id: 17,
+    navn_nokkel: "site.modul.m17.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m17.tekst",
+  },
+  {
+    id: 18,
+    navn_nokkel: "site.modul.m18.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m18.tekst",
+  },
+  {
+    id: 23,
+    navn_nokkel: "site.modul.m23.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m23.tekst",
+  },
+  {
+    id: 24,
+    navn_nokkel: "site.modul.m24.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m24.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

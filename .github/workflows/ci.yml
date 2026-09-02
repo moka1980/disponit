@@ -43,6 +43,11 @@ jobs:
       DISPONIT_TEST_TILGANGSSVEIP_DSN: postgresql://disponit_tilgangssveip:tilg@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PERSONVERNSVEIP_DSN: postgresql://disponit_personvernsveip:pers@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_COMPLIANCESVEIP_DSN: postgresql://disponit_compliancesveip:comp@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_AVSTEMMINGSVEIP_DSN: postgresql://disponit_avstemmingssveip:avst@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_HENVENDELSESVEIP_DSN: postgresql://disponit_henvendelsessveip:henv@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_ONBOARDINGSVEIP_DSN: postgresql://disponit_onboardingssveip:onbo@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_FORDRINGSVEIP_DSN: postgresql://disponit_fordringssveip:ford@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_LEVERANDORSVEIP_DSN: postgresql://disponit_leverandorssveip:leve@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -96,10 +101,24 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilgangssveip LOGIN PASSWORD 'tilg'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_personvernsveip LOGIN PASSWORD 'pers'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_compliancesveip LOGIN PASSWORD 'comp'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_avstemmingssveip LOGIN PASSWORD 'avst'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_henvendelsessveip LOGIN PASSWORD 'henv'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_onboardingssveip LOGIN PASSWORD 'onbo'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_fordringssveip LOGIN PASSWORD 'ford'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_leverandorssveip LOGIN PASSWORD 'leve'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilgang_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lisens_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_personvern_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_compliance_eier NOLOGIN"
+          # KLYNGE 3 (101-105): fem eiere og fem sveipere, opprettet i ÉN
+          # omgang av samme grunn som klynge 2 — ci.yml merges normalt
+          # for hånd, og fem separate endringer i den er fem sjanser til
+          # en rød CI som ikke handler om modulen som landet.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_avstemming_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kundeservice_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_onboarding_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_fordring_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_leverandor_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
@@ -152,6 +171,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_lisens_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_personvern_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_compliance_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_avstemming_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_kundeservice_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_onboarding_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_fordring_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_leverandor_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"
@@ -168,6 +192,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_lisens_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_personvern_eier"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_compliance_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_avstemming_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_kundeservice_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_onboarding_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_fordring_eier"
+          psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_leverandor_eier"
           # GO-vilkaar V3: event-triggeren som hindrer at retention-vakten
           # DEAKTIVERES. Den kan bare lages av superbruker — derfor her og
           # ikke i en migrasjon, noeyaktig som rollene. CI maa speile

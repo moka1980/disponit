@@ -1,0 +1,72 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m13-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 101
+# tildelt i docs/KLYNGE3-FUNDAMENT.md.
+#
+# V1 ER AVSTEMMINGSREGISTERET. Katalogen lover automatisk bokføring ved
+# full match. v1 BOKFØRER IKKE. Den registrerer bankposter og bilag,
+# regner matchen, og viser de UAVSTEMTE postene med alder.
+#
+# DOMMEN: en automatisk bokføring er en skriving i regnskapet, og et
+# regnskap som endres av noe ingen leste er ikke et regnskap. Å se de
+# uavstemte postene er dessuten det som gjør matchreglene målbare —
+# uten en målt treffrate er en autobokføring et veddemål.
+#
+# GRENSEN MOT M-23: M-13 eier BANKPOSTER — det som har skjedd på konto.
+# M-23 eier FORDRINGER — det kunden skylder. En innbetaling er begge
+# deler sett fra hver sin side, og v1 kobler dem IKKE automatisk:
+# koblingen er et forslag i registeret, aldri en postering.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m13_avstemming
+navn: Bankavstemmingsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELL, MÅLT avhengighet: hver registrering og hver avstemmingsdom
+# bokføres i evidenskjeden (m02) — en avstemming som ikke kan gjenfinnes
+# er ikke en avstemming, den er en påstand.
+avhengigheter:
+  - m02_revisjonslogg          # registrering og avstemmingsdom i evidenskjeden
+kjerne: platform/modules/m13_avstemming
+i18n_prefiks: avstemming
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et post/bilag-sett med KJENT fasit for hvilke par som
+      SKAL matche og hvilke som ikke skal, kjørt likt lokalt og på
+      staging med begge datasett-identitetene bundet. Fasiten må
+      inneholde de vanskelige tilfellene — delbetaling, øreavrunding,
+      og to bilag på samme beløp — ellers måler settet bare det lette.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver registrering og hver avstemmingsdom faktisk står
+      i evidenskjeden, målt som hendelser med identitet. Oppført som
+      avhengighet fordi det SKAL finnes; punktet står nei til målingen
+      er gjort.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: avstemmingssveipen bygget, og at en feil i den ikke
+      etterlater en halvferdig avstemming — en post som er merket
+      matchet mot et bilag som ikke fikk sin motsatte merking.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
+      den. Matchingen er den ene i klyngen som vokser kvadratisk hvis
+      den skrives naivt; grensen må settes før koden, ikke etter.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

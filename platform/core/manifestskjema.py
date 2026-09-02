@@ -1118,6 +1118,181 @@ KRAVGRENSER["m34-v1"] = {
 }
 
 
+# ---------------------------------------------------------------------
+# KLYNGE 3: «KUNDENS LIVSLØP OG PENGENE» — m13, m17, m18, m23, m24.
+#
+# Registrert FØR byggingen (§0), fra samme commit som manifestene, på
+# parformen fra m57/m6. Tredje klynge på samme form, og formen holder av
+# samme grunn som før: for hver modul er den farlige handlingen nettopp
+# den katalogen lover.
+#   M-13 kunne bokført automatisk        → v1 avstemmer og VISER
+#   M-17 kunne svart kunden              → v1 klassifiserer og LAGER UTKAST
+#   M-18 kunne provisjonert ny kunde     → v1 registrerer LØPET
+#   M-23 kunne sendt purring/tilbud      → v1 registrerer FORDRINGEN
+#   M-24 kunne betalt leverandøren       → v1 MÅLER avtalen
+#
+# MEN DENNE KLYNGEN ER IKKE SOM DE TO FØRRE, og det skal stå her:
+# M-13, M-23 og M-24 rører PENGER, og M-17 og M-23 rører EN KUNDE
+# DIREKTE. Skaden ved en feilaktig utført handling er kvalitativt annen
+# enn i klynge 1 og 2 — en purring sendt til feil kunde, eller en
+# postering i et regnskap, kan ikke trekkes tilbake ved å slette en rad.
+# Register-først er derfor ikke bare den vante formen her; det er den
+# eneste forsvarlige.
+#
+# `punktbinding` står tom for alle fem MED VILJE: ingen
+# sjekklistepunkter er flippbare før målingene finnes.
+# ---------------------------------------------------------------------
+
+M13_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN som invariant: modulen POSTERER ALDRI. Målt statisk
+    # (ingen skriving mot regnskapslagre utenfor egne tabeller) og
+    # funksjonelt (radantallet utenfor egne lagre er uendret etter en
+    # sveip). Samme form som m12s `tilgang_endret_utenfor_registeret`,
+    # og med hardere konsekvens: en postering er ikke reversibel ved å
+    # slette raden som laget den.
+    "postering_utenfor_registeret",
+    # En avstemming er et FORHOLD mellom to identifiserte poster. En
+    # match uten begge sider er ikke en avstemming, den er en påstand.
+    "match_uten_begge_sider",
+    # …og en post kan bare være matchet ÉN gang. Dobbeltmatch er den
+    # feilen som får et regnskap til å stemme på papiret og ikke i
+    # virkeligheten, og den er stille.
+    "post_matchet_flere_ganger",
+    # Beløp regnes i HELTALL (minste enhet). Et flyttall i en
+    # avstemming er en feil som viser seg først når summene ikke går
+    # opp, og da er det ikke lenger til å finne ut av.
+    "belop_i_flyttall",
+    # En uavstemt post som passerer sin egen aldersgrense er et FUNN,
+    # ikke en rad som stille blir gammel.
+    "uavstemt_over_grense_uten_funn",
+    "funntype_utenfor_lukket_sett",
+    "tenantlekkasje_i_avstemmingsregister",
+    "registerrad_endret_etter_innsetting",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m13-v1"] = {
+    "invarianter": M13_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M17_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER IKKE et svar. Utkastet lagres, et
+    # menneske sender — m57s form, og av samme grunn: at modellen kan
+    # skrive svaret er ikke det samme som at den kan stå for det.
+    "modulen_sendte_svar",
+    # DEN SKARPESTE: en henvendelse som ikke kunne klassifiseres skal
+    # ligge i M-37s unntakskø MED innholdet intakt. En tapt henvendelse
+    # er verre enn en uklassifisert, og den er usynlig.
+    "henvendelse_tapt_ved_feil",
+    # Klassifiseringen er et LUKKET SETT. En modell som får finne på
+    # egne kategorier gir en kø ingen kan sortere.
+    "klassifisering_utenfor_lukket_sett",
+    # Utkastet er append-only: regenerering lager en NY rad. Et utkast
+    # som endres under føttene på den som leser det, er et utkast ingen
+    # kan stå for å ha sendt.
+    "utkast_endret_etter_innsetting",
+    # Modellinput maskeres — samme krav som m6-v1s `maskert_felt`.
+    "modellinput_umaskert_felt",
+    # En egen kø ved siden av M-37s er nøyaktig det M-37 finnes for å
+    # hindre. Målt statisk.
+    "andre_unntakskø_opprettet",
+    "tenantlekkasje_i_henvendelsesregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m17-v1"] = {
+    "invarianter": M17_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M18_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen PROVISJONERER INGENTING — ingen tilgang, ingen
+    # konto, intet oppsett. Målt statisk og funksjonelt.
+    "modulen_provisjonerte",
+    # …og den SPEILER ikke M-12s tilganger. To registre som begge
+    # påstår å vite hvem som har hva, kan aldri holdes i takt; et steg
+    # kan NEVNE en tilgang, ikke eie den.
+    "tilgangstilstand_speilet_fra_m12",
+    "steg_uten_eier",
+    # Et løp er en SEKVENS. Et steg som er fullført før sitt eget
+    # forgjengersteg er et løp ingen kan lese statusen til.
+    "steg_fullfort_for_forgjenger",
+    # Et stoppet løp er et FUNN, ikke en rad som stille blir gammel.
+    "stoppet_lop_uten_funn",
+    "tenantlekkasje_i_onboardingregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m18-v1"] = {
+    "invarianter": M18_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M23_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, og den strengeste i klyngen: modulen SENDER INGENTING
+    # TIL KUNDEN — ingen purring, intet tilbud, ingen nedbetalingsplan.
+    # Målt statisk (ingen sendevei importert) og funksjonelt (ingen
+    # utgående melding etter en sveip). En purring til feil kunde kan
+    # ikke trekkes tilbake.
+    "modulen_sendte_til_kunde",
+    # …og den POSTERER ikke. Samme snitt som m13.
+    "postering_utenfor_registeret",
+    "belop_i_flyttall",
+    # Purretrinnet er en POLICYVERDI, ikke en konstant i koden. Et
+    # trinn kodet inn er en fullmakt modulen ga seg selv.
+    "purretrinn_hardkodet",
+    # …og trinnet kan bare gå ÉN vei og ett hakk om gangen. Et hopp
+    # over et trinn er en eskalering ingen besluttet.
+    "purretrinn_hoppet_over",
+    # En fordring som passerer sitt trinn er et FUNN, ikke en stille
+    # gammel rad.
+    "forfalt_fordring_uten_funn",
+    "tenantlekkasje_i_fordringsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m23-v1"] = {
+    "invarianter": M23_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M24_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen BETALER INGENTING. En utgående betaling er den
+    # ene handlingen i katalogen som er umulig å angre.
+    "modulen_utforte_betaling",
+    # …og den SETTER INGEN PRIS. Katalogen deler marginbeskyttelsen
+    # eksplisitt: M-24 oppdager, M-26 foreslår. v1 holder seg på sin
+    # side av snittet og beregner ikke ny pris i det hele tatt.
+    "modulen_beregnet_ny_pris",
+    "belop_i_flyttall",
+    # En SLA-måling er MOT EN AVTALT VERDI. En måling uten avtale er et
+    # tall uten dom.
+    "maling_uten_avtalt_verdi",
+    # Terskelen er en POLICYVERDI, ikke en konstant. Samme dom som
+    # m23s purretrinn.
+    "terskel_hardkodet",
+    "sla_brudd_uten_funn",
+    "tenantlekkasje_i_leverandorregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m24-v1"] = {
+    "invarianter": M24_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
@@ -1442,7 +1617,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # uendret (_grenser_m6). Ingen av dem har en arm m6 ikke har — og en
     # egen kopi per modul ville vært fem steder å glemme en rettelse.
     if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
-                   "m12-v1", "m22-v1", "m30-v1", "m34-v1"):
+                   "m12-v1", "m22-v1", "m30-v1", "m34-v1",
+                   "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

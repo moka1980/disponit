@@ -1,0 +1,69 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m18-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 103
+# tildelt i docs/KLYNGE3-FUNDAMENT.md.
+#
+# V1 ER ONBOARDINGREGISTERET. Katalogen lover 0 minutter per ny kunde —
+# registrering, betaling, workspace og oppsett maskinelt. v1
+# PROVISJONERER INGENTING. Den registrerer løpet: hvilke steg som
+# finnes, hvem som eier hvert av dem, når de forfaller, og hvor løpet
+# faktisk står.
+#
+# DOMMEN er den samme som gjorde M-12 trygg: provisjonering er den
+# farlige handlingen, og den er også den som krever at man først vet
+# hva et fullført løp ER. Uten et målt løp er en automatisk
+# provisjonering en handling ingen kan si om lyktes.
+#
+# GRENSEN MOT M-12: M-12 eier TILGANGENE — hvem som har hva. M-18 eier
+# LØPET — hva som skal skje for en ny kunde. Et onboardingsteg kan
+# NEVNE en tilgang; det oppretter den ikke, og det speiler den ikke.
+# To registre som begge påstår å vite hvem som har hva, kan aldri
+# holdes i takt.
+#
+# GRENSEN MOT M-21: M-21 eier PLIKTER mot omverdenen. M-18s stegfrister
+# er INTERNE mål, ikke forpliktelser — de brytes uten at noen har krav
+# på noe. Derfor egen tabell og egne funn.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m18_onboarding
+navn: Kunde-onboardingagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+avhengigheter:
+  - m02_revisjonslogg          # steg og statusendring i evidenskjeden
+kjerne: platform/modules/m18_onboarding
+i18n_prefiks: onboarding
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et løpssett med KJENT fasit for hvilke løp som er
+      stoppet og hvilke som går som de skal, kjørt likt lokalt og på
+      staging med begge datasett-identitetene bundet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert steg og hver statusendring faktisk står i
+      evidenskjeden, målt som hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: onboardingsveipen bygget, og at en feil i den ikke lar et
+      stoppet løp se ut som et løpende.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
