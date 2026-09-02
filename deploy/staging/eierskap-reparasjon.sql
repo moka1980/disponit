@@ -309,6 +309,29 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm34_kontrollbilde(text,integer)',                    'disponit_compliance_eier'),
     ('FUNCTION', 'm34_funnkandidater(text,date)',                      'disponit_compliance_eier'),
     ('FUNCTION', 'm34_sveip_etterprovinger(integer)',                  'disponit_compliance_eier'),
+    -- 101 (M-13): avstemmingsregisterets doerer og avstemmingssveipen.
+    -- NOLOGIN-eieren `disponit_avstemming_eier` eier funksjonene, ikke
+    -- tabellene -- de fem tabellene er migrators, som 095/096/100-familien.
+    -- Eierskapet ER skrivetilgangen her (057-radenes begrunnelse):
+    -- runtime har ingen tabellrettighet paa registeret i det hele tatt
+    -- og naar det KUN gjennom disse doerene, og sveipen er den
+    -- innelukkede kryss-tenant-autoriteten sveiperollen alene faar kalle
+    -- Trigger-vaktene `m13_bankpost_vakt`, `m13_bilag_vakt`,
+    -- `m13_avstemming_vakt` og `m13_funn_vakt` staar bevisst IKKE her: de
+    -- opprettes utenfor SET ROLE-vinduet og er migrators, som resten av
+    -- husets radvakter
+    ('FUNCTION', 'm13_evidens(text,uuid,text,text,jsonb)',             'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_registrer_konto(text,uuid,text,text,text,text)', 'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_registrer_post(text,uuid,uuid,text,date,bigint,text,text,text)', 'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_registrer_bilag(text,uuid,text,text,bigint,text,date,date,text)', 'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_avstem(text,uuid,uuid,uuid,text,text,text)',      'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_opphev_avstemming(text,uuid,text,text)',          'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_avstemmingsstatus(text)',                         'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_kontoer(text)',                                   'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_uavstemte_poster(text,integer)',                  'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_apne_bilag(text,integer)',                        'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_funnkandidater(text,date,integer)',               'disponit_avstemming_eier'),
+    ('FUNCTION', 'm13_sveip_avstemming(integer,integer)',               'disponit_avstemming_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

@@ -51,7 +51,28 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
                         "plan:opprett", "plan:aktiver", "plan:gjenoppta",
                         "epost:read", "epost:kilde:administrer",
                         "epost:utkast:behandle",
-                        "kontinuitet:read", "kontinuitet:write"}),
+                        "kontinuitet:read", "kontinuitet:write",
+                        # 101 (M-13): avstemmingsregisteret. `okonomi:read`
+                        # er et NYTT scope, og det oppsto ikke av vane —
+                        # de to kandidatene passet ikke. `decisions:read`
+                        # holdes av `leser`, altså enhver ordinær bruker,
+                        # og kontobevegelser, motparter og beløp er ikke
+                        # allmenn tilstandsinnsikt. `security:read`
+                        # beskrives to linjer over med ordene
+                        # «Compliance/ops»; et avstemmingsregister er
+                        # økonomi og ikke drift, og å låne det scopet
+                        # ville gjort beskrivelsen usann for alle de
+                        # andre flatene som bruker det.
+                        #
+                        # KRETSEN ER `admin` ALENE I V1, og det er en
+                        # dom og ikke en forglemmelse: verken `leser`
+                        # eller `sikkerhet` får det. En tenant som vil
+                        # skille regnskapsfører fra administrator kan
+                        # definere en snevrere rolle senere, uten
+                        # skjemaendring. M-23 (104) og M-24 (105)
+                        # GJENBRUKER scopet — det oppstår her fordi
+                        # M-13 kommer først.
+                        "okonomi:read"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).

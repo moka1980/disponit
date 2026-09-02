@@ -532,7 +532,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 100 (M-34): etterprøvingssveipens EGEN DSN, av samme grunn —
         # samme form, samme ene EXECUTE, samme fravær av
         # tabellrettigheter.
-        "DISPONIT_COMPLIANCESVEIP_URL")})
+        "DISPONIT_COMPLIANCESVEIP_URL",
+        # 101 (M-13): avstemmingssveipens EGEN DSN, av samme grunn —
+        # samme form, samme ene EXECUTE, samme fravær av
+        # tabellrettigheter.
+        "DISPONIT_AVSTEMMINGSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -572,6 +576,8 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         encoding="utf-8") == "verdi-DISPONIT_PERSONVERNSVEIP_URL"
     assert (rot / "compliancesveip/DISPONIT_COMPLIANCESVEIP_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_COMPLIANCESVEIP_URL"
+    assert (rot / "avstemmingssveip/DISPONIT_AVSTEMMINGSVEIP_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_AVSTEMMINGSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -1031,7 +1037,11 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 100 (M-34): etterprøvingssveipens EGEN DSN, av samme grunn —
         # samme form, samme ene EXECUTE, samme fravær av
         # tabellrettigheter.
-        "DISPONIT_COMPLIANCESVEIP_URL")})
+        "DISPONIT_COMPLIANCESVEIP_URL",
+        # 101 (M-13): avstemmingssveipens EGEN DSN, av samme grunn —
+        # samme form, samme ene EXECUTE, samme fravær av
+        # tabellrettigheter.
+        "DISPONIT_AVSTEMMINGSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

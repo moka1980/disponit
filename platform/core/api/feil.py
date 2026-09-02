@@ -110,6 +110,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # er en annen setning enn «noe gikk galt», og det er nettopp den
     # forskjellen modulen finnes for.
     Feilvei("kontroll_ulovlig_tilstand", 409, ("avvis",), None),
+    # 101 (M-13): avstemmingsregisterets doerer nekter det tilstanden
+    # eller innholdskravet ikke tillater — et fortegn som ikke svarer til
+    # bilagets retning, en match som ville gitt overdekning, en bankpost
+    # som alt er avstemt, en bankreferanse som dukker opp med et annet
+    # beloep, et kontonummer for kort til aa kunne maskeres. 409 av samme
+    # grunn som radene over: kroppen ER velformet, det er BASEN som sier
+    # nei — og her er den forskjellen selve svaret. «Disse to hoerer ikke
+    # sammen» er en annen setning enn «noe gikk galt».
+    Feilvei("avstemming_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

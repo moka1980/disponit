@@ -37,8 +37,9 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      KREVER: suitekjøring på STAGING med modulens andel pinnet og
+      stagingidentitet bundet. Koden finnes nå (101); det som mangler er
+      målingen på staging, og punktet står nei til den er gjort.
   syntetisk_datasett_likt_lokalt:
     status: nei
     notat: >-

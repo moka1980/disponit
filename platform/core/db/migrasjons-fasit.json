@@ -98,5 +98,6 @@
   "097_m12_tilgangsregister.sql": "2198f9be459510eca77726e290fc7aa2a90a026a1fee0bf56bfed468277982a0",
   "098_m22_lisensregister.sql": "19c6a1bfbb7fcddc11ac3bd2b810047e0622c11bc70e2e19953515db7ccce287",
   "099_m30_personvernregister.sql": "b72b7ba6a295cb6c94588b3fbc28e297798a14f6d41e4de812b7bc30c6b7fb7f",
-  "100_m34_kontrollregister.sql": "21d5c5e140dd0a13c2db1bae897a3477358db728d7eacc77a7123032fa8e0c5b"
+  "100_m34_kontrollregister.sql": "21d5c5e140dd0a13c2db1bae897a3477358db728d7eacc77a7123032fa8e0c5b",
+  "101_m13_avstemmingsregister.sql": "288b424667972445af3c2d6dbeb9bc899fb7df51824ae21cfcf9ee65d6c36b19"
 }

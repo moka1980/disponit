@@ -67,7 +67,8 @@ disponit-lagermaaling.service disponit-lagermaaling.timer
 disponit-begrepssveip.service disponit-begrepssveip.timer
 disponit-tilgangssveip.service disponit-tilgangssveip.timer
 disponit-personvernsveip.service disponit-personvernsveip.timer
-disponit-compliancesveip.service disponit-compliancesveip.timer"
+disponit-compliancesveip.service disponit-compliancesveip.timer
+disponit-avstemmingssveip.service disponit-avstemmingssveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -267,6 +268,19 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_COMPLIANCESVEIP_URL:-}" ]
   echo "AVBRUTT: DISPONIT_COMPLIANCESVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_compliancesveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 101 (M-13): avstemmingssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. Uten DSN-en ville uniten startet, lest ingenting og gitt
+# exit 2 hver natt — og en avstemmingssveip som ikke kjører er et
+# register som eldes stille, altså nøyaktig tilstanden modulen finnes
+# for å gjøre synlig. Porten står her, FØR første mutasjon: feiler den,
+# er systemet beviselig urørt.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_AVSTEMMINGSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_AVSTEMMINGSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_avstemmingssveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -882,6 +896,19 @@ if [ -z "${DISPONIT_COMPLIANCESVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred compliancesveip DISPONIT_COMPLIANCESVEIP_URL "$DISPONIT_COMPLIANCESVEIP_URL"
+# 101 (M-13): avstemmingssveipens egen katalog og egen DSN — aldri
+# API-ets, og aldri en av de andre jobbenes. Sjekken står på SAMME
+# shell-variabel som skrives, uten ny lesing av miljøfila imellom (samme
+# felle som over).
+install -d -m 700 /etc/disponit/avstemmingssveip
+if [ -z "${DISPONIT_AVSTEMMINGSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_AVSTEMMINGSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen avstemmingssveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred avstemmingssveip DISPONIT_AVSTEMMINGSVEIP_URL "$DISPONIT_AVSTEMMINGSVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1025,7 +1052,8 @@ disponit-lagermaaling.timer
 disponit-begrepssveip.timer
 disponit-tilgangssveip.timer
 disponit-personvernsveip.timer
-disponit-compliancesveip.timer"
+disponit-compliancesveip.timer
+disponit-avstemmingssveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1281,6 +1309,12 @@ systemctl stop disponit-personvernsveip.timer \
 # nyere `sist_sett_sveip`.
 systemctl stop disponit-compliancesveip.timer \
     disponit-compliancesveip.service 2>/dev/null || true
+# 101 (M-13): avstemmingssveipen stoppes i samme vindu og av samme grunn
+# — den er idempotent over sin egen tilstand: et funn som ikke ble reist
+# i natt, reises i morgen, og et som alt står åpent får bare et nyere
+# `sist_sett_sveip`.
+systemctl stop disponit-avstemmingssveip.timer \
+    disponit-avstemmingssveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1433,6 +1467,10 @@ systemctl enable --now disponit-personvernsveip.timer
 # ingenting — men preflighten over gater DSN-en, så det skal ikke kunne
 # skje.
 systemctl enable --now disponit-compliancesveip.timer
+# 101 (M-13): avstemmingssveipen, én gang i døgnet med spredning. Samme
+# form; uten credentialen står jobben med exit 2 og rører ingenting —
+# men preflighten over gater DSN-en, så det skal ikke kunne skje.
+systemctl enable --now disponit-avstemmingssveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

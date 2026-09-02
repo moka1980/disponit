@@ -214,6 +214,16 @@ APPEND_ONLY_TRIGGERE = (
     ("kontroll", "m34_kontroll_vakt"),
     ("etterproving", "m34_etterproving_vakt"),
     ("kontrollfunn", "m34_funn_vakt"),
+    # 101 (M-13): alle fire vaktene nekter DELETE — bankposten er en
+    # observasjon som ikke slettes, bilaget er historikk, matchen
+    # oppheves med begrunnelse, og funnet lukkes. Som de skal — så
+    # oppryddingen må skru dem av. At `bankpost` og `avstemming` må stå
+    # her er i seg selv en bekreftelse på at et regnskapsspor ikke kan
+    # viskes ut.
+    ("bankpost", "m13_bankpost_vakt"),
+    ("bilag", "m13_bilag_vakt"),
+    ("avstemming", "m13_avstemming_vakt"),
+    ("avstemmingsfunn", "m13_funn_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -334,6 +344,13 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # (eieren), som ikke ryddes herfra, så familien er fri
                  # for øvrig.
                  "kontrollfunn", "etterproving", "kontroll", "rammeverk",
+                 # 101 (M-13): funnene peker ikke på noe (objekt_id er
+                 # ikke en FK — den kan være en post ELLER et bilag), men
+                 # matchen peker på BÅDE `bankpost` og `bilag`, og
+                 # bankposten på `bankkonto`. Funn, match, de to sidene,
+                 # kontoen sist.
+                 "avstemmingsfunn", "avstemming", "bankpost", "bilag",
+                 "bankkonto",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.
