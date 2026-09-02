@@ -387,6 +387,25 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm23_hendelsene(text,uuid)',                           'disponit_fordring_eier'),
     ('FUNCTION', 'm23_funnkandidater(text,date)',                       'disponit_fordring_eier'),
     ('FUNCTION', 'm23_sveip_fordringer(integer)',                       'disponit_fordring_eier'),
+    -- 105 (M-24): leverandorregisterets doerer og leverandorsveipen.
+    -- Vaktene `m24_terskel_vakt`, `m24_part_vakt`, `m24_avtale_vakt`,
+    -- `m24_leveranse_vakt` og `m24_funn_vakt` staar bevisst IKKE her: de
+    -- opprettes utenfor SET ROLE-vinduet og er migrators.
+    ('FUNCTION', 'm24_bryter_sla(text,integer,integer)',                'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_evidens(text,uuid,text,text,jsonb)',              'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_sett_terskler(text,integer,integer,integer,integer,text)', 'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_registrer_leverandor(text,uuid,text,text,text)',  'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_registrer_avtale(text,uuid,uuid,text,text,integer,bigint,date,date,text)', 'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_registrer_leveranse(text,uuid,uuid,date,integer,bigint,text,text)', 'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_avslutt_avtale(text,uuid,text,text)',             'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_leverandorstatus(text)',                          'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_slaoversikt(text)',                               'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_avtalene(text,integer)',                          'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_leveransene(text,uuid)',                          'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_tersklene(text)',                                 'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_leverandorene(text)',                             'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_funnkandidater(text,date)',                       'disponit_leverandor_eier'),
+    ('FUNCTION', 'm24_sveip_leverandorer(integer)',                     'disponit_leverandor_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

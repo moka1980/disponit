@@ -1,0 +1,31 @@
+# M-24 (105): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: både `avtale_varsel_dogn` og
+# `maling_stillhet_dogn` måles i DØGN, og en avtale blir ikke utløpt
+# midt på dagen.
+#
+# SVEIPEN BETALER INGEN. Den kunne — den vet hvilke avtaler som løper og
+# hva de koster — men en utgående betaling er den ene handlingen i
+# katalogen som er umulig å angre, og en jobb som betalte om natten er
+# nøyaktig den fullmakten v1 ikke gir seg selv. Den skriver funn; et
+# menneske handler.
+#
+# KLOKKESLETTET ER 06:05 fordi 03:15, 04:20, 04:35, 04:50, 05:05, 05:20,
+# 05:35 og 05:50 alt er tatt. Sveipens første steg leser ALLE tenanters
+# avtaler, og to slike skann på samme sekund legger seg oppå hverandres
+# I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene. Sveipen måler NÅ («hvilke avtaler står i brudd i dag»),
+# ikke da.
+
+[Unit]
+Description=Disponit leverandorsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 06:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

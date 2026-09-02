@@ -368,7 +368,7 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // halelinjene — som ga en syntaksfeil i stedet for to lister.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
     "dokumentmal", "tilgang", "personvern", "compliance", "avstemming",
-    "kundeservice", "onboarding", "fordring"];
+    "kundeservice", "onboarding", "fordring", "leverandor"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

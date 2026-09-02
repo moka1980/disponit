@@ -56,6 +56,7 @@ KJENTE_EIERROLLER = (
     "disponit_kundeservice_eier", # M-17, migrasjon 102
     "disponit_onboarding_eier", # M-18, migrasjon 103
     "disponit_fordring_eier",   # M-23, migrasjon 104
+    "disponit_leverandor_eier", # M-24, migrasjon 105
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.

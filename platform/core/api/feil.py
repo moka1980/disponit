@@ -144,6 +144,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # hele saken, og «det trinnet er ikke naadd» er en annen setning enn
     # «noe gikk galt».
     Feilvei("fordring_ulovlig_tilstand", 409, ("avvis",), None),
+    # 105 (M-24): leverandorregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — en maaling utenfor avtalens gyldighet,
+    # en maaling mot en avsluttet avtale, to aktive avtaler paa samme
+    # leverandoer og ytelse, en ukjent SLA-type, en avslutning uten
+    # begrunnelse. 409 av samme grunn som raden over: kroppen ER
+    # velformet, det er BASEN som sier nei. En maaling mot en avtale som
+    # ikke gjaldt den dagen er et tall uten dom, og «avtalen gjaldt ikke
+    # da» er en annen setning enn «noe gikk galt».
+    Feilvei("leverandor_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,
