@@ -559,3 +559,23 @@ export const registrerTilgang = (tilgang, idem) =>
 export const registrerGjennomgang = (tilgangId, idem) =>
   _muter(`/v1/tilgang/${encodeURIComponent(tilgangId)}/gjennomgang`,
          "POST", {}, idem || nyIdempotensnokkel());
+
+// M-22 (098): lisensregisteret. Samme form som M-21s over — registreringen
+// bærer en SP-2-nøkkel, serveren UTLEDER lisens-id-en av den, og en tapt
+// respons + nytt klikk gjenspiller i stedet for å føde lisensen en gang
+// til. Fornyelsen har sin egen gjenspillgren i døren (samme dato igjen er
+// et stille ja), og avslutningen er idempotent av tilstanden sin — men
+// alle tre bærer nøkkelen, fordi serveren krever den på alle tre.
+//
+// MERK HVA SOM IKKE FINNES HER: ingen `siOppLisens`. Modulen sier ikke
+// opp noe — `avsluttLisens` fører at et MENNESKE har gjort det.
+export const registrerLisens = (lisens, idem) =>
+  _muter("/v1/lisens", "POST", lisens, idem || nyIdempotensnokkel());
+
+export const fornyLisens = (lisensId, fornyelsesdato, idem) =>
+  _muter(`/v1/lisens/${encodeURIComponent(lisensId)}/fornyelse`, "POST",
+         { fornyelsesdato }, idem || nyIdempotensnokkel());
+
+export const avsluttLisens = (lisensId, begrunnelse, idem) =>
+  _muter(`/v1/lisens/${encodeURIComponent(lisensId)}/avslutt`, "POST",
+         { begrunnelse }, idem || nyIdempotensnokkel());

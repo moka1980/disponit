@@ -1174,6 +1174,29 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tilgang as tilgangmodul
         return tilgangmodul.registrer_gjennomgang_endepunkt(tjeneste,
                                                             request)
+    # 098 (M-22): lisensregisteret. Samme snitt som 096 over: leseveien er
+    # tenantens eget register; de tre skriveveiene er MENNESKELIGE
+    # handlinger i flaten, bak `bestilling:opprett` + CSRF +
+    # Idempotency-Key. Sveipen som køer utløpsvarslene finnes IKKE som
+    # HTTP — den er et forpass i varselsenderen, med sitt eget grant til
+    # `disponit_varselsender`. Og det finnes ingen oppsigelsesvei her i
+    # det hele tatt: `avslutt` er et menneske som FØRER at lisensen er
+    # avsluttet, ikke modulen som avslutter den.
+    def lisens_liste(request: Request) -> Response:
+        from . import lisens as lisensmodul
+        return lisensmodul.lisenser(tjeneste, request)
+
+    def lisens_registrer(request: Request) -> Response:
+        from . import lisens as lisensmodul
+        return lisensmodul.registrer_endepunkt(tjeneste, request)
+
+    def lisens_fornyelse(request: Request) -> Response:
+        from . import lisens as lisensmodul
+        return lisensmodul.fornyelse_endepunkt(tjeneste, request)
+
+    def lisens_avslutt(request: Request) -> Response:
+        from . import lisens as lisensmodul
+        return lisensmodul.avslutt_endepunkt(tjeneste, request)
 
     def drift_backup(request: Request) -> Response:
         return lesing.drift_backup(tjeneste, request)
@@ -1558,6 +1581,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/tilgang/objekt", tilgang_objekt, methods=["POST"]),
         Route("/v1/tilgang/{tilgang_id:uuid}/gjennomgang",
               tilgang_gjennomgang, methods=["POST"]),
+        # 098 (M-22): samme rekkefølge og samme begrunnelse — kolleksjons-
+        # rutene FØR mønsterrutene.
+        Route("/v1/lisens", lisens_liste, methods=["GET"]),
+        Route("/v1/lisens", lisens_registrer, methods=["POST"]),
+        Route("/v1/lisens/{lisens_id:uuid}/fornyelse", lisens_fornyelse,
+              methods=["POST"]),
+        Route("/v1/lisens/{lisens_id:uuid}/avslutt", lisens_avslutt,
+              methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2223,6 +2254,24 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/tilgang/objekt"):          "bestilling:opprett",
     ("POST", "/v1/tilgang/{tilgang_id:uuid}/gjennomgang"):
         "bestilling:opprett",
+    # 098 (M-22): lisensregisteret. SCOPENE ER M-21s, GJENBRUKT OG
+    # VERIFISERT — ikke nye. Registrering, fornyelse og avslutning er
+    # BESTILLINGER i plattformens forstand og bærer `bestilling:opprett`,
+    # som `admin` alt har (autorisasjon.py) og som alt står i
+    # BROWSER_MUTASJONSSCOPES. Lesingen er kundens egen tilstandsflate og
+    # bærer `decisions:read` — scopet ALLE kunderollene har, og det
+    # eneste `LESESCOPES`-porten under godtar for en `/v1/`-GET. Hvem som
+    # eier hvilke lisenser og hva de koster er ikke administratorens
+    # hemmelighet; å endre dem er hennes.
+    #
+    # Sveipen står IKKE her, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m22_koe_utlopsvarsler` er kryss-tenant og
+    # kjøres av `disponit_varselsender` som et forpass — en fullmakt
+    # web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/lisens"):                  "decisions:read",
+    ("POST", "/v1/lisens"):                  "bestilling:opprett",
+    ("POST", "/v1/lisens/{lisens_id:uuid}/fornyelse"): "bestilling:opprett",
+    ("POST", "/v1/lisens/{lisens_id:uuid}/avslutt"): "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

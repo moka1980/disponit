@@ -77,7 +77,8 @@ DECLARE
       'backupverifisering_uteblitt',
       'selvtest_rodt',
       'selvtest_uteblitt',
-      'pliktfrist'];
+      'pliktfrist',
+      'lisensutlop'];
   v_ressurs TEXT[] := ARRAY[
       'policyutkast',
       'modultoken',
@@ -85,7 +86,8 @@ DECLARE
       'plan',
       'backupverifisering',
       'selvtest',
-      'plikt'];
+      'plikt',
+      'lisens'];
   r RECORD; v_def TEXT; v_onsket TEXT; v_ulovlige TEXT; v_forst TEXT;
 BEGIN
   IF to_regclass('public.varsel') IS NULL THEN

@@ -94,6 +94,14 @@ SPRAK = os.environ.get("DISPONIT_VARSEL_SPRAK", "nb")
 #: manifestets `ytelse_bestatt` peker på: et forpass i en eksisterende
 #: jobb er billig å legge inn og dyrt å oppdage at ble tregt.
 M21_GRENSE = int(os.environ.get("DISPONIT_M21_FRISTGRENSE", "100"))
+#: 098 (M-22): taket for hvor mange utløpsvarsler forpasset køer per
+#: kjøring. EGET tall, ikke delt med M-21s: de to registrene er ulike i
+#: størrelse og rytme — et lisensregister har titalls rader der et
+#: pliktregister har hundrevis — og et delt tak ville latt den ene
+#: sveipen spise den andres budsjett i stillhet. Samme ytelsesvern som
+#: M-21s, og av samme grunn: et forpass i en eksisterende jobb er billig
+#: å legge inn og dyrt å oppdage at ble tregt.
+M22_GRENSE = int(os.environ.get("DISPONIT_M22_UTLOPSGRENSE", "100"))
 
 
 def _locale(sprak: str) -> dict:
@@ -290,13 +298,13 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
             print(f"varselsender: {hva}-sveipen feilet: "
                   f"{type(e).__name__}: {e}", file=sys.stderr)
 
-    # 096 (M-21): FRISTSVEIPEN. Egen blokk fordi den er den ene sveipen
-    # som IKKE tar en plattformtenant: den er kryss-tenant per
-    # konstruksjon (registeret er kundenes), og signaturen er derfor
-    # `(p_grense INT)` og ikke `(p_tenant TEXT)`. Å presse den inn i
-    # løkka over ville krevd et parameter-oppslag per rad — en generalitet
-    # kjøpt for prisen av at listen ikke lenger kan leses som tre like
-    # ting.
+    # 096 (M-21): FRISTSVEIPEN. Egen blokk fordi den er den FØRSTE
+    # sveipen som IKKE tar en plattformtenant (098 la til den andre): den
+    # er kryss-tenant per konstruksjon (registeret er kundenes), og
+    # signaturen er derfor `(p_grense INT)` og ikke `(p_tenant TEXT)`.
+    # Å presse den inn i løkka over ville krevd et parameter-oppslag per
+    # rad — en generalitet kjøpt for prisen av at listen ikke lenger kan
+    # leses som tre like ting.
     #
     # DEN SKARPE INVARIANTEN BOR HER (`forpass_stanset_ordinaer_sending`):
     # forpasset kjører i SIN EGEN transaksjon, fanger SINE EGNE unntak,
@@ -315,6 +323,33 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
         conn.rollback()
         forpass_feil += 1
         print(f"varselsender: fristsveipen (M-21) feilet: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+
+    # 098 (M-22): UTLØPSSVEIPEN. Egen blokk ved siden av M-21s, aldri
+    # inni den — og det er ikke stilistisk. To sveiper i samme `try`
+    # ville delt transaksjon og delt except: en feil i M-22 ville rullet
+    # M-21s nettopp køede varsler tilbake, og en feil i M-21 ville
+    # hoppet over M-22 helt. Da ville invarianten
+    # `forpass_stanset_ordinaer_sending` vært sann for den ordinære
+    # sendingen og usann for naboforpasset — altså halvt målt.
+    #
+    # Signaturen er `(p_grense INT)` og ikke `(p_tenant TEXT)` av samme
+    # grunn som M-21s: sveipen er kryss-tenant per konstruksjon
+    # (lisensregisteret er kundenes, ikke plattformens), og utvalget
+    # ligger i registerets egen policy.
+    #
+    # `conn.rollback()` er det bærende leddet, som over: uten den ville
+    # en feilet sveip etterlatt en abortert transaksjon, og hver eneste
+    # påfølgende setning — M-21s forpass hvis det sto etter, rekøingen,
+    # klaimet, statusskrivingen — feilet på «current transaction is
+    # aborted». Det er nøyaktig det `test_m22_lisens.py` mutasjonstester.
+    try:
+        conn.execute("SELECT m22_koe_utlopsvarsler(%s)", (M22_GRENSE,))
+        conn.commit()
+    except Exception as e:                                    # noqa: BLE001
+        conn.rollback()
+        forpass_feil += 1
+        print(f"varselsender: utløpssveipen (M-22) feilet: "
               f"{type(e).__name__}: {e}", file=sys.stderr)
 
     oppsett = oppsett or _smtp_oppsett()

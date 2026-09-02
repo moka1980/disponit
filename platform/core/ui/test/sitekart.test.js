@@ -87,10 +87,13 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // når flere moduler deler scopet — den andre er garantert rød. Tre
   // moduler i samme klynge landet på `decisions:read`, og hver av dem
   // skrev først sin egen komplette liste. Rekkefølgen er `BASISRUTER`-ens.
+  // M-22 (098): lisensregisteret landet på det SAMME scopet, og listen er
+  // uttømmende — den UTVIDES, den dupliseres ikke. `lisens` står sist
+  // fordi det er `BASISRUTER`-ens rekkefølge.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
       "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
-      "kunnskap", "avtalefrist"]);
+      "kunnskap", "avtalefrist", "lisens"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.

@@ -250,6 +250,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm12_apne_funn(text,integer)',                        'disponit_tilgang_eier'),
     ('FUNCTION', 'm12_sveip_for_tenant(text,integer)',                 'disponit_tilgang_eier'),
     ('FUNCTION', 'm12_sveip_gjennomganger(integer)',                   'disponit_tilgang_eier'),
+    -- 098 (M-22): lisensregisterets doerer og utloepssveipen. Samme form
+    -- og samme begrunnelse som 096-raden over, med M-22s egen NOLOGIN-
+    -- eier: `disponit_lisens_eier` eier funksjonene, ikke tabellene --
+    -- de tre tabellene er migrators. Runtime har ingen tabellrettighet
+    -- paa registeret i det hele tatt og naar det KUN gjennom disse
+    -- doerene, og sveipen er den innelukkede kryss-tenant-autoriteten
+    -- senderrollen alene faar kalle. Vaktene `m22_lisens_vakt` og
+    -- `m22_anker_vakt` staar bevisst IKKE her: de opprettes utenfor
+    -- SET ROLE-vinduet og er migrators, som resten av husets radvakter.
+    ('FUNCTION', 'm22_evidens(text,uuid,text,text,jsonb)',             'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_standardpunkter()',                              'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_registrer_lisens(text,uuid,text,text,text,integer,numeric,text,date,text,integer,text,integer[],text)', 'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_registrer_fornyelse(text,uuid,date,text)',       'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_marker_avsluttet(text,uuid,text,text)',          'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_lisenser(text,integer)',                         'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_koe_for_tenant(text,integer)',                   'disponit_lisens_eier'),
+    ('FUNCTION', 'm22_koe_utlopsvarsler(integer)',                     'disponit_lisens_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
