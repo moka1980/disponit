@@ -104,5 +104,6 @@
   "103_m18_onboardingregister.sql": "2c417042e7b8e7c1aeb791685793d54f89062b3cb7c24e328f02892a24f3b9aa",
   "104_m23_fordringsregister.sql": "8f6312c7fae126365ff6ade48fe1917267caef4a6d6dbe430b9f9ca1fff73b25",
   "105_m24_leverandorregister.sql": "eac3c639848770b19f792f7822e5d2d3c495f4496d3bc24f7707ed3e4af1510f",
-  "106_m14_fakturakontroll.sql": "a6efc0d9cc6a46bbcafcf51beae591e628a9d4062505dc0996813bb8eca2b18e"
+  "106_m14_fakturakontroll.sql": "a6efc0d9cc6a46bbcafcf51beae591e628a9d4062505dc0996813bb8eca2b18e",
+  "107_m25_prosjektregister.sql": "c701c0062ce320fa254daae52f65e3969ec4f25cfaaeb0bcdaf65bf082d57709"
 }

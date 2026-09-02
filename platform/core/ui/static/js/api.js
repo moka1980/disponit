@@ -828,3 +828,38 @@ export const registrerFakturakontroll = (fakturaId, utfall, notat, idem) =>
 export const avgjorFaktura = (fakturaId, status, begrunnelse, idem) =>
   _muter(`/v1/faktura/${encodeURIComponent(fakturaId)}/avgjor`,
          "POST", { status, begrunnelse }, idem || nyIdempotensnokkel());
+// M-25 (107): prosjekt- og kontraktregisteret. PROSJEKTET og hver
+// ARBEIDSFØRING bærer sin egen SP-2-nøkkel — serveren utleder id-en av
+// den. En dobbelt ført time er et forbruk som er for høyt, og et
+// budsjett som ser sprukket ut uten å være det.
+//
+// DET FINNES INGEN FAKTURAFUNKSJON HER, og fraværet er dommen: policyen
+// vi sender ut navngir modulen som `v_prosjekt`, betrodd for
+// `milepael_dokumentert`, og bruker den attestasjonen til å la
+// `ordre.bekreft_og_fakturer` gå automatisk. `naaMilepael` KREVER en
+// dokumentasjonsreferanse og stiller ingen krav.
+export const settProsjektterskler = (terskler, idem) =>
+  _muter("/v1/prosjekt/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerProsjekt = (prosjekt, idem) =>
+  _muter("/v1/prosjekt", "POST", prosjekt, idem || nyIdempotensnokkel());
+
+export const settBetalingsplan = (prosjektId, milepaeler, idem) =>
+  _muter(`/v1/prosjekt/${encodeURIComponent(prosjektId)}/betalingsplan`,
+         "POST", { milepaeler }, idem || nyIdempotensnokkel());
+
+export const naaMilepael = (prosjektId, milepaelNr, dokumentasjonRef,
+                            idem) =>
+  _muter(`/v1/prosjekt/${encodeURIComponent(prosjektId)}/milepael`,
+         "POST", { milepael_nr: milepaelNr,
+                   dokumentasjon_ref: dokumentasjonRef },
+         idem || nyIdempotensnokkel());
+
+export const registrerArbeid = (prosjektId, arbeid, idem) =>
+  _muter(`/v1/prosjekt/${encodeURIComponent(prosjektId)}/arbeid`,
+         "POST", arbeid, idem || nyIdempotensnokkel());
+
+export const avsluttProsjekt = (prosjektId, begrunnelse, idem) =>
+  _muter(`/v1/prosjekt/${encodeURIComponent(prosjektId)}/avslutt`,
+         "POST", { begrunnelse }, idem || nyIdempotensnokkel());

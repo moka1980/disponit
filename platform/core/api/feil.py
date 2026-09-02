@@ -163,6 +163,16 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # setning enn «noe gikk galt» — og det er nettopp den kontrollen
     # modulen er navngitt for i policyen.
     Feilvei("faktura_ulovlig_tilstand", 409, ("avvis",), None),
+    # 107 (M-25): prosjektregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — en milepael merket naadd uten en
+    # henvisning til hva som dokumenterer den, en betalingsplan uten
+    # milepaeler, arbeid foert paa et avsluttet prosjekt, en endring av
+    # en naadd milepael, og et forsoek paa aa gjenaapne et prosjekt.
+    # 409: kroppen ER velformet, det er BASEN som sier nei. «Denne
+    # milepaelen har ingen dokumentasjon» er en annen setning enn «noe
+    # gikk galt» — og en automatisk faktura paa en udokumentert milepael
+    # er penger krevd for arbeid som kanskje ikke er gjort.
+    Feilvei("prosjekt_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,
