@@ -1,0 +1,75 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m24-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 105
+# tildelt i docs/KLYNGE3-FUNDAMENT.md.
+#
+# V1 ER LEVERANDØR- OG SLA-REGISTERET. Katalogen lover
+# leverandørbetaling innen policygrenser, og at agenten varsler når en
+# innkjøpspris stiger over terskel. v1 BETALER INGENTING. Den
+# registrerer avtalen (avtalt SLA, avtalt pris), måler den faktiske
+# leveransen mot den, og gjør avvik til funn.
+#
+# DOMMEN: en utgående betaling er den ene handlingen i hele katalogen
+# som er umulig å angre. Katalogen sier selv «innen policygrenser» —
+# og de grensene må være målt før de kan settes. En terskel for
+# prisstigning som ingen har målt normalvariasjonen bak, er et tall
+# noen gjettet.
+#
+# GRENSEN MOT M-26: katalogen deler marginbeskyttelsen eksplisitt —
+# M-24 OPPDAGER kostnadsøkningen, M-26 foreslår ny pris. Ingen av dem
+# setter en pris. v1 holder seg på M-24s side av det snittet og
+# beregner ikke ny pris i det hele tatt.
+#
+# GRENSEN MOT M-21: M-21 eier PLIKTER — våre frister mot omverdenen.
+# M-24 eier den ANDRE veien: leverandørens forpliktelse mot oss, målt.
+# Et SLA-brudd er et funn om DEM, ikke en plikt for oss.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m24_leverandor
+navn: Leverandør- og innkjøpsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m24-v1` bærer invarianten
+# `terskel_hardkodet` — prisstigningsterskelen SKAL være en policyverdi,
+# ikke en konstant i koden, av samme grunn som M-23s purretrinn: en
+# terskel kodet inn er en fullmakt modulen ga seg selv. Da er m01_policy
+# en reell avhengighet og ikke en høflighet, og den skal stå her.
+avhengigheter:
+  - m01_policy                 # terskelen er policy, ikke en konstant
+  - m02_revisjonslogg          # avtale og måling i evidenskjeden
+kjerne: platform/modules/m24_leverandor
+i18n_prefiks: leverandor
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et avtale- og leveransesett med KJENT fasit for hvilke
+      leveranser som bryter SLA og hvilke prisendringer som passerer
+      terskelen, kjørt likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver avtale og hver måling faktisk står i
+      evidenskjeden, målt som hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: leverandørsveipen bygget, og at en feil i den ikke lar et
+      SLA-brudd forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

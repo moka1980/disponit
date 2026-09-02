@@ -1,0 +1,75 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m17-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 102
+# tildelt i docs/KLYNGE3-FUNDAMENT.md.
+#
+# V1 ER HENVENDELSESREGISTERET. Katalogen lover at repeterende
+# henvendelser løses automatisk. v1 SVARER IKKE. Den registrerer
+# henvendelsen, klassifiserer den, foreslår et svar som UTKAST, og
+# sender resten til unntakskøen.
+#
+# DOMMEN: et automatisk svar til en kunde er en uttalelse på firmaets
+# vegne. M-57 har allerede formen for dette — utkastet lagres, et
+# menneske sender. At modellen kan skrive svaret er ikke det samme som
+# at den kan stå for det.
+#
+# GRENSEN MOT M-9: M-9 eier BEGREPENE — det vi vet. M-17 eier
+# HENVENDELSENE — det noen spurte om. Et svarutkast SITERER M-9 og
+# eier ikke innholdet; når begrepet endres, er utkastet foreldet, og
+# det er en egenskap ved utkastet og ikke ved begrepet.
+#
+# GRENSEN MOT M-37: unntakskøen er M-37s, ikke en ny kø. En andre kø
+# ved siden av den er nøyaktig det M-37 ble bygget for å hindre.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m17_kundeservice
+navn: Kundeserviceagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: klassifiseringen er en modellkjøring som
+# går gjennom policyporten (m01), hver henvendelse og hvert utkast
+# bokføres (m02), og det som ikke kan avgjøres går til M-37s kø.
+avhengigheter:
+  - m01_policy                 # klassifiseringen bestilles gjennom policyporten
+  - m02_revisjonslogg          # henvendelse og utkast i evidenskjeden
+  - m37_unntak                 # det uavgjorte går til DEN køen, ikke en ny
+kjerne: platform/modules/m17_kundeservice
+i18n_prefiks: kundeservice
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et henvendelsessett med KJENT fasit for klassifiseringen,
+      kjørt likt lokalt og på staging. Settet er også et golden-sett i
+      M-31s forstand — klassifiseringen er en modell, og en modell som
+      byttes uten en målt fasit er et bytte ingen kan bedømme.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver henvendelse, hver klassifisering og hvert utkast
+      faktisk står i evidenskjeden, målt som hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en feilet klassifisering havner i M-37s kø som et
+      unntak MED henvendelsen intakt — ikke som en tapt henvendelse.
+      Dette er modulens skarpeste port: en henvendelse som forsvinner
+      er verre enn en som ikke ble klassifisert.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for klassifiseringskostnad per henvendelse
+      og en målt kjøring mot den.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

@@ -1,0 +1,73 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m23-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 104
+# tildelt i docs/KLYNGE3-FUNDAMENT.md.
+#
+# V1 ER FORDRINGSREGISTERET. Katalogen lover at agenten FORESLÅR en
+# nedbetalingsplan innenfor eierens forhåndsgodkjente grenser når
+# kunden oppgir betalingsproblemer. v1 FORESLÅR INGENTING OVERFOR
+# KUNDEN. Den registrerer fordringen, regner aldersfordelingen, og
+# gjør en fordring som passerer sitt eget purretrinn til et FUNN.
+#
+# DOMMEN: et forslag om nedbetalingsplan er et TILBUD. Et tilbud som
+# når kunden er bindende i praksis selv om det ikke er det juridisk,
+# og «innenfor eierens forhåndsgodkjente grenser» forutsetter at de
+# grensene finnes som policy — de gjør de ikke ennå. Å bygge
+# tilbudsveien før grensen er å la modulen definere sin egen fullmakt.
+#
+# DEN SKARPE FORSKJELLEN FRA SØSKNENE: dette er PENGER OG EN KUNDE.
+# En purring sendt for tidlig, til feil kunde, eller på en fordring som
+# alt er betalt, er en skade som ikke kan trekkes tilbake. Derfor
+# sender v1 ingenting: purretrinnet blir et funn eieren leser.
+#
+# GRENSEN MOT M-13: M-13 eier BANKPOSTER — det som har skjedd på konto.
+# M-23 eier FORDRINGER — det kunden skylder. v1 kobler dem ikke
+# automatisk; en ubetalt fordring med en umatchet innbetaling i samme
+# størrelsesorden er et FUNN å se på, ikke en lukking.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m23_fordring
+navn: Kundefordringsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+avhengigheter:
+  - m01_policy                 # purretrinn og grenser er policy, ikke kode
+  - m02_revisjonslogg          # fordring og trinnendring i evidenskjeden
+kjerne: platform/modules/m23_fordring
+i18n_prefiks: fordring
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et fordringssett med KJENT fasit for aldersbøttene og
+      for hvilke fordringer som skal bli funn, kjørt likt lokalt og på
+      staging. Settet må inneholde grensetilfellene på bøttekantene —
+      en aldersfordeling som er feil på kanten er feil overalt der det
+      betyr noe.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver fordring og hver trinnendring faktisk står i
+      evidenskjeden, målt som hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: fordringssveipen bygget, og at en feil i den ALDRI kan
+      etterlate en fordring merket purret uten at trinnet ble registrert.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

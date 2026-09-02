@@ -120,10 +120,31 @@ PERSONVERNEIER=disponit_personvern_eier  # M-30 eier forespørselsregisteret
 PERSONVERNSVEIP=disponit_personvernsveip # M-30s fristsveip
 COMPLIANCEEIER=disponit_compliance_eier  # M-34 eier kontrollregisteret
 COMPLIANCESVEIP=disponit_compliancesveip # M-34s etterprøvingssveip
+# KLYNGE 3 (101-105), samme forhåndsoppretting og av samme grunn: én
+# kjøring av dette skriptet framfor fem stoppede deployer.
+#
+# HVER MODUL FÅR SIN EGEN SVEIPEROLLE, og det er en sikkerhetsdom og
+# ikke en forglemmelse. En delt sveiperolle måtte hatt EXECUTE på alle
+# fem kryss-tenant-defienerne, og en feil i én sveip ville da båret de
+# fire andres fullmakt. Prisen er fem timere i stedet for én; den prisen
+# er operasjonell, mens gevinsten er at hver sveips autoritet står i
+# nøyaktig én definer, revidérbar på ett sted.
+AVSTEMMINGEIER=disponit_avstemming_eier    # M-13 eier avstemmingsregisteret
+AVSTEMMINGSVEIP=disponit_avstemmingssveip  # M-13s aldringssveip
+KUNDESERVICEEIER=disponit_kundeservice_eier # M-17 eier henvendelsesregisteret
+HENVENDELSESVEIP=disponit_henvendelsessveip # M-17s ubesvart-sveip
+ONBOARDINGEIER=disponit_onboarding_eier    # M-18 eier onboardingregisteret
+ONBOARDINGSVEIP=disponit_onboardingsveip   # M-18s stoppet-løp-sveip
+FORDRINGEIER=disponit_fordring_eier        # M-23 eier fordringsregisteret
+FORDRINGSVEIP=disponit_fordringssveip      # M-23s forfallssveip
+LEVERANDOREIER=disponit_leverandor_eier    # M-24 eier leverandørregisteret
+LEVERANDORSVEIP=disponit_leverandorsveip   # M-24s SLA-sveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
-         "$TILGANGSSVEIP" "$PERSONVERNSVEIP" "$COMPLIANCESVEIP"; do
+         "$TILGANGSSVEIP" "$PERSONVERNSVEIP" "$COMPLIANCESVEIP" \
+         "$AVSTEMMINGSVEIP" "$HENVENDELSESVEIP" "$ONBOARDINGSVEIP" \
+         "$FORDRINGSVEIP" "$LEVERANDORSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -131,7 +152,9 @@ done
 for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$DOMAINSADMIN" "$KVALITETEIER" "$LAGEREIER" "$MALEIER" \
          "$KUNNSKAPEIER" "$PLIKTEIER" "$TILGANGEIER" "$LISENSEIER" \
-         "$PERSONVERNEIER" "$COMPLIANCEEIER"; do
+         "$PERSONVERNEIER" "$COMPLIANCEEIER" "$AVSTEMMINGEIER" \
+         "$KUNDESERVICEEIER" "$ONBOARDINGEIER" "$FORDRINGEIER" \
+         "$LEVERANDOREIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -190,6 +213,14 @@ sudo -u postgres psql -qc "GRANT $TILGANGEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $LISENSEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $PERSONVERNEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $COMPLIANCEEIER TO $MIGRATOR WITH INHERIT FALSE"
+# KLYNGE 3 (101-105): samme to grunner, ordrett. Sveiperollene får
+# INGENTING her — de er LOGIN-jobber med én EXECUTE hver (migrer.py),
+# aldri eierskap og aldri SET ROLE.
+sudo -u postgres psql -qc "GRANT $AVSTEMMINGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $KUNDESERVICEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ONBOARDINGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $FORDRINGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $LEVERANDOREIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
@@ -386,6 +417,9 @@ for base in $DB ${DB}_test; do
     "GRANT USAGE, CREATE ON SCHEMA public TO $KVALITETEIER, $LAGEREIER, $MALEIER, $KUNNSKAPEIER, $PLIKTEIER"
   sudo -u postgres psql -q -d "$base" -c \
     "GRANT USAGE, CREATE ON SCHEMA public TO $TILGANGEIER, $LISENSEIER, $PERSONVERNEIER, $COMPLIANCEEIER"
+  # …og for klynge 3s fem eiere (101-105), av nøyaktig samme grunn.
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $AVSTEMMINGEIER, $KUNDESERVICEEIER, $ONBOARDINGEIER, $FORDRINGEIER, $LEVERANDOREIER"
 done
 
 # ------------------------------------------------------------
