@@ -389,6 +389,13 @@ const BASISRUTER = [
   // på `bestilling:opprett`. Ingen av dem bokfører noe og ingen av dem
   // attesterer — de handlingene finnes ikke i v1.
   { nokkel: "faktura", scope: "okonomi:read", modulflate: 14 },
+  // M-25 (107): prosjekt- og kontraktregisteret. MODULFLATE bak
+  // `okonomi:read` — hva et prosjekt koster og hva vi kan kreve for det
+  // er virksomhetens pengestrøm. `admin` er alene om det i v1.
+  //
+  // De seks skriveveiene er gatet både inne på flaten og i
+  // `RUTESCOPE` på `bestilling:opprett`. Ingen av dem fakturerer noe.
+  { nokkel: "prosjekt", scope: "okonomi:read", modulflate: 25 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

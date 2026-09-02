@@ -427,6 +427,21 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm14_satsene(text)',                                   'disponit_faktura_eier'),
     ('FUNCTION', 'm14_funnkandidater(text,date)',                       'disponit_faktura_eier'),
     ('FUNCTION', 'm14_sveip_fakturaer(integer)',                        'disponit_faktura_eier'),
+    -- 107 (M-25): prosjektregisterets doerer og prosjektsveipen.
+    ('FUNCTION', 'm25_evidens(text,uuid,text,text,jsonb)',              'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_sett_terskler(text,integer,integer,integer,text)', 'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_registrer_prosjekt(text,uuid,text,text,text,bigint,date,date,text)', 'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_sett_betalingsplan(text,uuid,jsonb,text)',        'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_naa_milepael(text,uuid,integer,text,text)',       'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_registrer_arbeid(text,uuid,uuid,date,integer,bigint,text,text)', 'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_avslutt_prosjekt(text,uuid,text,text)',           'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_prosjektstatus(text)',                            'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_prosjektene(text,integer)',                       'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_milepaelene(text,uuid)',                          'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_arbeidet(text,uuid)',                             'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_tersklene(text)',                                 'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_funnkandidater(text,date)',                       'disponit_prosjekt_eier'),
+    ('FUNCTION', 'm25_sveip_prosjekter(integer)',                       'disponit_prosjekt_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

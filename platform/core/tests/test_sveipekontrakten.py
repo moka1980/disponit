@@ -44,6 +44,7 @@ SVEIPENE = (
     ("henvendelsessveip", "m17_sveip_henvendelser"),
     ("leverandorsveip", "m24_sveip_leverandorer"),
     ("onboardingsveip", "m18_sveip_onboarding"),
+    ("prosjektsveip", "m25_sveip_prosjekter"),
     ("personvernsveip", "m30_sveip_frister"),
     ("tilgangssveip", "m12_sveip_gjennomganger"),
 )

@@ -1405,6 +1405,50 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def faktura_avgjor(request: Request) -> Response:
         from . import faktura as fakturamodul
         return fakturamodul.avgjor_endepunkt(tjeneste, request)
+    # 107 (M-25): prosjekt- og kontraktregisteret. Tre leseveier og
+    # seks skriveveier.
+    #
+    # OG DET FINNES INGEN FAKTURAVEI OG INGEN ATTESTASJONSVEI. Policyen
+    # vi sender ut navngir modulen som `v_prosjekt`, betrodd for
+    # `milepael_dokumentert`, og bruker den attestasjonen til å la
+    # `ordre.bekreft_og_fakturer` gå automatisk. v1 registrerer at en
+    # milepæl er nådd OG hva som dokumenterer den; den stiller ingen
+    # krav og signerer ingenting.
+    def prosjekt_bilde(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.prosjektbilde(tjeneste, request)
+
+    def prosjekt_milepaeler(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.milepaelene_endepunkt(tjeneste, request)
+
+    def prosjekt_arbeidsliste(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.arbeidet_endepunkt(tjeneste, request)
+
+    def prosjekt_terskler(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.terskler_endepunkt(tjeneste, request)
+
+    def prosjekt_registrer(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.registrer_endepunkt(tjeneste, request)
+
+    def prosjekt_betalingsplan(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.betalingsplan_endepunkt(tjeneste, request)
+
+    def prosjekt_milepael(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.naa_milepael_endepunkt(tjeneste, request)
+
+    def prosjekt_arbeid(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.registrer_arbeid_endepunkt(tjeneste, request)
+
+    def prosjekt_avslutt(request: Request) -> Response:
+        from . import prosjekt as prosjektmodul
+        return prosjektmodul.avslutt_endepunkt(tjeneste, request)
 
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
@@ -1987,6 +2031,24 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/faktura/{faktura_id:uuid}/kontroll", faktura_kontroll,
               methods=["POST"]),
         Route("/v1/faktura/{faktura_id:uuid}/avgjor", faktura_avgjor,
+              methods=["POST"]),
+        # 107 (M-25): kolleksjonsruten FØRST, og ORDRUTEN `terskler` FØR
+        # mønsterruten. STIENE STÅR PÅ ÉN LINJE (102s lærdom).
+        Route("/v1/prosjekt", prosjekt_bilde, methods=["GET"]),
+        Route("/v1/prosjekt", prosjekt_registrer, methods=["POST"]),
+        Route("/v1/prosjekt/terskler", prosjekt_terskler,
+              methods=["POST"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/milepaeler",
+              prosjekt_milepaeler, methods=["GET"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/arbeidsliste",
+              prosjekt_arbeidsliste, methods=["GET"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/betalingsplan",
+              prosjekt_betalingsplan, methods=["POST"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/milepael",
+              prosjekt_milepael, methods=["POST"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/arbeid", prosjekt_arbeid,
+              methods=["POST"]),
+        Route("/v1/prosjekt/{prosjekt_id:uuid}/avslutt", prosjekt_avslutt,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -2823,6 +2885,25 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/faktura/{faktura_id:uuid}/kontroll"):
         "bestilling:opprett",
     ("POST", "/v1/faktura/{faktura_id:uuid}/avgjor"):
+        "bestilling:opprett",
+    # 107 (M-25): prosjektregisteret. LESINGEN bærer `okonomi:read` —
+    # hva et prosjekt koster og hva vi kan kreve for det er
+    # virksomhetens pengestrøm. SKRIVINGEN bærer `bestilling:opprett`.
+    # Ingen av dem fakturerer og ingen av dem attesterer.
+    ("GET",  "/v1/prosjekt"):                     "okonomi:read",
+    ("GET",  "/v1/prosjekt/{prosjekt_id:uuid}/milepaeler"):
+        "okonomi:read",
+    ("GET",  "/v1/prosjekt/{prosjekt_id:uuid}/arbeidsliste"):
+        "okonomi:read",
+    ("POST", "/v1/prosjekt"):                     "bestilling:opprett",
+    ("POST", "/v1/prosjekt/terskler"):            "bestilling:opprett",
+    ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/betalingsplan"):
+        "bestilling:opprett",
+    ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/milepael"):
+        "bestilling:opprett",
+    ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/arbeid"):
+        "bestilling:opprett",
+    ("POST", "/v1/prosjekt/{prosjekt_id:uuid}/avslutt"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

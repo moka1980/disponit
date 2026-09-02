@@ -404,6 +404,18 @@ GRANT EXECUTE ON FUNCTION m14_forventet_mva(BIGINT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m14_sats_paa_dato(TEXT, TEXT, DATE) TO {rolle};
 REVOKE ALL ON FUNCTION m14_sveip_fakturaer(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m14_funnkandidater(TEXT, DATE) FROM {rolle};
+-- 107 (M-25): prosjektregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7). Skrivedørene ligger i
+-- M37_RETTIGHETER_API; SVEIPEN hører sveiperollen til
+-- (PROSJEKTSVEIP_RETTIGHETER) og er kryss-tenant.
+SET LOCAL ROLE disponit_prosjekt_eier;
+GRANT EXECUTE ON FUNCTION m25_prosjektstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_prosjektene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_milepaelene(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_arbeidet(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_tersklene(TEXT) TO {rolle};
+REVOKE ALL ON FUNCTION m25_sveip_prosjekter(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m25_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -894,6 +906,17 @@ GRANT EXECUTE ON FUNCTION m14_sett_mvasats(TEXT, TEXT, INT, DATE, DATE, TEXT) TO
 GRANT EXECUTE ON FUNCTION m14_registrer_faktura(TEXT, UUID, TEXT, TEXT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, DATE, DATE, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m14_registrer_kontroll(TEXT, UUID, UUID, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m14_avgjor_faktura(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+-- 107 (M-25): prosjektregisterets seks skrivedører. At en milepæl ikke
+-- kan merkes nådd uten dokumentasjon, at en nådd milepæl er frosset, og
+-- at arbeid ikke føres på et avsluttet prosjekt, håndheves i dørene og i
+-- vaktene — aldri her. INGEN AV DEM FAKTURERER OG INGEN ATTESTERER.
+SET LOCAL ROLE disponit_prosjekt_eier;
+GRANT EXECUTE ON FUNCTION m25_sett_terskler(TEXT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_registrer_prosjekt(TEXT, UUID, TEXT, TEXT, TEXT, BIGINT, DATE, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_sett_betalingsplan(TEXT, UUID, JSONB, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_naa_milepael(TEXT, UUID, INT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_registrer_arbeid(TEXT, UUID, UUID, DATE, INT, BIGINT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m25_avslutt_prosjekt(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1291,6 +1314,17 @@ GRANT EXECUTE ON FUNCTION m14_sveip_fakturaer(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 107 (M-25): prosjektsveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den MERKER INGEN MILEPÆL NÅDD: en milepæl er
+# grunnlaget for et krav mot en kunde.
+PROSJEKTSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_prosjekt_eier;
+GRANT EXECUTE ON FUNCTION m25_sveip_prosjekter(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1520,7 +1554,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 106 (M-14): fakturasveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_fakturasveip",
-                           FAKTURASVEIP_RETTIGHETER)):
+                           FAKTURASVEIP_RETTIGHETER),
+                          # 107 (M-25): prosjektsveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_prosjektsveip",
+                           PROSJEKTSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

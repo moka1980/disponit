@@ -1,0 +1,74 @@
+# M-25 (107): prosjektsveipen for kontrakter og budsjetter.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (107): en unådd milepæl forbi sin frist er `milepael_over_frist`; et
+# forbruk over tenantens promille er `budsjett_overskredet`; et aktivt
+# prosjekt uten milepæler er `betalingsplan_mangler`; et uten føringer
+# på `stillhet_dogn` er `ingen_arbeid_registrert`; og en tenant uten
+# grenser er `ingen_terskel`.
+#
+# SVEIPEN FAKTURERER INGEN OG MERKER INGEN MILEPÆL NÅDD. Den kunne —
+# den vet hvilke som har passert sin dato — men en milepæl er
+# GRUNNLAGET FOR ET KRAV mot en kunde, og en jobb som merket den nådd om
+# natten ville skapt det kravet uten at noen dokumenterte noe.
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille prosjektsveip
+# er et budsjett som sprekker uten at noen ser det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_prosjektsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m25_sveip_prosjekter`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit prosjektsveip (milepaeler over frist og budsjettsprekk -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_PROSJEKTSVEIP_URL:/etc/disponit/prosjektsveip/DISPONIT_PROSJEKTSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_prosjektsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`prosjekt_aktive`, `milepael_ventende`,
+# `prosjektarbeid_pr_prosjekt`, `prosjektfunn_apne`). Går dette over ti
+# minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

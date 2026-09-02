@@ -1,0 +1,27 @@
+# M-25 (107): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: både `milepael_frist_dogn` og
+# `stillhet_dogn` måles i DØGN, og en milepæl blir ikke forsinket midt
+# på dagen.
+#
+# SVEIPEN MERKER INGEN MILEPÆL NÅDD. En milepæl er grunnlaget for et
+# krav mot en kunde, og den merkes av et menneske med en henvisning til
+# hva som dokumenterer den.
+#
+# KLOKKESLETTET ER 06:35 fordi 03:15 til 06:20 alt er tatt. Sveipens
+# første steg leser ALLE tenanters prosjekter, og to slike skann på
+# samme sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene. Sveipen måler NÅ, ikke da.
+
+[Unit]
+Description=Disponit prosjektsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 06:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

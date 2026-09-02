@@ -267,6 +267,18 @@ APPEND_ONLY_TRIGGERE = (
     ("inngaaende_faktura", "m14_faktura_vakt"),
     ("fakturaterskel", "m14_terskel_vakt"),
     ("mvasats", "m14_sats_vakt"),
+    # 107 (M-25): alle fem vaktene nekter DELETE — men `milepael` gjør
+    # det BETINGET, og det er med vilje: betalingsplanen REDIGERES til
+    # den er avtalt, mens en milepæl som er NÅDD ikke kan slettes. Den
+    # er grunnlaget for et krav mot kunden.
+    #
+    # Den står derfor her likevel: oppryddingen må kunne fjerne de
+    # nådde, og det er nøyaktig hva denne listen finnes for.
+    ("prosjektfunn", "m25_funn_vakt"),
+    ("prosjektarbeid", "m25_arbeid_vakt"),
+    ("milepael", "m25_milepael_vakt"),
+    ("prosjekt", "m25_prosjekt_vakt"),
+    ("prosjektterskel", "m25_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -421,6 +433,10 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # står fritt.
                  "fakturafunn", "fakturakontroll", "inngaaende_faktura",
                  "mvasats", "fakturaterskel",
+                 # 107 (M-25): funnene, arbeidet og milepælene peker på
+                 # prosjektet. Barna først, prosjektet, tersklene sist.
+                 "prosjektfunn", "prosjektarbeid", "milepael",
+                 "prosjekt", "prosjektterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.
