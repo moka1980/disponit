@@ -1,0 +1,88 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m27-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 109
+# tildelt i docs/KLYNGE4-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: `bransjemal-netthandel.yaml` og
+# `bransjemal-handverk-bygg.yaml` navngir denne modulen som
+# verifikatorene `v_lager` (`lager_reservert`, `retur_registrert`) og
+# `v_prognose` (`prognose_konfidens`) — og bruker dem til å slippe
+# `lager.bestill_pafyll` og `materiell.bestill` gjennom som
+# `modus: auto`.
+#
+# v1 ER BEHOLDNINGSREGISTERET SOM IKKE BESTILLER.
+#
+# DOMMEN: en automatisk innkjøpsordre er penger ut døra på en prognose
+# ingen har målt. Katalogen lover en etterspørselsprognose med
+# konfidens; en konfidens uten en målt treffhistorikk er et tall
+# modulen fant på om seg selv. v1 lager ingen prognose i det hele tatt.
+#
+# v1 teller beholdningen, registrerer hver bevegelse (inn, ut, retur,
+# svinn, telling), og gjør «under bestillingspunktet» til et FUNN.
+#
+# BEHOLDNINGEN ER SUMMEN AV BEVEGELSENE, aldri et fritt tall. Samme dom
+# som M-23s saldo: en vedlikeholdt avledning ingen kontrollerer er en
+# denormalisering som driver — og en lagerbeholdning som har drevet, er
+# en beholdning ingen kan bestille mot.
+#
+# OG DEN KAN IKKE VÆRE NEGATIV. Man kan ikke ha mindre enn ingenting på
+# lager; en negativ beholdning er alltid en manglende bevegelse, og den
+# skal si fra i det den oppstår framfor å bli et tall noen regner videre
+# på.
+#
+# BESTILLINGSPUNKTET ER TENANTENS. «Bestill når vi har mindre enn
+# tjue» er en forretningsbeslutning, og et punkt kodet inn ville vært
+# en fullmakt modulen ga seg selv — samme dom som M-23s purretrinn og
+# M-24s terskler.
+#
+# GRENSEN MOT M-24: M-24 eier AVTALEN med leverandøren et påfyll ville
+# gått på. M-27 eier BEHOLDNINGEN. Et passert bestillingspunkt er et
+# funn her; hvilken avtale bestillingen ville gått på, er M-24s rad.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m27_lager
+navn: Lager- og logistikkagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m27-v1` bærer invarianten
+# `bestillingspunkt_hardkodet` — punktet SKAL være en policyverdi og
+# ikke en konstant i koden.
+avhengigheter:
+  - m01_policy                 # bestillingspunktet er policy, ikke en konstant
+  - m02_revisjonslogg          # hver bevegelse i evidenskjeden
+kjerne: platform/modules/m27_lager
+i18n_prefiks: lager
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et bevegelsessett med KJENT fasit for sluttbeholdning og
+      for hvilke varer som er under bestillingspunktet, kjørt likt
+      lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver bevegelse faktisk står i evidenskjeden, målt som
+      hendelser med identitet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: lagersveipen bygget, og at en feil i den ikke lar en vare
+      under bestillingspunktet forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

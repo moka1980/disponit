@@ -1,0 +1,103 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m42-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 110
+# tildelt i docs/KLYNGE4-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: `bransjemal-tjenestebedrift.yaml` og
+# `bransjemal-handverk-bygg.yaml` navngir denne modulen som TO
+# verifikatorer — `v_bank` (`konto_verifisert`,
+# `konto_verifisert_uavhengig`) og `v_svindel` (`svindelsjekk_bestatt`)
+# — og bruker dem til å slippe utgående betalinger gjennom.
+#
+# DETTE ER KLYNGENS SKARPESTE MODUL, og den er skarp i BEGGE retninger.
+#
+# v1 VERIFISERER INGEN KONTO MOT EN EKSTERN KANAL, OG DEN STOPPER INGEN
+# BETALING.
+#
+# Det andre er den uvante halvdelen, og den er den viktigste: det
+# farligste en svindelvakt kan gjøre er ikke å slippe noe gjennom — det
+# er å STOPPE noe. En vakt som blokkerer feil er sin egen skade: en
+# leverandør som ikke får betalt, en lønn som ikke kommer, en frist som
+# ryker. Og en vakt ingen har målt, vet ikke hvor ofte den tar feil. Å
+# gi en umålt vakt stoppmyndighet er å bytte én risiko mot en annen og
+# kalle det sikkerhet.
+#
+# Det første er husets vante snitt: v1 ringer ingen bank, kaller intet
+# API, og signerer ingen attestasjon. `konto_verifisert` er en
+# attestasjon som autoriserer at penger går ut; den fullmakten tas ikke
+# før grunnlaget under den finnes.
+#
+# HVA v1 DA ER: kontohistorikken. Hvilket kontonummer som ble oppgitt,
+# av hvem, når, og HVORDAN et menneske verifiserte det — tilbakering til
+# et kjent nummer, signert brev, oppmøte — med metoden skrevet ned.
+#
+# OG DEN ENE MÅLINGEN SOM BETYR MEST: en KONTOENDRING PÅ EN LEVERANDØR
+# VI ALT BETALER er et funn. Det er det høyeste enkeltsignalet som
+# finnes i denne svindelklassen — en e-post med nytt kontonummer fra en
+# «leverandør» er selve angrepet — og ingen kan handle på det hvis det
+# ikke er skrevet ned at kontoen ble endret.
+#
+# EN VERIFIKASJON UTEN ET MENNESKE OG EN METODE ER INGEN VERIFIKASJON.
+# «Verifisert: ja» uten hvem og hvordan er en rad som ser ut som en
+# kontroll og ikke er det — og det er verre enn ingen rad, fordi noen
+# handler på den.
+#
+# GRENSEN MOT M-24: M-24 eier LEVERANDØREN. M-42 eier KONTONUMMERET og
+# HISTORIKKEN. Kontoen henger på leverandøren, men det er historikken —
+# hvem oppga hvilken konto når — som avslører svindelen, ikke gjeldende
+# verdi. Et register som bare bar siste kontonummer ville slettet
+# beviset i det angrepet lyktes.
+#
+# GRENSEN MOT M-37: en mistenkelig kontoendring hører til M-37s
+# unntakskø. Ingen ny kø.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m42_kontovakt
+navn: Kontoverifikasjons- og transaksjonsvaktagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m42-v1` bærer invarianten
+# `verifikasjonskrav_hardkodet` — hvilke metoder som teller som
+# uavhengig verifikasjon, og hvor lenge en verifikasjon står, er
+# tenantens beslutning og ikke modulens.
+avhengigheter:
+  - m01_policy                 # verifikasjonskravene er policy
+  - m02_revisjonslogg          # hver kontoendring i evidenskjeden
+  - m37_unntak                 # mistenkelig endring til den ENE køen
+kjerne: platform/modules/m42_kontovakt
+i18n_prefiks: kontovakt
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et kontohistorikksett med KJENT fasit for hvilke endringer
+      som er funn, kjørt likt lokalt og på staging. Uten en målt
+      falsk-positiv-rate er «svindelsjekk bestått» et ord.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver kontoregistrering og hver verifikasjon står i
+      evidenskjeden, med hvem som verifiserte og med hvilken metode.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: kontosveipen bygget, og at en feil i den ikke lar en
+      kontoendring forsvinne stille. Dette er modulens hele poeng: en
+      stille sveip her er en svindel ingen oppdaget.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

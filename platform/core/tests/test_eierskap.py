@@ -57,6 +57,18 @@ KJENTE_EIERROLLER = (
     "disponit_onboarding_eier", # M-18, migrasjon 103
     "disponit_fordring_eier",   # M-23, migrasjon 104
     "disponit_leverandor_eier", # M-24, migrasjon 105
+    # Klynge 4 «det bransjemalene alt har lovet» (106-110).
+    #
+    # M-27s eier heter `disponit_beholdning_eier` og IKKE
+    # `disponit_lager_eier`: det navnet står alt over, som M-4s. To
+    # moduler som deler eierrolle er den fullmaktsdelingen «én rolle per
+    # modul» finnes for å hindre — og porten under gjør kollisjonen til
+    # en rød test framfor noe man må se.
+    "disponit_faktura_eier",    # M-14, migrasjon 106
+    "disponit_prosjekt_eier",   # M-25, migrasjon 107
+    "disponit_prisbok_eier",    # M-26, migrasjon 108
+    "disponit_beholdning_eier", # M-27, migrasjon 109
+    "disponit_kontovakt_eier",  # M-42, migrasjon 110
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.
@@ -355,3 +367,38 @@ def test_legitime_designobjekter_star_urort(migrator):
     for nokkel, eier in design.items():
         if etter[nokkel] is not None:
             assert etter[nokkel] == eier, f"{nokkel} hos {etter[nokkel]}"
+
+
+def test_ingen_eierrolle_er_ført_to_ganger():
+    """ÉN ROLLE PER MODUL, målt på listen selv.
+
+    Porten finnes fordi det skjedde: klynge 4-fundamentet ga først M-27
+    navnet `disponit_lager_eier`, som er M-4s (migrasjon 093 og 099).
+    To moduler ville da delt eier, og en feil i den ene ville båret den
+    andres fullmakt — nøyaktig fullmaktsdelingen «én rolle per modul»
+    finnes for å hindre.
+
+    MUTASJONEN SOM DREPER DENNE: før en rolle opp to ganger.
+    """
+    assert len(set(KJENTE_EIERROLLER)) == len(KJENTE_EIERROLLER), \
+        sorted(r for r in KJENTE_EIERROLLER
+               if KJENTE_EIERROLLER.count(r) > 1)
+
+
+def test_ci_oppretter_hver_rolle_nøyaktig_én_gang():
+    """…og den samme dommen målt der den faktisk ble brutt: `ci.yml`.
+
+    `CREATE ROLE` to ganger er rød CI uansett, men den rødheten sier
+    «role already exists» og ikke «to moduler deler eier». Porten sier
+    det andre, og den ser BÅDE eier- og sveiperollene — også dem som
+    ikke står i `KJENTE_EIERROLLER`.
+    """
+    import re
+    from pathlib import Path
+    ci = (Path(__file__).resolve().parents[3]
+          / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    navn = re.findall(r'CREATE ROLE (disponit_[a-z0-9_]+)', ci)
+    assert len(navn) > 20, f"porten fant bare {len(navn)} roller"
+    dubletter = sorted({n for n in navn if navn.count(n) > 1})
+    assert not dubletter, f"opprettet to ganger i ci.yml: {dubletter}"
+

@@ -1,0 +1,83 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m26-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 108
+# tildelt i docs/KLYNGE4-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: ALLE TRE bransjemalene navngir denne modulen
+# som verifikatoren `v_prisbok`, betrodd for `priser_fra_prisbok`,
+# `laste_klausuler_uendret` og `standard_forbehold_inkludert` — og
+# bruker dem til å slippe `tilbud.generer` gjennom som `modus: auto`.
+# `pris.endre` står som `alltid_stopp` i policyen; det er den ene
+# handlingen malene selv ikke tør automatisere, og v1 er enig.
+#
+# Seks referanser i tre maler er flest av alle manglende moduler. M-24
+# peker dessuten hit i sin egen migrasjon (105): «M-24 oppdager
+# kostnadsøkningen, M-26 foreslår ny pris».
+#
+# v1 ER BOKA, OG DEN SETTER INGEN PRIS.
+#
+# DOMMEN: hver pris i boka er skrevet av et menneske gjennom en dør.
+# En modul som beregnet en ny pris ville tatt en beslutning som avgjør
+# hva virksomheten tjener — og gjort det på et grunnlag ingen har målt.
+# «M-24 oppdager, M-26 foreslår» er katalogens formulering; v1 holder
+# seg på registersiden av begge deler, og FORESLÅR heller ingenting.
+#
+# OG DEN GENERERER INGET TILBUD. Et tilbud er et bindende utspill mot
+# en kunde. v1 gjør prisen og klausulene FINNBARE og VERSJONERTE, slik
+# at et tilbud senere kan sitere en versjon — og slik at et tilbud som
+# ble gitt i går fortsatt kan gjenfinnes mot den prisen som gjaldt da.
+#
+# VERSJONERINGEN ER HELE POENGET. En prisbok uten versjon kan ikke
+# svare på «hva sto her da vi ga det tilbudet», og da er
+# `priser_fra_prisbok` en attestasjon om noe ingen kan etterprøve.
+#
+# GRENSEN MOT M-24: M-24 eier PRISEN VI BETALER. M-26 eier PRISEN VI
+# TAR. De to møtes i marginen, og ingen av dem regner den ut.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m26_prisbok
+navn: Prisbok- og tilbudsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m26-v1` bærer invarianten
+# `rabattgrense_hardkodet` — hvor mye en pris kan avvike fra boka før
+# det er et funn, er tenantens tall og ikke modulens.
+avhengigheter:
+  - m01_policy                 # rabattgrensen er policy, ikke en konstant
+  - m02_revisjonslogg          # hver prisendring i evidenskjeden
+kjerne: platform/modules/m26_prisbok
+i18n_prefiks: prisbok
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en prisbok med KJENT fasit for hvilke versjoner som gjaldt
+      når, kjørt likt lokalt og på staging. «Hva sto her da» er hele
+      spørsmålet modulen finnes for å svare på.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver prisendring og hver klausulendring faktisk står i
+      evidenskjeden, med hvem som gjorde den.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: prisboksveipen bygget, og at en feil i den ikke lar en
+      utløpt pris forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

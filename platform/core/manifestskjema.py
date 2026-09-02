@@ -1293,6 +1293,175 @@ KRAVGRENSER["m24-v1"] = {
 }
 
 
+# ---------------------------------------------------------------------
+# KLYNGE 4 «det bransjemalene alt har lovet» (106–110).
+#
+# Alle fem er navngitt som VERIFIKATORER i bransjemaler vi sender ut —
+# de betrodde partene som må attestere at et vilkår holder før en
+# `modus: auto`-handling får skje. Motoren feiler lukket
+# (`policy_validator/engine.py` §9), så handlingene har aldri fyrt; men
+# de står der, merket auto.
+#
+# KLYNGENS NYE DOM: de tre foregående klyngene holdt igjen på å UTFØRE
+# en handling. Her holder vi igjen på å AUTORISERE en. Derfor bærer
+# ALLE FEM invarianten `modulen_signerte_attestasjon` — en attestasjon
+# er nettopp det som slipper en automatisk handling med penger i andre
+# enden gjennom, og å ta den fullmakten før målingen under den finnes
+# er å la modulen definere sin egen troverdighet.
+# ---------------------------------------------------------------------
+
+M14_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen BOKFØRER INGENTING. Samme snitt som M-13 (101):
+    # en postering er en skriving i regnskapet.
+    "modulen_bokforte",
+    # …og den ATTESTERER INGENTING. Policyen navngir den som
+    # `v_regnskap`, betrodd for `faktura_godkjent` — og det er den
+    # attestasjonen som slipper `faktura.bokfor` gjennom som auto.
+    "modulen_signerte_attestasjon",
+    "belop_i_flyttall",
+    # MVA-SATSENE er POLICYVERDIER, ikke konstanter. En sats kodet inn
+    # er en fullmakt modulen ga seg selv over et tall staten setter.
+    "mvasats_hardkodet",
+    # En dublett som ikke ble et funn er en faktura vi kan betale to
+    # ganger. Det er modulens hovedfunn.
+    "dublett_uten_funn",
+    # …og en faktura som aldri ble kontrollert er verre enn en som
+    # feilet: den ser ferdig ut.
+    "faktura_uten_kontroll",
+    "tenantlekkasje_i_fakturaregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m14-v1"] = {
+    "invarianter": M14_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M25_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen FAKTURERER INGENTING. En automatisk faktura på
+    # en milepæl ingen har dokumentert er penger krevd for arbeid som
+    # kanskje ikke er gjort.
+    "modulen_fakturerte",
+    "modulen_signerte_attestasjon",
+    "belop_i_flyttall",
+    # En milepæl merket nådd uten en henvisning til hva som dokumenterer
+    # den, er en påstand — og den påstanden er grunnlaget for et krav.
+    "milepael_uten_dokumentasjon",
+    # Terskelen for hva som er en overskridelse verdt et funn er
+    # TENANTENS tall.
+    "budsjettvarsel_hardkodet",
+    "budsjett_overskredet_uten_funn",
+    "tenantlekkasje_i_prosjektregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m25-v1"] = {
+    "invarianter": M25_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M26_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SETTER INGEN PRIS. Hver pris i boka er skrevet
+    # av et menneske gjennom en dør. En modul som beregnet en ny pris
+    # ville avgjort hva virksomheten tjener, på et grunnlag ingen målte.
+    "modulen_satte_pris",
+    # …og den GENERERER INGET TILBUD. Et tilbud er et bindende utspill
+    # mot en kunde.
+    "modulen_genererte_tilbud",
+    "modulen_signerte_attestasjon",
+    "belop_i_flyttall",
+    # VERSJONERINGEN ER HELE POENGET: en prisbok uten versjon kan ikke
+    # svare på «hva sto her da vi ga det tilbudet», og da er
+    # `priser_fra_prisbok` en attestasjon om noe ingen kan etterprøve.
+    "pris_uten_versjon",
+    # …og en klausul som endret seg uten at noen ser det, er nøyaktig
+    # det `laste_klausuler_uendret` skal kunne benekte.
+    "klausul_endret_i_stillhet",
+    # RABATTGRENSEN ER TENANTENS. Manifestet fører m01_policy nettopp
+    # med denne begrunnelsen, og en avhengighet begrunnet i en invariant
+    # grensen ikke bærer er en avhengighet ingen kan etterprøve.
+    # (CodeRabbit, klynge 4-fundamentet.)
+    "rabattgrense_hardkodet",
+    "tenantlekkasje_i_prisbok",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m26-v1"] = {
+    "invarianter": M26_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M27_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen BESTILLER INGENTING. En automatisk
+    # innkjøpsordre er penger ut døra på en prognose ingen har målt.
+    "modulen_bestilte",
+    # …og den LAGER INGEN PROGNOSE. Katalogen lover en konfidens; en
+    # konfidens uten målt treffhistorikk er et tall modulen fant på om
+    # seg selv.
+    "modulen_beregnet_prognose",
+    "modulen_signerte_attestasjon",
+    "belop_i_flyttall",
+    # Beholdningen er SUMMEN AV BEVEGELSENE, aldri et fritt tall (M-23s
+    # saldo-dom). En vedlikeholdt avledning ingen kontrollerer driver.
+    "beholdning_uten_bevegelse",
+    # …og man kan ikke ha mindre enn ingenting på lager.
+    "negativ_beholdning",
+    # Bestillingspunktet er TENANTENS.
+    "bestillingspunkt_hardkodet",
+    "under_bestillingspunkt_uten_funn",
+    "tenantlekkasje_i_lagerregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m27-v1"] = {
+    "invarianter": M27_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M42_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, FØRSTE HALVDEL: modulen kaller INGEN ekstern kanal.
+    # `konto_verifisert_uavhengig` er navnet på en verifikasjon mot noe
+    # utenfor systemet, og v1 ringer ingen bank.
+    "modulen_verifiserte_mot_ekstern_kanal",
+    # ANDRE HALVDEL, og den uvante: modulen STOPPER INGEN BETALING. Det
+    # farligste en svindelvakt kan gjøre er ikke å slippe noe gjennom —
+    # det er å stoppe noe. En vakt som blokkerer feil er sin egen skade,
+    # og en umålt vakt vet ikke hvor ofte den tar feil.
+    "modulen_stoppet_betaling",
+    "modulen_signerte_attestasjon",
+    # MODULENS HOVEDFUNN: en kontoendring på en leverandør vi alt
+    # betaler er det høyeste enkeltsignalet i denne svindelklassen.
+    "kontoendring_uten_funn",
+    # «Verifisert: ja» uten hvem og hvordan er en rad som ser ut som en
+    # kontroll og ikke er det — verre enn ingen rad, fordi noen handler
+    # på den.
+    "verifikasjon_uten_menneske_og_metode",
+    # …og HISTORIKKEN ER BEVISET. Et register som bare bar siste
+    # kontonummer ville slettet beviset i det angrepet lyktes.
+    "kontohistorikk_overskrevet",
+    # Hvilke metoder som teller som uavhengig verifikasjon er tenantens
+    # beslutning.
+    "verifikasjonskrav_hardkodet",
+    "tenantlekkasje_i_kontoregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m42-v1"] = {
+    "invarianter": M42_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;

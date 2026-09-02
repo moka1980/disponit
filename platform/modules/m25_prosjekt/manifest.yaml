@@ -1,0 +1,80 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m25-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 107
+# tildelt i docs/KLYNGE4-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: `bransjemal-handverk-bygg.yaml` og
+# `bransjemal-netthandel.yaml` navngir denne modulen som verifikatoren
+# `v_prosjekt`, betrodd for `milepael_dokumentert`,
+# `kontraktsfestet_betalingsplan`, `prosjektbudsjett_ok`,
+# `arbeid_dokumentert` og `befaring_dokumentert` — og bruker dem til å
+# slippe `ordre.bekreft_og_fakturer` gjennom som `modus: auto`.
+#
+# v1 ER PROSJEKTREGISTERET SOM IKKE FAKTURERER OG IKKE ATTESTERER.
+#
+# DOMMEN: en automatisk faktura på en milepæl ingen har dokumentert, er
+# penger krevd for arbeid som kanskje ikke er gjort. Det er et krav som
+# har forlatt systemet i det øyeblikket det ble sendt — og en kunde som
+# får en faktura for noe som ikke skjedde, husker det lenger enn vi
+# husker feilen.
+#
+# v1 registrerer prosjektet, kontraktens betalingsplan med milepæler,
+# den dokumenterte framdriften, og MÅLER forbruk mot budsjett. En
+# milepæl merkes som nådd av et menneske, med en henvisning til hva som
+# dokumenterer den.
+#
+# GRENSEN MOT M-21: M-21 eier FRISTENE våre mot omverdenen. En milepæl
+# er ikke en plikt mot omverdenen; den er et punkt i en kontrakt. To
+# registre som begge påstår å eie «hva som må skje innen når», kan
+# aldri holdes i takt.
+#
+# GRENSEN MOT M-23: M-23 eier fordringen når den først er stilt. M-25
+# eier grunnlaget for å stille den.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m25_prosjekt
+navn: Prosjekt- og kontraktagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m25-v1` bærer invarianten
+# `budsjettvarsel_hardkodet` — hvor stor overskridelse som er et funn,
+# er tenantens tall og ikke modulens.
+avhengigheter:
+  - m01_policy                 # budsjettvarselet er policy, ikke en konstant
+  - m02_revisjonslogg          # hver milepæl i evidenskjeden
+kjerne: platform/modules/m25_prosjekt
+i18n_prefiks: prosjekt
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et prosjektsett med KJENT fasit for hvilke milepæler som
+      er dokumentert og hvilke budsjetter som er overskredet, kjørt
+      likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver milepælsmarkering faktisk står i evidenskjeden,
+      med hvem som gjorde den og hva som dokumenterer den.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: prosjektsveipen bygget, og at en feil i den ikke lar en
+      budsjettoverskridelse forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
