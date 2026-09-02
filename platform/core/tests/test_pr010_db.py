@@ -287,11 +287,22 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
         "plan:gjenoppta", "epost:kilde:administrer",
         "epost:utkast:behandle", "kontinuitet:write"}
+    # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
+    # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
+    # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant
+    # som vil ha en rolle som ser KØEN uten å kunne lese INNHOLDET, skal
+    # kunne lage den uten skjemaendring.
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read",
-                                            "epost:read", "kontinuitet:read"}
+                                            "epost:read", "kontinuitet:read",
+                                            "kundeservice:innhold"}
     assert "security:read" not in scopes_for_roller(["leser"])
     assert "security:read" in scopes_for_roller(["sikkerhet"])
+    # …og `okonomi:read` (101) er ADMINS ALENE: en `leser` skal ikke se
+    # virksomhetens pengestrøm, og at de to nye lesescopene i klynge 3
+    # fikk ULIK krets er hele poenget med at de er to.
+    assert "okonomi:read" not in scopes_for_roller(["leser"])
+    assert "okonomi:read" in scopes_for_roller(["admin"])
     # Ukjent rolle → ingen scopes (default-deny).
     assert scopes_for_roller(["finnesikke"]) == frozenset()
     # Union av flere roller.

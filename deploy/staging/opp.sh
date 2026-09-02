@@ -68,7 +68,8 @@ disponit-begrepssveip.service disponit-begrepssveip.timer
 disponit-tilgangssveip.service disponit-tilgangssveip.timer
 disponit-personvernsveip.service disponit-personvernsveip.timer
 disponit-compliancesveip.service disponit-compliancesveip.timer
-disponit-avstemmingssveip.service disponit-avstemmingssveip.timer"
+disponit-avstemmingssveip.service disponit-avstemmingssveip.timer
+disponit-henvendelsessveip.service disponit-henvendelsessveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -281,6 +282,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_AVSTEMMINGSVEIP_URL:-}" ]
   echo "AVBRUTT: DISPONIT_AVSTEMMINGSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_avstemmingssveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 102 (M-17): henvendelsessveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. Uten DSN-en ville uniten startet, lest ingenting og gitt
+# exit 2 hver natt — og en henvendelsessveip som ikke kjører er en
+# kundeservicekø som eldes stille. Porten står FØR første mutasjon.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_HENVENDELSESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_HENVENDELSESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_henvendelsessveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -909,6 +921,18 @@ if [ -z "${DISPONIT_AVSTEMMINGSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred avstemmingssveip DISPONIT_AVSTEMMINGSVEIP_URL "$DISPONIT_AVSTEMMINGSVEIP_URL"
+# 102 (M-17): henvendelsessveipens egen katalog og egen DSN. Sjekken står
+# på SAMME shell-variabel som skrives, uten ny lesing av miljøfila
+# imellom (samme felle som over).
+install -d -m 700 /etc/disponit/henvendelsessveip
+if [ -z "${DISPONIT_HENVENDELSESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_HENVENDELSESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen henvendelsessveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred henvendelsessveip DISPONIT_HENVENDELSESVEIP_URL "$DISPONIT_HENVENDELSESVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1053,7 +1077,8 @@ disponit-begrepssveip.timer
 disponit-tilgangssveip.timer
 disponit-personvernsveip.timer
 disponit-compliancesveip.timer
-disponit-avstemmingssveip.timer"
+disponit-avstemmingssveip.timer
+disponit-henvendelsessveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1315,6 +1340,10 @@ systemctl stop disponit-compliancesveip.timer \
 # `sist_sett_sveip`.
 systemctl stop disponit-avstemmingssveip.timer \
     disponit-avstemmingssveip.service 2>/dev/null || true
+# 102 (M-17): henvendelsessveipen stoppes i samme vindu og av samme grunn
+# — funnene er idempotente over sin egen tilstand.
+systemctl stop disponit-henvendelsessveip.timer \
+    disponit-henvendelsessveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1471,6 +1500,8 @@ systemctl enable --now disponit-compliancesveip.timer
 # form; uten credentialen står jobben med exit 2 og rører ingenting —
 # men preflighten over gater DSN-en, så det skal ikke kunne skje.
 systemctl enable --now disponit-avstemmingssveip.timer
+# 102 (M-17): henvendelsessveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-henvendelsessveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

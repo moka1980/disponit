@@ -119,6 +119,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # nei — og her er den forskjellen selve svaret. «Disse to hoerer ikke
     # sammen» er en annen setning enn «noe gikk galt».
     Feilvei("avstemming_ulovlig_tilstand", 409, ("avvis",), None),
+    # 102 (M-17): henvendelsesregisterets doerer nekter det tilstanden
+    # eller innholdskravet ikke tillater — «besvart» uten et utkast
+    # merket brukt_manuelt, en lukket henvendelse paa vei til unntakskoen,
+    # et utkast som alt er avgjort, en avsender som ikke er en hash. 409
+    # av samme grunn som radene over: kroppen ER velformet, det er BASEN
+    # som sier nei. «Vi kan ikke vise at noen svarte» er en annen setning
+    # enn «noe gikk galt».
+    Feilvei("henvendelse_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

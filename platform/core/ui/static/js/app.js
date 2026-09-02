@@ -34,6 +34,7 @@ import { visLisens } from "./flater/lisens.js";
 import { visPersonvern } from "./flater/personvern.js";
 import { visCompliance } from "./flater/compliance.js";
 import { visAvstemming } from "./flater/avstemming.js";
+import { visKundeservice } from "./flater/kundeservice.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -104,6 +105,7 @@ const FLATER = {
   // dørene, vakten og CHECK-ene i basen er den bindende porten.
   compliance: visCompliance,
   avstemming: visAvstemming,
+  kundeservice: visKundeservice,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

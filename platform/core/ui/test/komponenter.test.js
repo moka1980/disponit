@@ -916,7 +916,12 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
   // asserts over samme rot kan aldri begge være sanne).
   assert.ok(kortene(nordvik.rot).includes("#/lisens"),
     "lisensregisteret har ingen inngang i det hele tatt for en ekte tenant");
-  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 10,
+  // M-17 (102): kundeservicekøen er den neste modulflaten en LESEØKT har
+  // rute til — køen er tenantens alminnelige arbeidsflate, og den som
+  // svarer kunder skal se den. TALLET UNDER UTVIDES, det dupliseres ikke.
+  assert.ok(kortene(nordvik.rot).includes("#/kundeservice"),
+    "kundeservicekøen har ingen inngang i det hele tatt for en ekte tenant");
+  assert.equal(nordvik.rot.querySelectorAll(".skall-modul").length, 11,
     "menyen viser mer enn tildelingen pluss flatene økten har rute til");
 
   // En UKJENT tildeling («vet ikke») skal fortsatt nå flatene sine — og
@@ -926,8 +931,8 @@ test("AppShell: flaten økten har rute til står i menyen, også utenfor tildeli
     aktiv: "oversikt", sprak: "nb", paaSprak: () => {}, paaLoggUt: () => {} });
   nyttBrett().append(ukjent.rot);
   assert.deepEqual(kortene(ukjent.rot).sort(),
-    ["#/avtalefrist", "#/dokumentmal", "#/kunnskap", "#/lisens",
-      "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
+    ["#/avtalefrist", "#/dokumentmal", "#/kundeservice", "#/kunnskap",
+      "#/lisens", "#/nokkeltall", "#/rekruttering", "#/wcagkontroll"],
     "en ukjent tildeling mistet flatene økten har rute til");
   assert.ok(ukjent.rot.querySelector(".skall-venstre").textContent
     .includes(NB["ui.shell.moduler_ukjent"]),

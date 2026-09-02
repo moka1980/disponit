@@ -1,0 +1,72 @@
+# M-17 (102): henvendelsessveipen for kundeserviceregisteret.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (102): en åpen henvendelse uten klassifisering, eldre enn grensen, er
+# et `uklassifisert_over_grense`-funn; en klassifisert som SIER at svar
+# kreves og som ingen har svart på, er `ubesvart_over_grense`; og en
+# klassifisert som `mistenkelig` uten at den er satt i sikkerhetskøen er
+# `mistenkelig_uten_behandling` — den ene UTEN aldersgrense, fordi å
+# vente to døgn på den ville vært å gi angriperen to døgn.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, ikke her.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# henvendelsessveip er en kundeservicekø som eldes uten at noen ser det.
+#
+# SVEIPEN SVARER INGEN OG LESER INGEN KUNDETEKST. `disponit_henvendelsessveip`
+# har nøyaktig ÉN rettighet i basen: EXECUTE på `m17_sveip_henvendelser`.
+# INGEN tabellrettigheter — og siden en henvendelse er PERSONDATA, er
+# det snittet strengere her enn noe annet sted i klyngen: sveipen kan
+# reise funn i alle tenanter uten å kunne åpne en eneste kundetekst.
+# Krypteringen gjør det dessuten umulig i praksis: DEK-en finnes bare i
+# API-lagets minne, aldri i basen.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener` — som de andre
+# sveipene. Autoriteten ligger i DB-rollen, ikke i Unix-brukeren.
+
+[Unit]
+Description=Disponit henvendelsessveip (uklassifiserte og ubesvarte henvendelser -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_HENVENDELSESVEIP_URL:/etc/disponit/henvendelsessveip/DISPONIT_HENVENDELSESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_henvendelsessveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`henvendelse_apne`, `henvendelsesfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig svar:
+# funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

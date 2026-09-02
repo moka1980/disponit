@@ -303,8 +303,15 @@ export const KUNDEROLLER = [
     id: "leser",
     navn_nokkel: "ui.kundeadmin.rolle.leser",
     tekst_nokkel: "ui.kundeadmin.rolle.leser_tekst",
+    // 102 (M-17): `kundeservice:innhold` er retten til å LESE en
+    // henvendelses innhold. Skilt fra `decisions:read` fordi bare det
+    // ene er persondata — guiden skal si begge, ellers lover den mindre
+    // enn rollen faktisk har. KOMMENTAREN STÅR UTENFOR ARRAYET: porten
+    // i `test_ui_kontrakt.py` leser listen med et regex, og en
+    // kommentar inne i den gjør scopet usynlig for porten.
     scopes: ["decisions:read", "exceptions:read", "policy:read",
-             "epost:read", "kontinuitet:read"],
+             "epost:read", "kontinuitet:read",
+             "kundeservice:innhold"],
   },
   {
     id: "godkjenner",

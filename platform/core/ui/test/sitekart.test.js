@@ -90,10 +90,17 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // M-22 (098): lisensregisteret landet på det SAMME scopet, og listen er
   // uttømmende — den UTVIDES, den dupliseres ikke. `lisens` står sist
   // fordi det er `BASISRUTER`-ens rekkefølge.
+  //
+  // M-17 (102): kundeservicekøen landet på det samme scopet igjen, og
+  // det er en dom: køen er tenantens ALMINNELIGE arbeidsflate. Selve
+  // henvendelsens innhold ligger bak `kundeservice:innhold` og
+  // hentes av et eget endepunkt inne på flaten — menyoppføringen lover
+  // at LISTEN kan vises, ikke at hver celle kan åpnes, og flaten sier
+  // det med rene ord til den som mangler innsynsscopet.
   assert.deepEqual(alle,
     ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
       "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
-      "kunnskap", "avtalefrist", "lisens"]);
+      "kunnskap", "avtalefrist", "lisens", "kundeservice"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
   // `tillatteFlater` heller ikke en håndskrevet `#/rekruttering` gjennom,
   // og demo-stien lander på reserveflaten (Oversikt) i stedet.
@@ -359,7 +366,8 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   // hver sin flate her samtidig, og en naiv fletting beholdt begge
   // halelinjene — som ga en syntaksfeil i stedet for to lister.
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
-    "dokumentmal", "tilgang", "personvern", "compliance", "avstemming"];
+    "dokumentmal", "tilgang", "personvern", "compliance", "avstemming",
+    "kundeservice"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(
