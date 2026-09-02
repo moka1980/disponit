@@ -291,6 +291,24 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm30_apne_funn(text,integer)',                        'disponit_personvern_eier'),
     ('FUNCTION', 'm30_sveipkandidater(text,date,integer)',             'disponit_personvern_eier'),
     ('FUNCTION', 'm30_sveip_frister(integer)',                         'disponit_personvern_eier'),
+    -- 100 (M-34): kontrollregisterets doerer og etterproevingssveipen.
+    -- NOLOGIN-eieren `disponit_compliance_eier` eier funksjonene, ikke
+    -- tabellene -- de fire tabellene er migrators, som 095/096-familien.
+    -- Eierskapet ER skrivetilgangen her (057-radenes begrunnelse):
+    -- runtime har ingen tabellrettighet paa registeret i det hele tatt
+    -- og naar det KUN gjennom disse doerene, og sveipen er den
+    -- innelukkede kryss-tenant-autoriteten sveiperollen alene faar kalle
+    -- Trigger-vaktene `m34_kontroll_vakt`, `m34_etterproving_vakt` og
+    -- `m34_funn_vakt` staar bevisst IKKE her: de opprettes utenfor
+    -- SET ROLE-vinduet og er migrators, som resten av husets radvakter
+    ('FUNCTION', 'm34_evidens(text,uuid,text,text,jsonb)',             'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_rammeverk_id(text,text,text,text)',              'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_registrer_kontroll(text,uuid,text,text,text,text,text,integer,text)', 'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_registrer_etterproving(text,uuid,uuid,date,text,text,text,text,text)', 'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_marker_ikke_relevant(text,uuid,text,text)',      'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_kontrollbilde(text,integer)',                    'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_funnkandidater(text,date)',                      'disponit_compliance_eier'),
+    ('FUNCTION', 'm34_sveip_etterprovinger(integer)',                  'disponit_compliance_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

@@ -1,0 +1,39 @@
+# M-34 (100): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `etterproving_dogn` er et antall DØGN,
+# og et kontrollregister måles derfor ikke oftere enn det. En sveip hver
+# time ville stilt det samme spørsmålet 24 ganger om dagen og fått det
+# samme svaret 23 av dem — funnene er idempotente, så det ville vært
+# billig, men det ville ikke vært informasjon.
+#
+# DET SOM ENDRER SEG RASKERE ENN ET DØGN, ENDRER SEG I SAMME
+# TRANSAKSJON. Registrerer noen en etterprøving, flytter
+# `m34_registrer_etterproving` både historikken og avledningen med én
+# gang, og lesedøren regner `dogn_over_frist` fra `current_date` ved hvert
+# oppslag. Flaten viser altså aldri en frist som er stale — sveipen
+# eksisterer for FUNNENE, som er den varige, delte tilstanden, ikke for
+# tallet i tabellen.
+#
+# `RandomizedDelaySec=30min`: sveipen leser alle tenanters kontroller i
+# sitt første steg. Fyrer den på nøyaktig samme sekund som resten av
+# nattens jobber (backup 03:15, begrepssveipen 04:20, m57-utsending,
+# evidensreaperen), legger den seg oppå deres I/O uten grunn — den har
+# ingen frist å rekke. Spredningen er også grunnen til at klokkeslettet
+# er 04:50 og ikke et rundt tall: nabotimerne står på hele og halve
+# timer, og begrepssveipen har alt tatt 04:20.
+#
+# `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
+# sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
+# kontroller er forbigått i dag»), ikke da, og en forbigått kontroll som
+# ingen har fått funn på er nøyaktig det denne timeren finnes for.
+
+[Unit]
+Description=Disponit compliancesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 04:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

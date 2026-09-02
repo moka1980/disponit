@@ -280,6 +280,25 @@ REVOKE ALL ON FUNCTION m30_sveip_frister(INT) FROM {rolle};
 -- registeret UTEN å kreve tenantkontekst (sveipen setter den selv), og
 -- en runtime som kunne kalle det ville hatt en lesevei rundt SP-1.
 REVOKE ALL ON FUNCTION m30_sveipkandidater(TEXT, DATE, INT) FROM {rolle};
+-- 100 (M-34): kontrollregisterets LESEDØR, samme snitt og samme
+-- begrunnelse som M-21-blokken over. `rammeverk`, `kontroll`,
+-- `etterproving` og `kontrollfunn` står bevisst IKKE i noen GRANT-liste
+-- her: runtime har ingen SELECT på dem i det hele tatt (SP-7) og når
+-- registeret KUN gjennom dørene, som krever tenantkontekst først.
+-- Skrivedørene ligger i M37_RETTIGHETER_API (menneskelige handlinger i
+-- flaten); SVEIPEN hører sveiperollen til
+-- (COMPLIANCESVEIP_RETTIGHETER) og er kryss-tenant — et grant her ville
+-- gitt forespørselsveien nøyaktig det vinduet sveiperollen finnes for å
+-- nekte den.
+--
+-- `m34_funnkandidater` og `m34_rammeverk_id` er INTERNE ledd i sveipen
+-- og registreringsdøren, ikke lesedører. De grantes ingen, og REVOKE-en
+-- står fordi en rettighet som bare slutter å bli gitt ikke er trukket
+-- tilbake.
+SET LOCAL ROLE disponit_compliance_eier;
+GRANT EXECUTE ON FUNCTION m34_kontrollbilde(TEXT, INT) TO {rolle};
+REVOKE ALL ON FUNCTION m34_sveip_etterprovinger(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m34_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -696,6 +715,16 @@ GRANT EXECUTE ON FUNCTION m30_registrer_sak(TEXT, UUID, TEXT, TEXT, DATE, TEXT, 
 GRANT EXECUTE ON FUNCTION m30_besvar_sak(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m30_avvis_sak(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m30_forleng_frist(TEXT, UUID, DATE, TEXT, TEXT) TO {rolle};
+-- 100 (M-34): kontrollregisterets tre skrivedører — registrering,
+-- etterprøving og ikke-relevant-beslutningen. Menneskelige handlinger i
+-- flaten (`bestilling:opprett` + CSRF + Idempotency-Key), samme vindu
+-- som M-21-dørene over, men en ANNEN eier — derfor sin egen rolleblokk.
+-- Evidenskravet og begrunnelseskravet håndheves i dørene, i vakten og i
+-- CHECK-ene, aldri her.
+SET LOCAL ROLE disponit_compliance_eier;
+GRANT EXECUTE ON FUNCTION m34_registrer_kontroll(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m34_registrer_etterproving(TEXT, UUID, UUID, DATE, TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m34_marker_ikke_relevant(TEXT, UUID, TEXT, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -997,6 +1026,26 @@ REVOKE ALL ON FUNCTION m30_sveipkandidater(TEXT, DATE, INT) FROM {rolle};
 RESET ROLE;
 """
 
+# 100 (M-34): etterprøvingssveipens rolle. Samme form og samme
+# begrunnelse som KUNNSKAPSSVEIP_RETTIGHETER over: nøyaktig ÉN EXECUTE,
+# ingen tabellrettigheter. `m34_sveip_etterprovinger` er KRYSS-TENANT og
+# setter selv RLS-konteksten per tenant, så rollen kan reise funn i alle
+# tenanter uten å kunne LESE en eneste kontrollrad selv. Hele autoriteten
+# står i den eier-eide defineren, revidérbar på ett sted.
+COMPLIANCESVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_compliance_eier;
+GRANT EXECUTE ON FUNCTION m34_sveip_etterprovinger(INT) TO {rolle};
+-- LESEDØREN STÅR BEVISST IKKE HER, og heller ikke det interne
+-- kandidatleddet: sveipen når `m34_funnkandidater` INNENFRA sin egen
+-- definer, som eieren. En EXECUTE hit ville gitt rollen en tenantbundet
+-- lesevei inn i registeret den ikke trenger — og «trenger ikke» er
+-- nøyaktig kriteriet en sveiperolle skal måles på.
+REVOKE ALL ON FUNCTION m34_kontrollbilde(TEXT, INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m34_funnkandidater(TEXT, DATE) FROM {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1192,7 +1241,13 @@ def main(argv: list[str] | None = None) -> int:
                           # tabellrettigheter å nullstille, bare den
                           # ene EXECUTEn.
                           ("disponit_personvernsveip",
-                           PERSONVERNSVEIP_RETTIGHETER)):
+                           PERSONVERNSVEIP_RETTIGHETER),
+                          # 100 (M-34): etterprøvingssveipens rolle,
+                          # samme løkke og samme betingelse — ingen
+                          # tabellrettigheter å nullstille, bare den ene
+                          # EXECUTEn.
+                          ("disponit_compliancesveip",
+                           COMPLIANCESVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

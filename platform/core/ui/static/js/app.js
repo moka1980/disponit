@@ -32,6 +32,7 @@ import { visAvtalefrist } from "./flater/avtalefrist.js";
 import { visTilgang } from "./flater/tilgang.js";
 import { visLisens } from "./flater/lisens.js";
 import { visPersonvern } from "./flater/personvern.js";
+import { visCompliance } from "./flater/compliance.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -96,6 +97,11 @@ const FLATER = {
   // ergonomi: dørene i basen er den bindende porten.
   lisens: visLisens,
   personvern: visPersonvern,
+  // M-34 (100): modulflate bak `security:read` (sitekart.js) —
+  // scope-gaten bor der, som for de andre flatene. Skriveveiene i flaten
+  // er i tillegg gated på `bestilling:opprett`, men det er ergonomi:
+  // dørene, vakten og CHECK-ene i basen er den bindende porten.
+  compliance: visCompliance,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

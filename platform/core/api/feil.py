@@ -99,6 +99,17 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # velformet, det er TILSTANDEN (eller lovkravet basen haandhever)
     # som sier nei.
     Feilvei("personvernsak_ulovlig_tilstand", 409, ("avvis",), None),
+    # 100 (M-34): kontrollregisterets doerer nekter det tilstanden eller
+    # innholdskravet ikke tillater — en etterproving uten
+    # evidenshenvisning eller dato, et avvik uten beskrivelse, en
+    # ikke-relevant-beslutning uten begrunnelse, en eier eller en
+    # utfoerer som ikke er aktivt medlem, eller en kontroll som alt staar
+    # som ikke relevant. 409 av samme grunn som raden over: kroppen ER
+    # velformet, det er BASEN som sier nei — og for kontrollregisteret er
+    # den forskjellen selve svaret. «Vi kan ikke vise at vi gjorde dette»
+    # er en annen setning enn «noe gikk galt», og det er nettopp den
+    # forskjellen modulen finnes for.
+    Feilvei("kontroll_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

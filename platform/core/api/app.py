@@ -1152,6 +1152,31 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def plikt_bortfall(request: Request) -> Response:
         from . import plikt as pliktmodul
         return pliktmodul.bortfall_endepunkt(tjeneste, request)
+    # 100 (M-34): kontrollregisteret. Leseveien er tenantens eget
+    # register; de tre skriveveiene er menneskelige handlinger i flaten,
+    # bak `bestilling:opprett` + CSRF + Idempotency-Key.
+    # Etterprøvingssveipen finnes IKKE som HTTP — den har sin egen
+    # LOGIN-rolle (`disponit_compliancesveip`) og sin egen daglige timer,
+    # og runtime er eksplisitt REVOKEt fra den i 100.
+    #
+    # OG DET FINNES INGEN INNSENDINGSVEI. Katalogteksten lover innsending
+    # til sertifiseringsorgan; v1 registrerer kontrollen. Fraværet er
+    # dommen, ikke en manglende rute.
+    def compliance_bilde(request: Request) -> Response:
+        from . import compliance as compliancemodul
+        return compliancemodul.kontrollbilde(tjeneste, request)
+
+    def compliance_registrer(request: Request) -> Response:
+        from . import compliance as compliancemodul
+        return compliancemodul.registrer_endepunkt(tjeneste, request)
+
+    def compliance_etterproving(request: Request) -> Response:
+        from . import compliance as compliancemodul
+        return compliancemodul.etterproving_endepunkt(tjeneste, request)
+
+    def compliance_ikke_relevant(request: Request) -> Response:
+        from . import compliance as compliancemodul
+        return compliancemodul.ikke_relevant_endepunkt(tjeneste, request)
 
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
@@ -1626,6 +1651,16 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/personvern/{sak_id:uuid}/forleng", personvern_forleng,
               methods=["POST"]),
+        # 100 (M-34): kolleksjonsruten FØR mønsterrutene, som ellers i
+        # fila — {kontroll_id:uuid} avviser undernavnene uansett, men
+        # rekkefølgen sier intensjonen.
+        Route("/v1/compliance", compliance_bilde, methods=["GET"]),
+        Route("/v1/compliance/kontroll", compliance_registrer,
+              methods=["POST"]),
+        Route("/v1/compliance/kontroll/{kontroll_id:uuid}/etterproving",
+              compliance_etterproving, methods=["POST"]),
+        Route("/v1/compliance/kontroll/{kontroll_id:uuid}/ikke-relevant",
+              compliance_ikke_relevant, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -2309,6 +2344,33 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/lisens"):                  "bestilling:opprett",
     ("POST", "/v1/lisens/{lisens_id:uuid}/fornyelse"): "bestilling:opprett",
     ("POST", "/v1/lisens/{lisens_id:uuid}/avslutt"): "bestilling:opprett",
+    # 100 (M-34): kontrollregisteret. SCOPENE ER GJENBRUKT, IKKE NYE.
+    #
+    # LESINGEN bærer `security:read` og ikke `decisions:read`, og det er
+    # en dom: PR-008 §1 beskriver `security:read` som en valgfri
+    # ops/compliance-scope på en TENANTBUNDET brukersesjon, og
+    # `autorisasjon.py` beskriver rollen `sikkerhet` med nøyaktig de
+    # ordene («Compliance/ops»). Kontrollregisteret er flaten det scopet
+    # ble laget for. Kretsen er dessuten snevrere enn `decisions:read`
+    # MED VILJE: avviksbeskrivelser og evidenshenvisninger er
+    # revisjonsmateriale, ikke allmenn tilstandsinnsikt. Samme presedens
+    # som `/v1/modellstyring`, `/v1/datakvalitet`, `/v1/retensjon` og
+    # driftsrutene over.
+    #
+    # SKRIVINGEN bærer `bestilling:opprett` — samme scope som M-21s tre
+    # skriveveier, alt i BROWSER_MUTASJONSSCOPES. Et nytt scope skal ikke
+    # oppstå av vane.
+    #
+    # Sveipen står IKKE her, og det er en sikkerhetsdom og ikke en
+    # manglende funksjon: `m34_sveip_etterprovinger` er kryss-tenant og
+    # kjøres av `disponit_compliancesveip` fra sin egen timer — en
+    # fullmakt web-API-rollen med vilje ikke har (038-reaperens snitt).
+    ("GET",  "/v1/compliance"):              "security:read",
+    ("POST", "/v1/compliance/kontroll"):     "bestilling:opprett",
+    ("POST", "/v1/compliance/kontroll/{kontroll_id:uuid}/etterproving"):
+        "bestilling:opprett",
+    ("POST", "/v1/compliance/kontroll/{kontroll_id:uuid}/ikke-relevant"):
+        "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av
