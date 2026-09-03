@@ -80,7 +80,8 @@ disponit-lagersveip.service disponit-lagersveip.timer
 disponit-kontovaktsveip.service disponit-kontovaktsveip.timer
 disponit-betalingssveip.service disponit-betalingssveip.timer
 disponit-adressesveip.service disponit-adressesveip.timer
-disponit-lonnssveip.service disponit-lonnssveip.timer"
+disponit-lonnssveip.service disponit-lonnssveip.timer
+disponit-kampanjesveip.service disponit-kampanjesveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -384,6 +385,15 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_LONNSSVEIP_URL:-}" ] ); t
   echo "AVBRUTT: DISPONIT_LONNSSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_lonnssveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 114 (M-44): kampanjesveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille kampanjesveip er markedsføring ingen har sett på.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_KAMPANJESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_KAMPANJESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_kampanjesveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 # 110 (M-42): kontovaktsveipen har sin EGEN rolle med nøyaktig én
@@ -1163,6 +1173,17 @@ if [ -z "${DISPONIT_LONNSSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred lonnssveip DISPONIT_LONNSSVEIP_URL "$DISPONIT_LONNSSVEIP_URL"
+
+# 114 (M-44): kampanjesveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/kampanjesveip
+if [ -z "${DISPONIT_KAMPANJESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_KAMPANJESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen kampanjesveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred kampanjesveip DISPONIT_KAMPANJESVEIP_URL "$DISPONIT_KAMPANJESVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1319,7 +1340,8 @@ disponit-lagersveip.timer
 disponit-kontovaktsveip.timer
 disponit-betalingssveip.timer
 disponit-adressesveip.timer
-disponit-lonnssveip.timer"
+disponit-lonnssveip.timer
+disponit-kampanjesveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1629,6 +1651,10 @@ systemctl stop disponit-adressesveip.timer \
 # idempotente, så neste døgn tar kjøringen igjen.
 systemctl stop disponit-lonnssveip.timer \
     disponit-lonnssveip.service 2>/dev/null || true
+# 114 (M-44): kampanjesveipen stoppes i samme vindu — funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+systemctl stop disponit-kampanjesveip.timer \
+    disponit-kampanjesveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1809,6 +1835,8 @@ systemctl enable --now disponit-betalingssveip.timer
 systemctl enable --now disponit-adressesveip.timer
 # 113 (M-39): lønnssveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-lonnssveip.timer
+# 114 (M-44): kampanjesveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-kampanjesveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

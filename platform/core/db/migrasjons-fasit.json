@@ -111,5 +111,6 @@
   "110_m42_kontoregister.sql": "1fe5fabbe619443a779cf2bf96a7f27a93aaf27fac516c16659f65aa8bec5527",
   "111_m41_betalingsregister.sql": "1e89e85303d1af0119b661b324257e8967e2e4e866e6dca0fcac38da3752b61c",
   "112_m19_adresseregister.sql": "1597d7fd151271b20955f4ed5fa082c9dc27912e391b1b2ad37b839f94338c12",
-  "113_m39_lonnsgrunnlag.sql": "2cbdbf904625a0d9b676a5a7364d393803a96cbaf432ec0b48b254ba304ddadb"
+  "113_m39_lonnsgrunnlag.sql": "2cbdbf904625a0d9b676a5a7364d393803a96cbaf432ec0b48b254ba304ddadb",
+  "114_m44_kampanjeregister.sql": "7d29ee2197768b1d7f0981a5badaf1a35c3fdd906f094edb29baccd520204745"
 }

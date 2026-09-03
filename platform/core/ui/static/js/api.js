@@ -1077,3 +1077,48 @@ export const registrerTimer = (takerId, timer, idem) =>
 export const settLonnstakerAktiv = (takerId, aktiv, idem) =>
   _muter(`/v1/lonn/${encodeURIComponent(takerId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-44 (114): kampanjeregisteret. MOTTAKEREN, SAMTYKKEHENDELSEN og
+// KAMPANJEN bærer hver sin SP-2-nøkkel.
+//
+// FOR SAMTYKKEHENDELSEN ER SP-2 STRENGT NØDVENDIG: en gjentatt POST må
+// ikke bli to samtykker i en historikk som ER svaret på om vi hadde
+// lov.
+//
+// DET FINNES INGEN SENDEFUNKSJON HER, og fraværet er dommen. M-44 er en
+// annen figur enn de tre andre i klyngen: de er manglende
+// VERIFIKATORER, denne er den manglende AKTØREN. Modulen finnes FOR å
+// sende, og v1 sender null. Og botemiddelet malen foreslår for en
+// feilsendt e-post er å sende en TIL.
+//
+// `leggIKampanjeplan` SENDER INGENTING. Den skriver ned at mottakeren
+// VAR MENT å få kampanjen — og svarer med hvor mange hen da står
+// oppført til i tenantens periode.
+export const settKampanjegrense = (grense, idem) =>
+  _muter("/v1/kampanje/grense", "POST", grense,
+         idem || nyIdempotensnokkel());
+
+export const registrerKampanjemottaker = (mottaker, idem) =>
+  _muter("/v1/kampanje/mottaker", "POST", mottaker,
+         idem || nyIdempotensnokkel());
+
+export const registrerSamtykke = (mottakerId, hendelse, idem) =>
+  _muter(`/v1/kampanje/mottaker/${encodeURIComponent(mottakerId)}/samtykke`,
+         "POST", hendelse, idem || nyIdempotensnokkel());
+
+export const registrerKampanje = (kampanje, idem) =>
+  _muter("/v1/kampanje/kampanje", "POST", kampanje,
+         idem || nyIdempotensnokkel());
+
+export const avlysKampanje = (kampanjeId, idem) =>
+  _muter(`/v1/kampanje/kampanje/${encodeURIComponent(kampanjeId)}/avlys`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const leggIKampanjeplan = (kampanjeId, mottakerId, idem) =>
+  _muter(`/v1/kampanje/kampanje/${encodeURIComponent(kampanjeId)}/plan`,
+         "POST", { mottaker_id: mottakerId },
+         idem || nyIdempotensnokkel());
+
+export const settKampanjemottakerAktiv = (mottakerId, aktiv, idem) =>
+  _muter(`/v1/kampanje/mottaker/${encodeURIComponent(mottakerId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

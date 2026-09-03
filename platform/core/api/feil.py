@@ -217,6 +217,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # endre en frosset time, en plan skrevet bakover, og en uke kortere
     # enn en dag. 409: kroppen ER velformet, det er BASEN som sier nei.
     Feilvei("lonn_ulovlig_tilstand", 409, ("avvis",), None),
+    # 114 (M-44): et samtykke som INNTREFFER i framtida (som ville
+    # vaert usynlig for sveipen), samme kildehendelse to ganger, et
+    # forsoek paa aa endre en frosset samtykkehendelse, en avlyst
+    # kampanje som legges plan i, og en deaktivert mottaker. 409:
+    # kroppen ER velformet, det er BASEN som sier nei.
+    Feilvei("kampanje_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

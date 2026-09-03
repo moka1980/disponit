@@ -1689,6 +1689,57 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import lonn as lonnmodul
         return lonnmodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 114 (M-44): kampanjeregisteret. Fire leseveier og seks
+    # skriveveier.
+    #
+    # OG DET FINNES INGEN UTSENDINGSVEI. M-44 er en annen figur enn de
+    # tre andre i klynge 5: de er manglende VERIFIKATORER, denne er den
+    # manglende AKTØREN — malen fører modulen som `modul:` på en
+    # `auto`-handling. Modulen finnes FOR å sende, og v1 sender null.
+    def kampanje_bilde(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.kampanjebilde(tjeneste, request)
+
+    def kampanje_historikk(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.historikk_endepunkt(tjeneste, request)
+
+    def kampanje_samtykke_dato(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.samtykke_paa_dato_endepunkt(tjeneste,
+                                                         request)
+
+    def kampanje_grense(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.grense_endepunkt(tjeneste, request)
+
+    def kampanje_mottaker(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.registrer_mottaker_endepunkt(tjeneste,
+                                                          request)
+
+    def kampanje_samtykke(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.registrer_samtykke_endepunkt(tjeneste,
+                                                          request)
+
+    def kampanje_ny(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.registrer_kampanje_endepunkt(tjeneste,
+                                                          request)
+
+    def kampanje_avlys(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.avlys_kampanje_endepunkt(tjeneste, request)
+
+    def kampanje_plan(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.legg_i_plan_endepunkt(tjeneste, request)
+
+    def kampanje_aktiv(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2382,6 +2433,24 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/lonn/{taker_id:uuid}/aktiv", lonn_aktiv,
               methods=["POST"]),
+        Route("/v1/kampanje", kampanje_bilde, methods=["GET"]),
+        Route("/v1/kampanje/grense", kampanje_grense,
+              methods=["POST"]),
+        Route("/v1/kampanje/mottaker", kampanje_mottaker,
+              methods=["POST"]),
+        Route("/v1/kampanje/kampanje", kampanje_ny, methods=["POST"]),
+        Route("/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke",
+              kampanje_historikk, methods=["GET"]),
+        Route("/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke",
+              kampanje_samtykke, methods=["POST"]),
+        Route("/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke/{dag:str}",
+              kampanje_samtykke_dato, methods=["GET"]),
+        Route("/v1/kampanje/mottaker/{mottaker_id:uuid}/aktiv",
+              kampanje_aktiv, methods=["POST"]),
+        Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys",
+              kampanje_avlys, methods=["POST"]),
+        Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/plan",
+              kampanje_plan, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -3323,6 +3392,26 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/lonn/{taker_id:uuid}/plan"):   "bestilling:opprett",
     ("POST", "/v1/lonn/{taker_id:uuid}/timer"):  "bestilling:opprett",
     ("POST", "/v1/lonn/{taker_id:uuid}/aktiv"):  "bestilling:opprett",
+
+    # 114 (M-44): kampanjeregisteret. LESINGEN bærer `okonomi:read`,
+    # samme scope som 101 innførte og 111–113 gjenbrukte; SKRIVINGEN
+    # bærer `bestilling:opprett`.
+    ("GET",  "/v1/kampanje"):                    "okonomi:read",
+    ("GET",  "/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke"):
+        "okonomi:read",
+    ("GET",  "/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke/"
+             "{dag:str}"): "okonomi:read",
+    ("POST", "/v1/kampanje/grense"):             "bestilling:opprett",
+    ("POST", "/v1/kampanje/mottaker"):           "bestilling:opprett",
+    ("POST", "/v1/kampanje/kampanje"):           "bestilling:opprett",
+    ("POST", "/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke"):
+        "bestilling:opprett",
+    ("POST", "/v1/kampanje/mottaker/{mottaker_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys"):
+        "bestilling:opprett",
+    ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/plan"):
+        "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av
