@@ -10,7 +10,13 @@
 # sprer den vekk fra faste minutter, så den ikke systematisk møter
 # backup-, reaper- eller sendervinduene på samme klokkeslett hver natt.
 #
-# `OnCalendar=daily` OG IKKE `OnBootSec`+`OnUnitActiveSec` (CodeRabbit,
+# KLOKKESLETTET ER 02:20 UTC, og det er PINNET (ryddePR). Den sto på
+# `OnCalendar=daily` — midnatt i VERTENS tid, ikke et punkt på stigen
+# noen hadde valgt, og et punkt som flytter seg hvis verten bytter
+# tidssone. 02:20 med 30 minutters spredning er ferdig før backupen
+# 03:15, og `test_deploy_timerplan` holder den unik.
+#
+# `OnCalendar` OG IKKE `OnBootSec`+`OnUnitActiveSec` (CodeRabbit,
 # og den hadde rett): `Persistent=` VIRKER BARE sammen med en
 # kalenderutløser. På en ren monotonisk timer er direktivet inert — det
 # ser ut som en garanti og er ingen. Kadensen er skrevet om slik at
@@ -32,7 +38,7 @@
 Description=Disponit datakvalitetsprofilering-timer
 
 [Timer]
-OnCalendar=daily
+OnCalendar=*-*-* 02:20:00 UTC
 RandomizedDelaySec=30min
 Persistent=true
 

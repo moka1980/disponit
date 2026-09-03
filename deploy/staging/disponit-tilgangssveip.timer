@@ -14,8 +14,17 @@
 # nattens jobber (backup 03:15, retensjonsmålingen 03:17, m57-utsending,
 # evidensreaperen, begrepssveipen 04:20), legger den seg oppå deres I/O
 # uten grunn — den har ingen frist å rekke. Spredningen er også grunnen
-# til at klokkeslettet er 04:35 og ikke et rundt tall: nabotimerne står
-# på hele og halve timer, og 04:20 er begrepssveipens.
+# til at klokkeslettet ikke er et rundt tall: nabotimerne står på hele
+# og halve timer, og 04:20 er begrepssveipens.
+#
+# KLOKKESLETTET VAR 04:35 OG ER FLYTTET TIL 04:05 (ryddePR). Det sto
+# på nøyaktig samme sekund som `disponit-personvernsveip` — altså
+# nettopp kollisjonen avsnittet over sier den unngår. Begge leser alle
+# tenanters rader i sitt første steg. Doktrinen sto i prosa i hver av
+# de to filene; ingen av dem visste om den andre.
+#
+# `test_deploy_timerplan` måler den nå: to kalendertimere kan ikke
+# dele klokkeslett, og hver av dem må være UTC-festet.
 #
 # `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
 # sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
@@ -26,7 +35,7 @@
 Description=Disponit tilgangssveip-timer
 
 [Timer]
-OnCalendar=*-*-* 04:35:00 UTC
+OnCalendar=*-*-* 04:05:00 UTC
 RandomizedDelaySec=30min
 Persistent=true
 
