@@ -431,6 +431,14 @@ const BASISRUTER = [
   // De fire skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem slår noe opp.
   { nokkel: "adresse", scope: "okonomi:read", modulflate: 19 },
+  // M-39 (113): lønnsgrunnlaget. MODULFLATE bak `okonomi:read` — hvor
+  // mye en navngitt ansatt har jobbet er persondata OG grunnlaget for
+  // hens inntekt, og den som handler på et avvik er den som kjører lønn.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem utbetaler, og ingen av dem
+  // produserer en lønnsfil.
+  { nokkel: "lonn", scope: "okonomi:read", modulflate: 39 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

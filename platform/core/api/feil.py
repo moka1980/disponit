@@ -212,6 +212,11 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # og en kontroll av et deaktivert subjekt. 409: kroppen ER
     # velformet, det er BASEN som sier nei.
     Feilvei("adresse_ulovlig_tilstand", 409, ("avvis",), None),
+    # 113 (M-39): en time ARBEIDET i framtida (som ville vaert usynlig
+    # for sveipen), samme kildehendelse to ganger, et forsoek paa aa
+    # endre en frosset time, en plan skrevet bakover, og en uke kortere
+    # enn en dag. 409: kroppen ER velformet, det er BASEN som sier nei.
+    Feilvei("lonn_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

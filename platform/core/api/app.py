@@ -1645,6 +1645,50 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import adresse as adressemodul
         return adressemodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 113 (M-39): lønnsgrunnlaget. Fire leseveier og fem skriveveier.
+    #
+    # OG DET FINNES INGEN UTBETALINGSVEI OG INGEN EKSPORTVEI.
+    # Håndverk/bygg-malen navngir modulen som `v_lonn` og bruker ALLE
+    # TRE vilkårene den er betrodd for til å la
+    # `timeliste.samle_og_valider` gå automatisk. En lønnsfil er ikke en
+    # betaling — det er en fil, den ser harmløs ut, og den rammer alle
+    # på én gang.
+    def lonn_bilde(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.lonnsbilde(tjeneste, request)
+
+    def lonn_dager(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.dager_endepunkt(tjeneste, request)
+
+    def lonn_historikk(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.historikk_endepunkt(tjeneste, request)
+
+    def lonn_planer(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.planer_endepunkt(tjeneste, request)
+
+    def lonn_terskler(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.terskler_endepunkt(tjeneste, request)
+
+    def lonn_taker(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.registrer_taker_endepunkt(tjeneste, request)
+
+    def lonn_plan(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.sett_plan_endepunkt(tjeneste, request)
+
+    def lonn_timer(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.registrer_timer_endepunkt(tjeneste, request)
+
+    def lonn_aktiv(request: Request) -> Response:
+        from . import lonn as lonnmodul
+        return lonnmodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2323,6 +2367,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               adresse_kontroller, methods=["GET"]),
         Route("/v1/adresse/versjon/{versjon_id:uuid}/kontroll",
               adresse_kontroll, methods=["POST"]),
+        Route("/v1/lonn", lonn_bilde, methods=["GET"]),
+        Route("/v1/lonn/terskler", lonn_terskler, methods=["POST"]),
+        Route("/v1/lonn/taker", lonn_taker, methods=["POST"]),
+        Route("/v1/lonn/{taker_id:uuid}/dager", lonn_dager,
+              methods=["GET"]),
+        Route("/v1/lonn/{taker_id:uuid}/historikk", lonn_historikk,
+              methods=["GET"]),
+        Route("/v1/lonn/{taker_id:uuid}/planer", lonn_planer,
+              methods=["GET"]),
+        Route("/v1/lonn/{taker_id:uuid}/plan", lonn_plan,
+              methods=["POST"]),
+        Route("/v1/lonn/{taker_id:uuid}/timer", lonn_timer,
+              methods=["POST"]),
+        Route("/v1/lonn/{taker_id:uuid}/aktiv", lonn_aktiv,
+              methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -3250,6 +3309,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/adresse/versjon/{versjon_id:uuid}/kontroll"):
         "bestilling:opprett",
+
+    # 113 (M-39): lønnsgrunnlaget. LESINGEN bærer `okonomi:read`, samme
+    # scope som 101 innførte og 111/112 gjenbrukte; SKRIVINGEN bærer
+    # `bestilling:opprett`.
+    ("GET",  "/v1/lonn"):                        "okonomi:read",
+    ("GET",  "/v1/lonn/{taker_id:uuid}/dager"):  "okonomi:read",
+    ("GET",  "/v1/lonn/{taker_id:uuid}/historikk"):
+        "okonomi:read",
+    ("GET",  "/v1/lonn/{taker_id:uuid}/planer"): "okonomi:read",
+    ("POST", "/v1/lonn/terskler"):               "bestilling:opprett",
+    ("POST", "/v1/lonn/taker"):                  "bestilling:opprett",
+    ("POST", "/v1/lonn/{taker_id:uuid}/plan"):   "bestilling:opprett",
+    ("POST", "/v1/lonn/{taker_id:uuid}/timer"):  "bestilling:opprett",
+    ("POST", "/v1/lonn/{taker_id:uuid}/aktiv"):  "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

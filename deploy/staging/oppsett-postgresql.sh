@@ -406,6 +406,8 @@ BETALINGSSVEIP_DSN=("DISPONIT_BETALINGSSVEIP_URL=$DB"
                     "DISPONIT_TEST_BETALINGSSVEIP_DSN=${DB}_test")
 ADRESSESVEIP_DSN=("DISPONIT_ADRESSESVEIP_URL=$DB"
                   "DISPONIT_TEST_ADRESSESVEIP_DSN=${DB}_test")
+LONNSSVEIP_DSN=("DISPONIT_LONNSSVEIP_URL=$DB"
+                "DISPONIT_TEST_LONNSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -436,6 +438,7 @@ sikre_rolle_dsn "$LAGERSVEIP" "${LAGERSVEIP_DSN[@]}"
 sikre_rolle_dsn "$KONTOVAKTSVEIP" "${KONTOVAKTSVEIP_DSN[@]}"
 sikre_rolle_dsn "$BETALINGSSVEIP" "${BETALINGSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$ADRESSESVEIP" "${ADRESSESVEIP_DSN[@]}"
+sikre_rolle_dsn "$LONNSSVEIP" "${LONNSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

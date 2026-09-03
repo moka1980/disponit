@@ -507,6 +507,28 @@ GRANT EXECUTE ON FUNCTION m19_kravene(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m19_funnkandidater(TEXT, DATE) TO {rolle};
 REVOKE ALL ON FUNCTION m19_sveip_adresser(INT) FROM {rolle};
 RESET ROLE;
+
+-- 113 (M-39): lønnsgrunnlagets LESEDØRER. De fem tabellene står bevisst
+-- IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m39_dagene` og `m39_plan_paa_dato` er med fordi de er oppslagene
+-- `timer_mot_arbeidsplan` og `prosjektkode_gyldig` til slutt må hvile
+-- på. Ingen av dem UTBETALER noe, og ingen av dem skriver en fil.
+--
+-- `m39_funnkandidater` er GRANTET her (112s form): flaten skal kunne
+-- vise hvorfor et funn står uten å vente på natta, og kandidatdøren er
+-- tenantbundet (SP-1) mens SVEIPEN er det som er kryss-tenant.
+SET LOCAL ROLE disponit_lonn_eier;
+GRANT EXECUTE ON FUNCTION m39_lonnsstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_takerne(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_timehistorikken(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_dagene(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_planene(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_plan_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_tersklene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_funnkandidater(TEXT, DATE) TO {rolle};
+REVOKE ALL ON FUNCTION m39_sveip_lonnsgrunnlag(INT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -1062,6 +1084,17 @@ GRANT EXECUTE ON FUNCTION m19_registrer_subjekt(TEXT, UUID, TEXT, TEXT, TEXT) TO
 GRANT EXECUTE ON FUNCTION m19_registrer_adresse(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m19_registrer_kontroll(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m19_sett_subjektaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 113 (M-39): lønnsgrunnlagets fire skrivedører. At en time ikke kan
+-- være arbeidet i framtida, at timegrunnlaget er append-only, og at
+-- minutter er heltall, håndheves i dørene og i vaktene — aldri her.
+-- INGEN AV DEM UTBETALER, og ingen av dem produserer en lønnsfil:
+-- `korreksjon` er en KILDE man registrerer en time fra.
+SET LOCAL ROLE disponit_lonn_eier;
+GRANT EXECUTE ON FUNCTION m39_sett_terskler(TEXT, INT, INT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_registrer_taker(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_sett_arbeidsplan(TEXT, UUID, UUID, INT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_registrer_timer(TEXT, UUID, UUID, DATE, INT, TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m39_sett_takeraktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1527,6 +1560,17 @@ GRANT EXECUTE ON FUNCTION m19_sveip_adresser(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 113 (M-39): lønnssveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den PRODUSERER INGEN LØNNSFIL: en fil ser harmløs
+# ut, kan «bare genereres», og rammer alle på én gang.
+LONNSSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_lonn_eier;
+GRANT EXECUTE ON FUNCTION m39_sveip_lonnsgrunnlag(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1780,7 +1824,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 112 (M-19): adressesveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_adressesveip",
-                           ADRESSESVEIP_RETTIGHETER)):
+                           ADRESSESVEIP_RETTIGHETER),
+                          # 113 (M-39): lønnssveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_lonnssveip",
+                           LONNSSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))
