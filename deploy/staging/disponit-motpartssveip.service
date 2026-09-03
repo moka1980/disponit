@@ -41,7 +41,7 @@
 # UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
 
 [Unit]
-Description=Disponit motpartssveip (ukontrollerte og utlopte adresser -> funn)
+Description=Disponit motpartssveip (uvurderte og forverrede motparter -> funn)
 
 [Service]
 Type=oneshot
@@ -79,8 +79,10 @@ AmbientCapabilities=
 LoadCredential=DISPONIT_MOTPARTSSVEIP_URL:/etc/disponit/motpartssveip/DISPONIT_MOTPARTSSVEIP_URL
 ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_motpartssveip
 # Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
-# indeksdekket (`adressesubjekt_aktive`, `adresseversjon_oppslag`,
-# `adressekontroll_oppslag`, `adressefunn_apne`). Går dette over ti
+# indeksdekket (`motpartssubjekt_aktive`,
+# `motpartsversjon_oppslag_idx`, `motpartsvurdering_oppslag`,
+# `foretaksoppslag_apne_reservasjoner`, `motpartsfunn_apne`). Går
+# dette over ti
 # minutter, henger noe — og da er avbrudd riktig svar: funnene er
 # idempotente, så neste døgn tar kjøringen igjen.
 TimeoutStartSec=10min

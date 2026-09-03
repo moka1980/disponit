@@ -573,6 +573,15 @@ function detaljpanel(ctx, last, kvitter, settApen, krav) {
           if (e instanceof UautorisertFeil) {
             ctx.paaUautorisert(); return;
           }
+          // EN FEILET HANDLING MÅ SIES HØYT (CodeRabbit fant den i
+          // 117; samme feil sto her fra 116). Uten dette re-aktiveres
+          // knappen og ingenting skjer på skjermen — brukeren tror
+          // deaktiveringen gikk gjennom.
+          const m = e && e.status === 409
+            ? t("ui.motpart.feil.tilstand")
+            : t("ui.motpart.feil.generell");
+          kvitter(m);
+          meldLive(m);
           return;
         }
         kvitter(t("ui.motpart.skjema.deaktivert_ok"));

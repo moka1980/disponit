@@ -74,6 +74,7 @@ FLAATEN: dict[str, int] = {
     "personvernsveip": 30,
     "prisboksveip": 30,
     "prosjektsveip": 30,
+    "sanksjonssveip": 30,
     "retensjonsmaaling": 30,
     "tilgangssveip": 30,
     # Intervalljobber — vinduet er satt etter DERES kadens, ikke etter

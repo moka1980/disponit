@@ -585,6 +585,28 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm48_reserver_oppslag(text,uuid,uuid,text,text,text,text)',          'disponit_motpart_eier'),
     ('FUNCTION', 'm48_sett_krav(text,integer,integer,integer,bigint,text[],text)',    'disponit_motpart_eier'),
     ('FUNCTION', 'm48_sveip_motparter(integer)',                                      'disponit_motpart_eier'),
+    -- 117 (M-49): sanksjonskontrollens doerer og
+    -- sanksjonssveipen. INGEN AV DEM BLOKKERER HANDEL, OG
+    -- INGEN AVFEIER EN NAVNELIKHET. Beslutningen,
+    -- motargumentet og utloeseren staar i toppen av
+    -- migrasjon 117.
+    ('FUNCTION', 'm49_avklar_treff(text,uuid,uuid,text,text,text)',                   'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_evidens(text,uuid,text,text,jsonb)',                            'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_funnene(text,boolean)',                                         'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_kontrollene(text,uuid)',                                        'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_kravene(text)',                                                 'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_listene(text)',                                                 'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_lukk_funn(text,uuid,text,text,text)',                           'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_normaliser(text)',                                              'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_registrer_kontroll(text,uuid,uuid,uuid,text[],jsonb,text)',     'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_registrer_liste(text,uuid,text,text,date,text,integer,text)',   'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_registrer_subjekt(text,uuid,text,text,text,text,date,text,text)', 'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_sanksjonsstatus(text)',                                         'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_sett_krav(text,integer,integer,integer,integer,text)',          'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_sett_subjektaktiv(text,uuid,boolean,text)',                     'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_subjektene(text,integer)',                                      'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_sveip_sanksjoner(integer)',                                     'disponit_sanksjon_eier'),
+    ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),
     ('FUNCTION', 'm48_vurderingene(text,uuid)',                                       'disponit_motpart_eier'),
     -- 115: sveipestatusens doerer. Plattformskopet (090s form), eid av
