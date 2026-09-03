@@ -172,8 +172,8 @@ KONTOVAKTSVEIP=disponit_kontovaktsveip     # M-42s kontoendringssveip
 # fortsatt ikke en grunn til å slå sveiperollene sammen.
 BETALINGEIER=disponit_betaling_eier         # M-41 eier betalingsregisteret
 BETALINGSSVEIP=disponit_betalingssveip      # M-41s uavklart-betaling-sveip
-ADRESSEEIER=disponit_adresse_eier           # M-11 eier adresseregisteret
-ADRESSESVEIP=disponit_adressesveip          # M-11s ukontrollert-adresse-sveip
+ADRESSEEIER=disponit_adresse_eier           # M-19 eier adresseregisteret
+ADRESSESVEIP=disponit_adressesveip          # M-19s ukontrollert-adresse-sveip
 LONNEIER=disponit_lonn_eier                 # M-39 eier lonnsgrunnlaget
 LONNSSVEIP=disponit_lonnssveip              # M-39s avvik-mot-plan-sveip
 KAMPANJEEIER=disponit_kampanje_eier         # M-44 eier kampanjeregisteret
@@ -404,6 +404,8 @@ KONTOVAKTSVEIP_DSN=("DISPONIT_KONTOVAKTSVEIP_URL=$DB"
 # M-41
 BETALINGSSVEIP_DSN=("DISPONIT_BETALINGSSVEIP_URL=$DB"
                     "DISPONIT_TEST_BETALINGSSVEIP_DSN=${DB}_test")
+ADRESSESVEIP_DSN=("DISPONIT_ADRESSESVEIP_URL=$DB"
+                  "DISPONIT_TEST_ADRESSESVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -433,6 +435,7 @@ sikre_rolle_dsn "$PRISBOKSVEIP" "${PRISBOKSVEIP_DSN[@]}"
 sikre_rolle_dsn "$LAGERSVEIP" "${LAGERSVEIP_DSN[@]}"
 sikre_rolle_dsn "$KONTOVAKTSVEIP" "${KONTOVAKTSVEIP_DSN[@]}"
 sikre_rolle_dsn "$BETALINGSSVEIP" "${BETALINGSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$ADRESSESVEIP" "${ADRESSESVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

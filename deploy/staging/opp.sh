@@ -78,7 +78,8 @@ disponit-prosjektsveip.service disponit-prosjektsveip.timer
 disponit-prisboksveip.service disponit-prisboksveip.timer
 disponit-lagersveip.service disponit-lagersveip.timer
 disponit-kontovaktsveip.service disponit-kontovaktsveip.timer
-disponit-betalingssveip.service disponit-betalingssveip.timer"
+disponit-betalingssveip.service disponit-betalingssveip.timer
+disponit-adressesveip.service disponit-adressesveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -364,6 +365,15 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_BETALINGSSVEIP_URL:-}" ] 
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_betalingssveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+
+# 112 (M-19): adressesveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# En stille adressesveip er leveranser ingen har sett på.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_ADRESSESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_ADRESSESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_adressesveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 # 110 (M-42): kontovaktsveipen har sin EGEN rolle med nøyaktig én
@@ -1121,6 +1131,17 @@ if [ -z "${DISPONIT_BETALINGSSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred betalingssveip DISPONIT_BETALINGSSVEIP_URL "$DISPONIT_BETALINGSSVEIP_URL"
+
+# 112 (M-19): adressesveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/adressesveip
+if [ -z "${DISPONIT_ADRESSESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_ADRESSESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen adressesveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred adressesveip DISPONIT_ADRESSESVEIP_URL "$DISPONIT_ADRESSESVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1275,7 +1296,8 @@ disponit-prosjektsveip.timer
 disponit-prisboksveip.timer
 disponit-lagersveip.timer
 disponit-kontovaktsveip.timer
-disponit-betalingssveip.timer"
+disponit-betalingssveip.timer
+disponit-adressesveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1577,6 +1599,10 @@ systemctl stop disponit-kontovaktsveip.timer \
 # idempotente over sin egen tilstand.
 systemctl stop disponit-betalingssveip.timer \
     disponit-betalingssveip.service 2>/dev/null || true
+# 112 (M-19): adressesveipen stoppes i samme vindu — funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+systemctl stop disponit-adressesveip.timer \
+    disponit-adressesveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1753,6 +1779,8 @@ systemctl enable --now disponit-lagersveip.timer
 systemctl enable --now disponit-kontovaktsveip.timer
 # 111 (M-41): betalingssveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-betalingssveip.timer
+# 112 (M-19): adressesveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-adressesveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

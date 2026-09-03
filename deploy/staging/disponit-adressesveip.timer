@@ -1,0 +1,22 @@
+# M-19 (112): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `ukontrollert_dogn` og
+# `kontroll_gyldig_dogn` måles begge i DØGN.
+#
+# KLOKKESLETTET ER 07:50 fordi 03:15 til 07:35 alt er tatt. Sveipens
+# første steg leser ALLE tenanters subjekter, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit adressesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

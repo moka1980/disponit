@@ -424,6 +424,13 @@ const BASISRUTER = [
   // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem refunderer.
   { nokkel: "betaling", scope: "okonomi:read", modulflate: 41 },
+  // M-19 (112): adresseregisteret. MODULFLATE bak `okonomi:read` —
+  // leveringsadressen er den som avgjør om varen kommer fram, og den
+  // som handler på en ukontrollert adresse er den som sender.
+  //
+  // De fire skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem slår noe opp.
+  { nokkel: "adresse", scope: "okonomi:read", modulflate: 19 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

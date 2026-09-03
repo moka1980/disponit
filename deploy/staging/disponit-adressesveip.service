@@ -1,0 +1,79 @@
+# M-19 (112): adressesveipen for ukontrollerte og utløpte adresser.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (112): en gjeldende adresse ingen har kontrollert innen tenantens
+# frist er `ukontrollert_adresse`; en godkjent for lenge siden er
+# `kontroll_utlopt`; en noen sa nei til er `avvist_adresse`; en godkjent
+# med en metode tenantens eget krav ikke godtar er
+# `utilstrekkelig_metode`; og en tenant uten krav er `ingen_krav`.
+#
+# SVEIPEN SLÅR INGENTING OPP. Den kunne — den vet nøyaktig hvilke
+# adresser som står ukontrollerte, og et oppslag ville «løst» dem alle
+# på én natt. Men et oppslag er en utgående kanal med
+# personopplysninger i: kundens navn og adresse ut av huset, til en
+# tredjepart vi ikke har databehandleravtale med.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE BARE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til et adresseregister. Enheten kan ikke hindre et
+# oppslag mot en vert som deler nett med databasen; det gjerdet står i
+# koden (`adressesveip.py` importerer ingenting som kan snakke ut) og i
+# porten som måler det.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille adressesveip er
+# leveranser ingen har sett på.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_adressesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m19_sveip_adresser`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit adressesveip (ukontrollerte og utlopte adresser -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_ADRESSESVEIP_URL:/etc/disponit/adressesveip/DISPONIT_ADRESSESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_adressesveip
+# Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
+# indeksdekket (`adressesubjekt_aktive`, `adresseversjon_oppslag`,
+# `adressekontroll_oppslag`, `adressefunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
