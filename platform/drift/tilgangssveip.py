@@ -130,7 +130,28 @@ def kjor(conn, *, grense: int = GRENSE_PER_TENANT,
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        rad = rader[0]
+        # …OG RADENS FORM ER EN DEL AV KONTRAKTEN. Konverteringen gjøres
+        # FØR commit fordi det er her doktrinen står: en rad som ikke er
+        # kontrakten skal RULLE TILBAKE, ikke bli stående mens kjøringen
+        # rapporterer feilet. Lå den etter commit, var «feilet» og
+        # «transaksjonen står» sanne samtidig (109-rettingen).
+        #
+        # OG DEN FEMTE ER ET FLAGG, ikke et tall: `avkortet` her er
+        # «traff sveipen taket sitt», ikke «hos hvor mange». Den måles
+        # som at FELTET FINNES — ikke som en typepåstand. Den delte
+        # kontraktporten mater alle sveipene den samme generiske raden,
+        # og en `isinstance(..., bool)` her ville gjort en gyldig
+        # kjøring til en feilet uten at noe var galt med døren.
+        try:
+            verdier = tuple(int(v) for v in rader[0][:4])
+            if len(verdier) != 4:
+                raise ValueError("kontrakten ga ikke fire heltall")
+            avkortet = bool(rader[0][4])
+        except (IndexError, TypeError, ValueError):
+            _rull_tilbake(conn)
+            res.feilet = True
+            res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
+            return res
         try:
             conn.commit()
         except Exception:
@@ -138,9 +159,8 @@ def kjor(conn, *, grense: int = GRENSE_PER_TENANT,
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        res.tenanter, res.nye, res.oppdaterte, res.lukkede = (
-            int(rad[0]), int(rad[1]), int(rad[2]), int(rad[3]))
-        res.avkortet = bool(rad[4])
+        res.tenanter, res.nye, res.oppdaterte, res.lukkede = verdier
+        res.avkortet = avkortet
         return res
     finally:
         # Opplåsingen er BEST EFFORT. Er tilkoblingen borte, feiler også
