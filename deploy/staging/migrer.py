@@ -452,6 +452,22 @@ GRANT EXECUTE ON FUNCTION m27_punkt_paa_dato(TEXT, UUID, DATE) TO {rolle};
 GRANT EXECUTE ON FUNCTION m27_under_bestillingspunkt(TEXT, UUID, DATE) TO {rolle};
 REVOKE ALL ON FUNCTION m27_sveip_lager(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m27_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 110 (M-42): kontoregisterets LESEDØRER. De fem tabellene står bevisst
+-- IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m42_gjeldende_konto` og `m42_kontohistorikken` er med fordi de er
+-- oppslagene `konto_verifisert` til slutt må hvile på: hvilken konto
+-- står der nå, hvem oppga den, og hvem verifiserte den hvordan. Ingen av
+-- dem STOPPER en betaling.
+SET LOCAL ROLE disponit_kontovakt_eier;
+GRANT EXECUTE ON FUNCTION m42_kontostatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_mottakerne(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_kontohistorikken(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_gjeldende_konto(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_tersklene(TEXT) TO {rolle};
+REVOKE ALL ON FUNCTION m42_sveip_konto(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m42_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -975,6 +991,17 @@ GRANT EXECUTE ON FUNCTION m27_sett_bestillingspunkt(TEXT, UUID, BIGINT, DATE, TE
 GRANT EXECUTE ON FUNCTION m27_registrer_bevegelse(TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m27_registrer_telling(TEXT, UUID, UUID, BIGINT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m27_sett_vareaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 110 (M-42): kontoregisterets fem skrivedører. At kontonummeret aldri
+-- lagres, at historikken er append-only, og at DEN SOM OPPGA KONTOEN
+-- IKKE KAN VERIFISERE DEN, håndheves i dørene og i vaktene — aldri her.
+-- INGEN AV DEM STOPPER EN BETALING, og ingen av dem verifiserer noe mot
+-- en ekstern kanal.
+SET LOCAL ROLE disponit_kontovakt_eier;
+GRANT EXECUTE ON FUNCTION m42_sett_terskler(TEXT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_registrer_mottaker(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_oppgi_konto(TEXT, UUID, UUID, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_verifiser_konto(TEXT, UUID, UUID, TEXT, TEXT, TEXT, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m42_sett_mottakeraktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1405,6 +1432,18 @@ GRANT EXECUTE ON FUNCTION m27_sveip_lager(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 110 (M-42): kontovaktsveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den STOPPER INGEN BETALING: det farligste en
+# betalingsvakt kan gjøre er ikke å slippe noe gjennom, det er å stoppe
+# noe.
+KONTOVAKTSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_kontovakt_eier;
+GRANT EXECUTE ON FUNCTION m42_sveip_konto(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1646,7 +1685,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 109 (M-27): lagersveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_lagersveip",
-                           LAGERSVEIP_RETTIGHETER)):
+                           LAGERSVEIP_RETTIGHETER),
+                          # 110 (M-42): kontovaktsveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_kontovaktsveip",
+                           KONTOVAKTSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

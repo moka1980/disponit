@@ -409,6 +409,14 @@ const BASISRUTER = [
   // De seks skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem bestiller noe.
   { nokkel: "lager", scope: "okonomi:read", modulflate: 27 },
+  // M-42 (110): kontoregisteret. MODULFLATE bak `okonomi:read` — og
+  // valget er bevisst: den som handler på «en leverandør har byttet
+  // konto» er den som BETALER, ikke sikkerhetsvakten. `sikkerhet` ser
+  // den derfor ikke i v1; funnene havner i M-37s kø som alt annet.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem stopper en betaling.
+  { nokkel: "kontovakt", scope: "okonomi:read", modulflate: 42 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

@@ -191,6 +191,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # annen setning enn «noe gikk galt» — en negativ beholdning er ikke
     # en tilstand i verden, den er en maaling som er feil.
     Feilvei("lager_ulovlig_tilstand", 409, ("avvis",), None),
+    # 110 (M-42): kontoregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — en konto paa en deaktivert mottaker, et
+    # for kort kontonummer, et forsoek paa aa endre en frosset oppgave,
+    # og — den som betyr mest — DEN SOM OPPGA KONTOEN SOM PROEVER AA
+    # VERIFISERE DEN SELV. 409: kroppen ER velformet, det er BASEN som
+    # sier nei. Er de samme, er ingenting verifisert, og
+    # `konto_verifisert_uavhengig` er nettopp navnet paa det vilkaaret.
+    Feilvei("kontovakt_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

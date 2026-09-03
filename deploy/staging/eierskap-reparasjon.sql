@@ -476,6 +476,21 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm27_tersklene(text)',                                  'disponit_beholdning_eier'),
     ('FUNCTION', 'm27_funnkandidater(text,date)',                        'disponit_beholdning_eier'),
     ('FUNCTION', 'm27_sveip_lager(integer)',                             'disponit_beholdning_eier'),
+    -- 110 (M-42): kontoregisterets doerer og kontovaktsveipen.
+    ('FUNCTION', 'm42_evidens(text,uuid,text,text,jsonb)',              'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_normaliser(text)',                                'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_sett_terskler(text,integer,integer,text)',        'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_registrer_mottaker(text,uuid,text,text,text)',    'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_oppgi_konto(text,uuid,uuid,text,text,text,date,text,text)', 'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_verifiser_konto(text,uuid,uuid,text,text,text,date,text)', 'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_sett_mottakeraktiv(text,uuid,boolean,text)',       'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_gjeldende_konto(text,uuid)',                       'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_kontohistorikken(text,uuid,integer)',              'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_kontostatus(text)',                                'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_mottakerne(text,integer)',                         'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_tersklene(text)',                                  'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_funnkandidater(text,date)',                        'disponit_kontovakt_eier'),
+    ('FUNCTION', 'm42_sveip_konto(integer)',                             'disponit_kontovakt_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

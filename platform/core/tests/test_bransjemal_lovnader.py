@@ -48,10 +48,27 @@ VENTENDE: dict[str, str] = {
     "M-44": "kampanjeutsending (1 ref.) — ikke tildelt",
 }
 
-#: Klynge 4s fem. De har manifest fra og med fundament-commiten, så de
-#: skal IKKE stå i `VENTENDE` — men de har heller ingen kode, og
-#: attestasjonsfullmakten tar de ikke i v1.
+#: Klynge 4s fem. De hadde manifest fra og med fundament-commiten, og
+#: fra og med 110 har de ALLE KODE: migrasjonene 106–110, hver med sin
+#: eierrolle, sin sveip og sine porter.
+#:
+#: MEN INGEN AV DEM TAR ATTESTASJONSFULLMAKTEN. Det er klyngens
+#: strengeste dom, og den står: registrene MÅLER, og gapet mot
+#: `modus: auto` lukkes ikke av denne klyngen. En attestasjonsmyndighet
+#: uten en målt treffrate bak seg er et veddemål der innsatsen er en
+#: utgående betaling.
 KLYNGE4 = ("M-14", "M-25", "M-26", "M-27", "M-42")
+
+#: Migrasjonen hver av de fem hviler på. Bundet her og ikke bare i
+#: `docs/KLYNGE4-FUNDAMENT.md`, slik at en fjernet migrasjon blir rød i
+#: CI og ikke bare feil i et dokument.
+KLYNGE4_MIGRASJONER = {
+    "M-14": "106_m14_fakturakontroll.sql",
+    "M-25": "107_m25_prosjektregister.sql",
+    "M-26": "108_m26_prisbok.sql",
+    "M-27": "109_m27_lagerregister.sql",
+    "M-42": "110_m42_kontoregister.sql",
+}
 
 
 def _byggde() -> set[str]:
@@ -118,6 +135,29 @@ def test_klynge4_har_manifest_og_star_ikke_lenger_som_ventende():
     for m in VENTENDE:
         assert m not in byggde, \
             f"{m} står i VENTENDE, men har manifest — ta den ut"
+
+
+def test_klynge4_er_bygget_og_ingen_av_dem_attesterer():
+    """KLYNGEN ER FERDIG — og dommen står.
+
+    Alle fem har en migrasjon på disk. Ingen av dem attesterer: det
+    finnes ikke én funksjon i de fem migrasjonene som skriver en
+    attestasjon, og det er hele forskjellen fra det policyene lover.
+
+    MUTASJONEN SOM DREPER DENNE: la en av de fem få en
+    `*_attester*`-dør.
+    """
+    kat = ROT / "platform" / "core" / "db" / "migrations"
+    for modul, fil in KLYNGE4_MIGRASJONER.items():
+        sti = kat / fil
+        assert sti.exists(), f"{modul}: {fil} mangler"
+        tekst = sti.read_text(encoding="utf-8")
+        # Kommentarene FORKLARER fraværet og må ikke telle med.
+        kode = "\n".join(l for l in tekst.splitlines()
+                          if not l.lstrip().startswith("--"))
+        for navn in re.findall(r"CREATE FUNCTION (\w+)", kode):
+            for ord_ in ("attester", "signer", "attestasjon"):
+                assert ord_ not in navn.lower(), f"{modul}: {navn}"
 
 
 def test_hver_ventende_modul_er_faktisk_referert():

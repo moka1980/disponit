@@ -1,0 +1,27 @@
+# M-42 (110): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: både `reverifikasjon_dogn` og
+# `uverifisert_dogn` måles i DØGN.
+#
+# OG KONTOENDRINGEN VENTER IKKE PÅ DENNE TIMEREN. Det funnet skrives av
+# døren, i samme transaksjon som oppgaven — et døgns forsinkelse er et
+# døgn der pengene kan gå. Timeren holder funnet åpent og legger
+# tidsfunnene til.
+#
+# KLOKKESLETTET ER 07:20 fordi 03:15 til 07:05 alt er tatt. Sveipens
+# første steg leser ALLE tenanters mottakere, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit kontovaktsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:20:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

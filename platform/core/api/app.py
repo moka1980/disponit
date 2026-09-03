@@ -1530,6 +1530,42 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import lager as lagermodul
         return lagermodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 110 (M-42): kontoregisteret. To leseveier og fem skriveveier.
+    #
+    # OG DET FINNES INGEN SPERREVEI. To av tre bransjemaler navngir
+    # modulen som `v_kontovakt` og bruker `svindelsjekk_bestatt` til å
+    # la utgående betalinger gå automatisk. v1 SKRIVER NED; det
+    # farligste en betalingsvakt kan gjøre er ikke å slippe noe gjennom
+    # — det er å stoppe noe.
+    def kontovakt_bilde(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.kontovaktbilde(tjeneste, request)
+
+    def kontovakt_historikk(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.historikk_endepunkt(tjeneste, request)
+
+    def kontovakt_terskler(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.terskler_endepunkt(tjeneste, request)
+
+    def kontovakt_mottaker(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.registrer_mottaker_endepunkt(tjeneste,
+                                                           request)
+
+    def kontovakt_konto(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.oppgi_konto_endepunkt(tjeneste, request)
+
+    def kontovakt_verifikasjon(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.verifiser_endepunkt(tjeneste, request)
+
+    def kontovakt_aktiv(request: Request) -> Response:
+        from . import kontovakt as kontovaktmodul
+        return kontovaktmodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2162,6 +2198,22 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/lager/{vare_id:uuid}/telling", lager_telling,
               methods=["POST"]),
         Route("/v1/lager/{vare_id:uuid}/aktiv", lager_aktiv,
+              methods=["POST"]),
+        # 110 (M-42): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `mottaker`, `oppgave`) FØR mønsterrutene. STIENE STÅR PÅ ÉN
+        # LINJE (102s lærdom).
+        Route("/v1/kontovakt", kontovakt_bilde, methods=["GET"]),
+        Route("/v1/kontovakt/terskler", kontovakt_terskler,
+              methods=["POST"]),
+        Route("/v1/kontovakt/mottaker", kontovakt_mottaker,
+              methods=["POST"]),
+        Route("/v1/kontovakt/oppgave/{oppgave_id:uuid}/verifikasjon",
+              kontovakt_verifikasjon, methods=["POST"]),
+        Route("/v1/kontovakt/{mottaker_id:uuid}/historikk",
+              kontovakt_historikk, methods=["GET"]),
+        Route("/v1/kontovakt/{mottaker_id:uuid}/konto", kontovakt_konto,
+              methods=["POST"]),
+        Route("/v1/kontovakt/{mottaker_id:uuid}/aktiv", kontovakt_aktiv,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -3045,6 +3097,21 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/lager/{vare_id:uuid}/telling"):
         "bestilling:opprett",
     ("POST", "/v1/lager/{vare_id:uuid}/aktiv"):   "bestilling:opprett",
+    # 110 (M-42): kontoregisteret. LESINGEN bærer `okonomi:read` — den
+    # som handler på «en leverandør har byttet konto» er den som
+    # betaler. SKRIVINGEN bærer `bestilling:opprett`. Ingen av dem
+    # stopper en betaling.
+    ("GET",  "/v1/kontovakt"):                    "okonomi:read",
+    ("GET",  "/v1/kontovakt/{mottaker_id:uuid}/historikk"):
+        "okonomi:read",
+    ("POST", "/v1/kontovakt/terskler"):           "bestilling:opprett",
+    ("POST", "/v1/kontovakt/mottaker"):           "bestilling:opprett",
+    ("POST", "/v1/kontovakt/oppgave/{oppgave_id:uuid}/verifikasjon"):
+        "bestilling:opprett",
+    ("POST", "/v1/kontovakt/{mottaker_id:uuid}/konto"):
+        "bestilling:opprett",
+    ("POST", "/v1/kontovakt/{mottaker_id:uuid}/aktiv"):
+        "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

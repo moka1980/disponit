@@ -42,6 +42,7 @@ import { visFaktura } from "./flater/faktura.js";
 import { visProsjekt } from "./flater/prosjekt.js";
 import { visPrisbok } from "./flater/prisbok.js";
 import { visLager } from "./flater/lager.js";
+import { visKontovakt } from "./flater/kontovakt.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
 const FLATER = {
@@ -120,6 +121,7 @@ const FLATER = {
   prosjekt: visProsjekt,
   prisbok: visPrisbok,
   lager: visLager,
+  kontovakt: visKontovakt,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

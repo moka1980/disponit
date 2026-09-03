@@ -934,3 +934,39 @@ export const registrerTelling = (vareId, telling, idem) =>
 export const settVareAktiv = (vareId, aktiv, idem) =>
   _muter(`/v1/lager/${encodeURIComponent(vareId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-42 (110): kontoregisteret. ALLE skriveveiene sender en
+// Idempotency-Key, og for MOTTAKEREN, KONTOOPPGAVEN og VERIFIKASJONEN
+// utledes id-en deterministisk av den (SP-2). For kontooppgaven er det
+// strengt nødvendig: en gjentatt POST må ikke bli to linjer i en
+// historikk som ER beviset.
+//
+// DET FINNES INGEN SPERREFUNKSJON HER, og fraværet er dommen: to av tre
+// bransjemaler navngir modulen som `v_kontovakt` og bruker
+// `svindelsjekk_bestatt` til å la utgående betalinger gå automatisk.
+// Det farligste en betalingsvakt kan gjøre er ikke å slippe noe gjennom
+// — det er å stoppe noe.
+//
+// OG `oppgiKonto` SENDER KONTONUMMERET ÉN GANG, til en dør som
+// normaliserer det, regner masken og hashen, og kaster det. Svaret er
+// MASKEN; klienten får aldri nummeret tilbake.
+export const settKontoterskler = (terskler, idem) =>
+  _muter("/v1/kontovakt/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerMottaker = (mottaker, idem) =>
+  _muter("/v1/kontovakt/mottaker", "POST", mottaker,
+         idem || nyIdempotensnokkel());
+
+export const oppgiKonto = (mottakerId, konto, idem) =>
+  _muter(`/v1/kontovakt/${encodeURIComponent(mottakerId)}/konto`,
+         "POST", konto, idem || nyIdempotensnokkel());
+
+export const verifiserKonto = (oppgaveId, verifikasjon, idem) =>
+  _muter(`/v1/kontovakt/oppgave/${encodeURIComponent(oppgaveId)}`
+         + "/verifikasjon",
+         "POST", verifikasjon, idem || nyIdempotensnokkel());
+
+export const settMottakerAktiv = (mottakerId, aktiv, idem) =>
+  _muter(`/v1/kontovakt/${encodeURIComponent(mottakerId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

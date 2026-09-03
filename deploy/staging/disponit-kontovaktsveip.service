@@ -1,0 +1,76 @@
+# M-42 (110): kontovaktsveipen for kontoendringer og verifikasjoner.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (110): en mottaker der den siste oppgitte kontoen er en ANNEN enn den
+# forrige og ingen har verifisert den, er `kontoendring`; en konto ingen
+# har sjekket innen tenantens frist er `uverifisert_konto`; en
+# verifikasjon eldre enn `reverifikasjon_dogn` er `verifikasjon_utlopt`;
+# og en tenant uten grenser er `ingen_terskel`.
+#
+# SVEIPEN STOPPER INGEN BETALING OG VERIFISERER INGENTING. Den kunne —
+# den vet nøyaktig hvilke mottakere som byttet konto i går — men DET
+# FARLIGSTE EN BETALINGSVAKT KAN GJØRE ER IKKE Å SLIPPE NOE GJENNOM; det
+# er å STOPPE noe. `RestrictAddressFamilies` slipper AF_INET fordi
+# DATABASEN nås over TCP — ikke fordi noe skal ut, og det er hele
+# poenget med en modul som ikke verifiserer mot en ekstern kanal.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# KONTOENDRINGSFUNNET SKRIVES AV DØREN, ikke her: et døgns forsinkelse
+# er et døgn der pengene kan gå. Sveipen holder det åpent.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# kontovaktsveip er en kontoendring ingen ser.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_kontovaktsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m42_sveip_konto`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit kontovaktsveip (kontoendringer og utlopte verifikasjoner -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_KONTOVAKTSVEIP_URL:/etc/disponit/kontovaktsveip/DISPONIT_KONTOVAKTSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_kontovaktsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`betalingsmottaker_aktive`, `kontooppgave_oppslag`,
+# `kontoverifikasjon_oppslag`, `kontofunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

@@ -296,6 +296,15 @@ APPEND_ONLY_TRIGGERE = (
     ("bestillingspunkt", "m27_punkt_vakt"),
     ("vare", "m27_vare_vakt"),
     ("lagerterskel", "m27_terskel_vakt"),
+    # 110 (M-42): alle fem vaktene nekter DELETE. `kontooppgave` og
+    # `kontoverifikasjon` nekter OGSÅ UPDATE: historikken er beviset, og
+    # en historikk som kunne skrives om ville latt den som kapret
+    # e-postkontoen rydde opp etter seg.
+    ("kontofunn", "m42_funn_vakt"),
+    ("kontoverifikasjon", "m42_verifikasjon_vakt"),
+    ("kontooppgave", "m42_oppgave_vakt"),
+    ("betalingsmottaker", "m42_mottaker_vakt"),
+    ("kontoterskel", "m42_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -462,6 +471,10 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # varen. Barna først, varen, tersklene sist.
                  "lagerfunn", "lagerbevegelse", "bestillingspunkt",
                  "vare", "lagerterskel",
+                 # 110 (M-42): verifikasjonen peker på oppgaven, og
+                 # oppgaven og funnene på mottakeren.
+                 "kontoverifikasjon", "kontofunn", "kontooppgave",
+                 "betalingsmottaker", "kontoterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

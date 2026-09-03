@@ -76,7 +76,8 @@ disponit-leverandorsveip.service disponit-leverandorsveip.timer
 disponit-fakturasveip.service disponit-fakturasveip.timer
 disponit-prosjektsveip.service disponit-prosjektsveip.timer
 disponit-prisboksveip.service disponit-prisboksveip.timer
-disponit-lagersveip.service disponit-lagersveip.timer"
+disponit-lagersveip.service disponit-lagersveip.timer
+disponit-kontovaktsveip.service disponit-kontovaktsveip.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -351,6 +352,15 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_PROSJEKTSVEIP_URL:-}" ] )
   echo "AVBRUTT: DISPONIT_PROSJEKTSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_prosjektsveip og skriver DSN-en til miljøfila."
+  echo "Systemet er urørt; forrige release kjører som før."
+  exit 1
+fi
+# 110 (M-42): kontovaktsveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille kontovaktsveip er en kontoendring ingen ser.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_KONTOVAKTSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_KONTOVAKTSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_kontovaktsveip og skriver DSN-en til miljøfila."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
 fi
@@ -1080,6 +1090,16 @@ if [ -z "${DISPONIT_LAGERSVEIP_URL:-}" ]; then
   exit 1
 fi
 skriv_cred lagersveip DISPONIT_LAGERSVEIP_URL "$DISPONIT_LAGERSVEIP_URL"
+# 110 (M-42): kontovaktsveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/kontovaktsveip
+if [ -z "${DISPONIT_KONTOVAKTSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_KONTOVAKTSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "mellom preflighten og materialiseringen — fila er byttet eller"
+  echo "redigert mens utrullingen kjørte. Ingen kontovaktsveip-credential"
+  echo "er skrevet."
+  exit 1
+fi
+skriv_cred kontovaktsveip DISPONIT_KONTOVAKTSVEIP_URL "$DISPONIT_KONTOVAKTSVEIP_URL"
 skriv_cred api DISPONIT_KEK          "$DISPONIT_KEK"
 skriv_cred api DISPONIT_TOKEN_PEPPER "$DISPONIT_TOKEN_PEPPER"
 skriv_cred api DISPONIT_ATT_NOKLER   "$DISPONIT_ATT_NOKLER"
@@ -1232,7 +1252,8 @@ disponit-leverandorsveip.timer
 disponit-fakturasveip.timer
 disponit-prosjektsveip.timer
 disponit-prisboksveip.timer
-disponit-lagersveip.timer"
+disponit-lagersveip.timer
+disponit-kontovaktsveip.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1526,6 +1547,10 @@ systemctl stop disponit-prisboksveip.timer \
 # idempotente over sin egen tilstand.
 systemctl stop disponit-lagersveip.timer \
     disponit-lagersveip.service 2>/dev/null || true
+# 110 (M-42): kontovaktsveipen stoppes i samme vindu — funnene er
+# idempotente over sin egen tilstand.
+systemctl stop disponit-kontovaktsveip.timer \
+    disponit-kontovaktsveip.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1698,6 +1723,8 @@ systemctl enable --now disponit-prosjektsveip.timer
 systemctl enable --now disponit-prisboksveip.timer
 # 109 (M-27): lagersveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-lagersveip.timer
+# 110 (M-42): kontovaktsveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-kontovaktsveip.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.
