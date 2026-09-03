@@ -118,7 +118,26 @@ def kjor(conn, *, grense: int = GRENSE,
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        rad = rader[0]
+        # …OG RADENS FORM ER EN DEL AV KONTRAKTEN. Fem felt som lar seg
+        # lese som heltall. Konverteringen gjøres FØR commit fordi det
+        # er her doktrinen står: en rad som ikke er kontrakten skal
+        # RULLE TILBAKE, ikke bli stående mens kjøringen rapporterer
+        # feilet. Lå den etter commit, var «feilet» og «transaksjonen
+        # står» sanne samtidig (109-rettingen, CodeRabbit).
+        #
+        # `[:5]` og ikke hele raden: sveipen LESER fem felt, og en dør
+        # som en dag returnerer et sjette skal ikke gjøre en gyldig
+        # kjøring til en feilet. Den delte kontraktporten mater dessuten
+        # alle sveipene et supersett.
+        try:
+            verdier = tuple(int(v) for v in rader[0][:5])
+            if len(verdier) != 5:
+                raise ValueError("kontrakten ga ikke fem felt")
+        except (IndexError, TypeError, ValueError):
+            _rull_tilbake(conn)
+            res.feilet = True
+            res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
+            return res
         try:
             conn.commit()
         except Exception:
@@ -127,8 +146,7 @@ def kjor(conn, *, grense: int = GRENSE,
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
         (res.tenanter, res.nye, res.oppdaterte, res.lukkede,
-         res.avkortet) = (int(rad[0]), int(rad[1]), int(rad[2]),
-                          int(rad[3]), int(rad[4]))
+         res.avkortet) = verdier
         return res
     finally:
         # Opplåsingen er BEST EFFORT. Er tilkoblingen borte, feiler også

@@ -178,6 +178,36 @@ def test_en_rad_committes_og_telles(navn, doer):
 
 
 @pytest.mark.parametrize("navn,doer", SVEIPENE)
+def test_raden_valideres_FOR_commit(navn, doer):
+    """EN RAD SOM IKKE ER KONTRAKTEN SKAL RULLE TILBAKE.
+
+    De to portene over måler at FEIL ANTALL RADER ruller tilbake. Denne
+    måler radens FORM: felt som ikke lar seg lese er like mye en dør som
+    ikke oppførte seg som kontrakten.
+
+    FORSKJELLEN ER IKKE TEORETISK. Lå konverteringen etter `commit()`,
+    var «kjøringen feilet» og «transaksjonen står» sanne samtidig — og
+    kalleren rapporterte feilet mens funnene var skrevet. Ni sveip
+    hadde den formen til 3/9.
+
+    Porten sier ikke hvor mange felt hver sveip leser — den sier at en
+    rad de ikke kan lese, ikke skal committes. Det er den doktrinen som
+    er felles; antallet er modulens eget.
+
+    MUTASJONEN SOM DREPER DENNE: flytt heltallskonverteringen tilbake
+    til etter `conn.commit()`.
+    """
+    m = _modul(navn)
+    for rad in ((), (1,), (1, 2, None), ("a", "b", "c", "d", "e")):
+        conn = FalskTilkobling([rad])
+        res = m.kjor(conn, tidligere_feil=1)
+        assert res.feilet is True, f"{navn}: {rad!r} ble godtatt"
+        assert "rollback" in conn.spor, f"{navn}: rullet ikke tilbake"
+        assert "commit" not in conn.spor[:conn.spor.index("rollback")], \
+            f"{navn}: committet før formen var validert ({conn.spor})"
+
+
+@pytest.mark.parametrize("navn,doer", SVEIPENE)
 def test_opptatt_las_er_hverken_suksess_eller_feil(navn, doer):
     """En kjøring som fant nøkkelen opptatt har ikke sveipet noe og har
     heller ikke feilet. `hoppet_over` står PÅ resultatet så kalleren vet

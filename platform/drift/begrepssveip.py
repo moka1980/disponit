@@ -106,7 +106,24 @@ def kjor(conn, *, varselvindu_dogn: int = VARSELVINDU_DOGN,
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        rad = rader[0]
+        # …OG RADENS FORM ER EN DEL AV KONTRAKTEN. Konverteringen gjøres
+        # FØR commit fordi det er her doktrinen står: en rad som ikke er
+        # kontrakten skal RULLE TILBAKE, ikke bli stående mens kjøringen
+        # rapporterer feilet. Lå den etter commit, var «feilet» og
+        # «transaksjonen står» sanne samtidig (109-rettingen).
+        #
+        # FIRE felt her, ikke fem: denne sveipen har ingen `avkortet`.
+        # Porten måler det sveipen FAKTISK leser — en felles «fem
+        # heltall» ville vært en kontrakt ingen av oss hadde skrevet.
+        try:
+            verdier = tuple(int(v) for v in rader[0][:4])
+            if len(verdier) != 4:
+                raise ValueError("kontrakten ga ikke fire felt")
+        except (IndexError, TypeError, ValueError):
+            _rull_tilbake(conn)
+            res.feilet = True
+            res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
+            return res
         try:
             conn.commit()
         except Exception:
@@ -114,8 +131,7 @@ def kjor(conn, *, varselvindu_dogn: int = VARSELVINDU_DOGN,
             res.feilet = True
             res.alarm_utlost = tidligere_feil + 1 >= ALARM_ETTER_FEIL
             return res
-        res.tenanter, res.nye, res.oppdaterte, res.lukkede = (
-            int(rad[0]), int(rad[1]), int(rad[2]), int(rad[3]))
+        res.tenanter, res.nye, res.oppdaterte, res.lukkede = verdier
         return res
     finally:
         # Opplåsingen er BEST EFFORT. Er tilkoblingen borte, feiler også
