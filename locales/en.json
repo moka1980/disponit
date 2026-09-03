@@ -3471,5 +3471,15 @@
   "ui.kampanje.undertittel": "Consent and frequency cap — not a send queue",
   "ui.kampanje.uten_kontakt": "No contact point recorded",
   "ui.kampanje.uten_samtykke": "No consent recorded",
-  "varsel.sveip_uteblitt": "Sweep fleet: {antall_tause} have not run within their own window ({tause}), {antall_alarm} have failed twice in a row ({i_alarm}), and {antall_ulesbare} have a state file that cannot be read ({ulesbare}). Last observed: {sist_observert} (the observer itself is silent: {uobservert}). A sweep that never runs looks exactly like a sweep with no findings — check the timers on the host."
+  "varsel.sveip_uteblitt": "Sweep fleet: {antall_tause} have not run within their own window ({tause}), {antall_alarm} have failed twice in a row ({i_alarm}), and {antall_ulesbare} have a state file that cannot be read ({ulesbare}). Last observed: {sist_observert} (the observer itself is silent: {uobservert}). A sweep that never runs looks exactly like a sweep with no findings — check the timers on the host.",
+  "site.modul.m48.navn": "Company and credit watch",
+  "site.modul.m48.tekst": "The counterparty, the credit policy and the proposal — with purpose and legal basis on every lookup. v1 sets no credit limit and rejects no one: a limit the module set itself would become the receivables agent's ground truth without a person ever looking at it.",
+  "site.modul.m49.navn": "Sanctions and AML watch",
+  "site.modul.m49.tekst": "The check against the sanctions lists, with list version and match basis on every hit. v1 does not block: name similarity cannot be dismissed mechanically, and automatic blocking would have stopped lawful trade before anyone measured how often it is wrong.",
+  "site.modul.m46.navn": "Tender and competition watch",
+  "site.modul.m46.tekst": "The notice, the deadline and which qualification requirements are covered. v1 submits no bid: a submitted bid is binding, and an uncovered requirement becomes a finding — never a filled-in guess.",
+  "site.modul.m51.navn": "Grants and subsidies agent",
+  "site.modul.m51.tekst": "The scheme, its requirements and what our own figures give. v1 submits no application: a wrong figure in a submitted application is an incorrect statement to the authorities, so every amount is traced to its source entry.",
+  "site.modul.m55.navn": "Brand and IP monitor",
+  "site.modul.m55.tekst": "The finding, documented with URL, timestamp and a preserved copy. v1 sends no legal claim: a claim based on an automatic finding is an accusation against a named party, and a finding nobody can prove is worse than no finding."
 }

@@ -102,6 +102,27 @@ export const MODULSTATUS = {
   19: "bygges",     // m19_adresse: under_utvikling, ikke_i_drift
   39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
   44: "bygges",     // m44_kampanje: under_utvikling, ikke_i_drift
+  // KLYNGE 6 (116-120): «de fem som finner noe, og ikke handler på
+  // det». Registrert ved fødselen sammen med grensene m46/m48/m49/
+  // m51/m55-v1 — se docs/KLYNGE6-FUNDAMENT.md.
+  //
+  // INGEN BRANSJEMAL NAVNGIR DISSE FEM: `VENTENDE` er tom, og driveren
+  // er eierens prioritering i spesifikasjonen, ikke et løfte vi alt
+  // har sendt ut. Alle fem er `ekstern_lesing`, og v1 gjør likevel
+  // ingen utgående forespørsel — plattformens egen doktrine sier at
+  // «den unødvendige forespørselen ER skaden», og vi kan ikke ennå si
+  // hvilke som er nødvendige.
+  //
+  // M-49 er klyngens vanskeligste: den ENESTE der spesifikasjonen vil
+  // at modulen skal handle (blokkere fail-closed) — samtidig som
+  // navnelikhet aldri kan avfeies maskinelt. v1 blokkerer ikke.
+  //
+  // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
+  48: "bygges",     // m48_motpart: under_utvikling, ikke_i_drift
+  49: "bygges",     // m49_sanksjon: under_utvikling, ikke_i_drift
+  46: "bygges",     // m46_anbud: under_utvikling, ikke_i_drift
+  51: "bygges",     // m51_tilskudd: under_utvikling, ikke_i_drift
+  55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -333,6 +354,40 @@ const MODULER = [
     navn_nokkel: "site.modul.m44.navn",
     fase_nokkel: "site.fase.autopiloter",
     tekst_nokkel: "site.modul.m44.tekst",
+  },
+  // KLYNGE 6 — «de fem som finner noe, og ikke handler på det».
+  // Fasen er `autopiloter` for alle fem: de er ment å overvåke
+  // kontinuerlig. v1 gjør ingen av delene automatisk, og kortteksten
+  // sier hva som holdes tilbake — ikke hva modulen en dag skal gjøre.
+  {
+    id: 48,
+    navn_nokkel: "site.modul.m48.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m48.tekst",
+  },
+  {
+    id: 49,
+    navn_nokkel: "site.modul.m49.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m49.tekst",
+  },
+  {
+    id: 46,
+    navn_nokkel: "site.modul.m46.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m46.tekst",
+  },
+  {
+    id: 51,
+    navn_nokkel: "site.modul.m51.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m51.tekst",
+  },
+  {
+    id: 55,
+    navn_nokkel: "site.modul.m55.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m55.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

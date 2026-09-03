@@ -1,0 +1,90 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m48-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 116
+# tildelt i docs/KLYNGE6-FUNDAMENT.md.
+#
+# INGEN BRANSJEMAL NAVNGIR DENNE MODULEN. `VENTENDE` er tom; driveren
+# er eierens prioritering i spesifikasjonen (v9), ikke et løfte vi alt
+# har sendt ut til kunder. Det gjør tilbakeholdelsen mindre
+# presserende — og desto viktigere å si tydelig hva v1 er.
+#
+# v1 SETTER INGEN KREDITTGRENSE OG AVSLÅR INGEN MOTPART.
+#
+# DOMMEN: spesifikasjonens utdata sier at kredittgrensen er «inngang
+# til fordringsagenten M-23, ikke omvendt». En grense modulen satte
+# selv ville altså blitt M-23s FASIT uten at et menneske hadde sett på
+# den — og et avslag ville stengt en kunde ute på et tall ingen hadde
+# etterprøvd.
+#
+# v1 GJØR TO TING: registrerer motparten med kilde og tidsstempel, og
+# MÅLER den mot tenantens egen kredittpolicy. Forslaget er et forslag.
+#
+# HVERT OPPSLAG ER EN BEHANDLING AV PERSONDATA. Spesifikasjonens egen
+# vakt krever formål, hjemmel og tidsstempel i loggen — og en rad uten
+# dem er ikke en måling, det er en behandling ingen kan forsvare.
+#
+# v1 GJØR INGEN UTGÅENDE FORESPØRSEL. Ikke fordi forespørselen er gal:
+# plattformen har `ekstern_lesing`-maskineriet (oppdragskontrakten,
+# målautorisasjon, egressvakt). Men doktrinen sier at «den unødvendige
+# forespørselen ER skaden», og vi kan ikke ennå si hvilke oppslag som
+# er nødvendige — registeret er den målingen. M-48 er dessuten den ene
+# i klyngen der M-19s dom faktisk gjelder: et oppslag mot et
+# kredittregister sender motpartens organisasjonsnummer ut av huset.
+#
+# GRENSEN MOT M-23: M-23 eier FORDRINGEN — hva som faktisk skylder oss
+# penger. M-48 eier MOTPARTEN og grunnlaget for hva vi tør gi den.
+# v1 kobler dem ikke; koblingen er nettopp grensen vi ikke setter.
+#
+# GRENSEN MOT M-18: M-18 eier onboardingen av en kunde. M-48 eier
+# kredittvurderingen av den. En kunde kan være onboardet uten å ha
+# kreditt, og det er to forskjellige beslutninger.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m48_motpart
+navn: Foretaks- og kredittvakt
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m48-v1` bærer invarianten
+# `kredittpolicy_hardkodet` — hva som gir hvilken grense er tenantens
+# policy, ikke en konstant i koden.
+avhengigheter:
+  - m01_policy                 # kredittpolicyen er policy, ikke en konstant
+  - m02_revisjonslogg          # hvert oppslag i evidenskjeden
+kjerne: platform/modules/m48_motpart
+i18n_prefiks: motpart
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en motpartsportefølje med KJENT fasit for hvilken
+      kredittgrense policyen tilsier, kjørt likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert oppslag står i evidenskjeden med formål, hjemmel
+      og tidsstempel. Det er dette et tilsyn spør etter — oppslaget er
+      en behandling av persondata.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: motpartssveipen bygget, og at en feil i den ikke lar en
+      motpart uten gyldig vurdering se kredittverdig ut. Feilretningen
+      er hele poenget: en modul som feiler mot «har kreditt» er
+      farligere enn en som feiler mot «vet ikke».
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

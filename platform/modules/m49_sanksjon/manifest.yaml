@@ -1,0 +1,93 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m49-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 117
+# tildelt i docs/KLYNGE6-FUNDAMENT.md.
+#
+# DENNE ER KLYNGENS VANSKELIGSTE, og den er motsatt av de fire andre.
+#
+# De fire holder tilbake en utgående handling. Her vil spesifikasjonen
+# at modulen SKAL handle: «stopper handel med motparten ved treff»,
+# fail-closed. Og samtidig: «navnelikhet er aldri automatisk avfeid».
+#
+# DE TO SAMMEN ER PROBLEMET. Navnelikhet mot internasjonale
+# sanksjonslister gir STORE mengder kandidater, og ingen av dem kan
+# lukkes maskinelt. En modul som blokkerte automatisk på det
+# grunnlaget ville stanset LOVLIG HANDEL fra første natt — uten at noen
+# hadde målt hvor ofte den tar feil.
+#
+# v1 BLOKKERER DERFOR IKKE, OG AVFEIER HELLER INGEN NAVNELIKHET.
+#
+# Den registrerer at kontrollen ble gjort, mot HVILKEN listeversjon, med
+# hvilket matchgrunnlag — og gjør et uavklart treff til et FUNN.
+# Fail-closed-blokkeringen er fullmakten som holdes tilbake til noen har
+# målt falsk-positiv-raten på vår EGEN motpartsportefølje.
+#
+# Det er samme figur som M-41s refusjon (111): den farligste raden i
+# spesifikasjonen, gatet på en modul som aldri har eksistert.
+#
+# ET TREFF UTEN LISTEVERSJON ER UBRUKELIG I ETTERTID. «Sto de på lista
+# den dagen» er hele spørsmålet et tilsyn stiller, og en listeversjon
+# som kunne oppdateres på stedet ville slettet svaret.
+#
+# v1 GJØR INGEN UTGÅENDE FORESPØRSEL — men merk at M-19s begrunnelse
+# IKKE gjelder her: sanksjonslister lastes ned og matches LOKALT, så
+# man forteller ingen hvem man sjekker. Grunnen er doktrinens egen:
+# «den unødvendige forespørselen ER skaden», og vi kan ikke ennå si
+# hvilke som er nødvendige.
+#
+# GRENSEN MOT M-48: M-48 eier MOTPARTEN og dens reelle
+# rettighetshavere. M-49 kontrollerer dem mot listene. Avhengigheten er
+# ekte og står i spesifikasjonen — derfor er 116 før 117.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m49_sanksjon
+navn: Sanksjons- og hvitvaskingsvakt
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m49-v1` bærer invarianten
+# `matchterskel_hardkodet` — hvor likt et navn må være før det er en
+# kandidat er tenantens vurdering, ikke en konstant.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+  - m48_motpart
+kjerne: platform/modules/m49_sanksjon
+i18n_prefiks: sanksjon
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en listeversjon med KJENT fasit for hvilke navn som er
+      eksakte treff og hvilke som bare ligner, kjørt likt lokalt og på
+      staging. Skillet mellom de to ER modulen.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver kontroll står i evidenskjeden med listeversjon og
+      matchgrunnlag. «Sto de på lista den dagen» må kunne besvares.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: sanksjonssveipen bygget, og at en feil i den ikke lar en
+      motpart med et uavklart treff se KONTROLLERT ut. Dette er
+      klyngens skarpeste feilretning: en modul som feiler mot «ingen
+      treff» er verre enn en som feiler mot «må sjekkes».
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Matching mot en full listeversjon er klyngens dyreste operasjon.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

@@ -1586,6 +1586,191 @@ KRAVGRENSER["m44-v1"] = {
 }
 
 
+# ---------------------------------------------------------------------
+# KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
+# (docs/KLYNGE6-FUNDAMENT.md). Registrert FØR koden, §0-regelen.
+#
+# INGEN BRANSJEMAL NAVNGIR DISSE FEM. `VENTENDE` er tom; driveren er
+# eierens prioritering i spesifikasjonen, ikke et løfte vi har sendt ut.
+#
+# ALLE FEM ER `ekstern_lesing`, OG M-19s DOM GJELDER IKKE HER. M-19
+# (112) slår ingenting opp fordi oppslaget er en utgående kanal med
+# personopplysninger i, og fordi svaret uansett var feil vare. Ingen av
+# de to holder for alle fem: sanksjonslister lastes ned og matches
+# LOKALT — man forteller ingen hvem man sjekker — Doffin, TED og
+# ordningskatalogene er offentlige, og M-55 sender sine EGNE
+# merkevarenavn. Bare M-48 har M-19s form.
+#
+# DOMMEN SOM GJELDER er plattformens egen, fra `oppdragskontrakt.py`:
+# «`ekstern_lesing` er klassen der den unødvendige forespørselen ER
+# skaden.» v1 gjør ingen utgående forespørsel — ikke fordi den er gal,
+# men fordi vi ikke ennå kan si hvilke forespørsler som er NØDVENDIGE.
+# Registeret er den målingen. Den dagen en integrasjon kobles på, skal
+# `modulen_hentet_eksternt` endres BEVISST, og det skal skje i
+# oppdragskontrakten — ikke med en `httpx`-import i en modulfil.
+#
+# DEN DELTE DOMMEN: fem som finner, og ingen som handler.
+
+#: M-48 (116) — foretaks- og kredittvakt (KYB).
+M48_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SETTER INGEN KREDITTGRENSE. Spesifikasjonens
+    # egen vakt sier det, og utdata er «inngang til fordringsagenten
+    # M-23, ikke omvendt»: en grense modulen satte selv ville blitt
+    # M-23s fasit uten at et menneske hadde sett på den.
+    "modulen_satte_kredittgrense",
+    # …OG DEN AVSLÅR HELLER IKKE. Et avslag er en menneskelig
+    # beslutning; en modul som avslo ville stengt en kunde ute på et
+    # tall ingen hadde etterprøvd.
+    "modulen_avslo_motpart",
+    "modulen_hentet_eksternt",
+    "modulen_signerte_attestasjon",
+    # HVERT OPPSLAG ER EN BEHANDLING AV PERSONDATA, og spesifikasjonen
+    # krever formål, hjemmel og tidsstempel. Et oppslag uten dem er
+    # ikke en måling — det er en behandling ingen kan forsvare.
+    "oppslag_uten_formaal_og_hjemmel",
+    # En kredittvurdering uten hvilken policy som gjaldt er ubrukelig i
+    # ettertid: «hvorfor fikk de den grensen» kan ikke besvares.
+    "vurdering_uten_policyversjon",
+    "motpartshistorikk_overskrevet",
+    # Kredittpolicyen er TENANTENS.
+    "kredittpolicy_hardkodet",
+    "tenantlekkasje_i_motpartsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m48-v1"] = {
+    "invarianter": M48_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+#: M-49 (117) — sanksjons- og hvitvaskingsvakt. KLYNGENS VANSKELIGSTE.
+M49_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, OG DEN ER MOTSATT AV DE ANDRE FIRE: her vil
+    # spesifikasjonen at modulen SKAL handle — «stopper handel med
+    # motparten ved treff», fail-closed.
+    #
+    # Og samtidig: «navnelikhet er aldri automatisk avfeid». De to
+    # sammen betyr at treffene blir MANGE, og at ingen av dem kan
+    # lukkes maskinelt. En modul som blokkerte automatisk på det
+    # grunnlaget ville stanset LOVLIG HANDEL fra første natt, uten at
+    # noen hadde målt hvor ofte den tar feil.
+    #
+    # v1 registrerer kontrollen og gjør et uavklart treff til et FUNN.
+    # Blokkeringen er fullmakten som holdes tilbake til
+    # falsk-positiv-raten er målt på vår egen portefølje.
+    "modulen_blokkerte_motpart",
+    "modulen_avfeide_navnelikhet",
+    "modulen_hentet_eksternt",
+    "modulen_signerte_attestasjon",
+    # ET TREFF UTEN LISTEVERSJON ER UBRUKELIG I ETTERTID. «Sto de på
+    # lista den dagen» er hele spørsmålet, og en liste som oppdateres
+    # på stedet ville slettet svaret.
+    "treff_uten_listeversjon",
+    "kontroll_uten_matchgrunnlag",
+    "sanksjonshistorikk_overskrevet",
+    # Matchterskelen og kontrollfrekvensen er TENANTENS.
+    "matchterskel_hardkodet",
+    "tenantlekkasje_i_sanksjonsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m49-v1"] = {
+    "invarianter": M49_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+#: M-46 (118) — anbuds- og konkurransevakt.
+M46_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN TILBUD. Et innsendt tilbud er
+    # bindende, og fristen gjør det irreversibelt på den måten som
+    # betyr noe — man kan ikke trekke det og sende et bedre etterpå.
+    "modulen_sendte_tilbud",
+    "modulen_hentet_eksternt",
+    "modulen_signerte_attestasjon",
+    # HVERT FAKTAPUNKT I ET UTKAST PEKER PÅ ET KILDEDOKUMENT.
+    # Spesifikasjonens aksept sier det, og grunnen er skarpere enn den
+    # ser ut: et utkast med ett udekket punkt fylt inn av modulen er et
+    # tilbud som kan vinne på en påstand ingen kan stå inne for.
+    "utkastpunkt_uten_kilde",
+    # ET UDEKKET KRAV ER ET FUNN, aldri en utfylt gjetning.
+    "udekket_krav_uten_funn",
+    "anbudshistorikk_overskrevet",
+    # Søkeprofilen — NACE, geografi, verdi — er TENANTENS.
+    "sokeprofil_hardkodet",
+    "tenantlekkasje_i_anbudsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m46-v1"] = {
+    "invarianter": M46_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+#: M-51 (119) — tilskudds- og støtteagent.
+M51_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN SØKNAD. En innsendt søknad med
+    # et galt tall er en uriktig opplysning til det offentlige — og
+    # botemiddelet er ikke å sende en ny, det er å forklare den første.
+    "modulen_sendte_soknad",
+    "modulen_hentet_eksternt",
+    "modulen_signerte_attestasjon",
+    # ESTIMATET ER ET ESTIMAT, ALDRI EN LOVNAD. Spesifikasjonens vakt
+    # sier det: det skal presenteres med sine forutsetninger.
+    "estimat_uten_forutsetninger",
+    # HVERT TALL SPORES TIL EN KILDEPOST. Et beløp uten en post bak seg
+    # er nøyaktig den uriktige opplysningen dommen over handler om.
+    "belop_uten_kildepost",
+    "belop_i_flyttall",
+    "tilskuddshistorikk_overskrevet",
+    # Ordningskatalogens krav og frister er TENANTENS føringer.
+    "ordningskrav_hardkodet",
+    "tenantlekkasje_i_tilskuddsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m51-v1"] = {
+    "invarianter": M51_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+#: M-55 (120) — merkevare- og IP-overvåker.
+M55_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN JURIDISK HENVENDELSE. Et krav
+    # sendt på et automatisk funn er en anklage mot en navngitt part —
+    # og en feilaktig anklage er ikke reversibel ved å trekke den.
+    "modulen_sendte_krav",
+    "modulen_hentet_eksternt",
+    "modulen_signerte_attestasjon",
+    # HVERT FUNN HAR URL, TIDSSTEMPEL OG BEVARINGSKOPI. Uten dem er
+    # funnet verdiløst som bevis — og et funn som ikke kan bevises er
+    # verre enn ingen funn, fordi noen handler på det.
+    "funn_uten_bevaringskopi",
+    # FORVEKSLINGSVURDERINGEN ER DETERMINISTISK, og terskelen er
+    # tenantens. En modul som «vurderte» ulikt fra gang til gang kunne
+    # ikke etterprøves.
+    "forvekslingsvurdering_uten_grunnlag",
+    "merkevarefunn_overskrevet",
+    "forvekslingsterskel_hardkodet",
+    "tenantlekkasje_i_merkevareregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m55-v1"] = {
+    "invarianter": M55_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;

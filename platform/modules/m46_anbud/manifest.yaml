@@ -1,0 +1,78 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m46-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 118
+# tildelt i docs/KLYNGE6-FUNDAMENT.md.
+#
+# v1 SENDER INGEN TILBUD.
+#
+# DOMMEN: et innsendt tilbud er BINDENDE, og fristen gjør det
+# irreversibelt på den måten som betyr noe — man kan ikke trekke det og
+# sende et bedre etterpå. Spesifikasjonens egen vakt sier det, og
+# aksepten krever menneskelig signatur.
+#
+# v1 GJØR TO TING: registrerer kunngjøringen med kilde og frist, og
+# MÅLER den mot bedriftens egne kvalifikasjoner.
+#
+# HVERT FAKTAPUNKT I ET UTKAST PEKER PÅ ET KILDEDOKUMENT, og grunnen er
+# skarpere enn den ser ut: et utkast med ETT udekket punkt fylt inn av
+# modulen er et tilbud som kan VINNE på en påstand ingen kan stå inne
+# for. Et udekket krav er derfor et FUNN, aldri en utfylt gjetning.
+#
+# v1 GJØR INGEN UTGÅENDE FORESPØRSEL. Doffin og TED er offentlige
+# kunngjøringsstrømmer, så M-19s personvernbegrunnelse gjelder ikke —
+# grunnen er doktrinens egen om den unødvendige forespørselen, og at
+# integrasjonen hører hjemme i oppdragskontrakten når den kommer.
+#
+# GRENSEN MOT M-5: M-5 eier DOKUMENTMALEN. M-46 eier KUNNGJØRINGEN og
+# vurderingen av om vi kvalifiserer. Utkastet er en dokumentsak den
+# dagen det skal skrives; v1 måler bare hva som mangler.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m46_anbud
+navn: Anbuds- og konkurransevakt
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m46-v1` bærer invarianten
+# `sokeprofil_hardkodet` — NACE, geografi og verdigrense er tenantens
+# profil, ikke en konstant.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m46_anbud
+i18n_prefiks: anbud
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: kunngjøringer med KJENT fasit for hvilke krav som er
+      dekket av bedriftens kvalifikasjoner og hvilke som ikke er det,
+      kjørt likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert faktapunkt i et utkast peker på kildedokumentet
+      sitt, og at hvert udekket krav står som funn.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: anbudssveipen bygget, og at en feil i den ikke lar et
+      udekket kvalifikasjonskrav se dekket ut. Et krav som feilaktig
+      ser dekket ut er nøyaktig den gjetningen dommen forbyr.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
