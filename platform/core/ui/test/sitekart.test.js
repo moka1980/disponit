@@ -369,7 +369,7 @@ test("Hver datatabell ligger i en .tablewrap", () => {
   const flater = ["retensjon", "datakvalitet", "kunnskap", "avtalefrist",
     "dokumentmal", "tilgang", "personvern", "compliance", "avstemming",
     "kundeservice", "onboarding", "fordring", "leverandor",
-    "faktura", "prosjekt", "prisbok", "lager"];
+    "faktura", "prosjekt", "prisbok", "lager", "kontovakt"];
   let sett = 0;
   for (const navn of flater) {
     const kilde = readFileSync(new URL(

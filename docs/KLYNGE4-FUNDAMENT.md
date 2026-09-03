@@ -195,3 +195,38 @@ Egne filer, og **egne linjer** i de delte:
   ikke er ført opp. Det er med vilje: den gale commit-rekkefølgen
   spredte seg til seks filer nettopp fordi ingen port krevde at nye
   sveip ble målt.
+
+## Status — klyngen er bygget
+
+Alle fem registrene står i `main`:
+
+| Modul | Migrasjon | PR | Sveip (UTC) |
+|---|---|---|---|
+| M-14 | `106_m14_fakturakontroll.sql` | #355 | 06:20 |
+| M-25 | `107_m25_prosjektregister.sql` | #356 | 06:35 |
+| M-26 | `108_m26_prisbok.sql` | #357 | 06:50 |
+| M-27 | `109_m27_lagerregister.sql` | #358 | 07:05 |
+| M-42 | `110_m42_kontoregister.sql` | #359 | 07:20 |
+
+**OG DOMMEN STÅR: ingen av dem attesterer.** Gapet mot `modus: auto` er
+ikke lukket av denne klyngen, og det er med vilje. Det som er endret er
+at gapet nå har et MÅLEGRUNNLAG under seg: fem registre som skriver ned
+hva som faktisk skjedde, slik at en treffrate kan regnes før noen får
+fullmakten.
+
+`test_bransjemal_lovnader.test_klynge4_er_bygget_og_ingen_av_dem_attesterer`
+binder begge halvdelene: migrasjonene finnes, og ingen av dem har en
+attesteringsdør.
+
+### Det som står igjen
+
+* **Attestasjonsfullmakten** for alle fem — krever en målt treffrate,
+  og den finnes ikke før registrene har stått en stund.
+* **`VENTENDE` i porten**: M-11 (1 ref.), M-39 (2), M-41 (3), M-44 (1).
+  M-39 og M-41 er tildelt klynge 5.
+* **Fjorten nattlige sveip** er nå en egen driftssak. Klokkeslettene er
+  tildelt manuelt og ligger tett (03:15 → 07:20). En felles planlegger
+  med observerbarhet er verdt en runde — men det er fortsatt ikke en
+  grunn til å slå sveiperollene sammen.
+* **To felles opprydninger i sveipefilene**: `_skriv_feiltelling`-formen
+  og rad-kontrakten (109/110 har den nye formen, de sju eldre ikke).
