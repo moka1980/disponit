@@ -250,6 +250,24 @@ sudo -u postgres psql -qc "GRANT $KUNDESERVICEEIER TO $MIGRATOR WITH INHERIT FAL
 sudo -u postgres psql -qc "GRANT $ONBOARDINGEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $FORDRINGEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $LEVERANDOREIER TO $MIGRATOR WITH INHERIT FALSE"
+# KLYNGE 4 (106-110). SAMME KRAV, OG DET ER IKKE FORMALIA: hver av disse
+# migrasjonene gjoer `SET LOCAL ROLE <eier>` for aa lage doerene sine, og
+# `SET ROLE` krever MEDLEMSKAP — ikke bare at rollen finnes. Uten linjene
+# her stopper migrasjonen paa «permission denied to set role», og fordi
+# basen da alt har flyttet seg forbi forrige release, nekter
+# selv-reverseringen og enhetene blir staaende stoppet.
+#
+# Det skjedde 3/9: rollene ble opprettet av loekka over, ci.yml hadde
+# medlemskapene, og verten hadde dem ikke. CI var gronn paa alle fem
+# modulene mens verten aldri kunne kjoere dem.
+#
+# `test_deploy_rollemedlemskap.py` binder dette nedenfra: hver rolle en
+# MIGRASJON bytter til, maa staa her.
+sudo -u postgres psql -qc "GRANT $FAKTURAEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $PROSJEKTEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $PRISBOKEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $BEHOLDNINGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $KONTOVAKTEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB
