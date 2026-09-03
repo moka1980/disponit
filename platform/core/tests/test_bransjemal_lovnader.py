@@ -41,12 +41,15 @@ MALER = sorted(glob.glob(str(ROT / "policies" / "bransjemal-*.yaml")))
 #:
 #: KLYNGE 4 tar de fem øverste (`docs/KLYNGE4-FUNDAMENT.md`); resten
 #: står igjen. Tallene er de MÅLTE, ikke en preferanse.
-VENTENDE: dict[str, str] = {
-    "M-11": "adressevalidering (1 ref.) — ikke tildelt",
-    "M-39": "lønnsgrunnlag (2 ref.) — klynge 5",
-    "M-41": "betalings- og abonnementsstatus (3 ref.) — klynge 5",
-    "M-44": "kampanjeutsending (1 ref.) — ikke tildelt",
-}
+VENTENDE: dict[str, str] = {}
+#: TOM FRA OG MED KLYNGE 5 (3/9) — og det er en milepæl, ikke en
+#: forglemmelse. Hver modul en bransjemal vi sender ut navngir, har nå
+#: et manifest. Porten under snur derfor betydning: den holdt gapet
+#: TALT mens det fantes, og holder det nå LUKKET.
+#:
+#: En ny referanse i en mal er rød fra den commiten den legges inn —
+#: altså når noen bestemmer at vi lover det, ikke når noen oppdager at
+#: en `auto`-handling aldri har fyrt.
 
 #: Klynge 4s fem. De hadde manifest fra og med fundament-commiten, og
 #: fra og med 110 har de ALLE KODE: migrasjonene 106–110, hver med sin
@@ -62,6 +65,26 @@ KLYNGE4 = ("M-14", "M-25", "M-26", "M-27", "M-42")
 #: Migrasjonen hver av de fem hviler på. Bundet her og ikke bare i
 #: `docs/KLYNGE4-FUNDAMENT.md`, slik at en fjernet migrasjon blir rød i
 #: CI og ikke bare feil i et dokument.
+#: Klynge 5s fire — de SISTE manglende i malene. M-44 er en annen figur
+#: enn de tre andre: den er den manglende AKTØREN på `kampanje.send`,
+#: ikke en manglende verifikator. Det gjør tilbakeholdelsen sterkere —
+#: modulen finnes for å sende, og v1 sender null.
+KLYNGE5 = ("M-41", "M-19", "M-39", "M-44")
+
+#: BYGGET, MEN UTEN MANIFESTKATALOG. `_byggde()` leser
+#: `platform/modules/`, og to moduler står ikke der: de er
+#: PLATTFORMSKOPEDE og har ingen tenantflate å registrere.
+#:
+#: DET ER IKKE EN DETALJ — det er grunnen til at feilen kunne stå.
+#: Netthandelsmalen skrev «M-11 adressevalidering»; M-11 er selvtesten
+#: (091). Gap-porten så «M-11 er referert, men mangler manifest» og
+#: konkluderte med en ubygget adressemodul, i to klynger på rad. Med
+#: unntakene navngitt her måler porten det den lover.
+BYGD_UTEN_MANIFEST: dict[str, str] = {
+    "M-10": "backupens verifiseringshistorikk (migrasjon 090)",
+    "M-11": "selvtestrunden (migrasjon 091)",
+}
+
 KLYNGE4_MIGRASJONER = {
     "M-14": "106_m14_fakturakontroll.sql",
     "M-25": "107_m25_prosjektregister.sql",
@@ -72,8 +95,14 @@ KLYNGE4_MIGRASJONER = {
 
 
 def _byggde() -> set[str]:
-    """Modulnumrene som har et manifest, lest fra katalogen på disk."""
-    ut = set()
+    """Modulnumrene som ER BYGGET.
+
+    Manifestene på disk, PLUSS de plattformskopede som ikke har
+    manifestkatalog (`BYGD_UTEN_MANIFEST`). Uten den andre halvdelen
+    teller porten en bygget modul som manglende — og det er nøyaktig
+    det som skjedde med M-11.
+    """
+    ut = set(BYGD_UTEN_MANIFEST)
     for p in sorted((ROT / "platform" / "modules").iterdir()):
         if not (p / "manifest.yaml").exists():
             continue
@@ -158,6 +187,56 @@ def test_klynge4_er_bygget_og_ingen_av_dem_attesterer():
         for navn in re.findall(r"CREATE FUNCTION (\w+)", kode):
             for ord_ in ("attester", "signer", "attestasjon"):
                 assert ord_ not in navn.lower(), f"{modul}: {navn}"
+
+
+def test_klynge5_har_manifest_og_gapet_er_lukket():
+    """GAPET ER LUKKET, og porten holder det slik.
+
+    Fra og med klynge 5 har hver modul en bransjemal navngir et
+    manifest. `VENTENDE` er tom — og en tom liste er bare troverdig hvis
+    noe måler at den ER tom av riktig grunn.
+
+    Derfor to halvdeler: de fire har manifest, OG ingen referert modul
+    mangler. Den andre halvdelen er den som varer: legger noen inn en
+    femtende verifikator i en mal, er porten rød fra den commiten.
+
+    MUTASJONEN SOM DREPER DENNE: legg `M-99` som verifikator i en mal.
+    """
+    byggde = _byggde()
+    for m in KLYNGE5:
+        assert m in byggde, f"{m} har ikke manifest ennå"
+    mangler = sorted(set(_refererte()) - byggde)
+    assert mangler == [], (
+        "en bransjemal vi SENDER UT navngir moduler som ikke finnes: "
+        + ", ".join(mangler)
+        + ". Motoren feiler lukket, så handlingene deres har aldri fyrt"
+          " — men de står der, merket auto.")
+    assert VENTENDE == {}, \
+        f"gapet er lukket, men VENTENDE er ikke tom: {sorted(VENTENDE)}"
+
+
+def test_hvert_modulnummer_en_mal_navngir_finnes_i_katalogen():
+    """En mal kan ikke love en modul katalogen ikke har.
+
+    PORTEN FINNES FORDI DET SKJEDDE: netthandelsmalen skrev
+    «M-11 adressevalidering». M-11 er selvtesten (091), en helt annen
+    modul — og fordi selvtesten ikke har manifestkatalog, så gap-porten
+    bare «M-11 mangler» og gjentok feilen i to klynger.
+
+    Katalogen (`katalog.js`) er den ene kilden til hvilke moduler som
+    finnes. Et nummer utenfor den er en trykkfeil eller en oppfinnelse,
+    og begge deler er et løfte til en kunde ingen har bestemt.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `M-99` i en mal.
+    """
+    kat = (ROT / "platform" / "core" / "ui" / "static" / "js"
+           / "katalog.js").read_text(encoding="utf-8")
+    finnes = {f"M-{n}" for n in re.findall(r"\{ n: (\d+),", kat)}
+    assert len(finnes) >= 50, f"porten fant bare {len(finnes)} moduler"
+    ukjente = sorted(set(_refererte()) - finnes)
+    assert ukjente == [], (
+        "en bransjemal navngir modulnumre som ikke står i katalogen: "
+        + ", ".join(ukjente))
 
 
 def test_hver_ventende_modul_er_faktisk_referert():

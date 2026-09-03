@@ -1,0 +1,79 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m39-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 113
+# tildelt i docs/KLYNGE5-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: håndverk/bygg-malen navngir denne modulen som
+# verifikatoren `v_lonn`, betrodd for `timer_mot_arbeidsplan`,
+# `prosjektkode_gyldig` og `overtid_flagget` — og bruker ALLE TRE som
+# vilkår for at `timeliste.samle_og_valider` skal gå som `modus: auto`,
+# på dataklassene persondata og finansiell.
+#
+# v1 UTBETALER INGENTING OG PRODUSERER INGEN LØNNSFIL.
+#
+# DOMMEN: en lønnsfil er penger til mennesker, og en feil i den rammer
+# noen som har regnet med beløpet. Å ta den fullmakten før noen har målt
+# hvor ofte timegrunnlaget vårt stemmer med arbeidsplanen, er å la
+# modulen definere sin egen troverdighet på andres inntekt.
+#
+# v1 GJØR ÉN TING: samler timegrunnlaget og MÅLER det mot arbeidsplanen.
+# En time uten en plan å måle mot er et funn. Overtid er et funn — ikke
+# et flagg modulen setter og går videre fra.
+#
+# TIMER LAGRES SOM HELE MINUTTER (M-25s dom, 107): «7,5 time» som
+# flyttall er 7.499999999999999 på veien tilbake, og en lønnskjøring som
+# driver noen øre per rad driver systematisk.
+#
+# GRENSEN MOT M-25: M-25 eier PROSJEKTETS forbruk — timene som kostnad
+# på et prosjekt. M-39 eier TIMEN SOM LØNNSGRUNNLAG — den samme timen
+# sett fra den ansattes side. De to registrene skal ikke speile
+# hverandre; de svarer på forskjellige spørsmål, og en felles tabell
+# ville tvunget det ene svaret til å være det andre.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m39_lonnsgrunnlag
+navn: Lønnsgrunnlagsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m39-v1` bærer invarianten
+# `timegrense_hardkodet` — hvor mye en timeliste kan avvike fra planen
+# før det er et funn, er tenantens tall og ikke modulens.
+avhengigheter:
+  - m01_policy                 # timegrensen er policy, ikke en konstant
+  - m02_revisjonslogg          # hver føring i evidenskjeden
+kjerne: platform/modules/m39_lonnsgrunnlag
+i18n_prefiks: lonn
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: timelister med KJENT fasit for hvilke timer som avviker
+      fra planen og hvilke som er overtid, kjørt likt lokalt og på
+      staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver føring og hver retting står i evidenskjeden, med
+      hvem som gjorde den. Persondata og finansielle data i samme rad.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: lønnssveipen bygget, og at en feil i den ikke lar en time
+      uten arbeidsplan passere som målt.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

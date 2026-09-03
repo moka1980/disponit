@@ -1,0 +1,87 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m19-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 112
+# tildelt i docs/KLYNGE5-FUNDAMENT.md.
+#
+# NUMMERET ER NYTT, OG DET ER EN RETTING. Netthandelsmalen skrev
+# «M-11 adressevalidering». M-11 ER SELVTESTEN (migrasjon 091,
+# plattformskop, `it_og_drift`) — en helt annen modul, bygget for lenge
+# siden. Malen navngav feil nummer, og gap-porten arvet feilen: den så
+# «M-11 er referert, men har ikke manifest» og konkluderte med en
+# ubygget adressemodul.
+#
+# M-19 er laveste ledige plass i `kunde_og_salg`, og fase 2
+# («operasjoner») stemmer: adressekontroll er en standardisert
+# arbeidsprosess, ikke en autopilot. Malen er rettet i samme commit.
+#
+# HVA POLICYEN ALT LOVER: netthandelsmalen navngir denne modulen som
+# verifikatoren `v_adresse`, betrodd for `adresse_validert` — ett av tre
+# vilkår for at `ordre.bekreft_og_fakturer` skal gå som `modus: auto`.
+# Handlingen er M-25s, og den venter også på M-41.
+#
+# v1 SLÅR INGENTING OPP EKSTERNT OG ATTESTERER INGENTING.
+#
+# DOMMEN, OG DEN ER M-42s: «validert» uten hvem og hvordan er ikke en
+# måling — det er en påstand. Et oppslag mot et adresseregister er
+# dessuten en utgående kanal med persondata i, og en modul som gjorde
+# det automatisk ville sendt kundens adresse ut av huset på et grunnlag
+# ingen har bestemt.
+#
+# v1 GJØR ÉN TING: registrerer adressen SLIK DEN BLE OPPGITT, og
+# hvordan et menneske eventuelt kontrollerte den — med metode og kilde.
+#
+# NORMALISERINGEN ERSTATTER ALDRI ORIGINALEN. En normalisert adresse er
+# vår tolkning; originalen er det kunden faktisk skrev. Blander man dem,
+# kan ingen etterpå se om en feillevering skyldtes kunden eller oss.
+#
+# GRENSEN MOT M-3: M-3 profilerer DATASETT — tomme felt, formatavvik,
+# duplikater — og sier ingenting om én konkret rad. M-19 svarer på
+# «ble DENNE adressen kontrollert, av hvem, hvordan». De to er ikke to
+# syn på samme måling.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m19_adresse
+navn: Adressevalideringsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m19-v1` bærer invarianten
+# `valideringskrav_hardkodet` — hva som teller som kontrollert, og hvor
+# lenge en kontroll er gyldig, er tenantens tall.
+avhengigheter:
+  - m01_policy                 # valideringskravet er policy, ikke en konstant
+  - m02_revisjonslogg          # hver kontroll i evidenskjeden
+kjerne: platform/modules/m19_adresse
+i18n_prefiks: adresse
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: adresser med KJENT fasit for hva originalen var og hva
+      normaliseringen gjorde med den, kjørt likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver kontroll står i evidenskjeden, med hvem som gjorde
+      den og hvilken metode.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: adressesveipen bygget, og at en feil i den ikke lar en
+      ukontrollert adresse se kontrollert ut.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

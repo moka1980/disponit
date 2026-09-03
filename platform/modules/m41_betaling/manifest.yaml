@@ -1,0 +1,93 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m41-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 111
+# tildelt i docs/KLYNGE5-FUNDAMENT.md.
+#
+# HVA POLICYEN ALT LOVER: netthandelsmalen navngir denne modulen som
+# verifikatoren `v_betaling`, betrodd for `betaling_autorisert` og
+# `samme_betalingsmiddel`.
+#
+# DEN SKARPESTE ENKELTRADEN I HELE POLICYSETTET er gatet på den:
+#
+#     - id: refusjon.utfor
+#       modul: M-41
+#       modus: auto
+#       grenser: {belop_maks: "5000.00", valuta: [NOK]}
+#       reversering: {type: irreversibel}
+#       vilkaar: [{navn: samme_betalingsmiddel, verifikator: v_betaling}]
+#
+# Automatisk. Irreversibel. Opp til fem tusen kroner. Gatet på en
+# verifikator som aldri har eksistert. Motoren feiler lukket, så den har
+# aldri fyrt — men den står der, merket auto.
+#
+# OG M-25s EGEN AUTO-HANDLING VENTER PÅ DENNE: `ordre.bekreft_og_fakturer`
+# er gatet på `betaling_autorisert` herfra OG `adresse_validert` fra
+# M-11. M-25 landet i klynge 4; handlingen kan fortsatt ikke fyre.
+#
+# v1 REFUNDERER INGENTING OG AUTORISERER INGEN BETALING.
+#
+# DOMMEN: en refusjon er penger ut døra, og den er irreversibel. Å ta
+# den fullmakten før noen har målt hvor ofte statusen vår stemmer med
+# betalingsleverandørens, er å la modulen definere sin egen
+# troverdighet — med kundens penger som innsats.
+#
+# v1 GJØR ÉN TING: registrerer hvilken betalingsstatus som gjaldt når,
+# OG HVOR DEN KOM FRA. En status uten kilden sin er en påstand, og
+# `betaling_autorisert` ville hvilt på påstanden.
+#
+# BETALINGSMIDDELET LAGRES ALDRI. `samme_betalingsmiddel` krever å kunne
+# SAMMENLIGNE to betalingsmidler, ikke å kjenne dem — maske og saltet
+# hash holder (M-42s form, 110).
+#
+# GRENSEN MOT M-13: M-13 eier BANKPOSTENE, det som har skjedd på konto.
+# M-41 eier BETALINGSSTATUSEN slik betalingsleverandøren meldte den.
+# v1 kobler dem ikke: en bankpost uten en betalingsstatus er et funn å
+# se på, ikke en avstemming å gjøre automatisk.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m41_betaling
+navn: Betalings- og abonnementsstatusagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m41-v1` bærer invarianten
+# `belopsgrense_hardkodet` — hvor stort et avvik kan være før det er et
+# funn, er tenantens tall og ikke modulens.
+avhengigheter:
+  - m01_policy                 # beløpsgrensen er policy, ikke en konstant
+  - m02_revisjonslogg          # hver statusendring i evidenskjeden
+kjerne: platform/modules/m41_betaling
+i18n_prefiks: betaling
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en statushistorikk med KJENT fasit for hvilken status som
+      gjaldt når, og hvilken hendelse den kom fra, kjørt likt lokalt og
+      på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver statusendring og hvert registrert betalingsmiddel
+      står i evidenskjeden, med hvem og hvilken kilde.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: betalingssveipen bygget, og at en feil i den ikke lar en
+      uavklart betaling forsvinne stille.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

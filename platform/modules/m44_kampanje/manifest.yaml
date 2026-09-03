@@ -1,0 +1,88 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m44-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 114
+# tildelt i docs/KLYNGE5-FUNDAMENT.md.
+#
+# M-44 ER EN ANNEN FIGUR ENN DE TRE ANDRE I KLYNGEN. De er manglende
+# VERIFIKATORER — betrodde parter som skal attestere et vilkår. M-44 er
+# den manglende AKTØREN: netthandelsmalen fører den som `modul:` på en
+# `auto`-handling, ikke i `verifikatorer`.
+#
+#     - id: kampanje.send
+#       modul: M-44
+#       modus: auto
+#       dataklasser_tillatt: [offentlig, persondata]
+#       grenser: {frekvens: {maks: 2, periode: 1 uke, per: mottaker_id}}
+#       vilkaar: [samtykke_gyldig, avmeldingslenke, priser_fra_prisbok]
+#
+# Vilkårene har verifikatorer som FINNES (v_samtykke, og v_prisbok fra
+# klynge 4). Det er handlingen selv som mangler en modul.
+#
+# v1 SENDER INGENTING.
+#
+# DET GJØR TILBAKEHOLDELSEN STERKERE, IKKE SVAKERE. Modulen finnes for å
+# sende; v1 sender null. En utsending er irreversibel på den måten som
+# betyr noe — en e-post kan ikke kalles tilbake, og en for mye er en
+# klage, en avmelding eller et tilsynsspørsmål.
+#
+# v1 GJØR ÉN TING: registrerer kampanjen, mottakerne og samtykkets
+# tilstand — og MÅLER frekvenstaket malen alt har satt. Et brudd er et
+# funn. Den dagen noen skal sende, finnes det en målt historikk å bygge
+# fullmakten på.
+#
+# SAMTYKKET ER APPEND-ONLY, og det er ikke en teknisk preferanse:
+# «hadde vi lov til å sende dette den dagen» er hele spørsmålet et
+# tilsyn stiller, og et samtykke som kunne oppdateres på stedet ville
+# slettet svaret.
+#
+# GRENSEN MOT M-6: M-6 eier E-POSTEN som kanal. M-44 eier KAMPANJEN og
+# samtykket. v1 kobler dem ikke — koblingen er nettopp utsendingen vi
+# ikke gjør.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m44_kampanje
+navn: Kampanjeutsendingsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m44-v1` bærer invarianten
+# `frekvensgrense_hardkodet` — hvor ofte en mottaker kan kontaktes er
+# tenantens tall, selv om malen foreslår to per uke.
+avhengigheter:
+  - m01_policy                 # frekvenstaket er policy, ikke en konstant
+  - m02_revisjonslogg          # hvert samtykke i evidenskjeden
+kjerne: platform/modules/m44_kampanje
+i18n_prefiks: kampanje
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en mottakerliste med KJENT fasit for hvem som har gyldig
+      samtykke når, og hvem som er over frekvenstaket, kjørt likt
+      lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert samtykke og hver avmelding står i evidenskjeden,
+      med dato og kanal. Det er dette et tilsyn spør etter.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: kampanjesveipen bygget, og at en feil i den ikke lar en
+      mottaker uten gyldig samtykke se sendbar ut.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

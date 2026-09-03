@@ -1462,6 +1462,130 @@ KRAVGRENSER["m42-v1"] = {
 }
 
 
+M41_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, FØRSTE HALVDEL: modulen REFUNDERER INGENTING.
+    # `refusjon.utfor` står i netthandelsmalen som `modus: auto`,
+    # `reversering: irreversibel`, opp til 5000 NOK — gatet på en
+    # verifikator som aldri har eksistert. Penger ut døra, automatisk,
+    # på et grunnlag ingen har målt.
+    "modulen_refunderte",
+    # ANDRE HALVDEL: den AUTORISERER heller ingen betaling.
+    # `betaling_autorisert` er vilkåret som slipper M-25s
+    # `ordre.bekreft_og_fakturer` gjennom.
+    "modulen_autoriserte_betaling",
+    "modulen_signerte_attestasjon",
+    "belop_i_flyttall",
+    # HVER STATUS HAR EN KILDE — hendelsen fra betalingsleverandøren den
+    # kom fra. En status uten kilde er en påstand, og
+    # `betaling_autorisert` ville hvilt på påstanden.
+    "betalingsstatus_uten_kilde",
+    # Historikken overskrives aldri (M-42s dom, 110).
+    "betalingshistorikk_overskrevet",
+    # `samme_betalingsmiddel` krever å kunne SAMMENLIGNE to
+    # betalingsmidler, ikke å kjenne dem. Maske og saltet hash.
+    "betalingsmiddel_lagret_i_klartekst",
+    # Beløpsgrensen er TENANTENS.
+    "belopsgrense_hardkodet",
+    "tenantlekkasje_i_betalingsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m41-v1"] = {
+    "invarianter": M41_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+#: M-19 (112) — adressevalidering. NUMMERET ER EN RETTING:
+#: netthandelsmalen skrev «M-11 adressevalidering», men M-11 ER
+#: SELVTESTEN (091). Malen er rettet i samme commit, og
+#: `test_hvert_modulnummer_en_mal_navngir_finnes_i_katalogen` gjør
+#: gjentakelse rød.
+M19_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SLÅR INGENTING OPP EKSTERNT. Et oppslag mot et
+    # adresseregister er en utgående kanal med persondata i.
+    "modulen_slo_opp_eksternt",
+    "modulen_signerte_attestasjon",
+    # «Validert» uten hvem og hvordan er ikke en måling (M-42s dom).
+    "adresse_uten_kilde_og_metode",
+    "adressehistorikk_overskrevet",
+    # NORMALISERINGEN ERSTATTER ALDRI ORIGINALEN. Blander man dem, kan
+    # ingen etterpå se om en feillevering skyldtes kunden eller oss.
+    "normalisering_uten_original",
+    # Valideringskravet er TENANTENS.
+    "valideringskrav_hardkodet",
+    "tenantlekkasje_i_adresseregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m19-v1"] = {
+    "invarianter": M19_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M39_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, FØRSTE HALVDEL: modulen UTBETALER INGENTING.
+    "modulen_utbetalte",
+    # ANDRE HALVDEL: den produserer heller ingen LØNNSFIL. En feil i den
+    # rammer noen som har regnet med beløpet.
+    "modulen_produserte_lonnsfil",
+    "modulen_signerte_attestasjon",
+    # TIMER SOM HELE MINUTTER (M-25s dom, 107): «7,5 time» som flyttall
+    # er 7.499999999999999 på veien tilbake.
+    "timer_i_flyttall",
+    # En time uten en plan å måle mot ER IKKE MÅLT — og
+    # `timer_mot_arbeidsplan` ville vært en attestasjon om en
+    # sammenligning ingen gjorde.
+    "time_uten_arbeidsplan",
+    # Overtid er et FUNN, ikke et flagg modulen setter og går videre fra.
+    "overtid_uten_flagg",
+    "lonnsgrunnlag_overskrevet",
+    # Timegrensen er TENANTENS.
+    "timegrense_hardkodet",
+    "tenantlekkasje_i_lonnsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m39-v1"] = {
+    "invarianter": M39_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M44_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, OG DEN ER KLYNGENS STERKESTE: modulen SENDER INGENTING.
+    # M-44 er den manglende AKTØREN, ikke en manglende verifikator —
+    # `kampanje.send` står som `modus: auto` med modulen som utfører.
+    # Modulen finnes for å sende; v1 sender null. En e-post kan ikke
+    # kalles tilbake, og en for mye er en klage eller et
+    # tilsynsspørsmål.
+    "modulen_sendte",
+    "modulen_signerte_attestasjon",
+    # «Hadde vi lov den dagen» er hele spørsmålet et tilsyn stiller.
+    "mottaker_uten_samtykke",
+    "kampanje_uten_avmeldingslenke",
+    # Samtykket er append-only — et samtykke som kunne oppdateres på
+    # stedet ville slettet svaret på spørsmålet over.
+    "samtykkehistorikk_overskrevet",
+    # Frekvenstaket er TENANTENS, selv om malen foreslår to per uke.
+    "frekvensgrense_hardkodet",
+    "over_frekvensgrense_uten_funn",
+    "tenantlekkasje_i_kampanjeregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m44-v1"] = {
+    "invarianter": M44_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;
