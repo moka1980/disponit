@@ -1,0 +1,74 @@
+# M-41 (111): betalingssveipen for uavklarte betalinger og avvik.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (111): en siste status som verken er gjennomført eller feilet etter
+# tenantens frist er `uavklart_betaling`; et beløp som avviker fra det
+# forventede utover tenantens grense er `belopsavvik`; en autorisasjon
+# eldre enn `reautorisasjon_dogn` er `autorisasjon_utlopt`; og en tenant
+# uten grenser er `ingen_terskel`.
+#
+# SVEIPEN REFUNDERER INGENTING OG AUTORISERER INGENTING. Den kunne — den
+# vet nøyaktig hvilke betalinger som står uavklart — men netthandels-
+# malen har `refusjon.utfor` stående som `modus: auto` og
+# `reversering: irreversibel` opp til 5000 NOK, gatet på nettopp denne
+# modulen. En refusjon er PENGER UT DØRA og kan ikke kalles tilbake.
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut til en betalingsleverandør.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille betalingssveip
+# er penger som verken er kommet eller etterlyst.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_betalingssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m41_sveip_betalinger`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit betalingssveip (uavklarte betalinger og belopsavvik -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_BETALINGSSVEIP_URL:/etc/disponit/betalingssveip/DISPONIT_BETALINGSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_betalingssveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`betalingssubjekt_aktive`,
+# `betalingshendelse_oppslag`, `betalingsfunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

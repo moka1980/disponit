@@ -108,5 +108,6 @@
   "107_m25_prosjektregister.sql": "c701c0062ce320fa254daae52f65e3969ec4f25cfaaeb0bcdaf65bf082d57709",
   "108_m26_prisbok.sql": "181a928ba3208c1627955e5a3da90f106823c2b0e41ad3899be8773b1191de52",
   "109_m27_lagerregister.sql": "44e63babb57120b448e42ed4defef5dfc37dc4b96a6f83133313ed836a020be2",
-  "110_m42_kontoregister.sql": "1fe5fabbe619443a779cf2bf96a7f27a93aaf27fac516c16659f65aa8bec5527"
+  "110_m42_kontoregister.sql": "1fe5fabbe619443a779cf2bf96a7f27a93aaf27fac516c16659f65aa8bec5527",
+  "111_m41_betalingsregister.sql": "1e89e85303d1af0119b661b324257e8967e2e4e866e6dca0fcac38da3752b61c"
 }

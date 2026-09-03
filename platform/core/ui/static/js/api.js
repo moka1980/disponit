@@ -970,3 +970,38 @@ export const verifiserKonto = (oppgaveId, verifikasjon, idem) =>
 export const settMottakerAktiv = (mottakerId, aktiv, idem) =>
   _muter(`/v1/kontovakt/${encodeURIComponent(mottakerId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-41 (111): betalingsregisteret. SUBJEKTET og STATUSHENDELSEN bærer
+// sin egen SP-2-nøkkel; abonnementsperioden gjør det ikke — versjonen
+// ER nøkkelen der, og en ny periode er en ny beslutning.
+//
+// FOR STATUSHENDELSEN ER SP-2 STRENGT NØDVENDIG: en gjentatt POST må
+// ikke bli to statusskift i en historikk som ER beviset.
+//
+// DET FINNES INGEN REFUSJONSFUNKSJON HER, og fraværet er dommen:
+// netthandelsmalen har `refusjon.utfor` stående som `modus: auto` og
+// `reversering: irreversibel` opp til 5000 NOK, gatet på denne
+// modulen. En refusjon er penger ut døra og kan ikke kalles tilbake.
+//
+// OG `registrerStatus` SENDER BETALINGSMIDDELET ÉN GANG, til en dør som
+// normaliserer det, regner masken og hashen, og kaster det. Svaret er
+// MASKEN; klienten får aldri nummeret tilbake.
+export const settBetalingsterskler = (terskler, idem) =>
+  _muter("/v1/betaling/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerBetalingssubjekt = (subjekt, idem) =>
+  _muter("/v1/betaling/subjekt", "POST", subjekt,
+         idem || nyIdempotensnokkel());
+
+export const registrerBetalingsstatus = (subjektId, hendelse, idem) =>
+  _muter(`/v1/betaling/${encodeURIComponent(subjektId)}/status`,
+         "POST", hendelse, idem || nyIdempotensnokkel());
+
+export const settAbonnementsstatus = (subjektId, periode, idem) =>
+  _muter(`/v1/betaling/${encodeURIComponent(subjektId)}/abonnement`,
+         "POST", periode, idem || nyIdempotensnokkel());
+
+export const settBetalingssubjektAktiv = (subjektId, aktiv, idem) =>
+  _muter(`/v1/betaling/${encodeURIComponent(subjektId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

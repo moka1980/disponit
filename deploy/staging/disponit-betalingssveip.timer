@@ -1,0 +1,22 @@
+# M-41 (111): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `uavklart_dogn` og
+# `reautorisasjon_dogn` måles begge i DØGN.
+#
+# KLOKKESLETTET ER 07:35 fordi 03:15 til 07:20 alt er tatt. Sveipens
+# første steg leser ALLE tenanters subjekter, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit betalingssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
