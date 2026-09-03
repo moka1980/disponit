@@ -1042,3 +1042,38 @@ export const registrerAdressekontroll = (versjonId, kontroll, idem) =>
 export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-39 (113): lønnsgrunnlaget. TAKEREN, PLANEN og TIMEN bærer hver sin
+// SP-2-nøkkel.
+//
+// FOR TIMEN ER SP-2 STRENGT NØDVENDIG: en gjentatt POST må ikke bli to
+// arbeidsdager i et grunnlag noen skal få betalt etter.
+//
+// DET FINNES INGEN UTBETALINGSFUNKSJON OG INGEN EKSPORTFUNKSJON HER, og
+// fraværet er dommen: håndverk/bygg-malen navngir modulen som `v_lonn`
+// og bruker alle tre vilkårene den er betrodd for til å la
+// `timeliste.samle_og_valider` gå automatisk. En lønnsfil er ikke en
+// betaling — det er en fil, den ser harmløs ut, den kan «bare
+// genereres», og den rammer alle på én gang.
+//
+// OG `registrerTimer` SENDER MINUTTER, aldri timer med desimaler.
+// Konverteringen skjer i `tilMinutter`, én gang, og API-et ser aldri et
+// flyttall.
+export const settLonnsterskler = (terskler, idem) =>
+  _muter("/v1/lonn/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerLonnstaker = (taker, idem) =>
+  _muter("/v1/lonn/taker", "POST", taker, idem || nyIdempotensnokkel());
+
+export const settArbeidsplan = (takerId, plan, idem) =>
+  _muter(`/v1/lonn/${encodeURIComponent(takerId)}/plan`,
+         "POST", plan, idem || nyIdempotensnokkel());
+
+export const registrerTimer = (takerId, timer, idem) =>
+  _muter(`/v1/lonn/${encodeURIComponent(takerId)}/timer`,
+         "POST", timer, idem || nyIdempotensnokkel());
+
+export const settLonnstakerAktiv = (takerId, aktiv, idem) =>
+  _muter(`/v1/lonn/${encodeURIComponent(takerId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

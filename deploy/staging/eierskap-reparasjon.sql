@@ -524,6 +524,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm19_kravene(text)',                                    'disponit_adresse_eier'),
     ('FUNCTION', 'm19_funnkandidater(text,date)',                        'disponit_adresse_eier'),
     ('FUNCTION', 'm19_sveip_adresser(integer)',                          'disponit_adresse_eier'),
+    -- 113 (M-39): lønnsgrunnlagets doerer og lonnssveipen. INGEN AV
+    -- DEM UTBETALER, og ingen av dem produserer en lonnsfil.
+    ('FUNCTION', 'm39_evidens(text,uuid,text,text,jsonb)',              'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_sett_terskler(text,integer,integer,integer,integer,integer,text)', 'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_registrer_taker(text,uuid,text,text,text)',       'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_sett_arbeidsplan(text,uuid,uuid,integer,text,date,text,text)', 'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_registrer_timer(text,uuid,uuid,date,integer,text,text,text,text,text)', 'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_sett_takeraktiv(text,uuid,boolean,text)',         'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_plan_paa_dato(text,uuid,date)',                   'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_planene(text,uuid,integer)',                      'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_dagene(text,uuid,integer)',                       'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_timehistorikken(text,uuid,integer)',              'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_lonnsstatus(text)',                               'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_takerne(text,integer)',                           'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_tersklene(text)',                                 'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_funnkandidater(text,date)',                       'disponit_lonn_eier'),
+    ('FUNCTION', 'm39_sveip_lonnsgrunnlag(integer)',                    'disponit_lonn_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
