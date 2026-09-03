@@ -1,0 +1,73 @@
+# M-27 (109): lagersveipen for beholdning og bestillingspunkt.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (109): en aktiv vare på eller under sitt bestillingspunkt er
+# `under_bestillingspunkt`; en vare uten punkt på tenantens grense er
+# `uten_bestillingspunkt`; en vare uten bevegelse på `stille_dogn` er
+# `uten_bevegelse`; en vare ingen har talt på `telleintervall_dogn` er
+# `ikke_talt`; og en tenant uten grenser er `ingen_terskel`.
+#
+# SVEIPEN BESTILLER INGENTING OG JUSTERER INGEN BEHOLDNING. Den kunne —
+# den vet nøyaktig hvilke varer som er under punktet sitt, og hvor mye
+# som mangler — men en bestilling BINDER VIRKSOMHETEN ØKONOMISK, og en
+# jobb som gjorde det om natten ville tatt den beslutningen på ingens
+# vegne. `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås
+# over TCP — ikke fordi noe skal ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille lagersveip er
+# en vare som går tom uten at noen merker det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_lagersveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m27_sveip_lager`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit lagersveip (varer under bestillingspunkt og dodt lager -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_LAGERSVEIP_URL:/etc/disponit/lagersveip/DISPONIT_LAGERSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_lagersveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`vare_aktive`, `bestillingspunkt_oppslag`,
+# `lagerbevegelse_oppslag`, `lagerfunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

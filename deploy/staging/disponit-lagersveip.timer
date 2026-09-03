@@ -1,0 +1,26 @@
+# M-27 (109): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `stille_dogn`, `uten_punkt_dogn` og
+# `telleintervall_dogn` måles alle i DØGN, og en vare går ikke tom midt
+# på dagen uten at noen som står der ser det.
+#
+# SVEIPEN BESTILLER INGENTING. Et passert bestillingspunkt er et funn,
+# og et menneske avgjør hva som skal bestilles og av hvem.
+#
+# KLOKKESLETTET ER 07:05 fordi 03:15 til 06:50 alt er tatt. Sveipens
+# første steg leser ALLE tenanters varer, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit lagersveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

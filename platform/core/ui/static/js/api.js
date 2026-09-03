@@ -895,3 +895,42 @@ export const settPris = (produktId, pris, idem) =>
 export const settProduktAktiv = (produktId, aktiv, idem) =>
   _muter(`/v1/prisbok/${encodeURIComponent(produktId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-27 (109): lagerregisteret. ALLE skriveveiene sender en
+// Idempotency-Key, slik resten av modulene gjør. Forskjellen ligger i
+// hva API-et gjør med den: for VAREN og BEVEGELSENE utledes id-en
+// deterministisk av nøkkelen (SP-2), mens BESTILLINGSPUNKTET er
+// versjonerende og har versjonen som identitet i basen.
+//
+// FOR BEVEGELSENE ER DEN UTLEDEDE ID-EN STRENGT NØDVENDIG: en gjentatt
+// POST må ikke bli to linjer i hovedboken, for da er beholdningen feil.
+//
+// DET FINNES INGEN BESTILLINGSFUNKSJON HER, og fraværet er dommen: to
+// av tre bransjemaler navngir modulen som `v_lager` og bruker
+// `lager_reservert` til å la `lager.bestill_pafyll` gå automatisk. v1
+// skriver funnet; en bestilling binder virksomheten økonomisk.
+//
+// OG DET FINNES INGEN «SETT BEHOLDNING». En telling sender det TALTE
+// antallet, og basen skriver differansen som en linje.
+export const settLagerterskler = (terskler, idem) =>
+  _muter("/v1/lager/terskler", "POST", terskler,
+         idem || nyIdempotensnokkel());
+
+export const registrerVare = (vare, idem) =>
+  _muter("/v1/lager/vare", "POST", vare, idem || nyIdempotensnokkel());
+
+export const settBestillingspunkt = (vareId, punkt, idem) =>
+  _muter(`/v1/lager/${encodeURIComponent(vareId)}/punkt`,
+         "POST", punkt, idem || nyIdempotensnokkel());
+
+export const registrerBevegelse = (vareId, bevegelse, idem) =>
+  _muter(`/v1/lager/${encodeURIComponent(vareId)}/bevegelse`,
+         "POST", bevegelse, idem || nyIdempotensnokkel());
+
+export const registrerTelling = (vareId, telling, idem) =>
+  _muter(`/v1/lager/${encodeURIComponent(vareId)}/telling`,
+         "POST", telling, idem || nyIdempotensnokkel());
+
+export const settVareAktiv = (vareId, aktiv, idem) =>
+  _muter(`/v1/lager/${encodeURIComponent(vareId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

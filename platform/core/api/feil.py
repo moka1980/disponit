@@ -182,6 +182,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # galt» — og «hva sto her da» er hele spoersmaalet boka finnes for aa
     # svare paa.
     Feilvei("prisbok_ulovlig_tilstand", 409, ("avvis",), None),
+    # 109 (M-27): lagerregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — en NEGATIV BEHOLDNING, et
+    # bestillingspunkt skrevet BAKOVER, et forsoek paa aa endre en
+    # frosset hovedbokslinje, to overlappende punktversjoner, og en
+    # bevegelse paa en deaktivert vare. 409: kroppen ER velformet, det
+    # er BASEN som sier nei. «Beholdningen ville blitt negativ» er en
+    # annen setning enn «noe gikk galt» — en negativ beholdning er ikke
+    # en tilstand i verden, den er en maaling som er feil.
+    Feilvei("lager_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

@@ -402,6 +402,13 @@ const BASISRUTER = [
   // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem genererer et tilbud.
   { nokkel: "prisbok", scope: "okonomi:read", modulflate: 26 },
+  // M-27 (109): lagerregisteret. MODULFLATE bak `okonomi:read` — en
+  // beholdning er bundet kapital, og det er samme leseklasse som de
+  // fem foregående registrene.
+  //
+  // De seks skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem bestiller noe.
+  { nokkel: "lager", scope: "okonomi:read", modulflate: 27 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

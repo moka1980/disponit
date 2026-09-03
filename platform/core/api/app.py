@@ -1488,6 +1488,48 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import prisbok as prisbokmodul
         return prisbokmodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 109 (M-27): lagerregisteret. Tre leseveier og seks skriveveier.
+    #
+    # OG DET FINNES INGEN BESTILLINGSVEI. To av tre bransjemaler navngir
+    # modulen som `v_lager` og bruker `lager_reservert` til å la
+    # `lager.bestill_pafyll` gå automatisk. v1 skriver FUNNET; en
+    # bestilling binder virksomheten økonomisk.
+    def lager_bilde(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.lagerbilde(tjeneste, request)
+
+    def lager_bevegelser(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.bevegelser_endepunkt(tjeneste, request)
+
+    def lager_paa_dato(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.paa_dato_endepunkt(tjeneste, request)
+
+    def lager_terskler(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.terskler_endepunkt(tjeneste, request)
+
+    def lager_vare(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.registrer_vare_endepunkt(tjeneste, request)
+
+    def lager_punkt(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.sett_punkt_endepunkt(tjeneste, request)
+
+    def lager_bevegelse(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.registrer_bevegelse_endepunkt(tjeneste, request)
+
+    def lager_telling(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.registrer_telling_endepunkt(tjeneste, request)
+
+    def lager_aktiv(request: Request) -> Response:
+        from . import lager as lagermodul
+        return lagermodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2102,6 +2144,24 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/prisbok/{produkt_id:uuid}/pris", prisbok_pris,
               methods=["POST"]),
         Route("/v1/prisbok/{produkt_id:uuid}/aktiv", prisbok_aktiv,
+              methods=["POST"]),
+        # 109 (M-27): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `vare`) FØR mønsterrutene. STIENE STÅR PÅ ÉN LINJE (102s
+        # lærdom).
+        Route("/v1/lager", lager_bilde, methods=["GET"]),
+        Route("/v1/lager/terskler", lager_terskler, methods=["POST"]),
+        Route("/v1/lager/vare", lager_vare, methods=["POST"]),
+        Route("/v1/lager/{vare_id:uuid}/bevegelser", lager_bevegelser,
+              methods=["GET"]),
+        Route("/v1/lager/{vare_id:uuid}/paa-dato", lager_paa_dato,
+              methods=["GET"]),
+        Route("/v1/lager/{vare_id:uuid}/punkt", lager_punkt,
+              methods=["POST"]),
+        Route("/v1/lager/{vare_id:uuid}/bevegelse", lager_bevegelse,
+              methods=["POST"]),
+        Route("/v1/lager/{vare_id:uuid}/telling", lager_telling,
+              methods=["POST"]),
+        Route("/v1/lager/{vare_id:uuid}/aktiv", lager_aktiv,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -2971,6 +3031,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/prisbok/{produkt_id:uuid}/aktiv"):
         "bestilling:opprett",
+    # 109 (M-27): lagerregisteret. LESINGEN bærer `okonomi:read` — en
+    # beholdning er bundet kapital. SKRIVINGEN bærer
+    # `bestilling:opprett`. Ingen av dem bestiller noe.
+    ("GET",  "/v1/lager"):                        "okonomi:read",
+    ("GET",  "/v1/lager/{vare_id:uuid}/bevegelser"): "okonomi:read",
+    ("GET",  "/v1/lager/{vare_id:uuid}/paa-dato"): "okonomi:read",
+    ("POST", "/v1/lager/terskler"):               "bestilling:opprett",
+    ("POST", "/v1/lager/vare"):                   "bestilling:opprett",
+    ("POST", "/v1/lager/{vare_id:uuid}/punkt"):   "bestilling:opprett",
+    ("POST", "/v1/lager/{vare_id:uuid}/bevegelse"):
+        "bestilling:opprett",
+    ("POST", "/v1/lager/{vare_id:uuid}/telling"):
+        "bestilling:opprett",
+    ("POST", "/v1/lager/{vare_id:uuid}/aktiv"):   "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av
