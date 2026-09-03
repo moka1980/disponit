@@ -45,6 +45,7 @@ import { visLager } from "./flater/lager.js";
 import { visKontovakt } from "./flater/kontovakt.js";
 import { visAdresse } from "./flater/adresse.js";
 import { visBetaling } from "./flater/betaling.js";
+import { visKampanje } from "./flater/kampanje.js";
 import { visLonn } from "./flater/lonn.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
@@ -127,6 +128,7 @@ const FLATER = {
   kontovakt: visKontovakt,
   adresse: visAdresse,
   betaling: visBetaling,
+  kampanje: visKampanje,
   lonn: visLonn,
 };
 

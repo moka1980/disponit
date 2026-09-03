@@ -529,6 +529,23 @@ GRANT EXECUTE ON FUNCTION m39_tersklene(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m39_funnkandidater(TEXT, DATE) TO {rolle};
 REVOKE ALL ON FUNCTION m39_sveip_lonnsgrunnlag(INT) FROM {rolle};
 RESET ROLE;
+
+-- 114 (M-44): kampanjeregisterets LESEDØRER. De seks tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m44_samtykke_paa_dato` er med fordi den ER spørsmålet et tilsyn
+-- stiller: «hadde vi lov til å sende dette den dagen». Ingen av dørene
+-- SENDER noe.
+SET LOCAL ROLE disponit_kampanje_eier;
+GRANT EXECUTE ON FUNCTION m44_kampanjestatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_mottakerne(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_kampanjene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_samtykkehistorikken(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_samtykke_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_grensene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_funnkandidater(TEXT, DATE) TO {rolle};
+REVOKE ALL ON FUNCTION m44_sveip_kampanjer(INT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -1095,6 +1112,19 @@ GRANT EXECUTE ON FUNCTION m39_registrer_taker(TEXT, UUID, TEXT, TEXT, TEXT) TO {
 GRANT EXECUTE ON FUNCTION m39_sett_arbeidsplan(TEXT, UUID, UUID, INT, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m39_registrer_timer(TEXT, UUID, UUID, DATE, INT, TEXT, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m39_sett_takeraktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 114 (M-44): kampanjeregisterets seks skrivedører. At et samtykke ikke
+-- kan inntreffe i framtida, at samtykkehistorikken er append-only, og
+-- at en kampanje uten https-avmeldingslenke ikke kan registreres,
+-- håndheves i dørene og i vaktene — aldri her. INGEN AV DEM SENDER:
+-- `m44_legg_i_plan` skriver ned at mottakeren VAR MENT å få kampanjen.
+SET LOCAL ROLE disponit_kampanje_eier;
+GRANT EXECUTE ON FUNCTION m44_sett_grense(TEXT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_registrer_mottaker(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_registrer_samtykke(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_registrer_kampanje(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_avlys_kampanje(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_legg_i_plan(TEXT, UUID, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m44_sett_mottakeraktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1571,6 +1601,17 @@ GRANT EXECUTE ON FUNCTION m39_sveip_lonnsgrunnlag(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 114 (M-44): kampanjesveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den SENDER INGENTING: en e-post kan ikke kalles
+# tilbake, og botemiddelet malen foreslår er å sende en til.
+KAMPANJESVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_kampanje_eier;
+GRANT EXECUTE ON FUNCTION m44_sveip_kampanjer(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1828,7 +1869,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 113 (M-39): lønnssveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_lonnssveip",
-                           LONNSSVEIP_RETTIGHETER)):
+                           LONNSSVEIP_RETTIGHETER),
+                          # 114 (M-44): kampanjesveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_kampanjesveip",
+                           KAMPANJESVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

@@ -541,6 +541,25 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm39_tersklene(text)',                                 'disponit_lonn_eier'),
     ('FUNCTION', 'm39_funnkandidater(text,date)',                       'disponit_lonn_eier'),
     ('FUNCTION', 'm39_sveip_lonnsgrunnlag(integer)',                    'disponit_lonn_eier'),
+    -- 114 (M-44): kampanjeregisterets doerer og kampanjesveipen.
+    -- INGEN AV DEM SENDER NOE.
+    ('FUNCTION', 'm44_evidens(text,uuid,text,text,jsonb)',              'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_normaliser(text)',                                'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_sett_grense(text,integer,integer,integer,text)',  'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_registrer_mottaker(text,uuid,text,text,text,text)', 'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_registrer_samtykke(text,uuid,uuid,text,text,text,text,date,text,text)', 'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_registrer_kampanje(text,uuid,text,text,text,text,date,text)', 'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_avlys_kampanje(text,uuid,text)',                  'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_legg_i_plan(text,uuid,uuid,text)',                'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_sett_mottakeraktiv(text,uuid,boolean,text)',      'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_samtykke_paa_dato(text,uuid,date)',               'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_samtykkehistorikken(text,uuid,integer)',          'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_kampanjene(text,integer)',                        'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_kampanjestatus(text)',                            'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_mottakerne(text,integer)',                        'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_grensene(text)',                                  'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_funnkandidater(text,date)',                       'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_sveip_kampanjer(integer)',                        'disponit_kampanje_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

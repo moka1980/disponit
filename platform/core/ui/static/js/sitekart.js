@@ -439,6 +439,13 @@ const BASISRUTER = [
   // på `bestilling:opprett`. Ingen av dem utbetaler, og ingen av dem
   // produserer en lønnsfil.
   { nokkel: "lonn", scope: "okonomi:read", modulflate: 39 },
+  // M-44 (114): kampanjeregisteret. MODULFLATE bak `okonomi:read` —
+  // samtykke og kontaktpunkt er persondata, og den som handler på et
+  // frekvensbrudd er den som eier markedsføringen.
+  //
+  // De seks skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem sender noe.
+  { nokkel: "kampanje", scope: "okonomi:read", modulflate: 44 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

@@ -1,0 +1,22 @@
+# M-44 (114): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `periode_dogn` og
+# `samtykke_gyldig_dogn` måles begge i DØGN.
+#
+# KLOKKESLETTET ER 08:20 fordi 03:15 til 08:05 alt er tatt. Sveipens
+# første steg leser ALLE tenanters mottakere, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit kampanjesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 08:20:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

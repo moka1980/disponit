@@ -1,0 +1,82 @@
+# M-44 (114): kampanjesveipen for frekvenstak og samtykke.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (114): flere planlagte kampanjer i tenantens periode enn taket er
+# `over_frekvensgrense`; en planlagt mottaker uten et eneste samtykke er
+# `uten_samtykke`; en som har meldt seg av er `samtykke_trukket`; et
+# samtykke eldre enn gyldighetsvinduet er `samtykke_utlopt`; og en
+# tenant uten tak er `ingen_grense`.
+#
+# SVEIPEN SENDER INGENTING, og det er en sterkere tilbakeholdelse enn i
+# de tre søskenmodulene. De er manglende VERIFIKATORER; M-44 er den
+# manglende AKTØREN — malen fører modulen som `modul:` på en
+# `auto`-handling. Modulen finnes FOR å sende, og v1 sender null.
+#
+# Og botemiddelet malen foreslår for en feilsendt e-post er å sende en
+# TIL (`kampanje.send_korreksjon`). En utsending er irreversibel på den
+# måten som betyr noe.
+#
+# `RestrictAddressFamilies` SLIPPER AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut til en e-postgateway. Enheten kan ikke
+# hindre alt; det egentlige gjerdet står i koden
+# (`kampanjesveip.py` importerer verken `smtplib` eller noen
+# HTTP-klient) og i porten som måler det.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille kampanjesveip
+# er markedsføring ingen har sett på.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_kampanjesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m44_sveip_kampanjer`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit kampanjesveip (frekvenstak og samtykke -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_KAMPANJESVEIP_URL:/etc/disponit/kampanjesveip/DISPONIT_KAMPANJESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_kampanjesveip
+# Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
+# indeksdekket (`kampanjemottaker_aktive`, `samtykkehendelse_oppslag`,
+# `kampanjeplan_mottaker`, `kampanje_planlagt`, `kampanjefunn_apne`).
+# Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
