@@ -178,6 +178,20 @@ LONNEIER=disponit_lonn_eier                 # M-39 eier lonnsgrunnlaget
 LONNSSVEIP=disponit_lonnssveip              # M-39s avvik-mot-plan-sveip
 KAMPANJEEIER=disponit_kampanje_eier         # M-44 eier kampanjeregisteret
 KAMPANJESVEIP=disponit_kampanjesveip        # M-44s frekvenstak-sveip
+# KLYNGE 6 (116-120) — «de fem som finner noe, og ikke handler på det».
+# Fem eiere og fem sveipere, av samme grunn som før: en delt sveiperolle
+# måtte hatt EXECUTE på alle kryss-tenant-definerne, og en feil i én
+# sveip ville båret de andres fullmakt.
+MOTPARTEIER=disponit_motpart_eier           # M-48 eier motpartsregisteret
+MOTPARTSSVEIP=disponit_motpartssveip        # M-48s forverring-sveip
+SANKSJONEIER=disponit_sanksjon_eier         # M-49 eier sanksjonskontrollen
+SANKSJONSSVEIP=disponit_sanksjonssveip      # M-49s uavklart-treff-sveip
+ANBUDEIER=disponit_anbud_eier               # M-46 eier anbudsregisteret
+ANBUDSSVEIP=disponit_anbudssveip            # M-46s frist-sveip
+TILSKUDDEIER=disponit_tilskudd_eier         # M-51 eier tilskuddsregisteret
+TILSKUDDSSVEIP=disponit_tilskuddssveip      # M-51s ordningsfrist-sveip
+MERKEVAREIER=disponit_merkevare_eier        # M-55 eier merkevarefunnene
+MERKEVARESVEIP=disponit_merkevaresveip      # M-55s ubehandlet-funn-sveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -186,7 +200,9 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$FORDRINGSVEIP" "$LEVERANDORSVEIP" "$FAKTURASVEIP" \
          "$PROSJEKTSVEIP" "$PRISBOKSVEIP" "$LAGERSVEIP" \
          "$KONTOVAKTSVEIP" "$BETALINGSSVEIP" "$ADRESSESVEIP" \
-         "$LONNSSVEIP" "$KAMPANJESVEIP"; do
+         "$LONNSSVEIP" "$KAMPANJESVEIP" "$MOTPARTSSVEIP" \
+         "$SANKSJONSSVEIP" "$ANBUDSSVEIP" "$TILSKUDDSSVEIP" \
+         "$MERKEVARESVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -198,7 +214,9 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$KUNDESERVICEEIER" "$ONBOARDINGEIER" "$FORDRINGEIER" \
          "$LEVERANDOREIER" "$FAKTURAEIER" "$PROSJEKTEIER" \
          "$PRISBOKEIER" "$BEHOLDNINGEIER" "$KONTOVAKTEIER" \
-         "$BETALINGEIER" "$ADRESSEEIER" "$LONNEIER" "$KAMPANJEEIER"; do
+         "$BETALINGEIER" "$ADRESSEEIER" "$LONNEIER" "$KAMPANJEEIER" \
+         "$MOTPARTEIER" "$SANKSJONEIER" "$ANBUDEIER" "$TILSKUDDEIER" \
+         "$MERKEVAREIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -291,6 +309,15 @@ sudo -u postgres psql -qc "GRANT $BETALINGEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $ADRESSEEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $LONNEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $KAMPANJEEIER TO $MIGRATOR WITH INHERIT FALSE"
+# KLYNGE 6: migrator må være MEDLEM av hver eierrolle for å kunne kjøre
+# 116-120. `SET ROLE` krever MEDLEMSKAP, ikke at rollen finnes — det var
+# nettopp den forskjellen som tok staging ned 3/9, og lista her og i
+# `ci.yml` må derfor være den samme (#361 måler begge veier).
+sudo -u postgres psql -qc "GRANT $MOTPARTEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $SANKSJONEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ANBUDEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $TILSKUDDEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MERKEVAREIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

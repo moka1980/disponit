@@ -141,6 +141,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_adressesveip LOGIN PASSWORD 'adre'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lonnssveip LOGIN PASSWORD 'lonn'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kampanjesveip LOGIN PASSWORD 'kamp'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_motpartssveip LOGIN PASSWORD 'motp'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_sanksjonssveip LOGIN PASSWORD 'sank'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_anbudssveip LOGIN PASSWORD 'anbu'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilskuddssveip LOGIN PASSWORD 'tils'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_merkevaresveip LOGIN PASSWORD 'merk'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_faktura_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prosjekt_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prisbok_eier NOLOGIN"
@@ -150,6 +155,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_adresse_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_lonn_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_kampanje_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_motpart_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_sanksjon_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_anbud_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_tilskudd_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_merkevare_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
@@ -216,6 +226,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_adresse_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_lonn_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_kampanje_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_motpart_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_sanksjon_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_anbud_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_tilskudd_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_merkevare_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"

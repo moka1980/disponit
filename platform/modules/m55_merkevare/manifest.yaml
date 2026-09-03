@@ -1,0 +1,83 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m55-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 120
+# tildelt i docs/KLYNGE6-FUNDAMENT.md.
+#
+# v1 SENDER INGEN JURIDISK HENVENDELSE.
+#
+# DOMMEN: et krav sendt på et automatisk funn er en ANKLAGE MOT EN
+# NAVNGITT PART — og en feilaktig anklage er ikke reversibel ved å
+# trekke den. Spesifikasjonens vakt sier det rett ut: modulen
+# dokumenterer og rapporterer; enhver reaksjon besluttes av menneske.
+#
+# v1 GJØR ÉN TING: dokumenterer funnet slik at det holder som BEVIS.
+#
+# HVERT FUNN HAR URL, TIDSSTEMPEL OG BEVARINGSKOPI. Uten dem er funnet
+# verdiløst — og et funn som ikke kan bevises er VERRE enn ingen funn,
+# fordi noen handler på det. Bevaringskopien er hele poenget: en side
+# som er endret eller borte når saken tas opp, er ingen sak.
+#
+# FORVEKSLINGSVURDERINGEN ER DETERMINISTISK. En modul som «vurderte»
+# ulikt fra gang til gang kunne ikke etterprøves, og terskelen er
+# tenantens — hvor likt noe må være før det er forveksling er en
+# forretnings- og juridisk vurdering, ikke en konstant.
+#
+# v1 GJØR INGEN UTGÅENDE FORESPØRSEL. Merk at M-19s begrunnelse ikke
+# gjelder: modulen ville sendt sine EGNE merkevarenavn til et søke-API,
+# ikke kundedata. Grunnen er doktrinens egen om den unødvendige
+# forespørselen — og at et overvåkingsoppslag mot tredjeparts
+# annonseplattformer hører hjemme i oppdragskontraktens
+# `ekstern_lesing` med målautorisasjon, ikke i en modulfil.
+#
+# GRENSEN MOT M-37: et funn hører i unntakskøen når et menneske skal se
+# på det. M-55 eier DOKUMENTASJONEN av funnet; M-37 eier køen.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m55_merkevare
+navn: Merkevare- og IP-overvåker
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m55-v1` bærer invarianten
+# `forvekslingsterskel_hardkodet` — hvor likt noe må være før det er
+# forveksling er tenantens vurdering, ikke en konstant.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m55_merkevare
+i18n_prefiks: merkevare
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: funn med KJENT fasit for hva som er forveksling og hva som
+      bare ligner, kjørt likt lokalt og på staging. Vurderingen må gi
+      samme svar begge steder — den er deterministisk eller ingenting.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert funn har URL, tidsstempel og bevaringskopi i
+      evidenskjeden. Et funn uten bevaringskopi er ingen sak.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: merkevaresveipen bygget, og at en feil i den ikke lar et
+      funn uten bevaringskopi se dokumentert ut. Et funn ingen kan
+      bevise er verre enn ingen funn, fordi noen handler på det.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

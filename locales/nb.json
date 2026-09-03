@@ -3471,5 +3471,15 @@
   "ui.kampanje.undertittel": "Samtykke og frekvenstak — ikke en utsendingskø",
   "ui.kampanje.uten_kontakt": "Ingen kontaktpunkt ført",
   "ui.kampanje.uten_samtykke": "Ingen samtykke ført",
-  "varsel.sveip_uteblitt": "Sveipeflåten: {antall_tause} har ikke kjørt innenfor sitt eget vindu ({tause}), {antall_alarm} har feilet to ganger på rad ({i_alarm}), og {antall_ulesbare} har en tilstandsfil som ikke lar seg lese ({ulesbare}). Sist observert: {sist_observert} (observatøren selv er taus: {uobservert}). En sveip som ikke kjører ser nøyaktig ut som en sveip uten funn — se etter timerne på verten."
+  "varsel.sveip_uteblitt": "Sveipeflåten: {antall_tause} har ikke kjørt innenfor sitt eget vindu ({tause}), {antall_alarm} har feilet to ganger på rad ({i_alarm}), og {antall_ulesbare} har en tilstandsfil som ikke lar seg lese ({ulesbare}). Sist observert: {sist_observert} (observatøren selv er taus: {uobservert}). En sveip som ikke kjører ser nøyaktig ut som en sveip uten funn — se etter timerne på verten.",
+  "site.modul.m48.navn": "Foretaks- og kredittvakt",
+  "site.modul.m48.tekst": "Motparten, kredittpolicyen og forslaget — med formål og hjemmel på hvert oppslag. v1 setter ingen kredittgrense og avslår ingen: en grense modulen satte selv ville blitt fordringsagentens fasit uten at et menneske hadde sett på den.",
+  "site.modul.m49.navn": "Sanksjons- og hvitvaskingsvakt",
+  "site.modul.m49.tekst": "Kontrollen mot sanksjonslistene, med listeversjon og matchgrunnlag på hvert treff. v1 blokkerer ikke: navnelikhet kan ikke avfeies maskinelt, og automatisk blokkering ville stanset lovlig handel før noen hadde målt hvor ofte den tar feil.",
+  "site.modul.m46.navn": "Anbuds- og konkurransevakt",
+  "site.modul.m46.tekst": "Kunngjøringen, fristen og hvilke kvalifikasjonskrav som er dekket. v1 sender ingen tilbud: et innsendt tilbud er bindende, og et udekket krav blir et funn — aldri en utfylt gjetning.",
+  "site.modul.m51.navn": "Tilskudds- og støtteagent",
+  "site.modul.m51.tekst": "Ordningen, kravene og hva tallene våre gir. v1 sender ingen søknad: et galt tall i en innsendt søknad er en uriktig opplysning til det offentlige, og hvert beløp spores derfor til sin kildepost.",
+  "site.modul.m55.navn": "Merkevare- og IP-overvåker",
+  "site.modul.m55.tekst": "Funnet, dokumentert med URL, tidsstempel og bevaringskopi. v1 sender ingen juridisk henvendelse: et krav på et automatisk funn er en anklage mot en navngitt part, og et funn ingen kan bevise er verre enn ingen funn."
 }

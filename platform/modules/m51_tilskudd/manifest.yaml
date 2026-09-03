@@ -1,0 +1,80 @@
+# Modulmanifest — registeret leser KUN denne filen, aldri koden.
+# Format: platform/core/manifest-skjema.json (validert i CI, PR-005b).
+#
+# REGISTRERT VED FØDSELEN, FØR koden (§0-regelen, m57): grensen
+# `m51-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 119
+# tildelt i docs/KLYNGE6-FUNDAMENT.md.
+#
+# v1 SENDER INGEN SØKNAD.
+#
+# DOMMEN: en innsendt søknad med et galt tall er en URIKTIG OPPLYSNING
+# TIL DET OFFENTLIGE — og botemiddelet er ikke å sende en ny, det er å
+# forklare den første. Det er en helt annen slags irreversibilitet enn
+# en e-post som ikke kan kalles tilbake (M-44).
+#
+# v1 GJØR TO TING: vedlikeholder ordningskatalogen med krav og frister,
+# og MÅLER bedriftens prosjekter, timer og kostnader mot dem.
+#
+# ESTIMATET ER ET ESTIMAT, ALDRI EN LOVNAD, og det presenteres med sine
+# forutsetninger. HVERT TALL SPORES TIL EN KILDEPOST — et beløp uten en
+# post bak seg er nøyaktig den uriktige opplysningen dommen handler om.
+#
+# BELØP I ØRE, HELTALL (101s form). Et støttebeløp regnet i flyttall
+# ville avviket noen øre fra regnskapet det bygger på, hver gang.
+#
+# v1 GJØR INGEN UTGÅENDE FORESPØRSEL. Ordningskatalogene er offentlige,
+# så M-19s personvernbegrunnelse gjelder ikke — grunnen er doktrinens
+# egen om den unødvendige forespørselen.
+#
+# GRENSEN MOT M-16: M-16 eier NØKKELTALLENE. M-51 eier ORDNINGEN og
+# vurderingen av om vi kvalifiserer. Tallene M-51 regner på er M-16s og
+# M-25s; modulen eier ikke ett eneste av dem, og det er derfor hvert
+# beløp må spores til sin kildepost.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m51_tilskudd
+navn: Tilskudds- og støtteagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m51-v1` bærer invarianten
+# `ordningskrav_hardkodet` — hvilke ordninger som følges og med hvilke
+# krav er tenantens føring, ikke en konstant.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m16_nokkeltall
+kjerne: platform/modules/m51_tilskudd
+i18n_prefiks: tilskudd
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en ordning med KJENT fasit for hvilket beløp reglene gir
+      på et gitt prosjekt, kjørt likt lokalt og på staging. Regnestykket
+      i heltall må gi samme øre begge steder.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert tall i et utkast peker på kildeposten sin. Det er
+      dette som skiller et estimat fra en uriktig opplysning.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: tilskuddssveipen bygget, og at en feil i den ikke lar et
+      beløp uten kildepost se sporet ut. Et usporet tall er den
+      uriktige opplysningen dommen handler om.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
