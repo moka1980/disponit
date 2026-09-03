@@ -278,7 +278,24 @@ def test_flaten_slaar_ingenting_opp():
         assert ord_ not in uten, f"flaten bærer «{ord_}»"
     api = (ROT / "platform" / "core" / "ui" / "static" / "js"
            / "api.js").read_text(encoding="utf-8")
-    assert not re.search(r"export const (slaaOpp|validerAdresse)", api)
+    # PRESISERT DA M-48 (116) KOM, OG STRAMMET SAMTIDIG.
+    #
+    # Sjekken var `export const (slaaOpp|validerAdresse)` — en
+    # PREFIKSMATCH i en DELT fil. Den forbød dermed enhver modul å ha
+    # en oppslagshjelper, en rekkevidde M-19s invariant aldri krevde:
+    # dommen her er at ADRESSEmodulen ikke slår opp, ikke at
+    # plattformen aldri skal spørre noen om noe. M-48 har siden fått
+    # ett oppslag mot foretaksregisteret (eierbeslutning 3/9), og
+    # `slaaOppMotpart` traff prefikset.
+    #
+    # Navnesjekken er nå bundet til ADRESSE, og det er lagt til en
+    # SEMANTISK sjekk som er sterkere enn navnet: ingen hjelper her
+    # peker på en oppslagssti under `/v1/adresse`. Et omdøpt
+    # `hentAdressefasit` ville sluppet forbi den gamle sjekken, men
+    # ikke forbi denne.
+    assert not re.search(
+        r"export const (slaaOpp\w*Adresse|validerAdresse)", api)
+    assert not re.search(r"/v1/adresse[^\"`\n]*oppslag", api)
     # ALLE FEM SKRIVEVEIENE sender en Idempotency-Key.
     for n in ("settAdressekrav", "registrerAdressesubjekt",
               "registrerAdresse", "registrerAdressekontroll",

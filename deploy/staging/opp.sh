@@ -82,6 +82,7 @@ disponit-betalingssveip.service disponit-betalingssveip.timer
 disponit-adressesveip.service disponit-adressesveip.timer
 disponit-lonnssveip.service disponit-lonnssveip.timer
 disponit-kampanjesveip.service disponit-kampanjesveip.timer
+disponit-motpartssveip.service disponit-motpartssveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -377,6 +378,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_ADRESSESVEIP_URL:-}" ] );
   echo "AVBRUTT: DISPONIT_ADRESSESVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_adressesveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 116 (M-48): motpartssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille motpartssveip er motparter ingen har vurdert — og
+# forlatte reservasjoner ingen rydder, som er den ene raden sveipen
+# endrer utenfor funntabellen.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_MOTPARTSSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_MOTPARTSSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_motpartssveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1164,6 +1176,17 @@ if [ -z "${DISPONIT_ADRESSESVEIP_URL:-}" ]; then
 fi
 skriv_cred adressesveip DISPONIT_ADRESSESVEIP_URL "$DISPONIT_ADRESSESVEIP_URL"
 
+# 116 (M-48): motpartssveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/motpartssveip
+if [ -z "${DISPONIT_MOTPARTSSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_MOTPARTSSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen motpartssveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred motpartssveip DISPONIT_MOTPARTSSVEIP_URL "$DISPONIT_MOTPARTSSVEIP_URL"
+
 # 113 (M-39): lønnssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/lonnssveip
 if [ -z "${DISPONIT_LONNSSVEIP_URL:-}" ]; then
@@ -1343,6 +1366,7 @@ disponit-betalingssveip.timer
 disponit-adressesveip.timer
 disponit-lonnssveip.timer
 disponit-kampanjesveip.timer
+disponit-motpartssveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1657,6 +1681,13 @@ systemctl stop disponit-lonnssveip.timer \
 # idempotente, så neste døgn tar kjøringen igjen.
 systemctl stop disponit-kampanjesveip.timer \
     disponit-kampanjesveip.service 2>/dev/null || true
+# 116 (M-48): motpartssveipen stoppes i samme vindu — funnene er
+# idempotente. Blir en RESERVASJON stående fordi kjøringen ble stoppet
+# mellom reservasjon og fullføring, er det riktig utfall og ikke et
+# tap: neste kjøring finner den som `oppslag_uten_svar` og setter den
+# til `forlatt` etter seks timer.
+systemctl stop disponit-motpartssveip.timer \
+    disponit-motpartssveip.service 2>/dev/null || true
 # 115: sveipestatusen stoppes i samme vindu. Den fører flåtens
 # tilstand på nytt ved neste kjøring; ingenting går tapt.
 systemctl stop disponit-sveipestatus.timer \
@@ -1843,9 +1874,11 @@ systemctl enable --now disponit-adressesveip.timer
 systemctl enable --now disponit-lonnssveip.timer
 # 114 (M-44): kampanjesveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-kampanjesveip.timer
-# 115: sveipestatusen, ETTER hele stigen (08:35). Rekkefølgen er
-# poenget: observatøren leser flåtens tilstand etter at flåten har
-# kjørt.
+# 116 (M-48): motpartssveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-motpartssveip.timer
+# 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
+# Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
+# flåten har kjørt.
 systemctl enable --now disponit-sveipestatus.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp

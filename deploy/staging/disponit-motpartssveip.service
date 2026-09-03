@@ -1,0 +1,89 @@
+# M-48 (116): motpartssveipen for uvurderte og forverrede motparter.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (116): en aktiv motpart uten vurdering innen tenantens frist er
+# `uvurdert_motpart`; en vurdering eldre enn gyldighetsvinduet er
+# `utdatert_vurdering`; en ny profil ingen har målt er
+# `profil_uten_vurdering`; en motpart registeret sier er på vei ut er
+# `motpart_avviklet`; et forslag over taket er `forslag_over_tak`; en
+# reservasjon uten svar er `oppslag_uten_svar`; fem mislykkede
+# forespørsler på ett døgn er `gjentatte_oppslagsfeil`; og en tenant
+# uten policy er `ingen_krav`.
+#
+# SVEIPEN GJØR INGEN UTGÅENDE FORESPØRSEL, OG HER ER DET VIKTIGERE ENN
+# HOS NABOENE. M-48 HAR en utgående kanal — klyngens eneste — og
+# sveipen er nettopp der det ville vært lettest å misbruke den: den vet
+# hvilke motparter som står uvurderte, og en nattlig oppfriskning av
+# alle sammen ville «løst» dem på én kjøring. Det ville vært doktrinens
+# verste tilfelle, ikke dens oppfyllelse: unødvendige forespørsler i
+# industriell skala. Oppslaget hører hjemme der noen HAR et formål og
+# en hjemmel å oppgi.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP. Enheten
+# kan ikke hindre et oppslag mot en vert som deler nett med databasen;
+# det gjerdet står i koden (`motpartssveip.py` importerer ingenting som
+# kan snakke ut, heller ikke `api.foretaksregister`) og i porten som
+# måler det.
+#
+# DEN ENE RADEN SVEIPEN ENDRER UTENFOR FUNNTABELLEN er en forlatt
+# reservasjon: `reservert` → `forlatt` etter seks timer. Uten den veien
+# ut ville `oppslag_uten_svar` stått åpent for alltid — M-39s felle
+# (113).
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_motpartssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m48_sveip_motparter`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit motpartssveip (ukontrollerte og utlopte adresser -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_MOTPARTSSVEIP_URL:/etc/disponit/motpartssveip/DISPONIT_MOTPARTSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_motpartssveip
+# Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
+# indeksdekket (`adressesubjekt_aktive`, `adresseversjon_oppslag`,
+# `adressekontroll_oppslag`, `adressefunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

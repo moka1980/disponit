@@ -560,6 +560,33 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm44_grensene(text)',                                  'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_funnkandidater(text,date)',                       'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_sveip_kampanjer(integer)',                        'disponit_kampanje_eier'),
+    -- 116 (M-48): motpartsregisterets doerer og
+    -- motpartssveipen. KLYNGE 6s ENE UTGAAENDE KANAL:
+    -- foretaksregisteret er koblet paa, kredittleverandoeren
+    -- staar bak `modulen_hentet_kredittdata`. INGEN AV DEM
+    -- SETTER EN KREDITTGRENSE ELLER AVSLAAR EN MOTPART.
+    --
+    -- `m48_oppslag_frosset()` staar IKKE her: radvakten lages
+    -- etter `RESET ROLE` i seksjon 6 og eies av migratoren,
+    -- som er det reparasjonen ellers ville satt den til.
+    ('FUNCTION', 'm48_deaktiver_motpart(text,uuid,text)',                             'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_evidens(text,uuid,text,text,jsonb)',                            'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_fullfor_oppslag(text,uuid,text,text,text)',                     'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_funnene(text,boolean)',                                         'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_kravene(text)',                                                 'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_lukk_funn(text,uuid,text,text,text)',                           'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_motpartene(text,integer)',                                      'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_motpartsstatus(text)',                                          'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_oppslagene(text,uuid)',                                         'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_registrer_motpart(text,uuid,text,text,text)',                   'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_registrer_versjon(text,uuid,uuid,uuid,text,text,text,text,text,boolean,boolean,date,text)', 'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_registrer_vurdering(text,uuid,uuid,text,bigint,text,text)',     'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_registrert_vert()',                                             'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_reserver_oppslag(text,uuid,uuid,text,text,text,text)',          'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_sett_krav(text,integer,integer,integer,bigint,text[],text)',    'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_sveip_motparter(integer)',                                      'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),
+    ('FUNCTION', 'm48_vurderingene(text,uuid)',                                       'disponit_motpart_eier'),
     -- 115: sveipestatusens doerer. Plattformskopet (090s form), eid av
     -- samme rolle som resten av plattformdoerene.
     ('FUNCTION', 'registrer_sveipestatus(text,timestamp with time zone,integer,integer,boolean,boolean,text)', 'disponit_m37_claimer'),

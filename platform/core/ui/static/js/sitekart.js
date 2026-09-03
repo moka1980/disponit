@@ -446,6 +446,17 @@ const BASISRUTER = [
   // De seks skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem sender noe.
   { nokkel: "kampanje", scope: "okonomi:read", modulflate: 44 },
+  // M-48 (116): motpartsregisteret. MODULFLATE bak `okonomi:read` —
+  // hvem vi handler med og hva vi tør gi dem er økonomi, og den som
+  // handler på en uvurdert motpart er den som fakturerer.
+  //
+  // DENNE FLATEN ER KLYNGENS ENESTE MED EN «SLÅ OPP»-KNAPP. Den er
+  // gatet på `bestilling:opprett` som de andre skriveveiene, men
+  // doktrinen ligger ikke i scopet: formål og hjemmel er påkrevde
+  // felt uten standardverdi, og ferskhetsvinduet står synlig ved
+  // knappen. Ingen av veiene setter en kredittgrense eller avslår en
+  // motpart.
+  { nokkel: "motpart", scope: "okonomi:read", modulflate: 48 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
