@@ -83,6 +83,7 @@ disponit-adressesveip.service disponit-adressesveip.timer
 disponit-lonnssveip.service disponit-lonnssveip.timer
 disponit-kampanjesveip.service disponit-kampanjesveip.timer
 disponit-motpartssveip.service disponit-motpartssveip.timer
+disponit-sanksjonssveip.service disponit-sanksjonssveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -378,6 +379,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_ADRESSESVEIP_URL:-}" ] );
   echo "AVBRUTT: DISPONIT_ADRESSESVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_adressesveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 117 (M-49): sanksjonssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille sanksjonssveip er uavklarte treff ingen har sett
+# på — og et treff ingen har sett på er ikke et vern, det er en
+# udokumentert risiko.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_SANKSJONSSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_SANKSJONSSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_sanksjonssveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1176,6 +1188,17 @@ if [ -z "${DISPONIT_ADRESSESVEIP_URL:-}" ]; then
 fi
 skriv_cred adressesveip DISPONIT_ADRESSESVEIP_URL "$DISPONIT_ADRESSESVEIP_URL"
 
+# 117 (M-49): sanksjonssveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/sanksjonssveip
+if [ -z "${DISPONIT_SANKSJONSSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_SANKSJONSSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen sanksjonssveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred sanksjonssveip DISPONIT_SANKSJONSSVEIP_URL "$DISPONIT_SANKSJONSSVEIP_URL"
+
 # 116 (M-48): motpartssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/motpartssveip
 if [ -z "${DISPONIT_MOTPARTSSVEIP_URL:-}" ]; then
@@ -1367,6 +1390,7 @@ disponit-adressesveip.timer
 disponit-lonnssveip.timer
 disponit-kampanjesveip.timer
 disponit-motpartssveip.timer
+disponit-sanksjonssveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1681,6 +1705,11 @@ systemctl stop disponit-lonnssveip.timer \
 # idempotente, så neste døgn tar kjøringen igjen.
 systemctl stop disponit-kampanjesveip.timer \
     disponit-kampanjesveip.service 2>/dev/null || true
+# 117 (M-49): sanksjonssveipen stoppes i samme vindu — funnene er
+# idempotente, så neste døgn tar kjøringen igjen. Ingen avklaring går
+# tapt: sveipen avklarer ingenting.
+systemctl stop disponit-sanksjonssveip.timer \
+    disponit-sanksjonssveip.service 2>/dev/null || true
 # 116 (M-48): motpartssveipen stoppes i samme vindu — funnene er
 # idempotente. Blir en RESERVASJON stående fordi kjøringen ble stoppet
 # mellom reservasjon og fullføring, er det riktig utfall og ikke et
@@ -1876,6 +1905,8 @@ systemctl enable --now disponit-lonnssveip.timer
 systemctl enable --now disponit-kampanjesveip.timer
 # 116 (M-48): motpartssveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-motpartssveip.timer
+# 117 (M-49): sanksjonssveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-sanksjonssveip.timer
 # 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.

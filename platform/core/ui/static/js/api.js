@@ -1043,6 +1043,46 @@ export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
 
+// M-49 (117): sanksjonskontrollen. Alle bærer SP-2-nøkkel, og for
+// AVKLARINGEN er den strengt nødvendig: en gjentatt POST må ikke bli
+// to dommer over samme treff.
+//
+// DET FINNES INGEN `blokkerMotpart` HER, OG INGEN MASSEAVKLARING.
+// Fraværene er portene `modulen_blokkerte_motpart` og
+// `modulen_avfeide_navnelikhet` — se toppen av `flater/sanksjon.js`.
+export const settSanksjonskrav = (krav, idem) =>
+  _muter("/v1/sanksjon/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerSanksjonsliste = (liste, idem) =>
+  _muter("/v1/sanksjon/liste", "POST", liste,
+         idem || nyIdempotensnokkel());
+
+export const registrerSanksjonssubjekt = (subjekt, idem) =>
+  _muter("/v1/sanksjon/subjekt", "POST", subjekt,
+         idem || nyIdempotensnokkel());
+
+export const registrerSanksjonskontroll = (subjektId, kontroll, idem) =>
+  _muter(`/v1/sanksjon/${encodeURIComponent(subjektId)}/kontroll`,
+         "POST", kontroll, idem || nyIdempotensnokkel());
+
+// KONKLUSJON OG BEGRUNNELSE ER ARGUMENTER, IKKE STANDARDVERDIER. Det
+// finnes ingen `konklusjon = "ikke_samme_part"` her: en forhåndsvalgt
+// konklusjon ville gjort `modulen_avfeide_navnelikhet` til pynt.
+export const avklarSanksjonstreff = (treffId, konklusjon, begrunnelse,
+                                     idem) =>
+  _muter(`/v1/sanksjon/treff/${encodeURIComponent(treffId)}/avklaring`,
+         "POST", { konklusjon, begrunnelse },
+         idem || nyIdempotensnokkel());
+
+export const settSanksjonssubjektAktiv = (subjektId, aktiv, idem) =>
+  _muter(`/v1/sanksjon/${encodeURIComponent(subjektId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+export const lukkSanksjonsfunn = (subjektId, funntype, notat, idem) =>
+  _muter(`/v1/sanksjon/${encodeURIComponent(subjektId)}/funn/lukk`,
+         "POST", { funntype, notat }, idem || nyIdempotensnokkel());
+
 // M-48 (116): motpartsregisteret. Alle bærer SP-2-nøkkel, og for
 // OPPSLAGET er den strengt nødvendig: en gjentatt POST må ikke bli to
 // utgående forespørsler. Det er forskjellen på en dobbeltklikk og to

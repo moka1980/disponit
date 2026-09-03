@@ -1,0 +1,23 @@
+# M-49 (117): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `uavklart_frist_dogn`,
+# `kontroll_gyldig_dogn` og `ukontrollert_dogn` måles alle i DØGN.
+#
+# KLOKKESLETTET ER 09:05 fordi 02:20 til 08:50 alt er tatt, og fordi
+# klyngefundamentet fordelte 08:50–09:50 til klynge 6. Sveipens
+# første steg leser ALLE tenanters subjekter, og to slike skann på
+# samme sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse
+# som nabosveipene.
+
+[Unit]
+Description=Disponit sanksjonssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 09:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

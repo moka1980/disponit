@@ -1610,6 +1610,60 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # «løsningen» — et oppslag mot et adresseregister — er en utgående
     # kanal med personopplysninger i, og svaret ville uansett vært feil
     # vare: at en adresse FINNES sier ikke at pakken kommer fram.
+    # M-49 (117): sanksjonskontrollen. MODULEN BLOKKERER INGENTING
+    # og AVFEIER INGEN NAVNELIKHET — se `sanksjon.py` og toppen av
+    # migrasjon 117 for beslutningen, motargumentet og utløseren.
+    def sanksjon_bilde(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.sanksjonsbilde(tjeneste, request)
+
+    def sanksjon_funn(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.funn_endepunkt(tjeneste, request)
+
+    def sanksjon_lister(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.lister_endepunkt(tjeneste, request)
+
+    def sanksjon_kontroller(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.kontroller_endepunkt(tjeneste, request)
+
+    def sanksjon_treff(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.treff_endepunkt(tjeneste, request)
+
+    def sanksjon_krav(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.krav_endepunkt(tjeneste, request)
+
+    def sanksjon_liste(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.registrer_liste_endepunkt(tjeneste,
+                                                       request)
+
+    def sanksjon_subjekt(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.registrer_subjekt_endepunkt(tjeneste,
+                                                         request)
+
+    def sanksjon_kontroll(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.registrer_kontroll_endepunkt(tjeneste,
+                                                          request)
+
+    def sanksjon_avklaring(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.avklar_endepunkt(tjeneste, request)
+
+    def sanksjon_aktiv(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.sett_aktiv_endepunkt(tjeneste, request)
+
+    def sanksjon_lukk_funn(request: Request) -> Response:
+        from . import sanksjon as sanksjonmodul
+        return sanksjonmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-48 (116): klyngens ENE utgående kanal. Foretaksregisteret er
     # koblet på; kredittleverandøren står bak
     # `modulen_hentet_kredittdata` og finnes ikke i koden.
@@ -2448,6 +2502,26 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               betaling_abonnement, methods=["POST"]),
         Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
               methods=["POST"]),
+        Route("/v1/sanksjon", sanksjon_bilde, methods=["GET"]),
+        Route("/v1/sanksjon/funn", sanksjon_funn, methods=["GET"]),
+        Route("/v1/sanksjon/lister", sanksjon_lister,
+              methods=["GET"]),
+        Route("/v1/sanksjon/krav", sanksjon_krav, methods=["POST"]),
+        Route("/v1/sanksjon/liste", sanksjon_liste, methods=["POST"]),
+        Route("/v1/sanksjon/subjekt", sanksjon_subjekt,
+              methods=["POST"]),
+        Route("/v1/sanksjon/treff/{treff_id:uuid}/avklaring",
+              sanksjon_avklaring, methods=["POST"]),
+        Route("/v1/sanksjon/{subjekt_id:uuid}/kontroller",
+              sanksjon_kontroller, methods=["GET"]),
+        Route("/v1/sanksjon/{subjekt_id:uuid}/treff", sanksjon_treff,
+              methods=["GET"]),
+        Route("/v1/sanksjon/{subjekt_id:uuid}/kontroll",
+              sanksjon_kontroll, methods=["POST"]),
+        Route("/v1/sanksjon/{subjekt_id:uuid}/aktiv", sanksjon_aktiv,
+              methods=["POST"]),
+        Route("/v1/sanksjon/{subjekt_id:uuid}/funn/lukk",
+              sanksjon_lukk_funn, methods=["POST"]),
         Route("/v1/motpart", motpart_bilde, methods=["GET"]),
         Route("/v1/motpart/funn", motpart_funn, methods=["GET"]),
         Route("/v1/motpart/krav", motpart_krav, methods=["POST"]),
@@ -3426,6 +3500,28 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 112 (M-19): adresseregisteret. LESINGEN bærer `okonomi:read`,
     # samme scope som 101 innførte og 111 gjenbrukte; SKRIVINGEN bærer
     # `bestilling:opprett`.
+    # M-49 (117): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `lister` og `treff` er bevisst leseveier
+    # for tenanten selv: «sto de på lista DEN DAGEN» er spørsmålet et
+    # tilsyn stiller, og den som eier dataene skal kunne svare uten å
+    # spørre oss.
+    ("GET",  "/v1/sanksjon"):                    "okonomi:read",
+    ("GET",  "/v1/sanksjon/funn"):               "okonomi:read",
+    ("GET",  "/v1/sanksjon/lister"):             "okonomi:read",
+    ("GET",  "/v1/sanksjon/{subjekt_id:uuid}/kontroller"):
+        "okonomi:read",
+    ("GET",  "/v1/sanksjon/{subjekt_id:uuid}/treff"): "okonomi:read",
+    ("POST", "/v1/sanksjon/krav"):               "bestilling:opprett",
+    ("POST", "/v1/sanksjon/liste"):              "bestilling:opprett",
+    ("POST", "/v1/sanksjon/subjekt"):            "bestilling:opprett",
+    ("POST", "/v1/sanksjon/treff/{treff_id:uuid}/avklaring"):
+        "bestilling:opprett",
+    ("POST", "/v1/sanksjon/{subjekt_id:uuid}/kontroll"):
+        "bestilling:opprett",
+    ("POST", "/v1/sanksjon/{subjekt_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    ("POST", "/v1/sanksjon/{subjekt_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
     # M-48 (116): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett` — samme presedens som 101/111/112.
     # `oppslagslogg` er bevisst en LESEVEI for tenanten selv: et

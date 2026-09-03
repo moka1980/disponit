@@ -44,6 +44,7 @@ SVEIPENE = (
     ("lonnssveip", "m39_sveip_lonnsgrunnlag"),
     ("kampanjesveip", "m44_sveip_kampanjer"),
     ("motpartssveip", "m48_sveip_motparter"),
+    ("sanksjonssveip", "m49_sveip_sanksjoner"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

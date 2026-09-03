@@ -457,6 +457,16 @@ const BASISRUTER = [
   // knappen. Ingen av veiene setter en kredittgrense eller avslår en
   // motpart.
   { nokkel: "motpart", scope: "okonomi:read", modulflate: 48 },
+  // M-49 (117): sanksjonskontrollen. MODULFLATE bak `okonomi:read` —
+  // hvem som står på en sanksjonsliste er en opplysning med
+  // rettsvirkning, og den som handler på et uavklart treff er den som
+  // handler.
+  //
+  // FLATEN BLOKKERER INGENTING OG AVFEIER INGEN NAVNELIKHET. De to
+  // fraværene er portene `modulen_blokkerte_motpart` og
+  // `modulen_avfeide_navnelikhet` — beslutningen, motargumentet og
+  // utløseren står i toppen av migrasjon 117.
+  { nokkel: "sanksjon", scope: "okonomi:read", modulflate: 49 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
