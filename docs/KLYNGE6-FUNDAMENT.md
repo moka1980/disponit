@@ -55,13 +55,14 @@ målautorisasjon (`krever_malautorisasjon`), egress- og robots-vakt
 (014b), frekvenshåndheving i aktiveringsporten, og utførelsesfrist på
 oppdragsraden. `m_wcag_audit` leser eksternt i dag, innenfor det.
 
-**v1 GJØR LIKEVEL INGEN UTGÅENDE FORESPØRSEL**, og grunnen er ikke at
-forespørselen er farlig i seg selv:
+**FIRE AV FEM GJØR LIKEVEL INGEN UTGÅENDE FORESPØRSEL**, og grunnen er
+ikke at forespørselen er farlig i seg selv:
 
-* Å koble fem integrasjoner — Doffin, TED, Brreg, kredittleverandør,
-  OFAC/EU/FN, søke-API-er — inn i oppdragskontrakten er fem separate
-  arbeider med fem sett hemmeligheter, og hver av dem har sin egen
-  målautorisasjon å få på plass.
+* Å koble integrasjonene — Doffin, TED, kredittleverandør,
+  OFAC/EU/FN, søke-API-er — inn i oppdragskontrakten er separate
+  arbeider med hvert sitt sett hemmeligheter, og hver av dem har sin
+  egen målautorisasjon å få på plass. Foretaksregisteret er det ene
+  unntaket, og grunnen står under.
 * Doktrinen sier at den unødvendige forespørselen er skaden. **Vi kan
   ikke ennå si hvilke forespørsler som er nødvendige**, fordi vi ikke
   har målt hva vi ville spurt om. Registeret er den målingen.
@@ -73,6 +74,38 @@ forespørselen er gal. Den dagen en integrasjon kobles på, er porten
 `modulen_hentet_eksternt` det som må endres bevisst — og
 oppdragskontrakten er stedet det skal skje, ikke en `httpx`-import i
 en modulfil.
+
+### Unntaket: M-48 mot foretaksregisteret (eierbeslutning 3/9)
+
+Og snittet går **inne i M-48**, ikke rundt den. Spesifikasjonen gir
+modulen to eksterne kilder, og de er ikke like:
+
+| | Foretaksreg. | Kredittleverandøren |
+|---|---|---|
+| Hemmeligheter | ingen | ja |
+| Det vi sender | et orgnr | samme orgnr, kommersiell part |
+| Persondata ut | nei | ja — rettighetshavere |
+| Det vi får | roller, status | en **score** |
+| Fristelsen | ingen | å handle på scoren |
+
+Doktrinen taler **for** foretaksoppslaget: motpartens roller og
+regnskapsstatus finnes ikke andre steder, så forespørselen er
+nødvendig i doktrinens egen forstand. Spesifikasjonens vakt for M-48 —
+«oppslag logges som behandling av persondata» — handler om
+kredittleverandøren, ikke om et organisasjonsnummer.
+
+Kredittleverandøren er derfor fortsatt holdt tilbake, og porten heter
+nå `modulen_hentet_kredittdata`. I stedet kommer to porter som
+disiplinerer oppslaget som ER tillatt:
+
+* `oppslag_uten_ferskhetsvindu` — doktrinen som port. Et oppslag på et
+  organisasjonsnummer vi alt har ferske data om er per definisjon
+  unødvendig. Vinduet er **tenantens**, satt gjennom en dør.
+* `oppslag_mot_uregistrert_vert` — verten er én registrert konstant i
+  modulen. `ssrf.py` gir DNS-pinning og stenger ikke-routbare mål, men
+  den globale policyen slipper gjennom enhver offentlig vert; den
+  binder oss ikke til NETTOPP foretaksregisteret. Porten må derfor eies
+  av modulen.
 
 ## Den delte dommen: fem som finner, og ingen som handler
 
@@ -101,11 +134,37 @@ lukkes maskinelt. **En modul som blokkerte automatisk på det
 grunnlaget ville stanset lovlig handel fra første natt**, uten at noen
 hadde målt hvor ofte den tar feil.
 
-v1 blokkerer derfor ikke. Den registrerer at kontrollen ble gjort, mot
-HVILKEN listeversjon, med hvilket matchgrunnlag — og gjør et uavklart
-treff til et FUNN. Fail-closed-blokkeringen er fullmakten som holdes
-tilbake til noen har målt falsk-positiv-raten på vår egen
-motpartsportefølje.
+**BESLUTNING (eier delegerte 3/9): v1 BLOKKERER IKKE.** Den
+registrerer at kontrollen ble gjort, mot HVILKEN listeversjon, med
+hvilket matchgrunnlag — og gjør et uavklart treff til et FUNN.
+
+Den tyngste grunnen er ikke falsk-positiv-raten. Den er at **det ikke
+finnes noe å blokkere MED.** Et register stanser ingen handel; det
+måtte M-23, M-14 eller M-42 spørre registeret før de handlet, og den
+koblingen finnes ikke i v1. «Blokkering» ville i praksis vært å skrive
+et flagg ingen leser — nøyaktig `alarm`-feltet fra 115, som så ut som
+vern i to klynger uten å være det. I en etterlevelseskontroll er den
+feilen verre enn et ærlig hull, fordi et hull blir rapportert som hull
+mens teater blir rapportert som dekning.
+
+Og: **å ikke blokkere er ingen forverring.** I dag finnes ingen
+sanksjonskontroll i det hele tatt. v1 gjør situasjonen strengt bedre
+ved å produsere den første målingen. Argumentet «uten blokkering er vi
+eksponert» sammenligner v1 med en ferdig modul, ikke med i dag.
+
+**Motargumentet, ærlig sagt:** sanksjonsbrudd har objektivt ansvar i
+flere jurisdiksjoner — det holder ikke å ha ment godt. Det trekker mot
+fail-closed fra dag én, og det er grunnen til at spesifikasjonen ber om
+det. Det endrer likevel ikke v1, fordi en blokkering uten konsument
+ikke reduserer det ansvaret; den skjuler bare at kontrollen ikke er
+koblet til noe.
+
+**Utløseren, så beslutningen ikke blir liggende:** den dagen den
+FØRSTE handlende modulen spør sanksjonsregisteret, skrus blokkeringen
+på — men kun for **eksakt identifikatortreff** (organisasjonsnummer
+eller nasjonal ID mot listeversjon), aldri for navnelikhet. Derfor må
+v1 skille de to deterministisk og lagre matchgrunnlaget presist: da er
+påskruingen en policyrad, ikke et nytt datamodellarbeid.
 
 Det er samme figur som M-41s refusjon: den farligste raden i
 spesifikasjonen, gatet på en modul som aldri har eksistert.
@@ -124,7 +183,9 @@ Samme form som klynge 3, 4 og 5:
 * **BELØP I ØRE, HELTALL.** `BIGINT`, ingen unntak (101s form).
 * **GRENSENE ER TENANTENS.** Kredittpolicy, matchterskel, søkeprofil og
   kontrollfrekvens ligger i basen, satt gjennom en dør.
-* **INGEN AV DE FEM GJØR EN UTGÅENDE FORESPØRSEL, OG INGEN HANDLER.**
+* **INGEN AV DE FEM HANDLER.** Fire gjør heller ingen utgående
+  forespørsel; M-48 gjør én, mot foretaksregisteret, gjennom
+  oppdragskontrakten og innenfor tenantens ferskhetsvindu.
 
 ## Tildelte migrasjonsnumre
 

@@ -1622,7 +1622,33 @@ M48_INVARIANTER: tuple[str, ...] = (
     # beslutning; en modul som avslo ville stengt en kunde ute på et
     # tall ingen hadde etterprøvd.
     "modulen_avslo_motpart",
-    "modulen_hentet_eksternt",
+    # M-48 ER KLYNGENS UNNTAK FRA «INGEN UTGÅENDE FORESPØRSEL», etter
+    # eierbeslutning 3/9. Og snittet går INNE I modulen, ikke rundt den:
+    # spesifikasjonen har TO eksterne kilder, og de er ikke like.
+    #
+    #   FORETAKSREGISTERET er offentlig, uten hemmeligheter, og et
+    #   organisasjonsnummer er offentlige foretaksdata — ikke
+    #   persondata. Oppslaget er dessuten NØDVENDIG: motpartens roller
+    #   og regnskapsstatus finnes ikke andre steder. Doktrinen om den
+    #   unødvendige forespørselen taler FOR dette oppslaget, ikke mot.
+    #
+    #   KREDITTLEVERANDØREN er noe helt annet. Den er kommersiell, den
+    #   krever hemmeligheter, den sender de reelle rettighetshavernes
+    #   navn til en tredjepart — og den gir en SCORE vi ville blitt
+    #   fristet til å handle på. Den er fortsatt holdt tilbake.
+    "modulen_hentet_kredittdata",
+    # DOKTRINEN, SOM PORT: «den unødvendige forespørselen ER skaden».
+    # Et oppslag på et organisasjonsnummer vi alt har ferske data om er
+    # per definisjon unødvendig, og ferskhetsvinduet er TENANTENS.
+    "oppslag_uten_ferskhetsvindu",
+    # …og verten er EN registrert konstant i modulen. `ssrf.py` gir
+    # DNS-pinning og forbyr ikke-routbare mål, men den globale policyen
+    # slipper gjennom enhver offentlig vert — den binder oss ikke til
+    # NETTOPP foretaksregisteret. (`allowlist`-tupelen der er
+    # staging-unntaket for http/private mål, ikke dette.) Porten må
+    # derfor eies av modulen: en forespørsel til noe annet enn den
+    # registrerte verten skal være umulig, ikke bare uønsket.
+    "oppslag_mot_uregistrert_vert",
     "modulen_signerte_attestasjon",
     # HVERT OPPSLAG ER EN BEHANDLING AV PERSONDATA, og spesifikasjonen
     # krever formål, hjemmel og tidsstempel. Et oppslag uten dem er

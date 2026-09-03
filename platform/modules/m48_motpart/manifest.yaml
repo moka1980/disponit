@@ -25,13 +25,30 @@
 # vakt krever formål, hjemmel og tidsstempel i loggen — og en rad uten
 # dem er ikke en måling, det er en behandling ingen kan forsvare.
 #
-# v1 GJØR INGEN UTGÅENDE FORESPØRSEL. Ikke fordi forespørselen er gal:
-# plattformen har `ekstern_lesing`-maskineriet (oppdragskontrakten,
-# målautorisasjon, egressvakt). Men doktrinen sier at «den unødvendige
-# forespørselen ER skaden», og vi kan ikke ennå si hvilke oppslag som
-# er nødvendige — registeret er den målingen. M-48 er dessuten den ene
-# i klyngen der M-19s dom faktisk gjelder: et oppslag mot et
-# kredittregister sender motpartens organisasjonsnummer ut av huset.
+# v1 GJØR ETT UTGÅENDE OPPSLAG, OG BARE ETT (eierbeslutning 3/9).
+# M-48 er klyngens unntak, og snittet går inne i modulen: av
+# spesifikasjonens to eksterne kilder kobles FORETAKSREGISTERET på,
+# mens KREDITTLEVERANDØREN holdes tilbake.
+#
+# Foretaksoppslaget er offentlig, uten hemmeligheter, og sender bare et
+# organisasjonsnummer — offentlige foretaksdata, ikke persondata. Det
+# er dessuten nødvendig i doktrinens egen forstand: motpartens roller
+# og regnskapsstatus finnes ikke andre steder. Doktrinen om «den
+# unødvendige forespørselen ER skaden» taler FOR dette oppslaget.
+#
+# Kredittleverandøren er noe annet: kommersiell, krever hemmeligheter,
+# sender de reelle rettighetshavernes navn til en tredjepart, og gir en
+# SCORE vi ville blitt fristet til å handle på. Spesifikasjonens egen
+# vakt — «oppslag logges som behandling av persondata» — handler om
+# den, ikke om et organisasjonsnummer. Porten heter
+# `modulen_hentet_kredittdata`, og den står.
+#
+# Oppslaget som ER tillatt disiplineres av to porter:
+# `oppslag_uten_ferskhetsvindu` (et oppslag på et orgnr vi alt har
+# ferske data om er unødvendig — vinduet er tenantens) og
+# `oppslag_mot_uregistrert_vert` (verten er én registrert konstant i
+# modulen — `ssrf.py` pinner DNS og stenger ikke-routbare mål, men
+# binder oss ikke til nettopp foretaksregisteret; den porten er vår).
 #
 # GRENSEN MOT M-23: M-23 eier FORDRINGEN — hva som faktisk skylder oss
 # penger. M-48 eier MOTPARTEN og grunnlaget for hva vi tør gi den.
