@@ -113,5 +113,6 @@
   "112_m19_adresseregister.sql": "1597d7fd151271b20955f4ed5fa082c9dc27912e391b1b2ad37b839f94338c12",
   "113_m39_lonnsgrunnlag.sql": "2cbdbf904625a0d9b676a5a7364d393803a96cbaf432ec0b48b254ba304ddadb",
   "114_m44_kampanjeregister.sql": "7d29ee2197768b1d7f0981a5badaf1a35c3fdd906f094edb29baccd520204745",
-  "115_sveipestatus.sql": "f0d08376eae19ef830b6fa9cd8e256f3de1db1d5579555c2bd5471f3e24d22cc"
+  "115_sveipestatus.sql": "f0d08376eae19ef830b6fa9cd8e256f3de1db1d5579555c2bd5471f3e24d22cc",
+  "116_m48_motpartsregister.sql": "d1525a3306c1f17e79b9e31f2c23d5d2311d78d0ff87a09e6e28a3f81c277493"
 }

@@ -44,6 +44,7 @@ import { visPrisbok } from "./flater/prisbok.js";
 import { visLager } from "./flater/lager.js";
 import { visKontovakt } from "./flater/kontovakt.js";
 import { visAdresse } from "./flater/adresse.js";
+import { visMotpart } from "./flater/motpart.js";
 import { visBetaling } from "./flater/betaling.js";
 import { visKampanje } from "./flater/kampanje.js";
 import { visLonn } from "./flater/lonn.js";
@@ -130,6 +131,7 @@ const FLATER = {
   betaling: visBetaling,
   kampanje: visKampanje,
   lonn: visLonn,
+  motpart: visMotpart,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

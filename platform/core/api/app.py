@@ -1610,6 +1610,50 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # «løsningen» — et oppslag mot et adresseregister — er en utgående
     # kanal med personopplysninger i, og svaret ville uansett vært feil
     # vare: at en adresse FINNES sier ikke at pakken kommer fram.
+    # M-48 (116): klyngens ENE utgående kanal. Foretaksregisteret er
+    # koblet på; kredittleverandøren står bak
+    # `modulen_hentet_kredittdata` og finnes ikke i koden.
+    def motpart_bilde(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.motpartsbilde(tjeneste, request)
+
+    def motpart_funn(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.funn_endepunkt(tjeneste, request)
+
+    def motpart_historikk(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.historikk_endepunkt(tjeneste, request)
+
+    def motpart_oppslagslogg(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.oppslagslogg_endepunkt(tjeneste, request)
+
+    def motpart_krav(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.krav_endepunkt(tjeneste, request)
+
+    def motpart_registrer(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.registrer_motpart_endepunkt(tjeneste,
+                                                        request)
+
+    def motpart_oppslag(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.oppslag_endepunkt(tjeneste, request)
+
+    def motpart_vurdering(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.vurdering_endepunkt(tjeneste, request)
+
+    def motpart_deaktiver(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.deaktiver_endepunkt(tjeneste, request)
+
+    def motpart_lukk_funn(request: Request) -> Response:
+        from . import motpart as motpartmodul
+        return motpartmodul.lukk_funn_endepunkt(tjeneste, request)
+
     def adresse_bilde(request: Request) -> Response:
         from . import adresse as adressemodul
         return adressemodul.adressebilde(tjeneste, request)
@@ -2404,6 +2448,23 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               betaling_abonnement, methods=["POST"]),
         Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
               methods=["POST"]),
+        Route("/v1/motpart", motpart_bilde, methods=["GET"]),
+        Route("/v1/motpart/funn", motpart_funn, methods=["GET"]),
+        Route("/v1/motpart/krav", motpart_krav, methods=["POST"]),
+        Route("/v1/motpart/registrer", motpart_registrer,
+              methods=["POST"]),
+        Route("/v1/motpart/versjon/{versjon_id:uuid}/vurdering",
+              motpart_vurdering, methods=["POST"]),
+        Route("/v1/motpart/{motpart_id:uuid}/historikk",
+              motpart_historikk, methods=["GET"]),
+        Route("/v1/motpart/{motpart_id:uuid}/oppslagslogg",
+              motpart_oppslagslogg, methods=["GET"]),
+        Route("/v1/motpart/{motpart_id:uuid}/oppslag", motpart_oppslag,
+              methods=["POST"]),
+        Route("/v1/motpart/{motpart_id:uuid}/deaktiver",
+              motpart_deaktiver, methods=["POST"]),
+        Route("/v1/motpart/{motpart_id:uuid}/funn/lukk",
+              motpart_lukk_funn, methods=["POST"]),
         Route("/v1/adresse", adresse_bilde, methods=["GET"]),
         Route("/v1/adresse/krav", adresse_krav, methods=["POST"]),
         Route("/v1/adresse/subjekt", adresse_subjekt,
@@ -3365,6 +3426,26 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 112 (M-19): adresseregisteret. LESINGEN bærer `okonomi:read`,
     # samme scope som 101 innførte og 111 gjenbrukte; SKRIVINGEN bærer
     # `bestilling:opprett`.
+    # M-48 (116): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett` — samme presedens som 101/111/112.
+    # `oppslagslogg` er bevisst en LESEVEI for tenanten selv: et
+    # unntak ingen kan etterprøve er ikke et unntak.
+    ("GET",  "/v1/motpart"):                     "okonomi:read",
+    ("GET",  "/v1/motpart/funn"):                "okonomi:read",
+    ("GET",  "/v1/motpart/{motpart_id:uuid}/historikk"):
+        "okonomi:read",
+    ("GET",  "/v1/motpart/{motpart_id:uuid}/oppslagslogg"):
+        "okonomi:read",
+    ("POST", "/v1/motpart/krav"):                "bestilling:opprett",
+    ("POST", "/v1/motpart/registrer"):           "bestilling:opprett",
+    ("POST", "/v1/motpart/versjon/{versjon_id:uuid}/vurdering"):
+        "bestilling:opprett",
+    ("POST", "/v1/motpart/{motpart_id:uuid}/oppslag"):
+        "bestilling:opprett",
+    ("POST", "/v1/motpart/{motpart_id:uuid}/deaktiver"):
+        "bestilling:opprett",
+    ("POST", "/v1/motpart/{motpart_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
     ("GET",  "/v1/adresse"):                     "okonomi:read",
     ("GET",  "/v1/adresse/{subjekt_id:uuid}/historikk"):
         "okonomi:read",

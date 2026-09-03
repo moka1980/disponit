@@ -1,9 +1,17 @@
 # 115: én gang i døgnet, ETTER hele sveipestigen.
 #
-# KLOKKESLETTET ER 08:35 UTC fordi 03:15 til 08:20 alt er tatt, og
-# fordi rekkefølgen er poenget: observatøren skal lese flåtens
-# tilstand ETTER at flåten har kjørt, ikke før. Kjørte den 02:00,
-# ville hver eneste sveip sett ut som «ikke kjørt i dag».
+# KLOKKESLETTET ER 10:05 UTC fordi rekkefølgen er poenget:
+# observatøren skal lese flåtens tilstand ETTER at flåten har kjørt,
+# ikke før. Kjørte den 02:00, ville hver eneste sveip sett ut som
+# «ikke kjørt i dag», og varselet vært en falsk alarm hver natt.
+#
+# DEN STO 08:35 TIL M-48 (116) KOM. Klyngefundamentet fordelte
+# 08:50–09:50 til klynge 6s fem sveip, og observatøren er flyttet
+# BAKENFOR HELE den stigen med én gang i stedet for å skyves femten
+# minutter fem ganger. Gapet fra 09:50 til 10:05 er tomt i dag og
+# fylles etter hvert som M-49, M-46, M-51 og M-55 lander —
+# `test_timeren_gaar_etter_hele_stigen` holder rekkefølgen ærlig
+# uansett hvilken vei det går.
 #
 # `RandomizedDelaySec=15min` og ikke 30: vinduet må være ferdig før
 # varselsenderen henter køen, og spredningen har mindre å tjene her —
@@ -17,7 +25,7 @@
 Description=Disponit sveipestatus-timer
 
 [Timer]
-OnCalendar=*-*-* 08:35:00 UTC
+OnCalendar=*-*-* 10:05:00 UTC
 RandomizedDelaySec=15min
 Persistent=true
 

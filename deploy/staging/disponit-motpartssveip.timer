@@ -1,0 +1,23 @@
+# M-48 (116): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `vurdering_gyldig_dogn` og
+# `uvurdert_dogn` måles begge i DØGN, og ferskhetsvinduet i timer.
+#
+# KLOKKESLETTET ER 08:50 fordi 02:20 til 08:20 alt er tatt, og fordi
+# klyngefundamentet fordelte 08:50–09:50 til klynge 6. Sveipens første
+# steg leser ALLE tenanters motparter, og to slike skann på samme
+# sekund legger seg oppå hverandres I/O uten grunn.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse som
+# nabosveipene.
+
+[Unit]
+Description=Disponit motpartssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 08:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

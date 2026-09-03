@@ -1043,6 +1043,38 @@ export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
 
+// M-48 (116): motpartsregisteret. Alle bærer SP-2-nøkkel, og for
+// OPPSLAGET er den strengt nødvendig: en gjentatt POST må ikke bli to
+// utgående forespørsler. Det er forskjellen på en dobbeltklikk og to
+// oppslag noen må svare for.
+export const settMotpartskrav = (krav, idem) =>
+  _muter("/v1/motpart/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerMotpart = (motpart, idem) =>
+  _muter("/v1/motpart/registrer", "POST", motpart,
+         idem || nyIdempotensnokkel());
+
+// FORMÅL OG HJEMMEL ER ARGUMENTER, IKKE STANDARDVERDIER. Det finnes
+// ingen `formaal = "kredittvurdering"` her: et oppslag uten en
+// oppgitt grunn er nettopp det `oppslag_uten_formaal_og_hjemmel`
+// forbyr, og en standardverdi ville gjort porten til pynt.
+export const slaaOppMotpart = (motpartId, formaal, hjemmel, idem) =>
+  _muter(`/v1/motpart/${encodeURIComponent(motpartId)}/oppslag`,
+         "POST", { formaal, hjemmel }, idem || nyIdempotensnokkel());
+
+export const registrerMotpartsvurdering = (versjonId, vurdering, idem) =>
+  _muter(`/v1/motpart/versjon/${encodeURIComponent(versjonId)}/vurdering`,
+         "POST", vurdering, idem || nyIdempotensnokkel());
+
+export const deaktiverMotpart = (motpartId, idem) =>
+  _muter(`/v1/motpart/${encodeURIComponent(motpartId)}/deaktiver`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const lukkMotpartsfunn = (motpartId, funntype, notat, idem) =>
+  _muter(`/v1/motpart/${encodeURIComponent(motpartId)}/funn/lukk`,
+         "POST", { funntype, notat }, idem || nyIdempotensnokkel());
+
 // M-39 (113): lønnsgrunnlaget. TAKEREN, PLANEN og TIMEN bærer hver sin
 // SP-2-nøkkel.
 //

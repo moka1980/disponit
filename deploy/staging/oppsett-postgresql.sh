@@ -437,6 +437,10 @@ LONNSSVEIP_DSN=("DISPONIT_LONNSSVEIP_URL=$DB"
                 "DISPONIT_TEST_LONNSSVEIP_DSN=${DB}_test")
 KAMPANJESVEIP_DSN=("DISPONIT_KAMPANJESVEIP_URL=$DB"
                    "DISPONIT_TEST_KAMPANJESVEIP_DSN=${DB}_test")
+# M-48 (116). Rollen ble opprettet av klyngefundamentet (#371); DSN-en
+# hører modul-PR-en til — arbeidsdelingen #360/#361 måler begge veier.
+MOTPARTSSVEIP_DSN=("DISPONIT_MOTPARTSSVEIP_URL=$DB"
+                   "DISPONIT_TEST_MOTPARTSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -469,6 +473,7 @@ sikre_rolle_dsn "$BETALINGSSVEIP" "${BETALINGSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$ADRESSESVEIP" "${ADRESSESVEIP_DSN[@]}"
 sikre_rolle_dsn "$LONNSSVEIP" "${LONNSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$KAMPANJESVEIP" "${KAMPANJESVEIP_DSN[@]}"
+sikre_rolle_dsn "$MOTPARTSSVEIP" "${MOTPARTSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
