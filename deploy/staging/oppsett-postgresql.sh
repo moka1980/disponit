@@ -318,6 +318,49 @@ PERSONVERNSVEIP_DSN=("DISPONIT_PERSONVERNSVEIP_URL=$DB"
 COMPLIANCESVEIP_DSN=("DISPONIT_COMPLIANCESVEIP_URL=$DB"
                      "DISPONIT_TEST_COMPLIANCESVEIP_DSN=${DB}_test")
 
+# DE TI SOM MANGLET (#324s lærdom, ikke lært ferdig). Kommentaren over
+# sier det allerede: en sveiperolle uten DSN i miljøfila kan ikke
+# autentisere på en fersk install, og da STOPPER deployen når modulen
+# lander. Rollene ble opprettet for hver av disse — men DSN-en ble aldri
+# skrevet, fra og med M-13.
+#
+# `opp.sh` krevde fjorten sveip-DSN-er; dette skriptet skrev fire. En
+# utrulling på en fersk maskin stoppet altså på den FØRSTE manglende, og
+# har gjort det siden M-13, uten at noen port sa fra.
+#
+# `test_deploy_sveip_dsn.py` binder nå de to listene til hverandre, så
+# den ellevte sveipen ikke kan gjenta det.
+# M-13
+AVSTEMMINGSVEIP_DSN=("DISPONIT_AVSTEMMINGSVEIP_URL=$DB"
+                     "DISPONIT_TEST_AVSTEMMINGSVEIP_DSN=${DB}_test")
+# M-17
+HENVENDELSESVEIP_DSN=("DISPONIT_HENVENDELSESVEIP_URL=$DB"
+                      "DISPONIT_TEST_HENVENDELSESVEIP_DSN=${DB}_test")
+# M-18
+ONBOARDINGSVEIP_DSN=("DISPONIT_ONBOARDINGSVEIP_URL=$DB"
+                     "DISPONIT_TEST_ONBOARDINGSVEIP_DSN=${DB}_test")
+# M-23
+FORDRINGSVEIP_DSN=("DISPONIT_FORDRINGSVEIP_URL=$DB"
+                   "DISPONIT_TEST_FORDRINGSVEIP_DSN=${DB}_test")
+# M-24
+LEVERANDORSVEIP_DSN=("DISPONIT_LEVERANDORSVEIP_URL=$DB"
+                     "DISPONIT_TEST_LEVERANDORSVEIP_DSN=${DB}_test")
+# M-14
+FAKTURASVEIP_DSN=("DISPONIT_FAKTURASVEIP_URL=$DB"
+                  "DISPONIT_TEST_FAKTURASVEIP_DSN=${DB}_test")
+# M-25
+PROSJEKTSVEIP_DSN=("DISPONIT_PROSJEKTSVEIP_URL=$DB"
+                   "DISPONIT_TEST_PROSJEKTSVEIP_DSN=${DB}_test")
+# M-26
+PRISBOKSVEIP_DSN=("DISPONIT_PRISBOKSVEIP_URL=$DB"
+                  "DISPONIT_TEST_PRISBOKSVEIP_DSN=${DB}_test")
+# M-27
+LAGERSVEIP_DSN=("DISPONIT_LAGERSVEIP_URL=$DB"
+                "DISPONIT_TEST_LAGERSVEIP_DSN=${DB}_test")
+# M-42
+KONTOVAKTSVEIP_DSN=("DISPONIT_KONTOVAKTSVEIP_URL=$DB"
+                    "DISPONIT_TEST_KONTOVAKTSVEIP_DSN=${DB}_test")
+
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
 sikre_rolle_dsn "$TOKENADMIN" "${TOKENADMIN_DSN[@]}"
@@ -335,6 +378,16 @@ sikre_rolle_dsn "$KUNNSKAPSSVEIP"  "${KUNNSKAPSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$TILGANGSSVEIP"    "${TILGANGSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$PERSONVERNSVEIP" "${PERSONVERNSVEIP_DSN[@]}"
 sikre_rolle_dsn "$COMPLIANCESVEIP" "${COMPLIANCESVEIP_DSN[@]}"
+sikre_rolle_dsn "$AVSTEMMINGSVEIP" "${AVSTEMMINGSVEIP_DSN[@]}"
+sikre_rolle_dsn "$HENVENDELSESVEIP" "${HENVENDELSESVEIP_DSN[@]}"
+sikre_rolle_dsn "$ONBOARDINGSVEIP" "${ONBOARDINGSVEIP_DSN[@]}"
+sikre_rolle_dsn "$FORDRINGSVEIP" "${FORDRINGSVEIP_DSN[@]}"
+sikre_rolle_dsn "$LEVERANDORSVEIP" "${LEVERANDORSVEIP_DSN[@]}"
+sikre_rolle_dsn "$FAKTURASVEIP" "${FAKTURASVEIP_DSN[@]}"
+sikre_rolle_dsn "$PROSJEKTSVEIP" "${PROSJEKTSVEIP_DSN[@]}"
+sikre_rolle_dsn "$PRISBOKSVEIP" "${PRISBOKSVEIP_DSN[@]}"
+sikre_rolle_dsn "$LAGERSVEIP" "${LAGERSVEIP_DSN[@]}"
+sikre_rolle_dsn "$KONTOVAKTSVEIP" "${KONTOVAKTSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
