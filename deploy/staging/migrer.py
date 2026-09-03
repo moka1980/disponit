@@ -195,6 +195,9 @@ REVOKE ALL ON FUNCTION registrer_backupverifisering(
 REVOKE ALL ON FUNCTION registrer_selvtest(UUID, JSONB, TEXT) FROM {rolle};
 REVOKE ALL ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) FROM {rolle};
 REVOKE ALL ON FUNCTION varsle_selvtest_uteblitt(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION varsle_sveip_uteblitt(TEXT) FROM {rolle};
+REVOKE ALL ON FUNCTION registrer_sveipestatus(
+    TEXT, TIMESTAMPTZ, INT, INT, BOOLEAN, BOOLEAN, TEXT) FROM {rolle};
 RESET ROLE;
 -- 093 (M-4): retensjonsflatens LESEDØRER. Samme form og samme grunn som
 -- 090/091 over: `retensjonslager`, `retensjonsmaaling`,
@@ -1191,6 +1194,13 @@ RESET ROLE;
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION varsle_backupverifisering_uteblitt(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION varsle_selvtest_uteblitt(TEXT) TO {rolle};
+-- 115: den TREDJE taushetssveipen her, og den samme setningen anvendt
+-- på ATTEN prosesser i stedet for én. Hver sveip har hele tiden talt
+-- sine egne sammenhengende feil og skrevet `"alarm": 1` i journalen;
+-- det feltet har aldri hatt en konsument. Og den farligste tilstanden
+-- — en sveip som ALDRI kjører — skriver ingenting i det hele tatt og
+-- ser nøyaktig ut som en sveip uten funn.
+GRANT EXECUTE ON FUNCTION varsle_sveip_uteblitt(TEXT) TO {rolle};
 RESET ROLE;
 -- 096 (M-21): fristsveipen — den FJERDE sveipen i senderens pre-pass, og
 -- den eneste som er kryss-tenant per konstruksjon (registeret er
@@ -1314,6 +1324,14 @@ GRANT USAGE ON SCHEMA public TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION registrer_backupverifisering(
     TIMESTAMPTZ, TIMESTAMPTZ, NUMERIC, INT, BIGINT) TO {rolle};
+-- 115: sveipestatusens skrivedør. SAMME JOBBKLASSE som backupstatusen
+-- — en drift-observatør som leser filsystemtilstand og fører den inn i
+-- basen — og derfor samme rolle, ikke en nittende med egen DSN, egen
+-- credential-katalog og egen preflight. Rollen har fortsatt NULL
+-- tabellrettigheter, og `test_sveipestatus` måler at den har nøyaktig
+-- disse to EXECUTE-ene og ikke flere.
+GRANT EXECUTE ON FUNCTION registrer_sveipestatus(
+    TEXT, TIMESTAMPTZ, INT, INT, BOOLEAN, BOOLEAN, TEXT) TO {rolle};
 -- LESEDØREN STÅR BEVISST IKKE HER. Lesejobben skriver; den leser aldri
 -- historikken tilbake, og en `backup_status` den ikke trenger ville vært
 -- en tenantsveip den ikke skal ha.

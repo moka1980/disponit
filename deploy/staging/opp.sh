@@ -81,7 +81,8 @@ disponit-kontovaktsveip.service disponit-kontovaktsveip.timer
 disponit-betalingssveip.service disponit-betalingssveip.timer
 disponit-adressesveip.service disponit-adressesveip.timer
 disponit-lonnssveip.service disponit-lonnssveip.timer
-disponit-kampanjesveip.service disponit-kampanjesveip.timer"
+disponit-kampanjesveip.service disponit-kampanjesveip.timer
+disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
 # alt var ubootbar, og deployen etterlot tjenesten NEDE). Rød port her =
@@ -1341,7 +1342,8 @@ disponit-kontovaktsveip.timer
 disponit-betalingssveip.timer
 disponit-adressesveip.timer
 disponit-lonnssveip.timer
-disponit-kampanjesveip.timer"
+disponit-kampanjesveip.timer
+disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
 # ikke driften — `systemctl --help` skiller dem eksplisitt. En timer eller
@@ -1655,6 +1657,10 @@ systemctl stop disponit-lonnssveip.timer \
 # idempotente, så neste døgn tar kjøringen igjen.
 systemctl stop disponit-kampanjesveip.timer \
     disponit-kampanjesveip.service 2>/dev/null || true
+# 115: sveipestatusen stoppes i samme vindu. Den fører flåtens
+# tilstand på nytt ved neste kjøring; ingenting går tapt.
+systemctl stop disponit-sveipestatus.timer \
+    disponit-sveipestatus.service 2>/dev/null || true
 systemctl stop disponit-varselsender.timer disponit-varselsender.service \
     2>/dev/null || true
 systemctl stop disponit-domenerevalidering.timer \
@@ -1837,6 +1843,10 @@ systemctl enable --now disponit-adressesveip.timer
 systemctl enable --now disponit-lonnssveip.timer
 # 114 (M-44): kampanjesveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-kampanjesveip.timer
+# 115: sveipestatusen, ETTER hele stigen (08:35). Rekkefølgen er
+# poenget: observatøren leser flåtens tilstand etter at flåten har
+# kjørt.
+systemctl enable --now disponit-sveipestatus.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp
 # som selvrevers() dømmer API-et med.

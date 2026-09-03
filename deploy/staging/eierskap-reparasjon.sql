@@ -560,6 +560,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm44_grensene(text)',                                  'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_funnkandidater(text,date)',                       'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_sveip_kampanjer(integer)',                        'disponit_kampanje_eier'),
+    -- 115: sveipestatusens doerer. Plattformskopet (090s form), eid av
+    -- samme rolle som resten av plattformdoerene.
+    ('FUNCTION', 'registrer_sveipestatus(text,timestamp with time zone,integer,integer,boolean,boolean,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'sveipeflaaten(text)',                                 'disponit_m37_claimer'),
+    ('FUNCTION', 'sveipeobservasjonen(text)',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'varsle_sveip_uteblitt(text)',                         'disponit_m37_claimer'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
