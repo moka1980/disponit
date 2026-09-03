@@ -206,6 +206,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # hendelse, og to overlappende abonnementsperioder. 409: kroppen ER
     # velformet, det er BASEN som sier nei.
     Feilvei("betaling_ulovlig_tilstand", 409, ("avvis",), None),
+    # 112 (M-19): en adresse med dato i framtida (som ville vaert siste
+    # versjon for DOEREN og usynlig for SVEIPEN), samme kildehendelse to
+    # ganger, et forsoek paa aa endre en frosset versjon eller kontroll,
+    # og en kontroll av et deaktivert subjekt. 409: kroppen ER
+    # velformet, det er BASEN som sier nei.
+    Feilvei("adresse_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,

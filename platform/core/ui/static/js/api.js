@@ -1005,3 +1005,40 @@ export const settAbonnementsstatus = (subjektId, periode, idem) =>
 export const settBetalingssubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/betaling/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-19 (112): adresseregisteret. SUBJEKTET, ADRESSEVERSJONEN og
+// KONTROLLEN bærer hver sin SP-2-nøkkel.
+//
+// FOR ADRESSEVERSJONEN OG KONTROLLEN ER SP-2 STRENGT NØDVENDIG: en
+// gjentatt POST må ikke bli to versjoner i en historikk som ER beviset
+// på hva kunden faktisk oppga.
+//
+// DET FINNES INGEN OPPSLAGSFUNKSJON HER, og fraværet er dommen:
+// netthandelsmalen navngir modulen som `v_adresse` og lar M-25s
+// `ordre.bekreft_og_fakturer` gå automatisk på `adresse_validert`. Et
+// oppslag mot et adresseregister er en utgående kanal med
+// personopplysninger i — og at en adresse FINNES sier uansett ikke at
+// pakken kommer fram til den som skal ha den.
+//
+// OG `registrerAdresse` SENDER ADRESSEN SLIK DEN BLE OPPGITT.
+// Normaliseringen regnes i BASEN, av `m19_normaliser`; den er ikke et
+// felt klienten kan sende, for da kunne den vært hva som helst.
+export const settAdressekrav = (krav, idem) =>
+  _muter("/v1/adresse/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerAdressesubjekt = (subjekt, idem) =>
+  _muter("/v1/adresse/subjekt", "POST", subjekt,
+         idem || nyIdempotensnokkel());
+
+export const registrerAdresse = (subjektId, adresse, idem) =>
+  _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/versjon`,
+         "POST", adresse, idem || nyIdempotensnokkel());
+
+export const registrerAdressekontroll = (versjonId, kontroll, idem) =>
+  _muter(`/v1/adresse/versjon/${encodeURIComponent(versjonId)}/kontroll`,
+         "POST", kontroll, idem || nyIdempotensnokkel());
+
+export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
+  _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());

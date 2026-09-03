@@ -485,6 +485,28 @@ GRANT EXECUTE ON FUNCTION m41_tersklene(TEXT) TO {rolle};
 REVOKE ALL ON FUNCTION m41_sveip_betalinger(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m41_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
+
+-- 112 (M-19): adresseregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m19_gjeldende_adresse` og `m19_kontrollene` er med fordi de er
+-- oppslagene `adresse_validert` til slutt må hvile på. Ingen av dem
+-- SLÅR NOE OPP.
+--
+-- `m19_funnkandidater` er GRANTET her, ikke revokert som M-41s og
+-- M-42s: flaten skal kunne vise hvorfor et funn står uten å vente på
+-- natta, og kandidatdøren er tenantbundet (SP-1) mens SVEIPEN er det
+-- som er kryss-tenant. Sveipen selv er revokert.
+SET LOCAL ROLE disponit_adresse_eier;
+GRANT EXECUTE ON FUNCTION m19_adressestatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_subjektene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_adressehistorikken(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_gjeldende_adresse(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_kontrollene(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_kravene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_funnkandidater(TEXT, DATE) TO {rolle};
+REVOKE ALL ON FUNCTION m19_sveip_adresser(INT) FROM {rolle};
+RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
 -- port 2 måler det). KUN SELECT i PR-A: innhenterens skrivevei kommer
@@ -1029,6 +1051,17 @@ GRANT EXECUTE ON FUNCTION m41_registrer_subjekt(TEXT, UUID, TEXT, TEXT, TEXT) TO
 GRANT EXECUTE ON FUNCTION m41_registrer_status(TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m41_sett_abonnementsstatus(TEXT, UUID, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m41_sett_subjektaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 112 (M-19): adresseregisterets fire skrivedører. At en adresse ikke
+-- kan gjelde fra framtida, at historikken er append-only, og at
+-- normaliseringen regnes i BASEN og aldri sendes inn, håndheves i
+-- dørene og i vaktene — aldri her. INGEN AV DEM SLÅR NOE OPP: metoden
+-- er fra et lukket sett der ingen verdi er et oppslag.
+SET LOCAL ROLE disponit_adresse_eier;
+GRANT EXECUTE ON FUNCTION m19_sett_krav(TEXT, INT, INT, TEXT[], TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_registrer_subjekt(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_registrer_adresse(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_registrer_kontroll(TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m19_sett_subjektaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1482,6 +1515,18 @@ GRANT EXECUTE ON FUNCTION m41_sveip_betalinger(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 112 (M-19): adressesveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den SLÅR INGENTING OPP: et oppslag er en utgående
+# kanal med personopplysninger i, og svaret ville uansett ikke vært det
+# `adresse_validert` lover.
+ADRESSESVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_adresse_eier;
+GRANT EXECUTE ON FUNCTION m19_sveip_adresser(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1731,7 +1776,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 111 (M-41): betalingssveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_betalingssveip",
-                           BETALINGSSVEIP_RETTIGHETER)):
+                           BETALINGSSVEIP_RETTIGHETER),
+                          # 112 (M-19): adressesveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_adressesveip",
+                           ADRESSESVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

@@ -43,6 +43,7 @@ import { visProsjekt } from "./flater/prosjekt.js";
 import { visPrisbok } from "./flater/prisbok.js";
 import { visLager } from "./flater/lager.js";
 import { visKontovakt } from "./flater/kontovakt.js";
+import { visAdresse } from "./flater/adresse.js";
 import { visBetaling } from "./flater/betaling.js";
 import { byggRuter, hashForDypLenke, tillatteFlater } from "./sitekart.js";
 
@@ -123,6 +124,7 @@ const FLATER = {
   prisbok: visPrisbok,
   lager: visLager,
   kontovakt: visKontovakt,
+  adresse: visAdresse,
   betaling: visBetaling,
 };
 

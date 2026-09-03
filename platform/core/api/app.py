@@ -1602,6 +1602,49 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import betaling as betalingmodul
         return betalingmodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 112 (M-19): adresseregisteret. Tre leseveier og fire skriveveier.
+    #
+    # OG DET FINNES INGEN OPPSLAGSVEI. Netthandelsmalen navngir modulen
+    # som `v_adresse` og bruker den til å la M-25s
+    # `ordre.bekreft_og_fakturer` gå automatisk. Den nærliggende
+    # «løsningen» — et oppslag mot et adresseregister — er en utgående
+    # kanal med personopplysninger i, og svaret ville uansett vært feil
+    # vare: at en adresse FINNES sier ikke at pakken kommer fram.
+    def adresse_bilde(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.adressebilde(tjeneste, request)
+
+    def adresse_historikk(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.historikk_endepunkt(tjeneste, request)
+
+    def adresse_kontroller(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.kontroller_endepunkt(tjeneste, request)
+
+    def adresse_krav(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.krav_endepunkt(tjeneste, request)
+
+    def adresse_subjekt(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.registrer_subjekt_endepunkt(tjeneste,
+                                                        request)
+
+    def adresse_versjon(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.registrer_adresse_endepunkt(tjeneste,
+                                                        request)
+
+    def adresse_kontroll(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.registrer_kontroll_endepunkt(tjeneste,
+                                                         request)
+
+    def adresse_aktiv(request: Request) -> Response:
+        from . import adresse as adressemodul
+        return adressemodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2266,6 +2309,20 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               betaling_abonnement, methods=["POST"]),
         Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
               methods=["POST"]),
+        Route("/v1/adresse", adresse_bilde, methods=["GET"]),
+        Route("/v1/adresse/krav", adresse_krav, methods=["POST"]),
+        Route("/v1/adresse/subjekt", adresse_subjekt,
+              methods=["POST"]),
+        Route("/v1/adresse/{subjekt_id:uuid}/historikk",
+              adresse_historikk, methods=["GET"]),
+        Route("/v1/adresse/{subjekt_id:uuid}/versjon", adresse_versjon,
+              methods=["POST"]),
+        Route("/v1/adresse/{subjekt_id:uuid}/aktiv", adresse_aktiv,
+              methods=["POST"]),
+        Route("/v1/adresse/versjon/{versjon_id:uuid}/kontroller",
+              adresse_kontroller, methods=["GET"]),
+        Route("/v1/adresse/versjon/{versjon_id:uuid}/kontroll",
+              adresse_kontroll, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -3175,6 +3232,23 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/betaling/{subjekt_id:uuid}/abonnement"):
         "bestilling:opprett",
     ("POST", "/v1/betaling/{subjekt_id:uuid}/aktiv"):
+        "bestilling:opprett",
+
+    # 112 (M-19): adresseregisteret. LESINGEN bærer `okonomi:read`,
+    # samme scope som 101 innførte og 111 gjenbrukte; SKRIVINGEN bærer
+    # `bestilling:opprett`.
+    ("GET",  "/v1/adresse"):                     "okonomi:read",
+    ("GET",  "/v1/adresse/{subjekt_id:uuid}/historikk"):
+        "okonomi:read",
+    ("GET",  "/v1/adresse/versjon/{versjon_id:uuid}/kontroller"):
+        "okonomi:read",
+    ("POST", "/v1/adresse/krav"):                "bestilling:opprett",
+    ("POST", "/v1/adresse/subjekt"):             "bestilling:opprett",
+    ("POST", "/v1/adresse/{subjekt_id:uuid}/versjon"):
+        "bestilling:opprett",
+    ("POST", "/v1/adresse/{subjekt_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    ("POST", "/v1/adresse/versjon/{versjon_id:uuid}/kontroll"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

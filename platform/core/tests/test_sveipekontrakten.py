@@ -40,6 +40,7 @@ SVEIPENE = (
     ("fakturasveip", "m14_sveip_fakturaer"),
     ("begrepssveip", "m9_sveip_utlopte"),
     ("betalingssveip", "m41_sveip_betalinger"),
+    ("adressesveip", "m19_sveip_adresser"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

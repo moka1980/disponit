@@ -507,6 +507,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm41_tersklene(text)',                                  'disponit_betaling_eier'),
     ('FUNCTION', 'm41_funnkandidater(text,date)',                        'disponit_betaling_eier'),
     ('FUNCTION', 'm41_sveip_betalinger(integer)',                        'disponit_betaling_eier'),
+    -- 112 (M-19): adresseregisterets doerer og adressesveipen.
+    -- INGEN AV DEM SLAAR NOE OPP.
+    ('FUNCTION', 'm19_evidens(text,uuid,text,text,jsonb)',              'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_normaliser(text)',                                'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_sett_krav(text,integer,integer,text[],text)',     'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_registrer_subjekt(text,uuid,text,text,text)',     'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_registrer_adresse(text,uuid,uuid,text,text,text,text,text,text,text,date,text,text)', 'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_registrer_kontroll(text,uuid,uuid,text,text,text,text,text,date,text)', 'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_sett_subjektaktiv(text,uuid,boolean,text)',        'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_gjeldende_adresse(text,uuid,date)',                'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_adressehistorikken(text,uuid,integer)',            'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_kontrollene(text,uuid,integer)',                   'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_adressestatus(text)',                              'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_subjektene(text,integer)',                         'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_kravene(text)',                                    'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_funnkandidater(text,date)',                        'disponit_adresse_eier'),
+    ('FUNCTION', 'm19_sveip_adresser(integer)',                          'disponit_adresse_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy
