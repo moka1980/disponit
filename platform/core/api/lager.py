@@ -304,7 +304,12 @@ def _skriv(tjeneste, request, bygg):
                 raise           # driftsfeil — rammen svarer db_utilgjengelig
             raise avbrudd from e
         conn.commit()
-        return _ok({**svar, felt: ut}, rid)
+        # ET FELT SOM ALLTID ER NULL ER ET LØFTE API-ET IKKE HOLDER.
+        # `m27_registrer_vare` er en VOID-dør — den har ingenting å
+        # melde utover id-en, som alt står i `svar` (CodeRabbit).
+        if ut is not None:
+            svar = {**svar, felt: ut}
+        return _ok(svar, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

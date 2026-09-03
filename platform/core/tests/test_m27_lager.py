@@ -570,11 +570,21 @@ def test_et_deaktivert_vare_lukker_funnene_og_beholder_hovedboken(
         assert c.execute("SELECT m27_sett_vareaktiv(%s,%s,false,'u')",
                          (tenant, vid)).fetchone()[0] is False
         c.commit()
-        # EN DEAKTIVERT VARE TAR IKKE IMOT BEVEGELSER.
+        # EN DEAKTIVERT VARE TAR IKKE IMOT BEVEGELSER — OG HELLER IKKE
+        # TELLINGER. En telling ER en linje i hovedboken, og varen er
+        # ute av sveipen: linjen ville stått uten noen som måler den
+        # (CodeRabbit).
         _sett_kontekst(c, tenant)
         with pytest.raises(psycopg.Error) as ei:
             c.execute("SELECT m27_registrer_bevegelse(%s,%s,%s,'mottak',"
                       "1,NULL,current_date,'x','u')",
+                      (tenant, uuid.uuid4(), vid))
+        assert "deaktivert" in str(ei.value)
+        c.rollback()
+        _sett_kontekst(c, tenant)
+        with pytest.raises(psycopg.Error) as ei:
+            c.execute("SELECT m27_registrer_telling(%s,%s,%s,5,"
+                      "current_date,'x','u')",
                       (tenant, uuid.uuid4(), vid))
         assert "deaktivert" in str(ei.value)
         c.rollback()

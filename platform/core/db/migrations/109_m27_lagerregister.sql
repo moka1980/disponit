@@ -733,7 +733,7 @@ CREATE FUNCTION m27_registrer_telling(
     p_talt_antall BIGINT, p_utfort DATE, p_notat TEXT, p_aktor TEXT)
 RETURNS BIGINT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_sum BIGINT; v_endring BIGINT; v_finnes BOOLEAN;
+DECLARE v_sum BIGINT; v_endring BIGINT; v_aktiv BOOLEAN;
 BEGIN
     PERFORM public.krev_tenantkontekst(
         p_tenant, 'm27_registrer_telling');
@@ -742,12 +742,21 @@ BEGIN
         RAISE EXCEPTION 'm27_registrer_telling: et talt antall kan ikke'
             ' være negativt' USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    SELECT true INTO v_finnes FROM public.vare v
+    SELECT v.aktiv INTO v_aktiv FROM public.vare v
      WHERE v.tenant = p_tenant AND v.vare_id = p_vare_id
        FOR UPDATE;
-    IF NOT coalesce(v_finnes, false) THEN
+    IF v_aktiv IS NULL THEN
         RAISE EXCEPTION 'm27_registrer_telling: varen finnes ikke'
             USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    -- SAMME KRAV SOM PÅ EN BEVEGELSE. En telling ER en linje i
+    -- hovedboken, og en deaktivert vare skal ikke få nye linjer — den
+    -- er ute av sveipen, så linjen ville stått uten noen som måler den
+    -- (CodeRabbit, 110-runden).
+    IF NOT v_aktiv THEN
+        RAISE EXCEPTION 'm27_registrer_telling: varen er deaktivert —'
+            ' aktiver den før du teller den'
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     SELECT coalesce(sum(b.endring), 0) INTO v_sum
       FROM public.lagerbevegelse b
