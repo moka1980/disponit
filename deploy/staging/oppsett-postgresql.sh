@@ -165,6 +165,19 @@ BEHOLDNINGEIER=disponit_beholdning_eier    # M-27 eier lagerregisteret
 LAGERSVEIP=disponit_lagersveip             # M-27s bestillingspunktsveip
 KONTOVAKTEIER=disponit_kontovakt_eier      # M-42 eier kontoregisteret
 KONTOVAKTSVEIP=disponit_kontovaktsveip     # M-42s kontoendringssveip
+# KLYNGE 5 (111-114), samme forhåndsoppretting og av samme grunn.
+#
+# Med denne klyngen er plattformen oppe i ATTEN nattlige sveip
+# (03:15 → 08:20). Driftssaken fra klynge 4 står og er tyngre — men
+# fortsatt ikke en grunn til å slå sveiperollene sammen.
+BETALINGEIER=disponit_betaling_eier         # M-41 eier betalingsregisteret
+BETALINGSSVEIP=disponit_betalingssveip      # M-41s uavklart-betaling-sveip
+ADRESSEEIER=disponit_adresse_eier           # M-11 eier adresseregisteret
+ADRESSESVEIP=disponit_adressesveip          # M-11s ukontrollert-adresse-sveip
+LONNEIER=disponit_lonn_eier                 # M-39 eier lonnsgrunnlaget
+LONNSSVEIP=disponit_lonnssveip              # M-39s avvik-mot-plan-sveip
+KAMPANJEEIER=disponit_kampanje_eier         # M-44 eier kampanjeregisteret
+KAMPANJESVEIP=disponit_kampanjesveip        # M-44s frekvenstak-sveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -172,7 +185,8 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$AVSTEMMINGSVEIP" "$HENVENDELSESVEIP" "$ONBOARDINGSVEIP" \
          "$FORDRINGSVEIP" "$LEVERANDORSVEIP" "$FAKTURASVEIP" \
          "$PROSJEKTSVEIP" "$PRISBOKSVEIP" "$LAGERSVEIP" \
-         "$KONTOVAKTSVEIP"; do
+         "$KONTOVAKTSVEIP" "$BETALINGSSVEIP" "$ADRESSESVEIP" \
+         "$LONNSSVEIP" "$KAMPANJESVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -183,7 +197,8 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$PERSONVERNEIER" "$COMPLIANCEEIER" "$AVSTEMMINGEIER" \
          "$KUNDESERVICEEIER" "$ONBOARDINGEIER" "$FORDRINGEIER" \
          "$LEVERANDOREIER" "$FAKTURAEIER" "$PROSJEKTEIER" \
-         "$PRISBOKEIER" "$BEHOLDNINGEIER" "$KONTOVAKTEIER"; do
+         "$PRISBOKEIER" "$BEHOLDNINGEIER" "$KONTOVAKTEIER" \
+         "$BETALINGEIER" "$ADRESSEEIER" "$LONNEIER" "$KAMPANJEEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -268,6 +283,14 @@ sudo -u postgres psql -qc "GRANT $PROSJEKTEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $PRISBOKEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $BEHOLDNINGEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $KONTOVAKTEIER TO $MIGRATOR WITH INHERIT FALSE"
+# KLYNGE 5. Medlemskapene står HER, i samme commit som rollene — det er
+# hele lærdommen fra 3/9: klynge 4 opprettet rollene og glemte
+# medlemskapene, `SET ROLE` feilet midt i migrasjonssettet, basen sto
+# mellom to releaser og enhetene ble stående stoppet (#361).
+sudo -u postgres psql -qc "GRANT $BETALINGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ADRESSEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $LONNEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $KAMPANJEEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

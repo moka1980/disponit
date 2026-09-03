@@ -31,7 +31,7 @@ verifikatorer:
     beskrivelse: "M-27 lager og logistikk"
     betrodd_for: [lager_reservert, retur_registrert]
   v_adresse:
-    beskrivelse: "M-11 adressevalidering"
+    beskrivelse: "M-19 adressevalidering"
     betrodd_for: [adresse_validert]
   v_rett:
     beskrivelse: "M-34 regelverkssjekk angrerett/reklamasjon"

@@ -89,6 +89,19 @@ export const MODULSTATUS = {
   26: "bygges",     // m26_prisbok: under_utvikling, ikke_i_drift
   27: "bygges",     // m27_lager: under_utvikling, ikke_i_drift
   42: "bygges",     // m42_kontovakt: under_utvikling, ikke_i_drift
+  // KLYNGE 5 «resten av det bransjemalene alt har lovet» (111-114) —
+  // registrert 3/9 sammen med grensene m41-v1…m44-v1. Dette er de fire
+  // SISTE manglende modulene i malene vi sender ut; når de er bygget er
+  // gapet lukket.
+  //
+  // M-44 er en annen figur enn de tre andre: den er den manglende
+  // AKTØREN på `kampanje.send`, ikke en manglende verifikator. Det gjør
+  // tilbakeholdelsen sterkere — modulen finnes for å sende, og v1
+  // sender null.
+  41: "bygges",     // m41_betaling: under_utvikling, ikke_i_drift
+  19: "bygges",     // m19_adresse: under_utvikling, ikke_i_drift
+  39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
+  44: "bygges",     // m44_kampanje: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -285,6 +298,41 @@ const MODULER = [
     navn_nokkel: "site.modul.m42.navn",
     fase_nokkel: "site.fase.autopiloter",
     tekst_nokkel: "site.modul.m42.tekst",
+  },
+  // KLYNGE 5. Fasene leses fra `katalog.js` (m16/m31-regelen: katalogen
+  // er kilden, ikke en gjetning her): M-19 og M-39 er fase 2 →
+  // `operasjoner`, M-41 og M-44 er fase 3 → `autopiloter`.
+  // Fasetekstens egen formulering nevner «kampanje» — det er M-44.
+  //
+  // M-19 og IKKE M-11: M-11 er selvtesten (091). Malen navngav feil
+  // nummer, og den er rettet i samme commit.
+  {
+    id: 41,
+    navn_nokkel: "site.modul.m41.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m41.tekst",
+  },
+  {
+    // M-19 og ikke M-11: M-11 ER SELVTESTEN (091). Malen navngav feil
+    // nummer, og den er rettet i samme commit. Fase 2 fra `katalog.js`
+    // → `operasjoner`: adressekontroll er en standardisert
+    // arbeidsprosess, ikke en autopilot.
+    id: 19,
+    navn_nokkel: "site.modul.m19.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m19.tekst",
+  },
+  {
+    id: 39,
+    navn_nokkel: "site.modul.m39.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m39.tekst",
+  },
+  {
+    id: 44,
+    navn_nokkel: "site.modul.m44.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m44.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

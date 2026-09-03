@@ -69,6 +69,15 @@ KJENTE_EIERROLLER = (
     "disponit_prisbok_eier",    # M-26, migrasjon 108
     "disponit_beholdning_eier", # M-27, migrasjon 109
     "disponit_kontovakt_eier",  # M-42, migrasjon 110
+
+    # Klynge 5 «resten av det bransjemalene alt har lovet» (111-114).
+    # Ingen av navnene kolliderer med en eksisterende rolle — sjekket
+    # mot hele listen og mot ci.yml før de ble valgt, slik M-27s
+    # kollisjon lærte oss.
+    "disponit_betaling_eier",   # M-41, migrasjon 111
+    "disponit_adresse_eier",    # M-11, migrasjon 112
+    "disponit_lonn_eier",       # M-39, migrasjon 113
+    "disponit_kampanje_eier",   # M-44, migrasjon 114
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.
