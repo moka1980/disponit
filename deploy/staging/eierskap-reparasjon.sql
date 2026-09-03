@@ -491,6 +491,22 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm42_tersklene(text)',                                  'disponit_kontovakt_eier'),
     ('FUNCTION', 'm42_funnkandidater(text,date)',                        'disponit_kontovakt_eier'),
     ('FUNCTION', 'm42_sveip_konto(integer)',                             'disponit_kontovakt_eier'),
+    -- 111 (M-41): betalingsregisterets doerer og betalingssveipen.
+    ('FUNCTION', 'm41_evidens(text,uuid,text,text,jsonb)',              'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_normaliser(text)',                                'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_sett_terskler(text,integer,bigint,integer,text)', 'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_registrer_subjekt(text,uuid,text,text,text)',     'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_registrer_status(text,uuid,uuid,text,bigint,bigint,text,text,text,text,date,text,text)', 'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_sett_abonnementsstatus(text,uuid,text,date,text,text)', 'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_sett_subjektaktiv(text,uuid,boolean,text)',        'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_gjeldende_status(text,uuid,date)',                 'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_statushistorikken(text,uuid,integer)',             'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_abonnement_paa_dato(text,uuid,date)',              'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_betalingsstatus(text)',                            'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_subjektene(text,integer)',                         'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_tersklene(text)',                                  'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_funnkandidater(text,date)',                        'disponit_betaling_eier'),
+    ('FUNCTION', 'm41_sveip_betalinger(integer)',                        'disponit_betaling_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

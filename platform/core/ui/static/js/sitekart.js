@@ -417,6 +417,13 @@ const BASISRUTER = [
   // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem stopper en betaling.
   { nokkel: "kontovakt", scope: "okonomi:read", modulflate: 42 },
+  // M-41 (111): betalingsregisteret. MODULFLATE bak `okonomi:read` —
+  // betalingsstatus ER virksomhetens pengestrøm, og den som handler på
+  // et beløpsavvik er den som fakturerer.
+  //
+  // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
+  // på `bestilling:opprett`. Ingen av dem refunderer.
+  { nokkel: "betaling", scope: "okonomi:read", modulflate: 41 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

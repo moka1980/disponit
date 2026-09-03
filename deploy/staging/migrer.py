@@ -468,6 +468,22 @@ GRANT EXECUTE ON FUNCTION m42_gjeldende_konto(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m42_tersklene(TEXT) TO {rolle};
 REVOKE ALL ON FUNCTION m42_sveip_konto(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m42_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 111 (M-41): betalingsregisterets LESEDØRER. De fem tabellene står
+-- bevisst IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m41_gjeldende_status` og `m41_statushistorikken` er med fordi de er
+-- oppslagene `betaling_autorisert` og `samme_betalingsmiddel` til slutt
+-- må hvile på. Ingen av dem REFUNDERER noe.
+SET LOCAL ROLE disponit_betaling_eier;
+GRANT EXECUTE ON FUNCTION m41_betalingsstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_subjektene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_statushistorikken(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_gjeldende_status(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_abonnement_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_tersklene(TEXT) TO {rolle};
+REVOKE ALL ON FUNCTION m41_sveip_betalinger(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m41_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -1002,6 +1018,17 @@ GRANT EXECUTE ON FUNCTION m42_registrer_mottaker(TEXT, UUID, TEXT, TEXT, TEXT) T
 GRANT EXECUTE ON FUNCTION m42_oppgi_konto(TEXT, UUID, UUID, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m42_verifiser_konto(TEXT, UUID, UUID, TEXT, TEXT, TEXT, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m42_sett_mottakeraktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 111 (M-41): betalingsregisterets fem skrivedører. At en status ikke
+-- kan inntreffe i framtida, at historikken er append-only, og at
+-- betalingsmiddelet aldri lagres, håndheves i dørene og i vaktene —
+-- aldri her. INGEN AV DEM REFUNDERER, og ingen av dem autoriserer:
+-- `refundert` er en status man REGISTRERER når den har skjedd.
+SET LOCAL ROLE disponit_betaling_eier;
+GRANT EXECUTE ON FUNCTION m41_sett_terskler(TEXT, INT, BIGINT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_registrer_subjekt(TEXT, UUID, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_registrer_status(TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, TEXT, TEXT, TEXT, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_sett_abonnementsstatus(TEXT, UUID, TEXT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m41_sett_subjektaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1444,6 +1471,17 @@ GRANT EXECUTE ON FUNCTION m42_sveip_konto(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 111 (M-41): betalingssveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den REFUNDERER INGENTING: en refusjon er penger
+# ut døra, og den er irreversibel.
+BETALINGSSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_betaling_eier;
+GRANT EXECUTE ON FUNCTION m41_sveip_betalinger(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1689,7 +1727,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 110 (M-42): kontovaktsveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_kontovaktsveip",
-                           KONTOVAKTSVEIP_RETTIGHETER)):
+                           KONTOVAKTSVEIP_RETTIGHETER),
+                          # 111 (M-41): betalingssveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_betalingssveip",
+                           BETALINGSSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

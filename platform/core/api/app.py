@@ -1566,6 +1566,42 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kontovakt as kontovaktmodul
         return kontovaktmodul.sett_aktiv_endepunkt(tjeneste, request)
 
+    # 111 (M-41): betalingsregisteret. To leseveier og fem skriveveier.
+    #
+    # OG DET FINNES INGEN REFUSJONSVEI. Netthandelsmalen navngir
+    # modulen som `v_betaling` og bruker den til å la `refusjon.utfor`
+    # gå automatisk og IRREVERSIBELT opp til 5000 NOK. v1 registrerer;
+    # en refusjon er penger ut døra.
+    def betaling_bilde(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.betalingsbilde(tjeneste, request)
+
+    def betaling_historikk(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.historikk_endepunkt(tjeneste, request)
+
+    def betaling_terskler(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.terskler_endepunkt(tjeneste, request)
+
+    def betaling_subjekt(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.registrer_subjekt_endepunkt(tjeneste,
+                                                         request)
+
+    def betaling_status(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.registrer_status_endepunkt(tjeneste,
+                                                        request)
+
+    def betaling_abonnement(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.sett_abonnement_endepunkt(tjeneste, request)
+
+    def betaling_aktiv(request: Request) -> Response:
+        from . import betaling as betalingmodul
+        return betalingmodul.sett_aktiv_endepunkt(tjeneste, request)
+
     # 097 (M-12): tilgangsregisteret. Leseveien er tenantens eget
     # register OG de åpne funnene i ett kall; de tre skriveveiene er
     # menneskelige registreringer i flaten. INGEN av dem provisjonerer
@@ -2214,6 +2250,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/kontovakt/{mottaker_id:uuid}/konto", kontovakt_konto,
               methods=["POST"]),
         Route("/v1/kontovakt/{mottaker_id:uuid}/aktiv", kontovakt_aktiv,
+              methods=["POST"]),
+        # 111 (M-41): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
+        # `subjekt`) FØR mønsterrutene. STIENE STÅR PÅ ÉN LINJE.
+        Route("/v1/betaling", betaling_bilde, methods=["GET"]),
+        Route("/v1/betaling/terskler", betaling_terskler,
+              methods=["POST"]),
+        Route("/v1/betaling/subjekt", betaling_subjekt,
+              methods=["POST"]),
+        Route("/v1/betaling/{subjekt_id:uuid}/historikk",
+              betaling_historikk, methods=["GET"]),
+        Route("/v1/betaling/{subjekt_id:uuid}/status", betaling_status,
+              methods=["POST"]),
+        Route("/v1/betaling/{subjekt_id:uuid}/abonnement",
+              betaling_abonnement, methods=["POST"]),
+        Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
               methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
@@ -3111,6 +3162,19 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kontovakt/{mottaker_id:uuid}/konto"):
         "bestilling:opprett",
     ("POST", "/v1/kontovakt/{mottaker_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    # 111 (M-41): betalingsregisteret. LESINGEN bærer `okonomi:read`,
+    # SKRIVINGEN `bestilling:opprett`. Ingen av dem refunderer.
+    ("GET",  "/v1/betaling"):                     "okonomi:read",
+    ("GET",  "/v1/betaling/{subjekt_id:uuid}/historikk"):
+        "okonomi:read",
+    ("POST", "/v1/betaling/terskler"):            "bestilling:opprett",
+    ("POST", "/v1/betaling/subjekt"):             "bestilling:opprett",
+    ("POST", "/v1/betaling/{subjekt_id:uuid}/status"):
+        "bestilling:opprett",
+    ("POST", "/v1/betaling/{subjekt_id:uuid}/abonnement"):
+        "bestilling:opprett",
+    ("POST", "/v1/betaling/{subjekt_id:uuid}/aktiv"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

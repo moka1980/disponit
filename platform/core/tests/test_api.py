@@ -305,6 +305,15 @@ APPEND_ONLY_TRIGGERE = (
     ("kontooppgave", "m42_oppgave_vakt"),
     ("betalingsmottaker", "m42_mottaker_vakt"),
     ("kontoterskel", "m42_terskel_vakt"),
+    # 111 (M-41): alle fem vaktene nekter DELETE. `betalingshendelse`
+    # nekter OGSÅ UPDATE: den gjeldende statusen ER den siste raden, og
+    # en rad som kunne endres i ettertid ville slettet sporet av at noe
+    # skiftet.
+    ("betalingsfunn", "m41_funn_vakt"),
+    ("abonnementsperiode", "m41_periode_vakt"),
+    ("betalingshendelse", "m41_hendelse_vakt"),
+    ("betalingssubjekt", "m41_subjekt_vakt"),
+    ("betalingsterskel", "m41_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -475,6 +484,11 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # oppgaven og funnene på mottakeren.
                  "kontoverifikasjon", "kontofunn", "kontooppgave",
                  "betalingsmottaker", "kontoterskel",
+                 # 111 (M-41): hendelsene, periodene og funnene peker på
+                 # subjektet.
+                 "betalingshendelse", "abonnementsperiode",
+                 "betalingsfunn", "betalingssubjekt",
+                 "betalingsterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

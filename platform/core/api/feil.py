@@ -199,6 +199,13 @@ FEILVEIER: tuple[Feilvei, ...] = (
     # sier nei. Er de samme, er ingenting verifisert, og
     # `konto_verifisert_uavhengig` er nettopp navnet paa det vilkaaret.
     Feilvei("kontovakt_ulovlig_tilstand", 409, ("avvis",), None),
+    # 111 (M-41): betalingsregisterets doerer og vakter nekter det
+    # tilstanden ikke tillater — en status i FRAMTIDA (som ville vaert
+    # usynlig for sveipen og dermed skjult et statusskift), samme
+    # kildehendelse to ganger, et forsoek paa aa endre en frosset
+    # hendelse, og to overlappende abonnementsperioder. 409: kroppen ER
+    # velformet, det er BASEN som sier nei.
+    Feilvei("betaling_ulovlig_tilstand", 409, ("avvis",), None),
     Feilvei("body_for_stor", 413, ("sikkerhet",), None, aggregert=True),
     Feilvei("body_lengde_ugyldig", 411, ("sikkerhet",), None, aggregert=True),
     Feilvei("request_feilformet", 400, ("sikkerhet",), None, aggregert=True,
