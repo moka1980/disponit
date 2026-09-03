@@ -287,6 +287,15 @@ APPEND_ONLY_TRIGGERE = (
     ("klausul", "m26_klausul_vakt"),
     ("produkt", "m26_produkt_vakt"),
     ("prisbokterskel", "m26_terskel_vakt"),
+    # 109 (M-27): alle fem vaktene nekter DELETE. `lagerbevegelse` gjør
+    # det ubetinget OG nekter UPDATE: hovedboken er append-only, og en
+    # feilført linje rettes med en NY linje. Et lager der historikken
+    # kunne skrives om er et lager der svinn forsvinner.
+    ("lagerfunn", "m27_funn_vakt"),
+    ("lagerbevegelse", "m27_bevegelse_vakt"),
+    ("bestillingspunkt", "m27_punkt_vakt"),
+    ("vare", "m27_vare_vakt"),
+    ("lagerterskel", "m27_terskel_vakt"),
 )
 
 #: Rekkefølgen er FREMMEDNØKKELREKKEFØLGE, ikke alfabetisk.
@@ -449,6 +458,10 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # Klausulene står fritt.
                  "prisbokfunn", "pris", "produkt", "klausul",
                  "prisbokterskel",
+                 # 109 (M-27): funnene, bevegelsene og punktene peker på
+                 # varen. Barna først, varen, tersklene sist.
+                 "lagerfunn", "lagerbevegelse", "bestillingspunkt",
+                 "vare", "lagerterskel",
                  # 058: inndata-artefaktet peker på BÅDE `oppdrag`
                  # (bindingen) og `tenant_nokler` (DEK-referansen), så det
                  # må ut før begge.

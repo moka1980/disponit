@@ -458,6 +458,24 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm26_tersklene(text)',                                  'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_funnkandidater(text,date)',                        'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_sveip_prisbok(integer)',                           'disponit_prisbok_eier'),
+    -- 109 (M-27): lagerregisterets doerer og lagersveipen.
+    ('FUNCTION', 'm27_evidens(text,uuid,text,text,jsonb)',              'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_sett_terskler(text,integer,integer,integer,text)', 'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_registrer_vare(text,uuid,text,text,text,text)',    'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_sett_bestillingspunkt(text,uuid,bigint,date,text,text)', 'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_registrer_bevegelse(text,uuid,uuid,text,bigint,bigint,date,text,text)', 'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_registrer_telling(text,uuid,uuid,bigint,date,text,text)', 'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_sett_vareaktiv(text,uuid,boolean,text)',           'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_beholdning(text,uuid)',                            'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_beholdning_paa_dato(text,uuid,date)',              'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_punkt_paa_dato(text,uuid,date)',                   'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_under_bestillingspunkt(text,uuid,date)',           'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_lagerstatus(text)',                                'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_varene(text,integer)',                             'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_bevegelsene(text,uuid,integer)',                   'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_tersklene(text)',                                  'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_funnkandidater(text,date)',                        'disponit_beholdning_eier'),
+    ('FUNCTION', 'm27_sveip_lager(integer)',                             'disponit_beholdning_eier'),
     -- 057 port 19: den UTSATTE porten er claimer-eid definer, ikke en vakt
     -- som migrator. Den kjoerer ved COMMIT, etter at reaperens definer-
     -- identitet er borte, og maa lese gjennom claimerens m57_reaper-policy

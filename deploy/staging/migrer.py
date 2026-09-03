@@ -434,6 +434,24 @@ GRANT EXECUTE ON FUNCTION m26_pris_paa_dato(TEXT, UUID, DATE) TO {rolle};
 GRANT EXECUTE ON FUNCTION m26_innenfor_rabatt(TEXT, UUID, DATE, BIGINT) TO {rolle};
 REVOKE ALL ON FUNCTION m26_sveip_prisbok(INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m26_funnkandidater(TEXT, DATE) FROM {rolle};
+
+-- 109 (M-27): lagerregisterets LESEDØRER. De fem tabellene står bevisst
+-- IKKE i noen GRANT-liste her (SP-7).
+--
+-- `m27_beholdning*` og `m27_punkt_paa_dato` er med fordi de er
+-- oppslagene `lager_reservert` til slutt må hvile på: hva sto på lager
+-- DEN dagen, og hva var punktet da. Ingen av dem BESTILLER noe.
+SET LOCAL ROLE disponit_beholdning_eier;
+GRANT EXECUTE ON FUNCTION m27_lagerstatus(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_varene(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_bevegelsene(TEXT, UUID, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_tersklene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_beholdning(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_beholdning_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_punkt_paa_dato(TEXT, UUID, DATE) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_under_bestillingspunkt(TEXT, UUID, DATE) TO {rolle};
+REVOKE ALL ON FUNCTION m27_sveip_lager(INT) FROM {rolle};
+REVOKE ALL ON FUNCTION m27_funnkandidater(TEXT, DATE) FROM {rolle};
 RESET ROLE;
 -- 088 (M-6): e-postlagrene. Runtime LESER (RLS-gated) — payloaden er
 -- tenant-DEK-kryptert, så et direkte SELECT gir bare ciphertext (M-6
@@ -945,6 +963,18 @@ GRANT EXECUTE ON FUNCTION m26_registrer_produkt(TEXT, UUID, TEXT, TEXT, TEXT, TE
 GRANT EXECUTE ON FUNCTION m26_sett_pris(TEXT, UUID, BIGINT, TEXT, DATE, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m26_sett_klausul(TEXT, TEXT, TEXT, TEXT, BOOLEAN, DATE, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m26_sett_produktaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
+-- 109 (M-27): lagerregisterets seks skrivedører. At beholdningen ikke
+-- kan bli negativ, at en hovedbokslinje er frosset, og at et punkt ikke
+-- skrives bakover, håndheves i dørene og i vaktene — aldri her. INGEN
+-- AV DEM BESTILLER NOE, og ingen av dem SETTER en beholdning: en
+-- telling skriver differansen som en linje.
+SET LOCAL ROLE disponit_beholdning_eier;
+GRANT EXECUTE ON FUNCTION m27_sett_terskler(TEXT, INT, INT, INT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_registrer_vare(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_sett_bestillingspunkt(TEXT, UUID, BIGINT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_registrer_bevegelse(TEXT, UUID, UUID, TEXT, BIGINT, BIGINT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_registrer_telling(TEXT, UUID, UUID, BIGINT, DATE, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m27_sett_vareaktiv(TEXT, UUID, BOOLEAN, TEXT) TO {rolle};
 SET LOCAL ROLE disponit_m37_claimer;
 -- 066 (#159): revisjonshendelsens SKRIVEVEI — runtime alene. Det er API-et
 -- innloggede mennesker skriver hendelsen gjennom; en bakgrunnsarbeider har
@@ -1364,6 +1394,17 @@ GRANT EXECUTE ON FUNCTION m26_sveip_prisbok(INT) TO {rolle};
 RESET ROLE;
 """
 
+# 109 (M-27): lagersveipens rolle. Nøyaktig ÉN EXECUTE, ingen
+# tabellrettigheter. Sveipen er KRYSS-TENANT og setter selv
+# RLS-konteksten — og den BESTILLER INGENTING: et passert
+# bestillingspunkt er et funn, og et menneske avgjør hva som kjøpes.
+LAGERSVEIP_RETTIGHETER = """
+GRANT USAGE ON SCHEMA public TO {rolle};
+SET LOCAL ROLE disponit_beholdning_eier;
+GRANT EXECUTE ON FUNCTION m27_sveip_lager(INT) TO {rolle};
+RESET ROLE;
+"""
+
 TOKEN_ADMIN_RETTIGHETER = """
 REVOKE ALL ON FUNCTION verifiser_token(TEXT, TEXT) FROM {rolle};
 GRANT USAGE ON SCHEMA public TO {rolle};
@@ -1601,7 +1642,11 @@ def main(argv: list[str] | None = None) -> int:
                           # 108 (M-26): prisboksveipens rolle, samme
                           # løkke og samme betingelse.
                           ("disponit_prisboksveip",
-                           PRISBOKSVEIP_RETTIGHETER)):
+                           PRISBOKSVEIP_RETTIGHETER),
+                          # 109 (M-27): lagersveipens rolle, samme
+                          # løkke og samme betingelse.
+                          ("disponit_lagersveip",
+                           LAGERSVEIP_RETTIGHETER)):
             if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
                             (navn,)).fetchone():
                 conn.execute(mal.format(rolle=navn))

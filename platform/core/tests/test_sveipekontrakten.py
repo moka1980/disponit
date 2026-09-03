@@ -42,6 +42,7 @@ SVEIPENE = (
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),
+    ("lagersveip", "m27_sveip_lager"),
     ("leverandorsveip", "m24_sveip_leverandorer"),
     ("onboardingsveip", "m18_sveip_onboarding"),
     ("prisboksveip", "m26_sveip_prisbok"),
