@@ -321,11 +321,20 @@ jobs:
           python deploy/staging/sp10-provekjoring.py 56
           python deploy/staging/sp10-provekjoring.py 59
           python deploy/staging/sp10-provekjoring.py 67
-      - name: Enhetstester + negative policytester
-        run: python -m pytest platform/core/tests -q
-      - name: "Port: ingen DB-tester ble hoppet over"
-        # En hoppet test er ikke en bestått test. Feiler hvis DSN mangler
-        # eller pg-markerte tester skippes.
+      - name: "Enhetstester + negative policytester (og skip-porten)"
+        # ÉN KJØRING, IKKE TO. Steget het før «Enhetstester» og ble fulgt
+        # av «Port: ingen DB-tester ble hoppet over», som kjørte HELE
+        # suiten en gang til bare for å lese skip-rapporten. Det doblet
+        # den påkrevde sjekken — ~10 minutter ble ~20 — uten å måle én
+        # ekstra test. `-rs` gir rapporten i samme kjøring.
+        #
+        # `pipefail` ER IKKE PYNT: `run:` kjører som `bash -e`, og
+        # `pytest ... | tee` gir da tee sin exit-status. Det gamle
+        # port-steget kunne derfor IKKE feile på en rød suite — bare på
+        # grep-en. Det gikk godt fordi steget over fanget feilene; slår
+        # man dem sammen uten pipefail, blir hullet det eneste som står
+        # igjen.
+        shell: bash -euo pipefail {0}
         run: |
           python -m pytest platform/core/tests -q -rs 2>&1 | tee /tmp/ut.txt
           if grep -qiE "skipped" /tmp/ut.txt; then
