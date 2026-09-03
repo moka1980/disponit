@@ -130,10 +130,14 @@ def kjor(conn, *, grense: int = GRENSE,
         # gjøres FØR commit fordi det er her doktrinen står: en rad som
         # ikke er kontrakten skal rulle tilbake, ikke bli stående mens
         # kjøringen rapporterer feilet (CodeRabbit, 109).
+        # `[:5]` og ikke hele raden: sveipen LESER fem felt, og en dør
+        # som en dag returnerer et sjette skal ikke gjøre en gyldig
+        # kjøring til en feilet. Det som måles er at DE FEM finnes og
+        # lar seg lese som heltall.
         try:
-            verdier = tuple(int(v) for v in rader[0])
+            verdier = tuple(int(v) for v in rader[0][:5])
             if len(verdier) != 5:
-                raise ValueError("m27_sveip_lager ga ikke fem felt")
+                raise ValueError("kontrakten ga ikke fem felt")
         except (IndexError, TypeError, ValueError):
             _rull_tilbake(conn)
             res.feilet = True

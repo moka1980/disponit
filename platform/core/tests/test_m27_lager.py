@@ -1025,6 +1025,8 @@ def test_en_rad_som_ikke_er_kontrakten_rulles_tilbake():
     from drift import lagersveip
     for rader in ([(1, 2, 3, 4)], [(1, 2, 3, 4, None)],
                   [(1, 2, 3, 4, "fem")], [], [(1,) * 5, (1,) * 5]):
+        # (En rad med SEKS felt er derimot gyldig — sveipen leser fem,
+        #  og den delte kontraktporten mater alle sveipene et supersett.)
         conn = _FalskConn(rader)
         res = lagersveip.kjor(conn, tidligere_feil=1)
         assert res.feilet is True, rader
@@ -1037,6 +1039,11 @@ def test_en_rad_som_ikke_er_kontrakten_rulles_tilbake():
             res.lukkede, res.avkortet) == (False, 2, 3, 4, 5, 6)
     assert "rollback" not in conn.logg, conn.logg
     assert conn.logg[0] == "commit"
+    # …og et SUPERSETT er også gyldig: sveipen leser de fem første.
+    conn = _FalskConn([(2, 3, 4, 5, 6, 7)])
+    res = lagersveip.kjor(conn)
+    assert res.feilet is False and res.avkortet == 6
+    assert "rollback" not in conn.logg, conn.logg
 
 
 def test_arbeidernokkelen_er_modulens_egen():
