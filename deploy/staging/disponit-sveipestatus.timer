@@ -1,0 +1,25 @@
+# 115: én gang i døgnet, ETTER hele sveipestigen.
+#
+# KLOKKESLETTET ER 08:35 UTC fordi 03:15 til 08:20 alt er tatt, og
+# fordi rekkefølgen er poenget: observatøren skal lese flåtens
+# tilstand ETTER at flåten har kjørt, ikke før. Kjørte den 02:00,
+# ville hver eneste sveip sett ut som «ikke kjørt i dag».
+#
+# `RandomizedDelaySec=15min` og ikke 30: vinduet må være ferdig før
+# varselsenderen henter køen, og spredningen har mindre å tjene her —
+# jobben leser 22 småfiler, den skanner ingen tabell.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte,
+# fører flåtens tilstand én gang når den kommer opp. Det er nettopp da
+# observasjonen er mest verdt.
+
+[Unit]
+Description=Disponit sveipestatus-timer
+
+[Timer]
+OnCalendar=*-*-* 08:35:00 UTC
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

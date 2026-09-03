@@ -276,11 +276,19 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     #   rapportere sin egen død — den må observeres utenfra, av en
     #   prosess med en annen rolle på en annen kadens.
     #
+    # 115 la til den fjerde, og den er den samme setningen anvendt på
+    # ATTEN prosesser i stedet for én: `varsle_sveip_uteblitt` leser
+    # `sveipestatus`, som `disponit-sveipestatus.timer` fører fra
+    # sveipenes egne tilstandsfiler 08:35 — etter at hele stigen har
+    # kjørt. Hver sveip har hele tiden talt sine egne feil og skrevet
+    # `"alarm": 1` i journalen; DET FELTET HAR ALDRI HATT EN KONSUMENT.
+    # Dette er den.
+    #
     # HVER SVEIP HAR SIN EGEN SKJERMEDE BLOKK, ikke én felles: en feil i
     # den ene skal verken stoppe den andre eller sendingen av det som alt
-    # ligger i køen. Alle tre er idempotente per døgn på
+    # ligger i køen. Alle fire er idempotente per døgn på
     # `varsel_en_per_hendelse`, så en gjentatt kjøring køer ingenting nytt.
-    # SQL-en er tre HELE literaler, ikke ett navn satt inn i en mal:
+    # SQL-en er fire HELE literaler, ikke ett navn satt inn i en mal:
     # funksjonsnavn kan ikke parameteriseres, og en f-streng her ville
     # vært en strenginterpolasjon inn i SQL — riktig i dag, og en felle
     # den dagen noen gjør listen konfigurerbar.
@@ -288,7 +296,8 @@ def kjor(conn, *, send=None, oppsett=None, sprak: str | None = None) -> dict:
     for setning, hva in (
             ("SELECT varsle_tokenfamilie_utlop(%s)", "familievarsel"),
             ("SELECT varsle_backupverifisering_uteblitt(%s)", "backup"),
-            ("SELECT varsle_selvtest_uteblitt(%s)", "selvtest")):
+            ("SELECT varsle_selvtest_uteblitt(%s)", "selvtest"),
+            ("SELECT varsle_sveip_uteblitt(%s)", "sveipestatus")):
         try:
             conn.execute(setning, (plattformtenant,))
             conn.commit()

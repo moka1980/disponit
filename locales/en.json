@@ -3470,5 +3470,6 @@
   "ui.kampanje.tittel": "Campaign register",
   "ui.kampanje.undertittel": "Consent and frequency cap — not a send queue",
   "ui.kampanje.uten_kontakt": "No contact point recorded",
-  "ui.kampanje.uten_samtykke": "No consent recorded"
+  "ui.kampanje.uten_samtykke": "No consent recorded",
+  "varsel.sveip_uteblitt": "Sweep fleet: {antall_tause} have not run within their own window ({tause}), {antall_alarm} have failed twice in a row ({i_alarm}), and {antall_ulesbare} have a state file that cannot be read ({ulesbare}). Last observed: {sist_observert} (the observer itself is silent: {uobservert}). A sweep that never runs looks exactly like a sweep with no findings — check the timers on the host."
 }

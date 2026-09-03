@@ -1,0 +1,73 @@
+# 115: sveipestatus — flåtens taushet, observert utenfra.
+#
+# Plattformen har atten nattlige sveip. Hver av dem teller sine egne
+# sammenhengende feil i en fil under `StateDirectory=disponit`, og
+# skriver `"alarm": 1` i journalen når telleren når to.
+#
+# DEN ALARMEN HAR ALDRI HATT EN KONSUMENT. Feltet skrives av alle atten
+# og leses av ingen. Og det farligste tilfellet skriver ingenting i det
+# hele tatt: en sveip som ALDRI KJØRER — timeren deaktivert, enheten
+# død ved oppstart, DSN-en borte fra miljøfila — er helt taus og ser
+# nøyaktig ut som en sveip uten funn.
+#
+#     «En taushet kan per definisjon ikke varsle om seg selv — den må
+#      observeres utenfra, av en prosess med en annen rolle på en annen
+#      kadens.»  (varselsender.py, 035/090)
+#
+# DENNE ENHETEN ER DEN OBSERVATØREN, og den er med vilje IKKE en felles
+# planlegger for sveipene. En slik jobb måtte hatt alle atten
+# `LoadCredential`-ene og dermed alle atten rollenes fullmakt — og revet
+# ned nøyaktig det oppdelingen finnes for. Den leser bare filer.
+#
+# UNIX-IDENTITETEN ER SVEIPENES EGEN, `disponit-domener`, og
+# `StateDirectory=disponit` er den SAMME katalogen systemd gir dem.
+# Det er derfor jobben kan lese tilstandsfilene uten en eneste ekstra
+# rettighet — ingen `ReadOnlyPaths`, ingen utvidet tilgang.
+#
+# DEN VARSLER IKKE SELV. Den fører rader; `varsle_sveip_uteblitt` i
+# varselsenderen leser dem og køer varselet.
+#
+# ROLLEN ER M-10s: `disponit_driftstatus` finnes for nøyaktig denne
+# jobbklassen og har null tabellrettigheter. Den får én EXECUTE til.
+
+[Unit]
+Description=Disponit sveipestatus (flatens taushet -> varselkoen)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# SAMME katalog som sveipene selv får. Jobben leser filene deres; den
+# skriver aldri i katalogen.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_DRIFTSTATUS_URL:/etc/disponit/driftstatus/DISPONIT_DRIFTSTATUS_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_sveipestatus
+# Jobben leser 22 småfiler og gjør ett INSERT per fil. Går dette over
+# to minutter, henger noe — og da er avbrudd riktig svar: neste
+# kjøring fører hele flåten på nytt.
+TimeoutStartSec=2min
+
+[Install]
+WantedBy=multi-user.target

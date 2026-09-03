@@ -3470,5 +3470,6 @@
   "ui.kampanje.tittel": "Kampanjeregister",
   "ui.kampanje.undertittel": "Samtykke og frekvenstak — ikke en utsendingskø",
   "ui.kampanje.uten_kontakt": "Ingen kontaktpunkt ført",
-  "ui.kampanje.uten_samtykke": "Ingen samtykke ført"
+  "ui.kampanje.uten_samtykke": "Ingen samtykke ført",
+  "varsel.sveip_uteblitt": "Sveipeflåten: {antall_tause} har ikke kjørt innenfor sitt eget vindu ({tause}), {antall_alarm} har feilet to ganger på rad ({i_alarm}), og {antall_ulesbare} har en tilstandsfil som ikke lar seg lese ({ulesbare}). Sist observert: {sist_observert} (observatøren selv er taus: {uobservert}). En sveip som ikke kjører ser nøyaktig ut som en sveip uten funn — se etter timerne på verten."
 }

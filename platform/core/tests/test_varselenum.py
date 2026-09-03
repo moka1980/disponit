@@ -48,12 +48,19 @@ KANONISK = {
         # deklarasjonen i varselenum-reparasjon.sql er utvidet i SAMME
         # commit som migrasjonen. En modul som glemmer den ene, blir rød
         # her før den rekker å bli stille i drift.
-        "lisensutlop"),
+        "lisensutlop",
+        # 115: sveipeflåtens taushet. Samme arbeidsflyt som de to
+        # radene over — og denne er den tredje gangen porten har
+        # tvunget fram at fasiten og reparasjonsskriptet følger
+        # migrasjonen i samme commit. Det er nettopp den vanen den
+        # finnes for å lage.
+        "sveip_uteblitt"),
     "varsel_ressurs_type_chk": (
         "policyutkast", "modultoken", "domene", "plan",
         "backupverifisering", "selvtest",
-        "plikt",     # 096 (M-21)
-        "lisens"),   # 098 (M-22)
+        "plikt",          # 096 (M-21)
+        "lisens",         # 098 (M-22)
+        "sveipestatus"),  # 115
 }
 
 _VARIABEL = {"varsel_art_chk": "v_art",
