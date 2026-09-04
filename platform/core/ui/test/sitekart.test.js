@@ -435,3 +435,35 @@ test("Hver okNokkel i en flate finnes i begge locale-settene", () => {
   // ganger, og en terskel på forekomster ville vært grønn på det.
   assert.ok(talte.size >= 20, `fant bare ${talte.size} kvitteringsnøkler`);
 });
+
+test("sitekart: hver rute i menyen har et navn på begge språk", () => {
+  // MODULER SOM VISER MASKINNAVN. `navnFor` slår opp `ui.nav.<flate>`
+  // uten reserve, og `t()` gir nøkkelen tilbake når den mangler — så en
+  // modul uten tekst står i venstremenyen som «ui.nav.tollkode».
+  //
+  // SYTTEN MODULER STO SLIK, fra M-19 og utover: hver modul-PR la til
+  // ruten og glemte navnet, og ingenting målte det. Porten fantes ikke
+  // fordi ingen enkelt PR så mønsteret — den attende ville lagt seg til
+  // like stille.
+  //
+  // MUTASJONEN SOM DREPER DENNE: legg til en rute uten `ui.nav`-nøkkel.
+  const nb = locale("nb");
+  const en = locale("en");
+  // ALLE scopene, så ingen rute gjemmer seg bak et filter.
+  const alle = byggRuter({ scopes: [
+    "decisions:read", "exceptions:read", "policy:read", "policy:write",
+    "policy:activate", "okonomi:read", "okonomi:write", "hr:read",
+    "security:read", "platform:admin", "bestilling:opprett",
+  ] });
+  const mangler = [];
+  for (const r of alle) {
+    for (const [sprak, ordbok] of [["nb", nb], ["en", en]]) {
+      if (!(`ui.nav.${r.nokkel}` in ordbok)) {
+        mangler.push(`${sprak}: ui.nav.${r.nokkel}`);
+      }
+    }
+  }
+  assert.deepEqual(mangler, [],
+    `ruter uten navn — de står med nøkkelen sin i menyen:\n${
+      mangler.join("\n")}`);
+});

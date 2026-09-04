@@ -502,6 +502,15 @@ const BASISRUTER = [
   // utløpt regelsett: 121 nekter. Fraværene er portene
   // `modulen_sendte_faktura` og `validering_mot_utlopt_skjema`.
   { nokkel: "ehf", scope: "okonomi:read", modulflate: 54 },
+  // M-52 (122): toll- og HS-kodeagenten. MODULFLATE bak
+  // `okonomi:read` — en HS-kode er en RETTSLIG PÅSTAND om hva en vare
+  // er, og feil kode gir bot som treffer kunden.
+  //
+  // FLATEN DEKLARERER INGENTING, og den kan ikke avgi et forslag uten
+  // grunnlag: `m52_avgi_forslag` skriver forslaget og grunnene i samme
+  // setning. Fraværene er portene `modulen_deklarerte` og
+  // `forslag_uten_grunnlag`.
+  { nokkel: "tollkode", scope: "okonomi:read", modulflate: 52 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

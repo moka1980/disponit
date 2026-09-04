@@ -1393,3 +1393,49 @@ export const merkRettingKlar = (rettingId, idem) =>
 export const lukkEhffunn = (funnId, notat, idem) =>
   _muter(`/v1/ehf/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", { notat }, idem || nyIdempotensnokkel());
+
+// M-52 (122): toll- og HS-kodeagenten. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `deklarer` HER, OG DET KAN IKKE FINNES: 122 har
+// ingen «deklarert»-kolonne, ingen mottaker og ingen utboks. En HS-kode
+// er en RETTSLIG PÅSTAND om hva en vare er, og feil kode gir bot — som
+// treffer KUNDEN.
+//
+// `merkForslagKlart` SETTER EN TILSTAND HOS OSS. Deklarasjonen hører
+// til v2.
+//
+// OG `avgiTollforslag` TAR ALLTID MINST ÉN GRUNN. Det er ikke en
+// validering her — døra skriver forslaget og grunnene i SAMME setning,
+// så et forslag uten grunnlag kan ikke oppstå.
+export const settTollkrav = (krav, idem) =>
+  _muter("/v1/toll/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const registrerNomenklatur = (nomenklatur, idem) =>
+  _muter("/v1/toll/nomenklatur", "POST", nomenklatur,
+         idem || nyIdempotensnokkel());
+
+export const settTollGyldigTil = (nomenklaturId, gyldigTil, idem) =>
+  _muter(`/v1/toll/nomenklatur/${encodeURIComponent(nomenklaturId)}`
+         + "/gyldig-til",
+         "POST", { gyldig_til: gyldigTil },
+         idem || nyIdempotensnokkel());
+
+export const registrerVarenummer = (varenummer, idem) =>
+  _muter("/v1/toll/varenummer", "POST", varenummer,
+         idem || nyIdempotensnokkel());
+
+export const registrerTollvare = (vare, idem) =>
+  _muter("/v1/toll/vare", "POST", vare,
+         idem || nyIdempotensnokkel());
+
+export const avgiTollforslag = (vareId, forslag, idem) =>
+  _muter(`/v1/toll/vare/${encodeURIComponent(vareId)}/forslag`,
+         "POST", forslag, idem || nyIdempotensnokkel());
+
+export const merkForslagKlart = (forslagId, idem) =>
+  _muter(`/v1/toll/forslag/${encodeURIComponent(forslagId)}/klart`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const lukkTollfunn = (funnId, notat, idem) =>
+  _muter(`/v1/toll/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", { notat }, idem || nyIdempotensnokkel());

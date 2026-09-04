@@ -49,6 +49,7 @@ SVEIPENE = (
     ("tilskuddssveip", "m51_sveip_tilskudd"),
     ("merkevaresveip", "m55_sveip_merkevare"),
     ("ehfsveip", "m54_sveip_ehf"),
+    ("tollkodesveip", "m52_sveip_tollkode"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

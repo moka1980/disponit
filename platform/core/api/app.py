@@ -1678,6 +1678,64 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tilskudd as tilskuddmodul
         return tilskuddmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-52 (122): toll- og HS-kodeagenten. MODULEN DEKLARERER
+    # INGENTING — 122 har ingen «deklarert»-kolonne — og den avgir
+    # INGEN FORSLAG UTEN GRUNNLAG: døra skriver forslaget og grunnene
+    # i samme setning.
+    def toll_bilde(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.tollbilde(tjeneste, request)
+
+    def toll_funn(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.funn_endepunkt(tjeneste, request)
+
+    def toll_varenummer_les(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.varenummer_endepunkt(tjeneste, request)
+
+    def toll_grunner(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.grunner_endepunkt(tjeneste, request)
+
+    def toll_forslag_les(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.forslag_endepunkt(tjeneste, request)
+
+    def toll_krav(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.krav_endepunkt(tjeneste, request)
+
+    def toll_nomenklatur(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.registrer_nomenklatur_endepunkt(tjeneste,
+                                                          request)
+
+    def toll_gyldig_til(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.sett_gyldig_til_endepunkt(tjeneste, request)
+
+    def toll_varenummer_ny(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.registrer_varenummer_endepunkt(tjeneste,
+                                                         request)
+
+    def toll_vare(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.registrer_vare_endepunkt(tjeneste, request)
+
+    def toll_forslag_ny(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.avgi_forslag_endepunkt(tjeneste, request)
+
+    def toll_klart(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.merk_klart_endepunkt(tjeneste, request)
+
+    def toll_lukk_funn(request: Request) -> Response:
+        from . import tollkode as tollmodul
+        return tollmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-54 (121): EHF- og Peppol-avviksretteren. MODULEN SENDER INGEN
     # FAKTURA — 121 har ingen mottaker og ingen utboks — og den
     # VALIDERER IKKE MOT ET UTLØPT REGELSETT: en dom felt under en
@@ -2791,6 +2849,30 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/tilskudd/{ordning_id:uuid}/funn/lukk",
               tilskudd_lukk_funn, methods=["POST"]),
+        # M-52 (122). Faste stier FØR parametriserte, ellers ville
+        # `/v1/toll/vare` blitt lest som en id.
+        Route("/v1/toll", toll_bilde, methods=["GET"]),
+        Route("/v1/toll/funn", toll_funn, methods=["GET"]),
+        Route("/v1/toll/krav", toll_krav, methods=["POST"]),
+        Route("/v1/toll/nomenklatur", toll_nomenklatur,
+              methods=["POST"]),
+        Route("/v1/toll/varenummer", toll_varenummer_ny,
+              methods=["POST"]),
+        Route("/v1/toll/vare", toll_vare, methods=["POST"]),
+        Route("/v1/toll/nomenklatur/{nomenklatur_id:uuid}/varenummer",
+              toll_varenummer_les, methods=["GET"]),
+        Route("/v1/toll/nomenklatur/{nomenklatur_id:uuid}/gyldig-til",
+              toll_gyldig_til, methods=["POST"]),
+        Route("/v1/toll/forslag/{forslag_id:uuid}/grunner",
+              toll_grunner, methods=["GET"]),
+        Route("/v1/toll/forslag/{forslag_id:uuid}/klart", toll_klart,
+              methods=["POST"]),
+        Route("/v1/toll/vare/{vare_id:uuid}/forslag",
+              toll_forslag_les, methods=["GET"]),
+        Route("/v1/toll/vare/{vare_id:uuid}/forslag",
+              toll_forslag_ny, methods=["POST"]),
+        Route("/v1/toll/funn/{funn_id:uuid}/lukk", toll_lukk_funn,
+              methods=["POST"]),
         # M-54 (121). Samme rekkefølgeregel som M-55 under: faste
         # stier FØR parametriserte, ellers ville `/v1/ehf/regel`
         # blitt lest som en id.
@@ -3897,6 +3979,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/aktiv"):
         "bestilling:opprett",
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
+    # M-52 (122): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `/klart` er IKKE en deklarasjonsrute — den
+    # setter en tilstand hos oss. `/forslag` NEKTER uten grunnlag, mot
+    # en avviklet nomenklatur, og under tenantens terskel.
+    ("GET",  "/v1/toll"):                        "okonomi:read",
+    ("GET",  "/v1/toll/funn"):                   "okonomi:read",
+    ("GET",  "/v1/toll/nomenklatur/{nomenklatur_id:uuid}/varenummer"):
+        "okonomi:read",
+    ("GET",  "/v1/toll/forslag/{forslag_id:uuid}/grunner"):
+        "okonomi:read",
+    ("GET",  "/v1/toll/vare/{vare_id:uuid}/forslag"):
+        "okonomi:read",
+    ("POST", "/v1/toll/krav"):                   "bestilling:opprett",
+    ("POST", "/v1/toll/nomenklatur"):            "bestilling:opprett",
+    ("POST", "/v1/toll/varenummer"):             "bestilling:opprett",
+    ("POST", "/v1/toll/vare"):                   "bestilling:opprett",
+    ("POST", "/v1/toll/nomenklatur/{nomenklatur_id:uuid}/gyldig-til"):
+        "bestilling:opprett",
+    ("POST", "/v1/toll/vare/{vare_id:uuid}/forslag"):
+        "bestilling:opprett",
+    ("POST", "/v1/toll/forslag/{forslag_id:uuid}/klart"):
+        "bestilling:opprett",
+    ("POST", "/v1/toll/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-54 (121): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett`. `/klar` er IKKE en utsendingsrute — den
