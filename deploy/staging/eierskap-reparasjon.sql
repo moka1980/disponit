@@ -630,6 +630,33 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm46_sett_anbudaktiv(text,uuid,boolean,text)',                       'disponit_anbud_eier'),
     ('FUNCTION', 'm46_sett_profil(text,text[],text[],bigint,bigint,integer,integer,text)', 'disponit_anbud_eier'),
     ('FUNCTION', 'm46_sveip_anbud(integer)',                                          'disponit_anbud_eier'),
+    -- 119 (M-51): tilskuddsregisterets doerer og
+    -- tilskuddssveipen. INGEN AV DEM SENDER EN SOEKNAD, og
+    -- ingen kan sette et beloep uten kildepost:
+    -- `tilskuddsestimat` har ingen beloepskolonne.
+    --
+    -- `m51_estimat_frosset()` staar IKKE her: radvakten
+    -- lages etter `RESET ROLE` i seksjon 6 og eies av
+    -- migratoren.
+    ('FUNCTION', 'm51_estimatene(text,uuid)',                                         'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_evidens(text,uuid,text,text,jsonb)',                            'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_ferdigstill_estimat(text,uuid,text)',                           'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_forutsetningene(text,uuid)',                                    'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_funnene(text,boolean)',                                         'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_kildepostene(text,integer)',                                    'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_kravene(text)',                                                 'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_legg_til_forutsetning(text,uuid,uuid,text,text,text,text)',     'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_legg_til_post(text,uuid,uuid,uuid,bigint,text,text)',           'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_lukk_funn(text,uuid,text,text,text)',                           'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_opprett_estimat(text,uuid,uuid,date,date,text)',                'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_ordningene(text,integer)',                                      'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_postene(text,uuid)',                                            'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_registrer_kildepost(text,uuid,text,text,text,bigint,date,date,text)', 'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_registrer_ordning(text,uuid,text,text,text,text,text,bigint,integer,timestamp with time zone,text)', 'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_sett_krav(text,integer,integer,integer,text)',                  'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_sett_ordningaktiv(text,uuid,boolean,text)',                     'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_sveip_tilskudd(integer)',                                       'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_tilskuddsstatus(text)',                                         'disponit_tilskudd_eier'),
     ('FUNCTION', 'm46_utkastene(text,uuid)',                                          'disponit_anbud_eier'),
     ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),

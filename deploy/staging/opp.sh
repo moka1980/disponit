@@ -85,6 +85,7 @@ disponit-kampanjesveip.service disponit-kampanjesveip.timer
 disponit-motpartssveip.service disponit-motpartssveip.timer
 disponit-sanksjonssveip.service disponit-sanksjonssveip.timer
 disponit-anbudssveip.service disponit-anbudssveip.timer
+disponit-tilskuddssveip.service disponit-tilskuddssveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -380,6 +381,15 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_ADRESSESVEIP_URL:-}" ] );
   echo "AVBRUTT: DISPONIT_ADRESSESVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_adressesveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 119 (M-51): tilskuddssveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille tilskuddssveip er søknadsfrister ingen har sett.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_TILSKUDDSSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_TILSKUDDSSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_tilskuddssveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1199,6 +1209,17 @@ if [ -z "${DISPONIT_ADRESSESVEIP_URL:-}" ]; then
 fi
 skriv_cred adressesveip DISPONIT_ADRESSESVEIP_URL "$DISPONIT_ADRESSESVEIP_URL"
 
+# 119 (M-51): tilskuddssveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/tilskuddssveip
+if [ -z "${DISPONIT_TILSKUDDSSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_TILSKUDDSSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen tilskuddssveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred tilskuddssveip DISPONIT_TILSKUDDSSVEIP_URL "$DISPONIT_TILSKUDDSSVEIP_URL"
+
 # 118 (M-46): anbudssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/anbudssveip
 if [ -z "${DISPONIT_ANBUDSSVEIP_URL:-}" ]; then
@@ -1414,6 +1435,7 @@ disponit-kampanjesveip.timer
 disponit-motpartssveip.timer
 disponit-sanksjonssveip.timer
 disponit-anbudssveip.timer
+disponit-tilskuddssveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1728,6 +1750,10 @@ systemctl stop disponit-lonnssveip.timer \
 # idempotente, så neste døgn tar kjøringen igjen.
 systemctl stop disponit-kampanjesveip.timer \
     disponit-kampanjesveip.service 2>/dev/null || true
+# 119 (M-51): tilskuddssveipen stoppes i samme vindu — funnene er
+# idempotente. Ingen frist går tapt: den står på ordningsraden.
+systemctl stop disponit-tilskuddssveip.timer \
+    disponit-tilskuddssveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -1937,6 +1963,8 @@ systemctl enable --now disponit-motpartssveip.timer
 systemctl enable --now disponit-sanksjonssveip.timer
 # 118 (M-46): anbudssveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-anbudssveip.timer
+# 119 (M-51): tilskuddssveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-tilskuddssveip.timer
 # 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.

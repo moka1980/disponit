@@ -1610,6 +1610,74 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # «løsningen» — et oppslag mot et adresseregister — er en utgående
     # kanal med personopplysninger i, og svaret ville uansett vært feil
     # vare: at en adresse FINNES sier ikke at pakken kommer fram.
+    # M-51 (119): tilskudds- og støtteordningsvakten. MODULEN SENDER
+    # INGEN SØKNAD, og et estimat kan ikke ferdigstilles uten
+    # forutsetninger — begge er fravær i datamodellen, ikke sjekker.
+    def tilskudd_bilde(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.tilskuddsbilde(tjeneste, request)
+
+    def tilskudd_funn(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.funn_endepunkt(tjeneste, request)
+
+    def tilskudd_kildeposter(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.kildeposter_endepunkt(tjeneste, request)
+
+    def tilskudd_estimater(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.estimater_endepunkt(tjeneste, request)
+
+    def tilskudd_poster(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.poster_endepunkt(tjeneste, request)
+
+    def tilskudd_forutsetninger(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.forutsetninger_endepunkt(tjeneste,
+                                                      request)
+
+    def tilskudd_krav(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.krav_endepunkt(tjeneste, request)
+
+    def tilskudd_ordning(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.registrer_ordning_endepunkt(tjeneste,
+                                                         request)
+
+    def tilskudd_kildepost(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.registrer_kildepost_endepunkt(tjeneste,
+                                                           request)
+
+    def tilskudd_estimat_ny(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.opprett_estimat_endepunkt(tjeneste,
+                                                       request)
+
+    def tilskudd_post(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.legg_til_post_endepunkt(tjeneste, request)
+
+    def tilskudd_forutsetning(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.legg_til_forutsetning_endepunkt(
+            tjeneste, request)
+
+    def tilskudd_ferdigstill(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.ferdigstill_endepunkt(tjeneste, request)
+
+    def tilskudd_aktiv(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.sett_aktiv_endepunkt(tjeneste, request)
+
+    def tilskudd_lukk_funn(request: Request) -> Response:
+        from . import tilskudd as tilskuddmodul
+        return tilskuddmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-46 (118): anbuds- og konkurransevakten. MODULEN SENDER
     # INGEN TILBUD, og hvert faktapunkt i et utkast peker på et
     # kildedokument — begge er fravær i datamodellen, ikke sjekker.
@@ -2561,6 +2629,33 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               betaling_abonnement, methods=["POST"]),
         Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
               methods=["POST"]),
+        Route("/v1/tilskudd", tilskudd_bilde, methods=["GET"]),
+        Route("/v1/tilskudd/funn", tilskudd_funn, methods=["GET"]),
+        Route("/v1/tilskudd/kildeposter", tilskudd_kildeposter,
+              methods=["GET"]),
+        Route("/v1/tilskudd/krav", tilskudd_krav, methods=["POST"]),
+        Route("/v1/tilskudd/ordning", tilskudd_ordning,
+              methods=["POST"]),
+        Route("/v1/tilskudd/kildepost", tilskudd_kildepost,
+              methods=["POST"]),
+        Route("/v1/tilskudd/estimat/{estimat_id:uuid}/poster",
+              tilskudd_poster, methods=["GET"]),
+        Route("/v1/tilskudd/estimat/{estimat_id:uuid}/forutsetninger",
+              tilskudd_forutsetninger, methods=["GET"]),
+        Route("/v1/tilskudd/estimat/{estimat_id:uuid}/post",
+              tilskudd_post, methods=["POST"]),
+        Route("/v1/tilskudd/estimat/{estimat_id:uuid}/forutsetning",
+              tilskudd_forutsetning, methods=["POST"]),
+        Route("/v1/tilskudd/estimat/{estimat_id:uuid}/ferdigstill",
+              tilskudd_ferdigstill, methods=["POST"]),
+        Route("/v1/tilskudd/{ordning_id:uuid}/estimater",
+              tilskudd_estimater, methods=["GET"]),
+        Route("/v1/tilskudd/{ordning_id:uuid}/estimat",
+              tilskudd_estimat_ny, methods=["POST"]),
+        Route("/v1/tilskudd/{ordning_id:uuid}/aktiv", tilskudd_aktiv,
+              methods=["POST"]),
+        Route("/v1/tilskudd/{ordning_id:uuid}/funn/lukk",
+              tilskudd_lukk_funn, methods=["POST"]),
         Route("/v1/anbud", anbud_bilde, methods=["GET"]),
         Route("/v1/anbud/funn", anbud_funn, methods=["GET"]),
         Route("/v1/anbud/kilder", anbud_kilder, methods=["GET"]),
@@ -3582,6 +3677,34 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 112 (M-19): adresseregisteret. LESINGEN bærer `okonomi:read`,
     # samme scope som 101 innførte og 111 gjenbrukte; SKRIVINGEN bærer
     # `bestilling:opprett`.
+    # M-51 (119): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `/ferdigstill` er IKKE en innsendingsrute
+    # — den setter en tilstand hos oss, og nekter uten minst én
+    # forutsetning.
+    ("GET",  "/v1/tilskudd"):                    "okonomi:read",
+    ("GET",  "/v1/tilskudd/funn"):               "okonomi:read",
+    ("GET",  "/v1/tilskudd/kildeposter"):        "okonomi:read",
+    ("GET",  "/v1/tilskudd/estimat/{estimat_id:uuid}/poster"):
+        "okonomi:read",
+    ("GET",  "/v1/tilskudd/estimat/{estimat_id:uuid}/forutsetninger"):
+        "okonomi:read",
+    ("GET",  "/v1/tilskudd/{ordning_id:uuid}/estimater"):
+        "okonomi:read",
+    ("POST", "/v1/tilskudd/krav"):               "bestilling:opprett",
+    ("POST", "/v1/tilskudd/ordning"):            "bestilling:opprett",
+    ("POST", "/v1/tilskudd/kildepost"):          "bestilling:opprett",
+    ("POST", "/v1/tilskudd/estimat/{estimat_id:uuid}/post"):
+        "bestilling:opprett",
+    ("POST", "/v1/tilskudd/estimat/{estimat_id:uuid}/forutsetning"):
+        "bestilling:opprett",
+    ("POST", "/v1/tilskudd/estimat/{estimat_id:uuid}/ferdigstill"):
+        "bestilling:opprett",
+    ("POST", "/v1/tilskudd/{ordning_id:uuid}/estimat"):
+        "bestilling:opprett",
+    ("POST", "/v1/tilskudd/{ordning_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    ("POST", "/v1/tilskudd/{ordning_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
     # M-46 (118): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett`. `/klart` er IKKE en innsendingsrute — den
     # setter en tilstand hos oss, og nekter så lenge et absolutt krav

@@ -116,5 +116,6 @@
   "115_sveipestatus.sql": "f0d08376eae19ef830b6fa9cd8e256f3de1db1d5579555c2bd5471f3e24d22cc",
   "116_m48_motpartsregister.sql": "d1525a3306c1f17e79b9e31f2c23d5d2311d78d0ff87a09e6e28a3f81c277493",
   "117_m49_sanksjonskontroll.sql": "14c8d05c1bc5ba67cbad4c7eb2cac75ed5bd3d28ab96d09e76cbd180e754d2a8",
-  "118_m46_anbudsregister.sql": "1efc29d5c5d7fe1f04319546d195417aa18658fe0ae59b4f79036e0e23ab91df"
+  "118_m46_anbudsregister.sql": "1efc29d5c5d7fe1f04319546d195417aa18658fe0ae59b4f79036e0e23ab91df",
+  "119_m51_tilskuddsregister.sql": "725b5433c113b7aa196e038f9c231297deb67761ba2a9714eaa90d62bf53c912"
 }

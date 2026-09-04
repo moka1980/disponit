@@ -1,0 +1,91 @@
+# M-51 (119): tilskuddssveipen for frister og estimater uten
+# grunnlag.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (119): en ordning som nærmer seg søknadsfristen uten ferdigstilt
+# estimat er `frist_naermer_seg`; en frist som gikk er
+# `frist_passert`; et estimat uten en eneste post er
+# `estimat_uten_poster`; en sum over ordningens tak er
+# `estimat_over_ordningstak`; en post som peker på en kildepost som er
+# blitt for gammel er `utdatert_kildepost`; en aktiv ordning uten
+# estimat er `ingen_estimat`; og en tenant uten terskler er
+# `ingen_krav`.
+#
+# SVEIPEN REGNER INGEN ESTIMATER, OG DET ER MODULENS VIKTIGSTE FRAVÆR.
+# Den ser hver ordning, hver kildepost og hvert tak. En «hjelpsom»
+# automatikk som fylte inn poster for å nå taket, ville produsert et
+# estimat ingen har tatt stilling til — og et estimat er et TALL EN
+# BEDRIFT PLANLEGGER ETTER. Avstanden mellom estimat og lovnad er ikke
+# akademisk; den er lønnsutbetalinger.
+#
+# SVEIPEN FERDIGSTILLER HELLER INGENTING. `m51_ferdigstill_estimat`
+# nekter uten minst én forutsetning, og en sveip som ferdigstilte
+# automatisk ville omgått den vakten.
+#
+# OG DEN SENDER INGEN SØKNAD. 119 har ingen «sendt»-kolonne.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til en ordningsforvalter. Ordningene registreres av
+# et menneske som har lest regelverket; gjerdet mot automatisk henting
+# står i koden (`tilskuddssveip.py` importerer ingenting som kan snakke
+# ut) og i porten som måler det.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille tilskuddssveip
+# er søknadsfrister ingen har sett.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_tilskuddssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m51_sveip_tilskudd`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit tilskuddssveip (frister og estimater uten grunnlag -> funn)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_TILSKUDDSSVEIP_URL:/etc/disponit/tilskuddssveip/DISPONIT_TILSKUDDSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_tilskuddssveip
+# Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
+# indeksdekket (`stotteordning_aktive_frist`,
+# `tilskuddsestimat_ordning`, `estimatpost_estimat`,
+# `tilskuddsfunn_apne`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

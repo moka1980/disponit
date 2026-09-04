@@ -476,6 +476,14 @@ const BASISRUTER = [
   // Fraværene er portene `modulen_sendte_tilbud` og
   // `utkastpunkt_uten_kilde`.
   { nokkel: "anbud", scope: "okonomi:read", modulflate: 46 },
+  // M-51 (119): tilskudds- og støtteordningsvakten. MODULFLATE bak
+  // `okonomi:read` — et tilskuddsestimat er et tall en bedrift
+  // PLANLEGGER ETTER, og avstanden mellom estimat og lovnad er
+  // lønnsutbetalinger.
+  //
+  // FLATEN SENDER INGEN SØKNAD, og den kan ikke sette et beløp uten
+  // kildepost: `tilskuddsestimat` i 119 har ingen beløpskolonne.
+  { nokkel: "tilskudd", scope: "okonomi:read", modulflate: 51 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
