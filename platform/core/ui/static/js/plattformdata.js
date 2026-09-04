@@ -154,6 +154,28 @@ export const MODULSTATUS = {
   // en verifisert backup er noe modulen MÅLER, ikke noe den er.
   35: "bygges",
   37: "bygges",     // m37_unntak: under_utvikling, ikke_i_drift
+  // M-10 OG M-11: KATALOGREGISTRERT I ETTERKANT (090/091 er fra 1/9).
+  //
+  // GRENSENE `m10-v1` og `m11-v1` har stått i KRAVGRENSER siden FØR
+  // koden — §0-regelen ble respektert. Portene har ligget der siden.
+  // Det som aldri ble gjort, er å skrive modulene inn HER.
+  //
+  // GAPET DET GA: katalogen navnga 57 moduler, MODULSTATUS holdt 44,
+  // og differansen på 13 inneholdt to moduler som FAKTISK KJØRER. Den
+  // som talte «hvor mye gjenstår» ut fra registeret alene, fikk feil
+  // svar — og feilen pekte feil vei.
+  //
+  // «bygges» OG IKKE «i_drift», selv om koden kjører: aksene leser en
+  // AKSEPTHENDELSE, aldri en byggemilepæl (A-vedtaket på #152). Det
+  // finnes ingen `modulaksept`-rad for noen av dem, og å flippe fordi
+  // «den virker jo» ville vært den selvbetjente troverdigheten
+  // akseptporten finnes for å hindre.
+  //
+  // At de også er BASISRUTER i venstremenyen og ikke nås gjennom et
+  // modulkort, endrer ikke dette: M-31 og M-35 har samme
+  // menyplassering og har alltid stått her.
+  10: "bygges",     // m10_backup: under_utvikling, ikke_i_drift
+  11: "bygges",     // m11_selvtest: under_utvikling, ikke_i_drift
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
   38: "bygges",
@@ -408,6 +430,20 @@ const MODULER = [
     navn_nokkel: "site.modul.m55.navn",
     fase_nokkel: "site.fase.autopiloter",
     tekst_nokkel: "site.modul.m55.tekst",
+  },
+  // M-10 og M-11: fasen er katalogens egen (begge fase 1 —
+  // plattformens eget innsyn i seg selv), altså `site.fase.fundament`.
+  {
+    id: 10,
+    navn_nokkel: "site.modul.m10.navn",
+    fase_nokkel: "site.fase.fundament",
+    tekst_nokkel: "site.modul.m10.tekst",
+  },
+  {
+    id: 11,
+    navn_nokkel: "site.modul.m11.navn",
+    fase_nokkel: "site.fase.fundament",
+    tekst_nokkel: "site.modul.m11.tekst",
   },
   // KLYNGE 7 (121-125). Fasen er katalogens egen — M-47, M-50 og
   // M-52 står i fase 3, M-53 og M-54 i fase 2, og begge kartlegges

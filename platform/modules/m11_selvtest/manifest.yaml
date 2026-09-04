@@ -1,0 +1,84 @@
+# M-11 INTEGRASJONS- OG SELVTESTAGENT — KATALOGREGISTRERT I ETTERKANT.
+#
+# Se m10_backup/manifest.yaml for hele begrunnelsen. Kort: grensen
+# `m11-v1` har stått i `KRAVGRENSER` siden før migrasjon 091, portene
+# har ligget i `test_m11_selvtest.py` siden 1/9 — men modulen ble
+# aldri skrevet inn i katalogregisteret.
+#
+# STATUS ER `under_utvikling` fordi det ikke finnes en
+# aksepthendelse — ikke fordi koden mangler.
+#
+# `m11-v1` HAR ALT VÆRT NÆR Å BLI SLETTET ÉN GANG. Klynge 5-fundamentet
+# skrev `M11_INVARIANTER = (...)` for adressevalidering og
+# `KRAVGRENSER["m11-v1"] = {...}` uten å vite at begge fantes fra før.
+# Python sier ingenting om en modulvariabel som tildeles på nytt, og
+# `dict[...] = ...` overskriver stille: selvtestens SIKKERHETSGRENSE
+# ble byttet ut, og hele suiten var grønn. Porten
+# `test_kravgrenser_unike.py` finnes på grunn av det nestenuhellet, og
+# leser KILDEN — ikke det ferdig evaluerte modulnivået, for da har
+# overskrivingen alt skjedd.
+#
+# STATUSSETTET ER LUKKET OG TREDELT, og det tredje er modulens
+# skarpeste dom: `gronn`, `rod`, `ikke_konfigurert`.
+# `ikke_konfigurert` er IKKE et mildere rødt — det er «denne proben
+# måler noe som ikke er satt opp her», og det varsles ALDRI. En DELVIS
+# konfigurasjon er derimot `rod`: fem SMTP-navn der tre finnes er en
+# feil, ikke et fravær. Uten det skillet ville hver uinnstilte probe
+# vært en falsk alarm, og alarmene ville sluttet å bety noe.
+#
+# OG DEN SKARPESTE FORMEN: SELVTESTEN KAN IKKE VARSLE OM SIN EGEN DØD.
+# Derfor bor `varsle_selvtest_uteblitt` i VARSELSENDERENS pre-pass, og
+# ikke i selvtesten. Selvtesten må overleve pasienten, og varsleren må
+# overleve selvtesten.
+#
+# PLATTFORMSKOP MED VILJE: selvtesten måler PLATTFORMEN, ikke en
+# tenant. Ingen tenant-kolonne, ingen RLS, ingen direkte
+# runtime-lesing.
+id: m11_selvtest
+navn: Integrasjons- og selvtestagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: dørene eies av `disponit_m37_claimer`,
+# og RØDE prober køes som varsel i SAMME transaksjon som runden
+# skrives — en rød probe uten varsel i køen er urepresenterbar.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m11_selvtest
+i18n_prefiks: selvtest
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet. Portene finnes og er grønne lokalt
+      (test_m11_selvtest.py).
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et probesett med KJENT fasit for hva som er grønt, rødt
+      og ikke konfigurert, kjørt likt lokalt og på staging. Skillet
+      mellom «ikke satt opp» og «delvis satt opp» må gi samme svar
+      begge steder.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at samletdommen felles I BASEN og ikke av kalleren, og
+      at hver rød probe har sitt varsel i køen fra samme transaksjon.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en feilet probe ikke hindrer at runden registreres —
+      en selvtest som stopper på første feil måler bare den første
+      feilen — og at `ikke_konfigurert` ALDRI varsles.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for rundens kostnad og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

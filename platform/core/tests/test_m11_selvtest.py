@@ -570,7 +570,10 @@ def test_samlet_dommen_felles_i_basen_ikke_av_kalleren():
 
 @pg
 def test_registreringen_er_idempotent_paa_kjoring_id():
-    """En retry skal verken duplisere prober eller køe varslene en gang
+    """
+    INVARIANT: `registrering_duplikat_kjoring_id`.
+    
+    En retry skal verken duplisere prober eller køe varslene en gang
     til. Kontroll: fjern `IF v_rader = 0 THEN RETURN 0` i 091, så dobler
     varslene ved andre kall."""
     st = _st()
@@ -601,7 +604,12 @@ def test_registreringen_er_idempotent_paa_kjoring_id():
 
 @pg
 def test_rod_probe_koer_varsel_og_ikke_konfigurert_gjor_det_aldri():
-    """Kjernen i dommen: en rød probe uten varsel i køen skal være
+    """
+    INVARIANT: `rodt_uten_varsel` OG `ikke_konfigurert_varslet` — en rød probe
+    uten varsel i køen er urepresenterbar, og `ikke_konfigurert` er IKKE et
+    mildere rødt: det varsles aldri.
+    
+    Kjernen i dommen: en rød probe uten varsel i køen skal være
     urepresenterbar, og `ikke_konfigurert` varsles ALDRI.
 
     Kontroll: bytt `= 'rod'` til `<> 'gronn'` i 091, så varsles også
@@ -683,7 +691,10 @@ def test_status_settet_er_lukket_i_lagringen():
 
 @pg
 def test_runtime_avvises_paa_skrivedoeren_og_tabellene():
-    """Web-runtime skal ikke kunne dikte en grønn runde over en rød
+    """
+    INVARIANT: `skrivedor_naadd_av_runtime` (SP-7).
+    
+    Web-runtime skal ikke kunne dikte en grønn runde over en rød
     plattform — og heller ikke lese tabellene direkte forbi
     tenantkontekst-porten (SP-7)."""
     rt = _rt()
@@ -744,7 +755,11 @@ def test_lesedoeren_krever_tenantkontekst_og_grupperer_ikke_i_sql():
 
 @pg
 def test_uteblitt_varsles_og_er_idempotent_per_dogn():
-    """Selvtesten kan ikke varsle om sin egen død. Denne sveipen bor i
+    """
+    INVARIANT: `uteblitt_ikke_varslet` — selvtesten kan ikke varsle om sin
+    egen død, så sveipen bor i varselsenderens pre-pass.
+    
+    Selvtesten kan ikke varsle om sin egen død. Denne sveipen bor i
     varselsenderen — en annen prosess, en annen rolle, en annen kadens —
     og er den ENE veien tilstanden når fram."""
     m = _c()
@@ -911,3 +926,45 @@ def test_endepunktet_har_ingen_skrivevei(klient, token):   # noqa: F811
     for metode in ("post", "put", "delete", "patch"):
         svar = getattr(klient, metode)("/v1/drift/selvtest", headers=h)
         assert svar.status_code == 405, (metode, svar.status_code)
+
+
+def test_ui_axe_dekning():
+    """`ui_axe_alvorlige_brudd` — flaten er registrert der axe kjører.
+
+    Delt med M-10 — se `test_m10_backupinnsyn.py` for hvorfor.
+    """
+    rot = Path(__file__).resolve().parents[3]
+    app_js = (rot / "platform" / "core" / "ui" / "static" / "js"
+              / "app.js").read_text(encoding="utf-8")
+    assert "driftstatus: vis" in app_js
+    sitekart = (rot / "platform" / "core" / "ui" / "static" / "js"
+                / "sitekart.js").read_text(encoding="utf-8")
+    assert '{ nokkel: "driftstatus"' in sitekart
+
+
+def test_grensen_dekkes_av_portene_i_denne_fila():
+    """§0, MÅLT BEGGE VEIER — OG DET VAR HALVPARTEN SOM MANGLET.
+
+    Grensen `m11-v1` har stått i `KRAVGRENSER` siden FØR koden ble
+    skrevet: §0-regelen ble respektert. Portene under har ligget her
+    siden. MEN INGENTING BANDT DE TO SAMMEN.
+
+    Konsekvensen er stille: en invariant kunne fjernes fra grensen,
+    eller en port slettes, og ingen test ville merket det. Grensen ville
+    fremdeles vært «registrert», og suiten fremdeles grønn.
+
+    `test_kravgrenser_unike.py` pinner at en grense ikke OVERSKRIVES.
+    Denne pinner at den er DEKKET. De to er ulike hull, og bare det
+    første var lukket.
+
+    MUTASJONEN SOM DREPER DENNE: legg til en invariant i `m11-v1` som
+    ingen test her nevner.
+    """
+    from manifestskjema import KRAVGRENSER
+    g = KRAVGRENSER["m11-v1"]
+    assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
+    inv = set(g["invarianter"])
+    assert inv
+    egen = Path(__file__).read_text(encoding="utf-8")
+    mangler = sorted(i for i in inv if i not in egen)
+    assert mangler == [], f"invarianter uten port: {mangler}"

@@ -1,0 +1,77 @@
+# M-10 BACKUP- OG GJENOPPRETTINGSAGENT — KATALOGREGISTRERT I ETTERKANT.
+#
+# HVA SOM MANGLET, PRESIST: grensen `m10-v1` har stått i
+# `manifestskjema.KRAVGRENSER` siden FØR migrasjon 090 ble skrevet —
+# §0-regelen ble respektert. Portene har ligget i
+# `test_m10_backupinnsyn.py` siden 1/9. Det som ALDRI ble gjort, er å
+# skrive modulen inn i KATALOGREGISTERET: manifest, `MODULSTATUS`,
+# `MODULOVERSIKT`.
+#
+# GAPET DET GA: katalogen navnga 57 moduler, `MODULSTATUS` holdt 44, og
+# differansen på 13 inneholdt to moduler som FAKTISK KJØRER. Den som
+# talte «hvor mye gjenstår» ut fra registeret alene, fikk feil svar —
+# og feilen pekte feil vei: den så ut som mer arbeid enn det var.
+#
+# STATUS ER `under_utvikling`, OG DET ER IKKE EN FEIL. Koden kjører,
+# men katalogaksene leser en AKSEPTHENDELSE, aldri en byggemilepæl
+# (A-vedtaket på #152). Det finnes ingen `modulaksept`-rad for M-10.
+# Å flippe aksene fordi «den virker jo» ville vært nøyaktig den
+# selvbetjente troverdigheten akseptporten finnes for å hindre.
+#
+# PLATTFORMSKOP MED VILJE: backupen er hele basens, ikke en tenants.
+# `backupverifisering` har ingen tenant-kolonne og ingen RLS — og det
+# er et KRAV, ikke en mangel. En tenant-kolonne her ville vært en
+# invitasjon til å tro at radene bærer kundedata.
+#
+# FAIL-CLOSED PÅ MÅLINGEN: under ti tabeller eller under 1 KiB dump er
+# ikke en SVAK verifisering. Det er et tegn på at restoren målte feil
+# base, og skal avvises — aldri registreres «med forbehold».
+id: m10_backup
+navn: Backup- og gjenopprettingsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: dørene eies av `disponit_m37_claimer`
+# (051-formen), og den uteblitte verifiseringen varsles gjennom
+# varselveien fra 035.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m10_backup
+i18n_prefiks: backup
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet. Portene finnes og er grønne lokalt
+      (test_m10_backupinnsyn.py), men andelen er ikke pinnet.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en verifiseringsrapport med KJENT fasit, kjørt likt
+      lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver verifisering står med sine egne tall —
+      tabellantall og dumpstørrelse fra restoren, ikke fra skriptet
+      som ba om den.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en uteblitt verifisering varsles ÉN gang per døgn, og
+      at en feil i sveipen gjør STØY, ikke stillhet. En backup ingen
+      har verifisert ser lik ut som en som virker.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen — og merk
+      ironien: dette er modulen som MÅLER at gjenoppretting virker,
+      uten selv å ha vært gjennom en.

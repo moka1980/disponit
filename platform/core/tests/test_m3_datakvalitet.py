@@ -1327,3 +1327,31 @@ def test_axe_porten_finnes_og_kjores_av_npm_test():
     assert kilde.count("alvorligeBrudd") >= 4, \
         "axe kjøres ikke på flatens tilstander"
     assert "visDatakvalitet" in kilde
+
+
+def test_grensen_dekkes_av_portene_i_denne_fila():
+    """§0, MÅLT BEGGE VEIER — OG DET VAR HALVPARTEN SOM MANGLET.
+
+    Grensen `m3-v1` har stått i `KRAVGRENSER` siden FØR koden ble
+    skrevet: §0-regelen ble respektert. Portene under har ligget her
+    siden. MEN INGENTING BANDT DE TO SAMMEN.
+
+    Konsekvensen er stille: en invariant kunne fjernes fra grensen,
+    eller en port slettes, og ingen test ville merket det. Grensen ville
+    fremdeles vært «registrert», og suiten fremdeles grønn.
+
+    `test_kravgrenser_unike.py` pinner at en grense ikke OVERSKRIVES.
+    Denne pinner at den er DEKKET. De to er ulike hull, og bare det
+    første var lukket.
+
+    MUTASJONEN SOM DREPER DENNE: legg til en invariant i `m3-v1` som
+    ingen test her nevner.
+    """
+    from manifestskjema import KRAVGRENSER
+    g = KRAVGRENSER["m3-v1"]
+    assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
+    inv = set(g["invarianter"])
+    assert inv
+    egen = Path(__file__).read_text(encoding="utf-8")
+    mangler = sorted(i for i in inv if i not in egen)
+    assert mangler == [], f"invarianter uten port: {mangler}"

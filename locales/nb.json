@@ -4472,5 +4472,9 @@
   "ui.ehf.feil.generell": "Noe gikk galt. Prøv igjen.",
   "ui.ehf.feil.tilstand": "Handlingen er ikke lovlig i denne tilstanden.",
   "ui.ehf.feil.urettet_formfeil": "Dokumentet har en formfeil uten retting. Å merke klar nå er å be et menneske signere på at noe er i orden som ikke er det.",
-  "ui.ehf.feil.validering_avvist": "Valideringen ble avvist. Er regelsettet gyldig i dag, og er dokumentet allerede dømt mot nettopp dette settet?"
+  "ui.ehf.feil.validering_avvist": "Valideringen ble avvist. Er regelsettet gyldig i dag, og er dokumentet allerede dømt mot nettopp dette settet?",
+  "site.modul.m10.navn": "Backup- og gjenopprettingsagent",
+  "site.modul.m10.tekst": "Verifiserer at backupen faktisk lar seg gjenopprette, og fører hver måling som en rad. Under ti tabeller eller under 1 KiB dump er ikke en svak verifisering — det er et tegn på at restoren målte feil base, og avvises.",
+  "site.modul.m11.navn": "Integrasjons- og selvtestagent",
+  "site.modul.m11.tekst": "Kjører plattformens prober og skiller «rødt» fra «ikke satt opp her» — det siste varsles aldri. Selvtesten kan ikke varsle om sin egen død, så den uteblitte runden meldes av varselsenderen."
 }

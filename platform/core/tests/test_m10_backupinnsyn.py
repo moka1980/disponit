@@ -151,7 +151,12 @@ def test_tabellen_har_ingen_tenantkolonne():
 
 @pg
 def test_registrering_er_idempotent_paa_backup_ts():
-    """Samme backup verifisert to ganger er ÉN rad, og andre kall
+    """
+    INVARIANT: `registrering_duplikat_backup_ts` — lesejobben kjører hvert 30.
+    minutt over den samme dagsferske rapporten; uten dette ville hver kjøring
+    vært en ny «verifisering».
+    
+    Samme backup verifisert to ganger er ÉN rad, og andre kall
     returnerer 0 — ikke 1, og ikke en feil. Kontroll: fjern
     `ON CONFLICT (backup_ts) DO NOTHING` i 090, så velter andre kall på
     en UniqueViolation i stedet for å svare 0."""
@@ -187,7 +192,12 @@ def test_registrering_er_idempotent_paa_backup_ts():
 
 @pg
 def test_runtime_avvises_paa_skrivedoeren_i_runtime():
-    """GRANTGRENSEN, målt i basen og ikke i migrer.py: web-runtime skal
+    """
+    INVARIANT: `skrivedor_naadd_av_runtime` — en rettighet som bare slutter å
+    bli gitt er ikke trukket tilbake (035), så avvisningen måles i RUNTIME og
+    ikke i en kodegjennomgang.
+    
+    GRANTGRENSEN, målt i basen og ikke i migrer.py: web-runtime skal
     ikke kunne dikte en verifisering. En rettighet som bare slutter å bli
     GITT er ikke trukket tilbake (035) — derfor spør vi den ekte rollen.
 
@@ -340,7 +350,13 @@ def _uten_ferske_verifiseringer(m):
 
 @pg
 def test_uteblitt_varsles_og_er_idempotent_per_dogn():
-    """FRAVÆR ER FEIL i v1: en tabell der ingenting er verifisert de siste
+    """
+    INVARIANT: `uteblitt_ikke_varslet` OG `varsel_duplikat_per_dogn` — en
+    backup ingen har verifisert ser lik ut som en som virker, og hendelsen er
+    DØGNET: ett varsel per dag, ikke ett per timerkjøring og ikke evig
+    stillhet etter det første.
+    
+    FRAVÆR ER FEIL i v1: en tabell der ingenting er verifisert de siste
     30 timene varsler — og en tilstand som vedvarer gir ETT varsel per
     døgn, ikke ett per timerkjøring.
 
@@ -425,7 +441,11 @@ def test_rapport_som_mangler_er_den_MILDE_tilstanden(tmp_path):
 
 
 def test_ugyldig_rapport_er_den_HARDE_tilstanden(tmp_path):
-    """Ugyldig JSON, manglende felt og feil type er alle `UgyldigRapport`
+    """
+    INVARIANT: `ugyldig_rapport_registrert` — en verifisering vi ikke kan lese
+    er ikke en verifisering, og skal aldri gi en rad «med forbehold».
+    
+    Ugyldig JSON, manglende felt og feil type er alle `UgyldigRapport`
     — og ALDRI en utfylt verdi. Kontroll: la `_gyldig` konvertere
     strenger til tall, så blir `"137"`-tilfellet grønt der det skal være
     rødt."""
@@ -639,3 +659,46 @@ def test_endepunktet_har_ingen_skrivevei(klient, token):   # noqa: F811
     for metode in ("post", "put", "delete", "patch"):
         svar = getattr(klient, metode)("/v1/drift/backup", headers=h)
         assert svar.status_code == 405, (metode, svar.status_code)
+
+
+def test_ui_axe_dekning():
+    """`ui_axe_alvorlige_brudd` — flaten er registrert der axe kjører.
+
+    M-10 og M-11 DELER flate (`driftstatus`): den henter begge
+    endepunktene i ett kall-par, så axe-dekningen er felles.
+    """
+    rot = Path(__file__).resolve().parents[3]
+    app_js = (rot / "platform" / "core" / "ui" / "static" / "js"
+              / "app.js").read_text(encoding="utf-8")
+    assert "driftstatus: vis" in app_js
+    sitekart = (rot / "platform" / "core" / "ui" / "static" / "js"
+                / "sitekart.js").read_text(encoding="utf-8")
+    assert '{ nokkel: "driftstatus"' in sitekart
+
+
+def test_grensen_dekkes_av_portene_i_denne_fila():
+    """§0, MÅLT BEGGE VEIER — OG DET VAR HALVPARTEN SOM MANGLET.
+
+    Grensen `m10-v1` har stått i `KRAVGRENSER` siden FØR koden ble
+    skrevet: §0-regelen ble respektert. Portene under har ligget her
+    siden. MEN INGENTING BANDT DE TO SAMMEN.
+
+    Konsekvensen er stille: en invariant kunne fjernes fra grensen,
+    eller en port slettes, og ingen test ville merket det. Grensen ville
+    fremdeles vært «registrert», og suiten fremdeles grønn.
+
+    `test_kravgrenser_unike.py` pinner at en grense ikke OVERSKRIVES.
+    Denne pinner at den er DEKKET. De to er ulike hull, og bare det
+    første var lukket.
+
+    MUTASJONEN SOM DREPER DENNE: legg til en invariant i `m10-v1` som
+    ingen test her nevner.
+    """
+    from manifestskjema import KRAVGRENSER
+    g = KRAVGRENSER["m10-v1"]
+    assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
+    inv = set(g["invarianter"])
+    assert inv
+    egen = Path(__file__).read_text(encoding="utf-8")
+    mangler = sorted(i for i in inv if i not in egen)
+    assert mangler == [], f"invarianter uten port: {mangler}"
