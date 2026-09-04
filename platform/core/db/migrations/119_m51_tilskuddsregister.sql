@@ -103,6 +103,17 @@ CREATE TABLE tilskuddskrav (
     usikkerhet_prosent INT NOT NULL DEFAULT 20
         CHECK (usikkerhet_prosent BETWEEN 0 AND 100),
     versjon INT NOT NULL DEFAULT 1 CHECK (versjon >= 1),
+    -- IDEMPOTENSNØKKELEN SOM SATTE DENNE VERSJONEN.
+    --
+    -- Raden er en singleton per tenant, og har derfor ingen id å
+    -- utlede fra nøkkelen slik de andre skrivedørene gjør. Uten
+    -- nøkkelen HER ville et gjenspilt kall — en klient som gjentar
+    -- etter en tidsavbrutt forbindelse — bumpet `versjon` en gang
+    -- til. Og versjonen er ikke pynt: hvert funn bærer
+    -- `kravversjon`, så et fantomtall gjør «hvilke terskler gjaldt
+    -- da» til et spørsmål ingen kan svare på.
+    siste_nokkel TEXT NOT NULL
+        CHECK (siste_nokkel ~ '[^[:space:]]'),
     oppdatert TIMESTAMPTZ NOT NULL DEFAULT now(),
     oppdatert_av TEXT NOT NULL CHECK (oppdatert_av ~ '[^[:space:]]'),
     CONSTRAINT tilskuddskrav_pk PRIMARY KEY (tenant)
@@ -409,26 +420,73 @@ REVOKE ALL ON FUNCTION m51_evidens(TEXT, UUID, TEXT, TEXT, JSONB)
 -- 3. Skrivedørene.
 -- ------------------------------------------------------------
 
+-- TERSKLENE, MED IDEMPOTENSNØKKELEN SOM DEL AV DØRA.
+--
+-- De andre skrivedørene her utleder rad-id-en fra nøkkelen, og er
+-- idempotente fordi en gjentatt id ikke kan settes inn to ganger.
+-- `tilskuddskrav` er en SINGLETON per tenant og har ingen slik id —
+-- så uten det som står under, ville en gjenspilt POST økt `versjon`
+-- en gang til uten at noe var endret.
+--
+-- TO UTFALL PÅ SAMME NØKKEL, OG DE ER IKKE DET SAMME:
+--
+--   samme nøkkel, samme verdier  → GJENSPILL. Returner versjonen som
+--                                  alt står der. Ingen bump, ingen
+--                                  ny evidens.
+--   samme nøkkel, ANDRE verdier  → KONFLIKT. Nøkkelen er klientens
+--                                  løfte om at dette er den SAMME
+--                                  operasjonen; er verdiene andre,
+--                                  er løftet brutt, og å velge én av
+--                                  dem i stillhet er verre enn å si
+--                                  fra. `unique_violation` blir
+--                                  `idempotenskonflikt` i API-laget.
 CREATE FUNCTION m51_sett_krav(
     p_tenant TEXT, p_frist_varsel_dogn INT,
     p_kildepost_gyldig_dogn INT, p_usikkerhet_prosent INT,
-    p_aktor TEXT)
+    p_aktor TEXT, p_nokkel TEXT)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog AS $$
-DECLARE v_versjon INT;
+DECLARE v_versjon INT; v_nokkel TEXT; v_likt BOOLEAN;
 BEGIN
     PERFORM public.krev_tenantkontekst(p_tenant, 'm51_sett_krav');
+    IF p_nokkel IS NULL OR btrim(p_nokkel) = '' THEN
+        RAISE EXCEPTION 'm51_sett_krav: idempotensnøkkel mangler'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     PERFORM set_config('disponit.aktor', p_aktor, true);
+
+    -- LÅS RADEN FØRST, LES NØKKELEN ETTERPÅ. Samme dom som i de tre
+    -- andre dørene her: lesningen over en lås er fra transaksjonens
+    -- snapshot, og et parallelt `m51_sett_krav` som committer mens vi
+    -- venter ville vært usynlig — to gjenspill ville da begge bumpet.
+    PERFORM 1 FROM public.tilskuddskrav
+     WHERE tenant = p_tenant FOR UPDATE;
+    SELECT k.versjon, k.siste_nokkel,
+           (k.frist_varsel_dogn = p_frist_varsel_dogn
+            AND k.kildepost_gyldig_dogn = p_kildepost_gyldig_dogn
+            AND k.usikkerhet_prosent = p_usikkerhet_prosent)
+      INTO v_versjon, v_nokkel, v_likt
+      FROM public.tilskuddskrav k WHERE k.tenant = p_tenant;
+
+    IF v_nokkel IS NOT NULL AND v_nokkel = p_nokkel THEN
+        IF v_likt THEN
+            RETURN v_versjon;
+        END IF;
+        RAISE EXCEPTION 'm51_sett_krav: nøkkelen % er alt brukt på'
+            ' andre verdier', p_nokkel
+            USING ERRCODE = 'unique_violation';
+    END IF;
 
     INSERT INTO public.tilskuddskrav
         (tenant, frist_varsel_dogn, kildepost_gyldig_dogn,
-         usikkerhet_prosent, oppdatert_av)
+         usikkerhet_prosent, siste_nokkel, oppdatert_av)
     VALUES (p_tenant, p_frist_varsel_dogn, p_kildepost_gyldig_dogn,
-            p_usikkerhet_prosent, p_aktor)
+            p_usikkerhet_prosent, btrim(p_nokkel), p_aktor)
     ON CONFLICT (tenant) DO UPDATE SET
         frist_varsel_dogn = EXCLUDED.frist_varsel_dogn,
         kildepost_gyldig_dogn = EXCLUDED.kildepost_gyldig_dogn,
         usikkerhet_prosent = EXCLUDED.usikkerhet_prosent,
+        siste_nokkel = EXCLUDED.siste_nokkel,
         versjon = public.tilskuddskrav.versjon + 1,
         oppdatert = now(),
         oppdatert_av = EXCLUDED.oppdatert_av
@@ -440,8 +498,8 @@ BEGIN
             'usikkerhet_prosent', p_usikkerhet_prosent));
     RETURN v_versjon;
 END $$;
-REVOKE ALL ON FUNCTION m51_sett_krav(TEXT, INT, INT, INT, TEXT)
-    FROM PUBLIC;
+REVOKE ALL ON FUNCTION
+    m51_sett_krav(TEXT, INT, INT, INT, TEXT, TEXT) FROM PUBLIC;
 
 
 -- DOM 5: ORDNINGENS KRAV ER IKKE MODULENS.
@@ -1641,7 +1699,8 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION'
             ' m51_funnene(TEXT, BOOLEAN) TO disponit';
         EXECUTE 'GRANT EXECUTE ON FUNCTION'
-            ' m51_sett_krav(TEXT, INT, INT, INT, TEXT) TO disponit';
+            ' m51_sett_krav(TEXT, INT, INT, INT, TEXT, TEXT)'
+            ' TO disponit';
         EXECUTE 'GRANT EXECUTE ON FUNCTION'
             ' m51_registrer_ordning(TEXT, UUID, TEXT, TEXT, TEXT,'
             ' TEXT, TEXT, BIGINT, INT, TIMESTAMPTZ, TEXT)'

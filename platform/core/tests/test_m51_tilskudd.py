@@ -107,11 +107,11 @@ def _tenantnavn(merke: str) -> str:
 
 
 def _krav(c, tenant, *, frist=21, kilde=400, usikkerhet=20,
-          aktor="u-test"):
+          aktor="u-test", nokkel=None):
     _sett_kontekst(c, tenant)
-    v = c.execute("SELECT m51_sett_krav(%s,%s,%s,%s,%s)",
-                  (tenant, frist, kilde, usikkerhet,
-                   aktor)).fetchone()[0]
+    v = c.execute("SELECT m51_sett_krav(%s,%s,%s,%s,%s,%s)",
+                  (tenant, frist, kilde, usikkerhet, aktor,
+                   nokkel or secrets.token_hex(8))).fetchone()[0]
     c.commit()
     return v
 
@@ -441,6 +441,50 @@ def test_ferdigstilling_gir_summen_OG_spennet(miljo):
         # ALLE ER HELTALL — ingen flyttall har vært innom.
         for v in (sum_, nedre, ovre):
             assert isinstance(v, int), type(v)
+        c.rollback()
+
+
+@pg
+def test_terskeldoera_er_idempotent_paa_nokkelen(miljo):
+    """EN GJENSPILT POST SKAL IKKE BUMPE VERSJONEN.
+
+    De andre skrivedørene utleder rad-id-en fra idempotensnøkkelen og
+    er idempotente fordi en gjentatt id ikke kan settes inn to ganger.
+    `tilskuddskrav` er en SINGLETON per tenant og har ingen slik id —
+    så uten nøkkelen inne i døra ville en klient som gjentar etter en
+    tidsavbrutt forbindelse økt `versjon` en gang til uten at noe var
+    endret. Og versjonen er ikke pynt: hvert funn bærer
+    `kravversjon`, så et fantomtall gjør «hvilke terskler gjaldt da»
+    til et spørsmål ingen kan svare på.
+
+    SAMME NØKKEL MED ANDRE VERDIER ER NOE ANNET, og må si fra:
+    nøkkelen er klientens løfte om at dette er den samme
+    operasjonen. Er verdiene andre, er løftet brutt, og å velge én av
+    dem i stillhet er verre enn en konflikt.
+
+    MUTASJONEN SOM DREPER DENNE: la døra ignorere `p_nokkel`.
+    """
+    tenant = _tenantnavn("idem")
+    nokkel = secrets.token_hex(8)
+    with _rt() as c:
+        v1 = _krav(c, tenant, usikkerhet=20, nokkel=nokkel)
+        # GJENSPILL: samme nøkkel, samme verdier.
+        v2 = _krav(c, tenant, usikkerhet=20, nokkel=nokkel)
+        assert v1 == v2, (v1, v2)
+
+        # SAMME NØKKEL, ANDRE VERDIER → konflikt, ikke stille valg.
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _krav(c, tenant, usikkerhet=35, nokkel=nokkel)
+        c.rollback()
+
+        # NY NØKKEL BUMPER, som den skal.
+        v3 = _krav(c, tenant, usikkerhet=35)
+        assert v3 == v1 + 1, (v1, v3)
+        # …og verdien FULGTE MED. Lest gjennom lesedøra: kjøretids-
+        # rollen har ingen tabellrettigheter, og skal ikke ha dem.
+        _sett_kontekst(c, tenant)
+        assert c.execute("SELECT * FROM m51_kravene(%s)",
+                         (tenant,)).fetchone()[2] == 35
         c.rollback()
 
 

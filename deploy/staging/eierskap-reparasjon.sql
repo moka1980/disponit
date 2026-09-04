@@ -653,7 +653,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm51_postene(text,uuid)',                                            'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_registrer_kildepost(text,uuid,text,text,text,bigint,date,date,text)', 'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_registrer_ordning(text,uuid,text,text,text,text,text,bigint,integer,timestamp with time zone,text)', 'disponit_tilskudd_eier'),
-    ('FUNCTION', 'm51_sett_krav(text,integer,integer,integer,text)',                  'disponit_tilskudd_eier'),
+    ('FUNCTION', 'm51_sett_krav(text,integer,integer,integer,text,text)',                  'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_sett_ordningaktiv(text,uuid,boolean,text)',                     'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_sveip_tilskudd(integer)',                                       'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_tilskuddsstatus(text)',                                         'disponit_tilskudd_eier'),

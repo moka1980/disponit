@@ -434,15 +434,21 @@ def krav_endepunkt(tjeneste, request):
     vil være med et estimat er en forretningsbeslutning, ikke noe en
     modul kan bestemme.
     """
-    def bygg(tenant, bid, _nokkel, kropp, rid, _request):
+    def bygg(tenant, bid, nokkel, kropp, rid, _request):
         frist = _heltall(kropp, "frist_varsel_dogn", rid,
                          *KRAVGRENSER["frist_varsel_dogn"])
         kilde = _heltall(kropp, "kildepost_gyldig_dogn", rid,
                          *KRAVGRENSER["kildepost_gyldig_dogn"])
         usikkerhet = _heltall(kropp, "usikkerhet_prosent", rid,
                               *KRAVGRENSER["usikkerhet_prosent"])
-        return ("SELECT m51_sett_krav(%s,%s,%s,%s,%s)",
-                (tenant, frist, kilde, usikkerhet, bid), {}, "versjon")
+        # NØKKELEN GÅR HELT INN I DØRA. `tilskuddskrav` er en singleton
+        # per tenant og har ingen id å utlede fra nøkkelen slik de
+        # andre skrivedørene gjør — så uten dette ville et gjenspill
+        # etter en tidsavbrutt forbindelse bumpet `versjon` en gang
+        # til, og hvert funn bærer `kravversjon`.
+        return ("SELECT m51_sett_krav(%s,%s,%s,%s,%s,%s)",
+                (tenant, frist, kilde, usikkerhet, bid, nokkel), {},
+                "versjon")
     return _skriv(tjeneste, request, bygg)
 
 
