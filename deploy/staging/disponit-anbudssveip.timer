@@ -1,0 +1,23 @@
+# M-46 (118): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `frist_varsel_dogn` og
+# `kilde_gyldig_dogn` måles begge i DØGN.
+#
+# KLOKKESLETTET ER 09:20 fordi 02:20 til 09:05 alt er tatt, og fordi
+# klyngefundamentet fordelte 08:50–09:50 til klynge 6.
+#
+# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse
+# som nabosveipene. `Persistent` er ekstra viktig her — en vert som
+# var nede da tidspunktet passerte skal likevel oppdage en frist som
+# nærmer seg.
+
+[Unit]
+Description=Disponit anbudssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 09:20:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

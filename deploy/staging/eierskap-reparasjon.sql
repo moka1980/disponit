@@ -606,6 +606,31 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm49_sett_subjektaktiv(text,uuid,boolean,text)',                     'disponit_sanksjon_eier'),
     ('FUNCTION', 'm49_subjektene(text,integer)',                                      'disponit_sanksjon_eier'),
     ('FUNCTION', 'm49_sveip_sanksjoner(integer)',                                     'disponit_sanksjon_eier'),
+    -- 118 (M-46): anbudsregisterets doerer og anbudssveipen.
+    -- INGEN AV DEM SENDER ET TILBUD, og ingen kan skrive et
+    -- faktapunkt uten kilde: `utkastpunkt` har ingen
+    -- fritekstkolonne.
+    --
+    -- `m46_utkast_frosset()` staar IKKE her: radvakten lages
+    -- etter `RESET ROLE` i seksjon 6 og eies av migratoren.
+    ('FUNCTION', 'm46_anbudene(text,integer)',                                        'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_anbudsstatus(text)',                                            'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_evidens(text,uuid,text,text,jsonb)',                            'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_funnene(text,boolean)',                                         'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_kildene(text)',                                                 'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_kravene(text,uuid,uuid)',                                       'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_lukk_funn(text,uuid,text,text,text)',                           'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_merk_klart(text,uuid,text)',                                    'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_opprett_utkast(text,uuid,uuid,text)',                           'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_profilen(text)',                                                'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_registrer_anbud(text,uuid,text,text,text,text,text,text,bigint,timestamp with time zone,text)', 'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_registrer_kilde(text,uuid,text,text,date,text,text)',           'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_registrer_krav(text,uuid,uuid,text,text,text,boolean,text)',    'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_registrer_punkt(text,uuid,uuid,uuid,uuid,text,text,text)',      'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_sett_anbudaktiv(text,uuid,boolean,text)',                       'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_sett_profil(text,text[],text[],bigint,bigint,integer,integer,text)', 'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_sveip_anbud(integer)',                                          'disponit_anbud_eier'),
+    ('FUNCTION', 'm46_utkastene(text,uuid)',                                          'disponit_anbud_eier'),
     ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),
     ('FUNCTION', 'm48_vurderingene(text,uuid)',                                       'disponit_motpart_eier'),

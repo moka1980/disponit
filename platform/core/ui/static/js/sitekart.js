@@ -467,6 +467,15 @@ const BASISRUTER = [
   // `modulen_avfeide_navnelikhet` — beslutningen, motargumentet og
   // utløseren står i toppen av migrasjon 117.
   { nokkel: "sanksjon", scope: "okonomi:read", modulflate: 49 },
+  // M-46 (118): anbuds- og konkurransevakten. MODULFLATE bak
+  // `okonomi:read` — en anbudsfrist som passerer er den ene feilen som
+  // ikke kan rettes dagen etter.
+  //
+  // FLATEN SENDER INGEN TILBUD, og den kan ikke skrive et faktapunkt
+  // uten kilde: `utkastpunkt` i 118 har ingen fritekstkolonne.
+  // Fraværene er portene `modulen_sendte_tilbud` og
+  // `utkastpunkt_uten_kilde`.
+  { nokkel: "anbud", scope: "okonomi:read", modulflate: 46 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

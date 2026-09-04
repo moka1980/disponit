@@ -444,6 +444,9 @@ MOTPARTSSVEIP_DSN=("DISPONIT_MOTPARTSSVEIP_URL=$DB"
 # M-49 (117). Rollen ble opprettet av klyngefundamentet (#371).
 SANKSJONSSVEIP_DSN=("DISPONIT_SANKSJONSSVEIP_URL=$DB"
                     "DISPONIT_TEST_SANKSJONSSVEIP_DSN=${DB}_test")
+# M-46 (118). Rollen ble opprettet av klyngefundamentet (#371).
+ANBUDSSVEIP_DSN=("DISPONIT_ANBUDSSVEIP_URL=$DB"
+                 "DISPONIT_TEST_ANBUDSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -478,6 +481,7 @@ sikre_rolle_dsn "$LONNSSVEIP" "${LONNSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$KAMPANJESVEIP" "${KAMPANJESVEIP_DSN[@]}"
 sikre_rolle_dsn "$MOTPARTSSVEIP" "${MOTPARTSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$SANKSJONSSVEIP" "${SANKSJONSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$ANBUDSSVEIP" "${ANBUDSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

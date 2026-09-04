@@ -55,6 +55,7 @@ STANDARDKATALOG = Path("/var/lib/disponit")
 #: døgn etter at den døde.
 FLAATEN: dict[str, int] = {
     # Nattlige kalendertimere — ett døgn pluss slark.
+    "anbudssveip": 30,
     "adressesveip": 30,
     "avstemmingssveip": 30,
     "begrepssveip": 30,

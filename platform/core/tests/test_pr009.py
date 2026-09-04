@@ -566,7 +566,9 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 116 (M-48): motpartssveipens EGEN DSN, av samme grunn.
         "DISPONIT_MOTPARTSSVEIP_URL",
         # 117 (M-49): sanksjonssveipens EGEN DSN, av samme grunn.
-        "DISPONIT_SANKSJONSSVEIP_URL")})
+        "DISPONIT_SANKSJONSSVEIP_URL",
+        # 118 (M-46): anbudssveipens EGEN DSN, av samme grunn.
+        "DISPONIT_ANBUDSSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -642,6 +644,10 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     # er uavklarte treff ingen har sett på.
     assert (rot / "sanksjonssveip/DISPONIT_SANKSJONSSVEIP_URL").read_text(
         encoding="utf-8") == "verdi-DISPONIT_SANKSJONSSVEIP_URL"
+    # 118 (M-46): anbudssveipens EGEN DSN — en stille anbudssveip er
+    # frister ingen har sett.
+    assert (rot / "anbudssveip/DISPONIT_ANBUDSSVEIP_URL").read_text(
+        encoding="utf-8") == "verdi-DISPONIT_ANBUDSSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -1135,7 +1141,9 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 116 (M-48): motpartssveipens EGEN DSN, av samme grunn.
         "DISPONIT_MOTPARTSSVEIP_URL",
         # 117 (M-49): sanksjonssveipens EGEN DSN, av samme grunn.
-        "DISPONIT_SANKSJONSSVEIP_URL")})
+        "DISPONIT_SANKSJONSSVEIP_URL",
+        # 118 (M-46): anbudssveipens EGEN DSN, av samme grunn.
+        "DISPONIT_ANBUDSSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):
