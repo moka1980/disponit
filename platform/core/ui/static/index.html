@@ -28,6 +28,39 @@
     <p class="noscript">Disponit krever JavaScript for å vise kundeflaten.</p>
   </noscript>
 
+  <!-- OPPSTARTSVAKTEN, OG HVORFOR TEKSTEN STÅR HER OG IKKE I LOCALES.
+       ==================================================================
+       EIERS FUNN 4/9: «når man klikker login, vises bare hvit tom side».
+
+       Årsaken var utrullingen. `opp.sh` stopper `disponit-api.socket` i
+       vedlikeholdsvinduet, og da svarer nginx 502 med sin egen HTML-side
+       — også på «.js». En modul servert som `text/html` BLOKKERES av
+       nettleseren, hele importgrafen ryker, og `#app` blir stående tom.
+       Ingen kode har kjørt, så ingenting kan si fra.
+
+       En hvit side er den verste feilmeldingen som finnes: den skiller
+       ikke «laster» fra «ødelagt» fra «du har ikke tilgang».
+
+       Vakten er derfor et KLASSISK script, ikke en modul: en modul ville
+       vært en del av nøyaktig den grafen som feilet. Den har ingen
+       importer og kan ikke ryke med.
+
+       TEKSTEN BOR HER, ikke i `locales/`, og det er ikke en forglemmelse:
+       vakten finnes for tilfellet der INGENTING lastet — også
+       `/ui/locale/nb`. En oversettelse hentet over nett kan ikke være
+       reserven for at nettet ikke svarte. Samme unntak som `<noscript>`
+       over, og det gjelder bare disse to. -->
+  <div id="oppstartsfeil" class="oppstartsfeil" role="alert" hidden>
+    <p data-nb="Kunne ikke laste Disponit."
+       data-en="Could not load Disponit."></p>
+    <p class="muted"
+       data-nb="Det kan skyldes en pågående utrulling. Vi prøver igjen."
+       data-en="A deployment may be in progress. Retrying."></p>
+    <button type="button" id="oppstart-paa-nytt"
+            data-nb="Prøv igjen nå" data-en="Retry now"></button>
+  </div>
+
+  <script defer src="/ui/js/oppstartsvakt.js"></script>
   <script type="module" src="/ui/js/app.js"></script>
 </body>
 </html>
