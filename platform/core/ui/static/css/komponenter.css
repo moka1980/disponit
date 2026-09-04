@@ -1665,3 +1665,25 @@ th.rekrut-kandidat { white-space: normal; }
     padding-right: env(safe-area-inset-right, 0px);
   }
 }
+
+/* --- Oppstartsvakten ----------------------------------------------------
+   Beskjeden som vises når INGENTING annet lastet.
+
+   FØRSTE UTKAST HARDKODET FARGENE HER, med begrunnelsen «boksen må stå på
+   egne bein om `tokens.css` er like utilgjengelig som modulene var».
+   Porten `test_ingen_hardkodet_farge_eller_avstand_i_ui_css` avviste det,
+   og den har rett: argumentet var for sterkt. Faller stilarket bort, står
+   det igjen to avsnitt og en knapp — og nettleserens egen tegning av dem
+   er fullt lesbar. Det er INNHOLDET som må overleve, ikke utseendet.
+   Tokenkilden er fortsatt den eneste (RUTINER pkt. 6). */
+.oppstartsfeil {
+  margin: var(--sp-6) auto;
+  max-width: 34rem;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+}
+.oppstartsfeil p { margin: 0 0 var(--sp-2); }
+.oppstartsfeil button { min-height: 44px; }

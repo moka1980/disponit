@@ -519,3 +519,82 @@ test("safe-area: hver kant som ligger inntil skjermkanten reserverer"
   assert.match(blokk, /padding-left:\s*max\([^;]*safe-area-inset-left/);
   assert.match(blokk, /padding-right:\s*max\([^;]*safe-area-inset-right/);
 });
+
+// ---------------------------------------------------------------------
+// OPPSTARTSVAKTEN (eiers funn 4/9: hvit side ved innlogging)
+// ---------------------------------------------------------------------
+
+// En port som griper i råtekst treffer kommentarene som FORKLARER hvorfor
+// et mønster er unngått. Det skjedde fire ganger på pythonsiden før
+// `_bare_kode` ryddet det; her er den samme regelen.
+function utenKommentarer(kilde) {
+  return kilde
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+}
+
+test("oppstartsvakt: den er et klassisk script, ikke en modul", () => {
+  // HELE POENGET. Vakten finnes for tilfellet der modulgrafen RYKER —
+  // under en utrulling stopper `opp.sh` API-socketen, nginx svarer 502
+  // med HTML, og en «.js» servert som `text/html` blokkeres av
+  // nettleseren. Var vakten selv en modul, ville den vært en del av
+  // nøyaktig den grafen som feilet.
+  //
+  // MUTASJONEN SOM DREPER DENNE: gi vakten `type="module"`.
+  const html = readFileSync(join(ROT, "platform", "core", "ui", "static",
+    "index.html"), "utf-8");
+  const vakt = html.match(/<script[^>]*oppstartsvakt\.js[^>]*>/);
+  assert.ok(vakt, "oppstartsvakten er ikke lastet fra index.html");
+  assert.equal(/type\s*=\s*"module"/.test(vakt[0]), false,
+    "vakten er en modul og ryker med grafen den skal redde");
+  assert.match(vakt[0], /defer/, "vakten blokkerer parsingen");
+  // …og den står FØR appen, så den er i gang uansett hva som skjer med
+  // modulen etterpå.
+  assert.ok(html.indexOf("oppstartsvakt.js") < html.indexOf('"/ui/js/app.js"'));
+
+  const kilde = readFileSync(join(ROT, "platform", "core", "ui", "static",
+    "js", "oppstartsvakt.js"), "utf-8");
+  assert.equal(/^\s*import\s/m.test(utenKommentarer(kilde)), false,
+    "vakten importerer noe og er dermed ikke uavhengig");
+  // KODEN, IKKE KOMMENTAREN. Porten traff først vaktens egen forklaring
+  // av hvorfor `innerHTML` ikke brukes — samme upresishet som `_bare_kode`
+  // ryddet på pythonsiden. En port som leser råtekst måler prosaen med.
+  assert.equal(/innerHTML/.test(utenKommentarer(kilde)), false,
+    "V6: ingen innerHTML");
+});
+
+test("oppstartsvakt: teksten bor i HTML-en, ikke i JS-en", () => {
+  // Vakten finnes for tilfellet der INGENTING lastet — også
+  // `/ui/locale/nb`. En oversettelse hentet over nett kan ikke være
+  // reserven for at nettet ikke svarte. Samme unntak som `<noscript>`,
+  // og det gjelder bare de to.
+  const html = readFileSync(join(ROT, "platform", "core", "ui", "static",
+    "index.html"), "utf-8");
+  const boks = html.slice(html.indexOf('id="oppstartsfeil"'));
+  for (const attr of ["data-nb", "data-en"]) {
+    assert.ok(boks.indexOf(attr) > 0, `mangler ${attr}`);
+  }
+  assert.match(boks, /role="alert"/);
+  assert.match(boks, /hidden/);
+  // …OG INGEN NORSK TEKST I SELVE VAKTEN.
+  const kilde = readFileSync(join(ROT, "platform", "core", "ui", "static",
+    "js", "oppstartsvakt.js"), "utf-8");
+  const utenKommentar = kilde.split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  assert.equal(/"[^"]*[æøåÆØÅ][^"]*"/.test(utenKommentar), false,
+    "vakten bærer sin egen tekst i stedet for å lese den fra HTML-en");
+});
+
+test("oppstartsvakt: den gir seg når flaten er oppe", () => {
+  // `aria-busy="false"` er appens EGET signal om at den er ferdig — ikke
+  // en gjetning på om noden har innhold, som ville vært sann også for en
+  // halvtegnet feilside.
+  const kilde = readFileSync(join(ROT, "platform", "core", "ui", "static",
+    "js", "oppstartsvakt.js"), "utf-8");
+  assert.match(kilde, /aria-busy["'\s)]*\)\s*===\s*"false"/);
+  // …OG DEN LASTER IKKE OM I DET UENDELIGE. En side som blinker hvert
+  // femte sekund er ikke en beskjed, den er støy — og den skjuler at
+  // problemet er varig.
+  assert.match(kilde, /PAUSER\s*=\s*\[/);
+  assert.match(kilde, /forsok\s*<\s*PAUSER\.length/);
+});
