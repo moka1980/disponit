@@ -61,6 +61,7 @@ FLAATEN: dict[str, int] = {
     "begrepssveip": 30,
     "betalingssveip": 30,
     "compliancesveip": 30,
+    "ehfsveip": 30,
     "fakturasveip": 30,
     "fordringssveip": 30,
     "henvendelsessveip": 30,

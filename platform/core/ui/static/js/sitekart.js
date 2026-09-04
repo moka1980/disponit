@@ -494,6 +494,14 @@ const BASISRUTER = [
   // 120 er NOT NULL med fremmednøkkel. Fraværene er portene
   // `modulen_sendte_krav` og `funn_uten_bevaringskopi`.
   { nokkel: "merkevare", scope: "okonomi:read", modulflate: 55 },
+  // M-54 (121): EHF- og Peppol-avviksretteren. MODULFLATE bak
+  // `okonomi:read` — en faktura er et betalingskrav, og en formfeil i
+  // den er en teknisk sak med en økonomisk konsekvens.
+  //
+  // FLATEN SENDER INGEN FAKTURA, og den kan ikke validere mot et
+  // utløpt regelsett: 121 nekter. Fraværene er portene
+  // `modulen_sendte_faktura` og `validering_mot_utlopt_skjema`.
+  { nokkel: "ehf", scope: "okonomi:read", modulflate: 54 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

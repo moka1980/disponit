@@ -118,5 +118,6 @@
   "117_m49_sanksjonskontroll.sql": "14c8d05c1bc5ba67cbad4c7eb2cac75ed5bd3d28ab96d09e76cbd180e754d2a8",
   "118_m46_anbudsregister.sql": "1efc29d5c5d7fe1f04319546d195417aa18658fe0ae59b4f79036e0e23ab91df",
   "119_m51_tilskuddsregister.sql": "ede176f293b9c24cf385496853799cbcc5eb32706dd6c87e20a388ba42e53445",
-  "120_m55_merkevarefunn.sql": "537f83857d7629a4fc82732cfa7bb6e1a3e12bb746a9e06f81d91d46bd204410"
+  "120_m55_merkevarefunn.sql": "537f83857d7629a4fc82732cfa7bb6e1a3e12bb746a9e06f81d91d46bd204410",
+  "121_m54_ehf_avvik.sql": "d009ce9adc98464ee28282604c8f4cc96f3b90b9a5807e17abcfb849e4cf2d1c"
 }

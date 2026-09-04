@@ -485,8 +485,8 @@ test("Merkevare: vurderingen melder dommen, ikke bare «ok»", async () => {
   knapp.click();
   await vent(() => SISTE !== undefined);
   assert.equal(SISTE.sti, `/v1/merkevare/funn/${F1}/vurder`);
-  await vent(() => document.body.textContent.includes("87"));
-  const tekst = document.body.textContent;
+  await vent(() => h.textContent.includes("87"));
+  const tekst = h.textContent;
   assert.ok(tekst.includes("87") && tekst.includes("80"),
     "kvitteringen bar ikke likheten og terskelen");
   assert.ok(tekst.includes(t("ui.merkevare.grunnlag_avstand")),
@@ -502,9 +502,9 @@ test("Merkevare: en avvist vurdering SIER det", async () => {
   const knapp = [...h.querySelectorAll("button")].find(
     (b) => b.textContent === t("ui.merkevare.knapp.vurder"));
   knapp.click();
-  await vent(() => document.body.textContent.includes(
+  await vent(() => h.textContent.includes(
     t("ui.merkevare.feil.vurdering")));
-  assert.ok(document.body.textContent.includes(
+  assert.ok(h.textContent.includes(
     t("ui.merkevare.feil.vurdering")));
   assert.equal(knapp.disabled, false, "knappen ble liggende død");
 });

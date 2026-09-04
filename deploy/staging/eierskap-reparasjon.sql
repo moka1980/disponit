@@ -686,6 +686,33 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm55_varslene(text,boolean)',                                        'disponit_merkevare_eier'),
     ('FUNCTION', 'm55_vurder_funn(text,uuid,uuid,text)',                              'disponit_merkevare_eier'),
     ('FUNCTION', 'm55_vurderingene(text,uuid)',                                       'disponit_merkevare_eier'),
+    -- 121 (M-54): EHF-registerets doerer og EHF-sveipen. INGEN AV
+    -- DEM SENDER EN FAKTURA, og ingen dommer mot et utloept regelsett.
+    --
+    -- `m54_regelsett_frosset()` og `m54_retting_frosset()` staar IKKE
+    -- her: radvaktene lages etter `RESET ROLE` i seksjon 6 og eies av
+    -- migratoren.
+    ('FUNCTION', 'm54_avvikene(text,uuid)',                                           'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_dokumentene(text,integer)',                                     'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_ehfstatus(text)',                                               'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_evidens(text,uuid,text,text,jsonb)',                            'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_funnene(text,boolean)',                                         'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_kravene(text)',                                                 'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_lukk_funn(text,uuid,text,text)',                                'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_merk_klar(text,uuid,text)',                                     'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_regelsett_gyldig(date,date)',                                   'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_regelsettene(text,integer)',                                    'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_reglene(text,uuid)',                                            'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_registrer_dokument(text,uuid,text,text,text,date,text,bigint,text,text)', 'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_registrer_felter(text,uuid,text[],integer[],text[],bigint[],text)', 'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_registrer_regel(text,uuid,uuid,text,text,text,text[],text,text,text,text)', 'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_registrer_regelsett(text,uuid,text,text,date,date,text,text,text)', 'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_registrer_retting(text,uuid,uuid,text,text,text,text,text)',     'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_sett_gyldig_til(text,uuid,date,text)',                          'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_sett_krav(text,integer,integer,text,text)',                      'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_sveip_ehf(integer)',                                            'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_valider_dokument(text,uuid,uuid,uuid,text)',                    'disponit_ehf_eier'),
+    ('FUNCTION', 'm54_valideringene(text,uuid)',                                      'disponit_ehf_eier'),
     ('FUNCTION', 'm46_utkastene(text,uuid)',                                          'disponit_anbud_eier'),
     ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),

@@ -1,0 +1,23 @@
+# M-54 (121): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `utlopsvarsel_dogn` og
+# `avviksfrist_dogn` måles begge i DØGN — og en standard som går ut,
+# går ut på en DATO.
+#
+# KLOKKESLETTET ER 10:05, klynge 7s første plass i stigen 10:05–11:05.
+# `disponit-sveipestatus.timer` (115) står bakerst på 11:20 og leser
+# flåtens tilstand ETTER at flåten har kjørt.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at regelsettet vi validerer med er gått ut.
+
+[Unit]
+Description=Disponit EHF-sveip-timer
+
+[Timer]
+OnCalendar=*-*-* 10:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

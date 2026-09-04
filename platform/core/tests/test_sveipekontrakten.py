@@ -48,6 +48,7 @@ SVEIPENE = (
     ("anbudssveip", "m46_sveip_anbud"),
     ("tilskuddssveip", "m51_sveip_tilskudd"),
     ("merkevaresveip", "m55_sveip_merkevare"),
+    ("ehfsveip", "m54_sveip_ehf"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

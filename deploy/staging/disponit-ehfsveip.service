@@ -1,0 +1,87 @@
+# M-54 (121): EHF-sveipen for regler som er gått ut.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (121): et utløpt regelsett UTEN en gyldig etterfølger er
+# `regelsett_utlopt`; et som går ut innen tenantens varselvindu er
+# `regelsett_utloper_snart`; en dom felt under et sett som siden har
+# gått ut er `validering_mot_utlopt_regelsett`; et dokument ingen har
+# validert innen fristen er `dokument_uten_validering`; en formfeil
+# uten klargjort retting er `avvik_uten_retting`; en retting som ikke
+# er merket klar er `retting_ikke_klar`; og en tenant uten terskler er
+# `ingen_krav`.
+#
+# SVEIPEN VALIDERER IKKE, OG DET ER MODULENS VIKTIGSTE FRAVÆR. En
+# automatisk revalidering ville felt nye dommer om natten uten at noen
+# ba om det — og en dom er inngangen til en RETTING AV EN KUNDES
+# FAKTURA. En faktura er et betalingskrav, og en rettet faktura som
+# gikk ut uten at noen så på rettingen er et dobbelt krav.
+#
+# OG DEN MERKER INGENTING KLART. «Klar til signering» er en tilstand
+# et menneske setter; signaturen selv finnes ikke i v1.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til en fakturamottaker eller ned til et
+# standardorgan. Regelsettet registreres av et menneske som har lest
+# standarden; gjerdet mot automatisk henting står i koden
+# (`ehfsveip.py` importerer ingenting som kan snakke ut).
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille EHF-sveip er
+# en standard som er gått ut uten at noen har sett det — og en
+# foreldet regel ser nøyaktig ut som en riktig regel.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_ehfsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m54_sveip_ehf`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit EHF-sveip (utlopte regelsett og dommer under dem)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_EHFSVEIP_URL:/etc/disponit/ehfsveip/DISPONIT_EHFSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_ehfsveip
+# Sveipen er ETT funksjonskall som gjør seks setninger per tenant, alle
+# indeksdekket (`ehfregelsett_gyldige_idx`,
+# `ehfvalidering_dokument_idx`, `ehfavvik_validering_idx`,
+# `ehfretting_avvik_idx`, `ehffunn_apne_idx`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
