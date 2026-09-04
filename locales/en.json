@@ -4683,5 +4683,9 @@
   "ui.tollkode.varenummer.tekst_hjelp": "Word for word from the nomenclature. This is what a classification is argued against — the code is only an address.",
   "ui.tollkode.varenummer.tittel": "Commodity codes",
   "ui.tollkode.varer.ingen": "No goods registered.",
-  "ui.tollkode.varer.tittel": "Goods"
+  "ui.tollkode.varer.tittel": "Goods",
+  "ui.shell.bunnmeny": "Main menu",
+  "ui.shell.mer": "More",
+  "ui.shell.omrader": "Areas",
+  "ui.shell.sok_ingen_treff": "No modules match your search."
 }

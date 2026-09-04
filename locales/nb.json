@@ -4683,5 +4683,9 @@
   "ui.tollkode.varenummer.tekst_hjelp": "Ordrett fra nomenklaturen. Det er denne en klassifisering argumenteres mot — koden er bare en adresse.",
   "ui.tollkode.varenummer.tittel": "Varenummer",
   "ui.tollkode.varer.ingen": "Ingen varer registrert.",
-  "ui.tollkode.varer.tittel": "Varer"
+  "ui.tollkode.varer.tittel": "Varer",
+  "ui.shell.bunnmeny": "Hovedmeny",
+  "ui.shell.mer": "Mer",
+  "ui.shell.omrader": "Områder",
+  "ui.shell.sok_ingen_treff": "Ingen moduler matcher søket."
 }

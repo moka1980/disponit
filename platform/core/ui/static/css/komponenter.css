@@ -1401,3 +1401,159 @@ th.rekrut-kandidat { white-space: normal; }
   background: var(--card); }
 .editor-simuler-beslutning { font-weight: 600; }
 .editor-simuler-avvik { color: var(--danger); font-weight: 600; }
+
+/* --- Bunnmeny (mobil) --------------------------------------------------
+   EIERS VEDTAK 4/9: «hovedmenyene skal være helt nederst på mobil».
+
+   Toppnavigasjonen var ikke en mobilmeny. Ti piller som brakk til sin egen
+   rad, og under dem søkefeltet, menybryteren og en modulmeny på trettisju
+   rader — alt FØR innholdet. Halve telefonskjermen gikk med til navigasjon
+   før første opplysning.
+
+   Menyen finnes bare under bruddpunktet. På en bred skjerm er sidemenyen
+   riktig form (den tåler dybde og viser mer om gangen), og to primære
+   navigasjoner samtidig ville vært to svar på samme spørsmål. */
+.skall-bunn { display: none; }
+
+@media (max-width: 60rem) {
+  .skall-bunn {
+    display: block;
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: var(--z-bunnmeny);
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    /* TELEFONENS EGEN KANT. Under `inset: 0` ligger gestusstripa på
+       iPhone og navigasjonslinja på Android. Uten dette havner det
+       nederste av menyen under dem — synlig, men ikke trykkbar. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .skall-bunn-liste {
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .skall-bunn-liste > li { flex: 1 1 0; min-width: 0; }
+
+  .skall-bunn-valg {
+    /* 44px ER IKKE PYNT. Under det bommer tommelen, og en meny du bommer
+       på er verre enn en du må åpne. Høyden er satt på selve målet, ikke
+       på foreldren: det er lenka man treffer. */
+    min-height: 44px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--sp-2) var(--sp-1);
+    background: none;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+  }
+
+  /* IKON *OG* TEKST. Et ikon alene er en gjetning — hva det betyr er noe
+     man lærer, ikke noe man ser. Teksten er liten, men den står der. */
+  .skall-bunn-tekst {
+    font-size: 0.7rem;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  /* HVOR ER JEG. Farge alene er ikke informasjon (WCAG 1.4.1), så den
+     valgte oppføringen bærer også vekt og en strek over seg. */
+  .skall-bunn-valg[aria-current="page"] {
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow: inset 0 3px 0 0 var(--info);
+  }
+  .skall-bunn-valg[aria-expanded="true"] { color: var(--ink); }
+
+  .skall-bunn-mer-liste {
+    display: grid;
+    border-bottom: 1px solid var(--line);
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  .skall-bunn-mer-valg {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding: var(--sp-2) var(--sp-4);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .skall-bunn-mer-valg + .skall-bunn-mer-valg {
+    border-top: 1px solid var(--line);
+  }
+
+  /* PLASSEN MÅ RESERVERES. En fast meny som legger seg OVER innholdet
+     spiser den siste raden på hver eneste side — og den siste raden er
+     ofte knappen. */
+  .skall { padding-bottom: calc(var(--bunnmeny-h)
+    + env(safe-area-inset-bottom, 0px)); }
+
+  /* Toppnavigasjonens piller er nå duplikater av bunnmenyen. To veier til
+     samme sted i samme skjermbilde er ikke to muligheter — det er en meny
+     som ser dobbelt så stor ut som den er. */
+  .skall-topp .skall-nav { display: none; }
+}
+
+/* Områdefanene i modulmenyen: samme mønster som husets øvrige faner, men
+   smalere — de står i en sidemeny, ikke over en skjemaside. */
+.skall-venstre .faner-liste {
+  margin-bottom: var(--sp-3);
+  gap: 0;
+}
+.skall-venstre .fane {
+  font-size: 0.85rem;
+  padding: var(--sp-1) var(--sp-2);
+}
+
+/* Under et søk brytes fanene, og hver treffrad bærer området sitt i stedet
+   — for da er det ikke fanen som grupperer, det er søket. */
+.skall-modul-omrade {
+  color: var(--muted);
+  display: block;
+  font-size: 0.75rem;
+  padding: 0 var(--sp-2) var(--sp-1);
+}
+
+/* --- Kontekstpanelet tar bare plass når det HAR noe ---------------------
+   EIERS SKJERMBILDER 4/9: panelet sto med «Velg en modul i menyen for å se
+   detaljer» på hver eneste flate og reserverte inntil tjue rem — en
+   femtedel av bredden — permanent. På en modulflate ble det aldri fylt,
+   fordi modulflatene ikke bruker det: kolonnen var opptatt av en setning
+   som ba deg gjøre noe du ikke skulle.
+
+   Panelet fjernes ikke fra dokumentet. Det er et fokusmål (`tabindex=-1`)
+   som `visKontekst` sender fokus til, og et mål som ikke finnes kan man
+   ikke sendes til. Det er PLASSEN som frigis. */
+.skall-kropp[data-kontekst="tom"] {
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  grid-template-areas: "venstre hoved";
+}
+.skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "hoved";
+}
+.skall-kropp[data-kontekst="tom"] > .skall-kontekst { display: none; }
+
+@media (max-width: 60rem) {
+  .skall-kropp[data-kontekst="tom"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "venstre" "hoved";
+  }
+  .skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "hoved";
+  }
+}
