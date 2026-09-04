@@ -1043,6 +1043,51 @@ export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
 
+// M-46 (118): anbuds- og konkurransevakten. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `sendAnbud` HER, OG DET KAN IKKE FINNES: 118 har
+// ingen «sendt»-kolonne å skrive til. `merkUtkastKlart` setter en
+// tilstand HOS OSS, og døra nekter så lenge et absolutt krav mangler.
+//
+// OG `registrerAnbudspunkt` TAR ALLTID EN `kilde_id`. Det er ikke en
+// validering her — `utkastpunkt` har ingen fritekstkolonne, så et
+// punkt uten kilde kan ikke uttrykkes.
+export const settAnbudsprofil = (profil, idem) =>
+  _muter("/v1/anbud/profil", "POST", profil,
+         idem || nyIdempotensnokkel());
+
+export const registrerAnbud = (anbud, idem) =>
+  _muter("/v1/anbud/registrer", "POST", anbud,
+         idem || nyIdempotensnokkel());
+
+export const registrerKildedokument = (kilde, idem) =>
+  _muter("/v1/anbud/kilde", "POST", kilde,
+         idem || nyIdempotensnokkel());
+
+export const registrerAnbudskrav = (anbudId, krav, idem) =>
+  _muter(`/v1/anbud/${encodeURIComponent(anbudId)}/krav/ny`,
+         "POST", krav, idem || nyIdempotensnokkel());
+
+export const opprettAnbudsutkast = (anbudId, idem) =>
+  _muter(`/v1/anbud/${encodeURIComponent(anbudId)}/utkast/ny`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const registrerAnbudspunkt = (utkastId, punkt, idem) =>
+  _muter(`/v1/anbud/utkast/${encodeURIComponent(utkastId)}/punkt`,
+         "POST", punkt, idem || nyIdempotensnokkel());
+
+export const merkUtkastKlart = (utkastId, idem) =>
+  _muter(`/v1/anbud/utkast/${encodeURIComponent(utkastId)}/klart`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const settAnbudAktiv = (anbudId, aktiv, idem) =>
+  _muter(`/v1/anbud/${encodeURIComponent(anbudId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+export const lukkAnbudsfunn = (anbudId, funntype, notat, idem) =>
+  _muter(`/v1/anbud/${encodeURIComponent(anbudId)}/funn/lukk`,
+         "POST", { funntype, notat }, idem || nyIdempotensnokkel());
+
 // M-49 (117): sanksjonskontrollen. Alle bærer SP-2-nøkkel, og for
 // AVKLARINGEN er den strengt nødvendig: en gjentatt POST må ikke bli
 // to dommer over samme treff.

@@ -91,6 +91,37 @@ export function oreTekst(ore) {
   return `${neg ? "-" : ""}${kr},${rest}`;
 }
 
+// ØRE ↔ FELTVERDI, MED HELTALLSMATEMATIKK BEGGE VEIER.
+//
+// `Math.floor(ore / 100)` og `Number(kr) * 100` er ikke en rundtur:
+// 123456 øre vises som 1234 kr, og lagres tilbake som 123400. Femtiseks
+// øre forsvinner — STILLE, og på en lagring brukeren gjorde av en helt
+// annen grunn (de rettet fristen, ikke beløpet).
+//
+// Her går begge veier gjennom STRENGER og heltall. Ingen divisjon,
+// ingen `Number` på et beløp, ingen avrunding (101s form, og
+// invarianten `belop_i_flyttall`).
+export function oreTilFelt(ore) {
+  if (ore === null || ore === undefined) return "";
+  const n = BigInt(ore);
+  const neg = n < 0n;
+  const a = (neg ? -n : n).toString().padStart(3, "0");
+  return `${neg ? "-" : ""}${a.slice(0, -2)}.${a.slice(-2)}`;
+}
+
+export function feltTilOre(verdi) {
+  const s = String(verdi === null || verdi === undefined ? "" : verdi)
+    .trim().replace(",", ".");
+  if (!s) return null;
+  const m = /^(-?)(\d*)(?:\.(\d{0,2}))?$/.exec(s);
+  if (!m) return null;
+  const kr = m[2] || "0";
+  const ore = (m[3] || "").padEnd(2, "0");
+  const tall = BigInt(kr) * 100n + BigInt(ore);
+  return Number(m[1] === "-" ? -tall : tall);
+}
+
+
 // «SLIK STO DET DA» — en profil har alltid en kilde og en versjon.
 export function profilTekst(rad) {
   if (!rad.siste_registerstatus) return t("ui.motpart.uten_profil");
@@ -281,14 +312,16 @@ function kravSkjema(ctx, last, krav, kvitter) {
   const uvurdert = el("input", { id: "mp-k-uvurdert",
     name: "uvurdert", type: "number", required: true, step: "1",
     min: "0", max: "3650" });
+  // `step: "0.01"` fordi feltet bærer ØRE-presisjon (CodeRabbit
+  // fant rundturtapet i 118; samme feil sto her fra 116).
   const tak = el("input", { id: "mp-k-tak", name: "tak",
-    type: "number", required: true, step: "1", min: "0",
+    type: "number", required: true, step: "0.01", min: "0",
     max: "1000000000" });
   if (krav) {
     ferskhet.value = String(krav.oppslag_ferskhet_timer);
     gyldig.value = String(krav.vurdering_gyldig_dogn);
     uvurdert.value = String(krav.uvurdert_dogn);
-    tak.value = String(Math.floor(krav.maks_forslag_ore / 100));
+    tak.value = oreTilFelt(krav.maks_forslag_ore);
   }
   const grunnlagsboks = el("fieldset", { class: "felt" },
     el("legend", { text: t("ui.motpart.krav.grunnlag") }));
@@ -329,7 +362,7 @@ function kravSkjema(ctx, last, krav, kvitter) {
       oppslag_ferskhet_timer: Number(ferskhet.value),
       vurdering_gyldig_dogn: Number(gyldig.value),
       uvurdert_dogn: Number(uvurdert.value),
-      maks_forslag_ore: Number(tak.value) * 100,
+      maks_forslag_ore: feltTilOre(tak.value),
       godkjente_grunnlag: GRUNNLAG.filter((g) => bokser[g].checked),
     }, idem),
   });
@@ -445,7 +478,7 @@ function vurderingSkjema(ctx, last, versjonId, krav, kvitter) {
       text: t(GRUNNLAGTEKST[g] || g) }));
   }
   const belop = el("input", { id: "mp-v-belop", name: "belop",
-    type: "number", required: true, step: "1", min: "0",
+    type: "number", required: true, step: "0.01", min: "0",
     max: "1000000000" });
   const begrunnelse = el("input", { id: "mp-v-begrunnelse",
     name: "begrunnelse", type: "text", required: true,
@@ -468,7 +501,7 @@ function vurderingSkjema(ctx, last, versjonId, krav, kvitter) {
     },
     send: (idem) => registrerMotpartsvurdering(versjonId, {
       grunnlag: grunnlag.value,
-      foreslatt_grense_ore: Number(belop.value) * 100,
+      foreslatt_grense_ore: feltTilOre(belop.value),
       begrunnelse: begrunnelse.value.trim(),
     }, idem),
   });

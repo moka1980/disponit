@@ -1610,6 +1610,65 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # «løsningen» — et oppslag mot et adresseregister — er en utgående
     # kanal med personopplysninger i, og svaret ville uansett vært feil
     # vare: at en adresse FINNES sier ikke at pakken kommer fram.
+    # M-46 (118): anbuds- og konkurransevakten. MODULEN SENDER
+    # INGEN TILBUD, og hvert faktapunkt i et utkast peker på et
+    # kildedokument — begge er fravær i datamodellen, ikke sjekker.
+    def anbud_bilde(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.anbudsbilde(tjeneste, request)
+
+    def anbud_funn(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.funn_endepunkt(tjeneste, request)
+
+    def anbud_kilder(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.kilder_endepunkt(tjeneste, request)
+
+    def anbud_krav_les(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.krav_endepunkt(tjeneste, request)
+
+    def anbud_utkast_les(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.utkast_endepunkt(tjeneste, request)
+
+    def anbud_profil(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.profil_endepunkt(tjeneste, request)
+
+    def anbud_registrer(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.registrer_anbud_endepunkt(tjeneste, request)
+
+    def anbud_krav_ny(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.registrer_krav_endepunkt(tjeneste, request)
+
+    def anbud_kilde_ny(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.registrer_kilde_endepunkt(tjeneste, request)
+
+    def anbud_utkast_ny(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.opprett_utkast_endepunkt(tjeneste, request)
+
+    def anbud_punkt(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.registrer_punkt_endepunkt(tjeneste, request)
+
+    def anbud_klart(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.merk_klart_endepunkt(tjeneste, request)
+
+    def anbud_aktiv(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.sett_aktiv_endepunkt(tjeneste, request)
+
+    def anbud_lukk_funn(request: Request) -> Response:
+        from . import anbud as anbudmodul
+        return anbudmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-49 (117): sanksjonskontrollen. MODULEN BLOKKERER INGENTING
     # og AVFEIER INGEN NAVNELIKHET — se `sanksjon.py` og toppen av
     # migrasjon 117 for beslutningen, motargumentet og utløseren.
@@ -2501,6 +2560,29 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/betaling/{subjekt_id:uuid}/abonnement",
               betaling_abonnement, methods=["POST"]),
         Route("/v1/betaling/{subjekt_id:uuid}/aktiv", betaling_aktiv,
+              methods=["POST"]),
+        Route("/v1/anbud", anbud_bilde, methods=["GET"]),
+        Route("/v1/anbud/funn", anbud_funn, methods=["GET"]),
+        Route("/v1/anbud/kilder", anbud_kilder, methods=["GET"]),
+        Route("/v1/anbud/profil", anbud_profil, methods=["POST"]),
+        Route("/v1/anbud/registrer", anbud_registrer,
+              methods=["POST"]),
+        Route("/v1/anbud/kilde", anbud_kilde_ny, methods=["POST"]),
+        Route("/v1/anbud/utkast/{utkast_id:uuid}/punkt", anbud_punkt,
+              methods=["POST"]),
+        Route("/v1/anbud/utkast/{utkast_id:uuid}/klart", anbud_klart,
+              methods=["POST"]),
+        Route("/v1/anbud/{anbud_id:uuid}/krav", anbud_krav_les,
+              methods=["GET"]),
+        Route("/v1/anbud/{anbud_id:uuid}/utkast", anbud_utkast_les,
+              methods=["GET"]),
+        Route("/v1/anbud/{anbud_id:uuid}/krav/ny", anbud_krav_ny,
+              methods=["POST"]),
+        Route("/v1/anbud/{anbud_id:uuid}/utkast/ny", anbud_utkast_ny,
+              methods=["POST"]),
+        Route("/v1/anbud/{anbud_id:uuid}/aktiv", anbud_aktiv,
+              methods=["POST"]),
+        Route("/v1/anbud/{anbud_id:uuid}/funn/lukk", anbud_lukk_funn,
               methods=["POST"]),
         Route("/v1/sanksjon", sanksjon_bilde, methods=["GET"]),
         Route("/v1/sanksjon/funn", sanksjon_funn, methods=["GET"]),
@@ -3500,6 +3582,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 112 (M-19): adresseregisteret. LESINGEN bærer `okonomi:read`,
     # samme scope som 101 innførte og 111 gjenbrukte; SKRIVINGEN bærer
     # `bestilling:opprett`.
+    # M-46 (118): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `/klart` er IKKE en innsendingsrute — den
+    # setter en tilstand hos oss, og nekter så lenge et absolutt krav
+    # står udekket.
+    ("GET",  "/v1/anbud"):                       "okonomi:read",
+    ("GET",  "/v1/anbud/funn"):                  "okonomi:read",
+    ("GET",  "/v1/anbud/kilder"):                "okonomi:read",
+    ("GET",  "/v1/anbud/{anbud_id:uuid}/krav"):  "okonomi:read",
+    ("GET",  "/v1/anbud/{anbud_id:uuid}/utkast"): "okonomi:read",
+    ("POST", "/v1/anbud/profil"):                "bestilling:opprett",
+    ("POST", "/v1/anbud/registrer"):             "bestilling:opprett",
+    ("POST", "/v1/anbud/kilde"):                 "bestilling:opprett",
+    ("POST", "/v1/anbud/utkast/{utkast_id:uuid}/punkt"):
+        "bestilling:opprett",
+    ("POST", "/v1/anbud/utkast/{utkast_id:uuid}/klart"):
+        "bestilling:opprett",
+    ("POST", "/v1/anbud/{anbud_id:uuid}/krav/ny"):
+        "bestilling:opprett",
+    ("POST", "/v1/anbud/{anbud_id:uuid}/utkast/ny"):
+        "bestilling:opprett",
+    ("POST", "/v1/anbud/{anbud_id:uuid}/aktiv"):
+        "bestilling:opprett",
+    ("POST", "/v1/anbud/{anbud_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
     # M-49 (117): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett`. `lister` og `treff` er bevisst leseveier
     # for tenanten selv: «sto de på lista DEN DAGEN» er spørsmålet et
