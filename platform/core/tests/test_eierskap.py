@@ -81,6 +81,7 @@ KJENTE_EIERROLLER = (
     "disponit_motpart_eier",  # M-48, migrasjon 116
     "disponit_sanksjon_eier",  # M-49, migrasjon 117
     "disponit_anbud_eier",  # M-46, migrasjon 118
+    "disponit_tilskudd_eier",  # M-51, migrasjon 119
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.

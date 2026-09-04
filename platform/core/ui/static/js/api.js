@@ -1043,6 +1043,54 @@ export const settAdressesubjektAktiv = (subjektId, aktiv, idem) =>
   _muter(`/v1/adresse/${encodeURIComponent(subjektId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
 
+// M-51 (119): tilskudds- og støtteordningsvakten. Alle bærer
+// SP-2-nøkkel.
+//
+// DET FINNES INGEN `sendSoknad` HER, OG DET KAN IKKE FINNES: 119 har
+// ingen «sendt»-kolonne. `ferdigstillEstimat` setter en tilstand hos
+// oss, og døra nekter uten minst én forutsetning.
+//
+// OG `leggTilEstimatpost` TAR ALLTID EN `kildepost_id`. Det er ikke en
+// validering her — `tilskuddsestimat` har ingen beløpskolonne, så
+// summen ER summen av postene.
+export const settTilskuddskrav = (krav, idem) =>
+  _muter("/v1/tilskudd/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerOrdning = (ordning, idem) =>
+  _muter("/v1/tilskudd/ordning", "POST", ordning,
+         idem || nyIdempotensnokkel());
+
+export const registrerKildepost = (post, idem) =>
+  _muter("/v1/tilskudd/kildepost", "POST", post,
+         idem || nyIdempotensnokkel());
+
+export const opprettTilskuddsestimat = (ordningId, periode, idem) =>
+  _muter(`/v1/tilskudd/${encodeURIComponent(ordningId)}/estimat`,
+         "POST", periode, idem || nyIdempotensnokkel());
+
+export const leggTilEstimatpost = (estimatId, post, idem) =>
+  _muter(`/v1/tilskudd/estimat/${encodeURIComponent(estimatId)}/post`,
+         "POST", post, idem || nyIdempotensnokkel());
+
+export const leggTilForutsetning = (estimatId, forutsetning, idem) =>
+  _muter(`/v1/tilskudd/estimat/${encodeURIComponent(estimatId)}`
+         + "/forutsetning",
+         "POST", forutsetning, idem || nyIdempotensnokkel());
+
+export const ferdigstillEstimat = (estimatId, idem) =>
+  _muter(`/v1/tilskudd/estimat/${encodeURIComponent(estimatId)}`
+         + "/ferdigstill",
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const settOrdningAktiv = (ordningId, aktiv, idem) =>
+  _muter(`/v1/tilskudd/${encodeURIComponent(ordningId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+export const lukkTilskuddsfunn = (ordningId, funntype, notat, idem) =>
+  _muter(`/v1/tilskudd/${encodeURIComponent(ordningId)}/funn/lukk`,
+         "POST", { funntype, notat }, idem || nyIdempotensnokkel());
+
 // M-46 (118): anbuds- og konkurransevakten. Alle bærer SP-2-nøkkel.
 //
 // DET FINNES INGEN `sendAnbud` HER, OG DET KAN IKKE FINNES: 118 har
