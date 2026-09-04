@@ -2,7 +2,7 @@
 // Alle bygger DOM via el()/sett() — API- og locale-tekst går inn som
 // tekstnode, aldri innerHTML (V6). Farge er ALDRI eneste signal: badge og
 // tidslinje bærer også glyf + tekst.
-import { el, sett } from "./dom.js";
+import { el, ikon, sett } from "./dom.js";
 import { t, sprak } from "./i18n.js";
 import { OMRADER } from "./katalog.js";
 import { omradeFor, faseFor } from "./katalogoppslag.js";
@@ -348,7 +348,28 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
       else a.removeAttribute("aria-current");
     }
     aktivFlate = nokkel;
+    // HVOR ER JEG — OGSÅ NEDERST. En bunnmeny uten «her er du» er fire
+    // like knapper: du vet hvor du kan gå, ikke hvor du står.
+    if (typeof bunnknapper !== "undefined") {
+      for (const [k, a] of bunnknapper) {
+        if (k === nokkel) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
+      }
+    }
     merkValgt();
+    // FANEN FØLGER RUTEN. Navigerer du til en modulflate — fra bunnen,
+    // fra en dyplenke, fra nettleserens historikk — skal området den
+    // hører til stå åpent, ikke det du så på sist.
+    if (typeof modulliste !== "undefined" && sokefelt && !sokefelt.value) {
+      const her = [...MODULFLATE].find(([, f]) => f === nokkel);
+      if (her) {
+        const omrade = OMRADER.find((o) => o.moduler.includes(her[0]));
+        if (omrade && omrade.id !== apentOmrade) {
+          apentOmrade = omrade.id;
+          tegnModuler("");
+        }
+      }
+    }
   }
 
   // §2.3 LAYOUT: topp (nav + søk) · venstre (modulmeny) · sentrum (dashboard)
@@ -369,6 +390,17 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   const kontekst = el("aside", { class: "skall-kontekst", tabindex: "-1",
     "aria-label": t("ui.shell.kontekst") },
     el("p", { class: "muted", text: t("ui.shell.kontekst_tom") }));
+  // ET TOMT PANEL SKAL IKKE TA PLASS (eiers skjermbilder 4/9).
+  //
+  // Panelet reserverte inntil tjue rem på HVER flate — en femtedel av
+  // bredden — og på en modulflate sto det med «Velg en modul i menyen»
+  // hele tiden, fordi modulflatene ikke bruker det. Kolonnen var altså
+  // permanent opptatt av en setning som ba deg gjøre noe du ikke skulle.
+  //
+  // Tilstanden står på kroppen, ikke på panelet: rutenettet må VITE at
+  // sonen er borte, ellers blir kolonnen stående tom (samme lærdom som
+  // `data-meny`, Codex P1).
+  kontekst.dataset.tom = "ja";
 
   // OVERSKRIFTSNIVÅENE MÅ HENGE SAMMEN (Codex P2). De elleve gruppene sto som
   // `h3` uten noe på nivå 2 over seg, så den som navigerer på overskrifter
@@ -478,43 +510,125 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // alltid det ene av dem den eneste inngangen flaten har.
   const sokenavn = (n) => [navnFor(n), t(`site.katalog.m${n}.navn`)];
 
+  // HVILKET OMRÅDE STÅR ÅPENT. Fanevalget er en tilstand menyen bærer, av
+  // samme grunn som `valgtModul`: lista tegnes på nytt for hvert tastetrykk
+  // i søket, og uten dette ville fanen sprunget tilbake til den første.
+  let apentOmrade = null;
+
+  function modulrad(n) {
+    // EN NAVIGASJON ER EN LENKE (Codex P2). Kortet ER inngangen når
+    // modulen har en flate — og etter at oppføringen forsvant fra
+    // toppnavigasjonen er det den ENESTE annonserte inngangen. Som
+    // `<button>` med `location.hash` mistet den da alt en lenke har
+    // med seg: åpne i ny fane, kopier adressen, se hvor den peker før
+    // man klikker — og hjelpemidlene fikk «knapp» der brukeren står
+    // foran en navigasjon. Adressen er den samme som dyplenken, så
+    // `href` er ikke en ny mekanisme, bare den ærlige formen for den
+    // som alt fantes.
+    //
+    // Knappen beholdes for moduler UTEN flate: der finnes det ingen
+    // adresse å peke på, og panelet er en visning i samme side.
+    const flate = MODULFLATE.get(n);
+    const navn = navnFor(n);
+    const kn = flate
+      ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
+      : el("button", { type: "button", class: "skall-modul", text: navn });
+    if (!flate) kn.addEventListener("click", () => visKontekst(n));
+    modulknapper.set(n, kn);
+    return el("li", {}, kn);
+  }
+
   function tegnModuler(filter) {
     const q = (filter || "").trim().toLocaleLowerCase(valgtSprak || "nb");
     const grupper = [];
     modulknapper.clear();
-    for (const omrade of OMRADER) {
-      const treff = omrade.moduler.filter((n) => erSynlig(n)).filter((n) =>
-        !q || sokenavn(n).some((s) =>
-          s.toLocaleLowerCase(valgtSprak || "nb").includes(q)));
-      if (!treff.length) continue;
-      grupper.push(el("section", { class: "skall-modulgruppe" },
-        el("h3", { class: "skall-modulgruppe-navn",
-          text: t(`site.omrade.${omrade.id}`) }),
-        el("ul", { class: "skall-modulgruppe-liste" },
-          treff.map((n) => {
-            // EN NAVIGASJON ER EN LENKE (Codex P2). Kortet ER inngangen når
-            // modulen har en flate — og etter at oppføringen forsvant fra
-            // toppnavigasjonen er det den ENESTE annonserte inngangen. Som
-            // `<button>` med `location.hash` mistet den da alt en lenke har
-            // med seg: åpne i ny fane, kopier adressen, se hvor den peker før
-            // man klikker — og hjelpemidlene fikk «knapp» der brukeren står
-            // foran en navigasjon. Adressen er den samme som dyplenken, så
-            // `href` er ikke en ny mekanisme, bare den ærlige formen for den
-            // som alt fantes.
-            //
-            // Knappen beholdes for moduler UTEN flate: der finnes det ingen
-            // adresse å peke på, og panelet er en visning i samme side.
-            const flate = MODULFLATE.get(n);
-            const navn = navnFor(n);
-            const kn = flate
-              ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
-              : el("button", { type: "button", class: "skall-modul",
-                text: navn });
-            if (!flate) kn.addEventListener("click", () => visKontekst(n));
-            modulknapper.set(n, kn);
-            return el("li", {}, kn);
-          }))));
+
+    // SØKET BRYTER FANENE, MED VILJE.
+    //
+    // Fanene viser ETT område om gangen — det er hele poenget: en meny på
+    // trettisju rader er en katalog, ikke en meny. Men et søk som bare
+    // lette i det åpne området ville vært et søk som lyver: treffet ditt
+    // ligger i et område du ikke ser på, og lista sier «ingen treff».
+    //
+    // Under et søk er treffene derfor ÉN flat liste på tvers, og hver rad
+    // bærer området sitt — for da er det ikke fanen som grupperer, det er
+    // søket, og du skal likevel se HVOR modulen hører hjemme.
+    if (q) {
+      const rader = [];
+      for (const omrade of OMRADER) {
+        const treff = omrade.moduler.filter((n) => erSynlig(n)).filter((n) =>
+          sokenavn(n).some((s) =>
+            s.toLocaleLowerCase(valgtSprak || "nb").includes(q)));
+        for (const n of treff) {
+          rader.push(el("li", {},
+            modulrad(n).firstChild,
+            el("span", { class: "skall-modul-omrade",
+              text: t(`site.omrade.${omrade.id}`) })));
+        }
+      }
+      const melding = tildelte === null ? "ui.shell.moduler_ukjent"
+        : rader.length ? null : "ui.shell.sok_ingen_treff";
+      sett(modulliste,
+        melding ? el("p", { class: "muted", role: "status",
+          text: t(melding) }) : null,
+        rader.length
+          ? el("ul", { class: "skall-modulgruppe-liste" }, rader) : null);
+      merkValgt();
+      return;
     }
+
+    for (const omrade of OMRADER) {
+      const treff = omrade.moduler.filter((n) => erSynlig(n));
+      if (!treff.length) continue;
+      grupper.push({ id: omrade.id, moduler: treff });
+    }
+    if (grupper.length) {
+      // ETT OMRÅDE OM GANGEN (eiers vedtak 4/9). Det største området har
+      // ni flater; hele lista hadde trettisju. Fanene er husets egne —
+      // full WAI-ARIA med roving tabindex — så tastaturet og
+      // skjermleseren får mønsteret de kjenner, ikke en ny oppfinnelse.
+      if (!grupper.some((g) => g.id === apentOmrade)) {
+        // FANEN FØLGER DER DU ER. Står du på en modulflate, er det
+        // området DEN hører til som skal stå åpent — ikke det første i
+        // alfabetet. Ellers måtte du finne deg selv igjen hver gang.
+        const her = [...MODULFLATE].find(([, f]) => f === aktivFlate);
+        apentOmrade = (her && grupper.find(
+          (g) => g.moduler.includes(her[0]))?.id) || grupper[0].id;
+      }
+      const faner = Faner({
+        // ALLE PANELENE BYGGES, ETT VISES (`behold`). Med riving per
+        // bytte ville menyen bare INNEHOLDT det åpne området — og da er
+        // påstanden «menyen viser tildelingen din» ikke lenger sann:
+        // resten av modulene dine finnes ikke i dokumentet, bare i en
+        // fane du ennå ikke har trykket på. Skjult er noe annet enn
+        // fraværende, og `merkValgt` trenger dessuten radene for å kunne
+        // merke den du står på uansett hvilken fane som er åpen.
+        behold: true,
+        styring: false,
+        start: apentOmrade,
+        paaBytte: (id) => { apentOmrade = id; },
+        merkelapp: t("ui.shell.omrader"),
+        trinn: grupper.map((g) => ({
+          nokkel: g.id,
+          tittel: t(`site.omrade.${g.id}`),
+          bygg: () => el("ul", { class: "skall-modulgruppe-liste" },
+            g.moduler.map((n) => modulrad(n))),
+        })),
+      });
+      // «VET IKKE» STÅR SAMMEN MED RADENE, ikke i stedet for dem. At
+      // tildelingen ikke kunne leses er en opplysning i seg selv, og uten
+      // den framstår radene unionen gir som hele svaret på hva økten har.
+      // Forbeholdet kommer FØRST — det er det lista skal leses med.
+      sett(modulliste,
+        tildelte === null
+          ? el("p", { class: "muted", text: t("ui.shell.moduler_ukjent") })
+          : null,
+        faner.rot);
+      merkValgt();
+      return;
+    }
+    // INGEN GRUPPER: da er det ingen faner å tegne, og meldingen under er
+    // hele svaret.
     // Et tomt søk skal SI at det er tomt, ikke bare vise ingenting — og en
     // tildeling uten moduler er noe annet enn et søk uten treff.
     //
@@ -523,11 +637,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     // ville de to radene unionen gir framstått som hele svaret på hva økten
     // har. Meldingen kommer først — den er forbeholdet lista skal leses med.
     const melding = tildelte === null ? "ui.shell.moduler_ukjent"
-      : grupper.length ? null
-        : tildelte.size ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
-    sett(modulliste,
-      melding ? el("p", { class: "muted", text: t(melding) }) : null,
-      ...grupper);
+      : tildelte.size ? "ui.shell.moduler_tomt" : "ui.shell.moduler_ingen";
+    sett(modulliste, el("p", { class: "muted", text: t(melding) }));
     merkValgt();
   }
 
@@ -542,6 +653,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     const status = modulStatus(n);
     valgtModul = n;
     merkValgt();
+    kontekst.dataset.tom = "nei";
+    kropp.dataset.kontekst = "fylt";
     sett(kontekst,
       el("h2", { class: "skall-kontekst-tittel",
         text: t(`site.katalog.m${n}.navn`) }),
@@ -574,6 +687,12 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     skjul.setAttribute("aria-expanded", apen ? "true" : "false");
     skjul.textContent = apen ? t("ui.shell.skjul_meny") : t("ui.shell.vis_meny");
     venstre.hidden = !apen;
+    // TO BRYTERE, ÉN TILSTAND. Bunnmenyens «Moduler» og toppens
+    // «Skjul modulmeny» styrer det samme, og en av dem som sa noe annet
+    // enn den andre ville vært en kontroll som lyver om hva den gjorde.
+    if (typeof bunnmoduler !== "undefined") {
+      bunnmoduler.setAttribute("aria-expanded", apen ? "true" : "false");
+    }
     // Rutenettet må VITE at sonen er borte (Codex P1): `hidden` alene tok
     // menyen ut av flyten, og et autoplassert rutenett flyttet da `main` inn i
     // sidebarkolonnen. Tilstanden står på kroppen, og CSS bytter oppsett.
@@ -650,11 +769,106 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   const statuslinje = el("footer", { class: "skall-status", role: "status" },
     deler.flatMap((d, i) => i ? [el("span", { text: "·" }), d] : [d]));
 
-  const kropp = el("div", { class: "skall-kropp", "data-meny": "apen" },
-    venstre, hoved, kontekst);
+  const kropp = el("div", { class: "skall-kropp", "data-meny": "apen",
+    "data-kontekst": "tom" }, venstre, hoved, kontekst);
+
+  // ------------------------------------------------------------------
+  // BUNNMENYEN (eiers vedtak 4/9: «hovedmenyene skal være helt nederst
+  // på mobil»).
+  // ------------------------------------------------------------------
+  //
+  // TOPPNAVIGASJONEN VAR IKKE EN MOBILMENY. Ti piller som brakk til en
+  // egen rad under merket, og under DEM igjen søkefeltet, bryteren og en
+  // modulmeny på trettisju rader — alt sammen FØR innholdet. På en
+  // telefon var halve skjermen navigasjon før du hadde sett en eneste
+  // opplysning.
+  //
+  // Reglene bunnmenyen er bygget etter, og hvorfor de er reglene:
+  //
+  //   * MAKS FEM. Flere enn det, og målene blir for smale for en
+  //     tommel — og en meny du bommer på er verre enn en du må åpne.
+  //     Her: fire, fordi det er fire ting som er øverste nivå.
+  //   * IKON *OG* TEKST. Et ikon alene er en gjetning; hva «☰» betyr
+  //     er noe man lærer, ikke noe man ser.
+  //   * BARE ØVERSTE NIVÅ. Undernavigasjon hører ikke hjemme her —
+  //     «Moduler» åpner modulmenyen, den ER ikke modulmenyen.
+  //   * DEN STÅR STILLE. Samme plassering på hver eneste flate. En meny
+  //     som flytter seg er en meny man må lete etter hver gang.
+  //
+  // Den er ETT navigasjonslandemerke til, så den bærer sin egen etikett.
+  const bunnvalg = [];
+  const bunnknapper = new Map();
+
+  const bunnrute = (nokkel, ikonnavn) => {
+    if (!ruter.some((r) => r.nokkel === nokkel)) return;
+    const a = el("a", { class: "skall-bunn-valg", href: `#/${nokkel}` },
+      ikon(ikonnavn), el("span", { class: "skall-bunn-tekst",
+        text: t(`ui.nav.${nokkel}`) }));
+    // MARKERT FRA FØRSTE TEGNING, som toppnavigasjonen: en dyplenke rett
+    // inn i flaten skal si hvor du er med én gang, ikke først ved neste
+    // navigasjon.
+    if (nokkel === aktiv) a.setAttribute("aria-current", "page");
+    bunnknapper.set(nokkel, a);
+    bunnvalg.push(a);
+  };
+  bunnrute("oversikt", "oversikt");
+
+  // «Moduler» er en BRYTER, ikke en lenke: den åpner menyen som alt
+  // finnes, og en lenke ville lovet en side som ikke er der.
+  const bunnmoduler = el("button", { type: "button",
+    class: "skall-bunn-valg" },
+    ikon("moduler"),
+    el("span", { class: "skall-bunn-tekst", text: t("ui.shell.moduler") }));
+  bunnmoduler.setAttribute("aria-controls", "modulmeny");
+  bunnmoduler.setAttribute("aria-expanded", "true");
+  bunnvalg.push(bunnmoduler);
+
+  bunnrute("varsler", "varsler");
+
+  // «Mer» åpner resten av toppnavigasjonen. Å KRAMME alt inn i bunnen
+  // hadde gitt ti mål på en telefonbredde — omtrent tre kvart
+  // tommelbredde hver, altså en meny bygget for å bomme på.
+  const merliste = el("div", { class: "skall-bunn-mer-liste", hidden: true,
+    id: "skall-bunn-mer" });
+  const bunnmer = el("button", { type: "button", class: "skall-bunn-valg" },
+    ikon("mer"),
+    el("span", { class: "skall-bunn-tekst", text: t("ui.shell.mer") }));
+  bunnmer.setAttribute("aria-controls", "skall-bunn-mer");
+  bunnmer.setAttribute("aria-expanded", "false");
+  bunnmer.addEventListener("click", () => {
+    const apen = bunnmer.getAttribute("aria-expanded") === "true";
+    bunnmer.setAttribute("aria-expanded", apen ? "false" : "true");
+    merliste.hidden = apen;
+  });
+  bunnvalg.push(bunnmer);
+
+  bunnmoduler.addEventListener("click", () => {
+    const apen = !menyErApen();
+    settMeny(apen);
+    // Å ÅPNE MENYEN ER Å BE OM Å SE DEN. Uten dette hoppet ville
+    // brukeren stått igjen nederst på siden med menyen åpnet langt over
+    // seg — og på en telefon er «langt over» utenfor skjermen.
+    if (apen) venstre.scrollIntoView({ block: "start" });
+  });
+
+  // «MER» BÆRER DET BUNNEN IKKE HAR PLASS TIL — og ingenting annet: en
+  // rute som står begge steder ville gitt to veier til samme sted i
+  // samme meny, som er en meny som ser større ut enn den er.
+  for (const r of ruter) {
+    if (bunnknapper.has(r.nokkel)) continue;
+    merliste.append(el("a", { class: "skall-bunn-mer-valg",
+      href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) }));
+  }
+
+  const bunn = el("nav", { class: "skall-bunn",
+    "aria-label": t("ui.shell.bunnmeny") },
+    merliste,
+    el("ul", { class: "skall-bunn-liste" },
+      bunnvalg.map((v) => el("li", {}, v))));
+
   // `nav` står ikke her lenger — den er et barn av `topp` (én rad).
   const rot = el("div", { class: "skall" }, topp, sok, skjul, kropp,
-    statuslinje);
+    statuslinje, bunn);
   // `velger` gis ut fordi den som bygger skallet på nytt må kunne legge fokus
   // tilbake på kontrollen brukeren nettopp brukte (Codex P2) — uten å lete
   // etter den på klassenavn i et tre den selv nettopp har satt inn.
@@ -689,7 +903,7 @@ let _fanerTeller = 0;
 // Standard (false) er som før: `bygg()` per valg, for paneler som leser
 // tilstand som endrer seg mellom tegninger (policyadmin/wcag-formen).
 export function Faner({ trinn, start, paaBytte, styring = true,
-                        behold = false } = {}) {
+                        behold = false, merkelapp = null } = {}) {
   let aktiv = start && trinn.some((s) => s.nokkel === start) ? start : trinn[0].nokkel;
   // ID-ene var utledet av `nokkel` alene, så to fanesett med samme trinnavn
   // fikk samme ID-er (Codex P2). Det er ikke et teoretisk sammentreff: i
@@ -703,8 +917,11 @@ export function Faner({ trinn, start, paaBytte, styring = true,
   const panelId = (n) => `${merke}-panel-${n}`;
   const faner = new Map();
   const paneler = new Map();
+  // ETIKETTEN KAN OVERSTYRES. To fanesett på samme side må kunne skilles
+  // fra hverandre av den som hopper mellom landemerker — «Faner» og «Faner»
+  // er to navn som ikke navngir noe.
   const liste = el("div", { class: "faner-liste", role: "tablist",
-    "aria-label": t("ui.faner.merkelapp") });
+    "aria-label": merkelapp || t("ui.faner.merkelapp") });
 
   // ETT panel per fane, ikke ett panel som bytter ID (Codex P2). Med den gamle
   // løsningen lovet fanene mer enn DOM-en holdt: Roller og Handlinger

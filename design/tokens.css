@@ -49,6 +49,13 @@
   --teppe:rgba(20,35,43,.45);
 
   --z-innhold:0; --z-topplinje:10; --z-overlegg:30; --z-skuff:40;
+  /* Bunnmenyen ligger over innholdet, men UNDER skuffen og overlegget: en
+     dialog som åpnes skal dekke navigasjonen, ikke ligge bak den. */
+  --z-bunnmeny:20;
+  /* Bunnmenyens høyde bor HER fordi to uavhengige regler må dele nøyaktig
+     samme tall — menyens egen `min-height`, og den plassen innholdet må
+     reservere nederst så siste rad ikke havner under menyen. */
+  --bunnmeny-h:3.75rem;
   --bp-smal:720px;
   --innhold-maks:1100px;
   --site-maks:1240px;

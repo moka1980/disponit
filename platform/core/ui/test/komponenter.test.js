@@ -407,17 +407,45 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   // krever hver sin etikett — her: `aria-label` mot `aria-labelledby`.
   assert.ok(rot.querySelector("nav#modulmeny"),
     "modulmenyen er ikke et navigasjonslandemerke");
+  // TRE, ikke to, etter bunnmenyen (4/9): toppen, modulmenyen og
+  // hovedmenyen nederst. Tallet står her fordi et landemerke som dukker
+  // opp uten at noen har bestemt det er nettopp det som gjør
+  // landemerkehopping ubrukelig — da er «neste navigasjon» et sted du
+  // ikke vet hva er. Hvert av dem må ha sin egen etikett, ellers er de
+  // tre like oppføringer i hjelpemidlets liste.
   const navlandemerker = [...rot.querySelectorAll("nav")];
-  assert.equal(navlandemerker.length, 2);
+  assert.equal(navlandemerker.length, 3);
   assert.ok(navlandemerker.every((n) =>
     n.getAttribute("aria-label") || n.getAttribute("aria-labelledby")),
   "et navigasjonslandemerke står uten etikett");
   assert.ok(rot.querySelector(".skall-kontekst"), "kontekstpanel mangler");
   assert.ok(rot.querySelector(".skall-status"), "statuslinje mangler");
 
-  // Modulmenyen er gruppert etter fagområde, ikke én lang liste.
-  assert.ok(rot.querySelectorAll(".skall-modulgruppe").length >= 5,
-    "modulmenyen er ikke gruppert etter område");
+  // MODULMENYEN ER FANER, IKKE ÉN LANG LISTE (eiers vedtak 4/9).
+  //
+  // Grupperingen var overskrifter i én rull: trettisju rader under elleve
+  // overskrifter er ikke en meny, det er en katalog. Nå er hvert område en
+  // fane, og ETT område er synlig om gangen — det største har ni rader.
+  //
+  // Kravet er skjerpet, ikke flyttet: før holdt det at radene sto under en
+  // overskrift. Nå må det faktisk VÆRE færre synlige samtidig.
+  const tabliste = rot.querySelector(".skall-venstre [role='tablist']");
+  assert.ok(tabliste, "modulmenyen har ingen områdefaner");
+  const faner = [...tabliste.querySelectorAll("[role='tab']")];
+  assert.ok(faner.length >= 5,
+    `modulmenyen har bare ${faner.length} områdefaner`);
+  assert.equal(faner.filter((f) => f.getAttribute("aria-selected") === "true")
+    .length, 1, "det er ikke nøyaktig ett område åpent");
+  // ALLE RADENE FINNES, ÉN GRUPPE VISES. Skjult er noe annet enn
+  // fraværende: menyen påstår å vise tildelingen din, og da må resten av
+  // modulene dine ligge i dokumentet — ikke bare i en fane du ennå ikke
+  // har trykket på.
+  const paneler = [...rot.querySelectorAll(".skall-venstre .faner-panel")];
+  assert.equal(paneler.length, faner.length);
+  assert.equal(paneler.filter((p) => !p.hidden).length, 1,
+    "mer enn ett områdepanel er synlig samtidig");
+  assert.ok(paneler.every((p) => p.querySelector(".skall-modul")),
+    "et områdepanel ble aldri bygget");
   // Nevneren er katalogen, ikke et innbakt tall: et literalt 45 her ville
   // blitt en løgn i det katalogen vokste, og testen ville feilet på selve
   // utvidelsen i stedet for på en menyfeil (Codex P1 på PR #99).
