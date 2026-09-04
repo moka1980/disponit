@@ -175,6 +175,20 @@ test("bunnmeny: den sier hvor du står", () => {
   "page");
 });
 
+test("bunnmeny: «Mer» finnes bare når det er noe å åpne", () => {
+  // CodeRabbit. En økt med bare bunnrutene og modulflater ville fått en
+  // «Mer» som folder ut ingenting — en kontroll som ser ut som en vei
+  // videre og ikke er det. Samme klasse som en knapp som alltid feiler.
+  const { rot } = skall({ ruter: [{ nokkel: "oversikt" },
+    { nokkel: "varsler" }, { nokkel: "nokkeltall", modulflate: 16 }] });
+  assert.equal(valgene(rot).some((v) =>
+    v.textContent.includes(t("ui.shell.mer"))), false,
+  "«Mer» sto der uten noe å åpne");
+  // …og de tre andre valgene står der fortsatt.
+  assert.equal(valgene(rot).length, 3);
+});
+
+
 test("bunnmeny: bare ruter økten faktisk har", () => {
   // Samme gating som toppnavigasjonen. En bunnmeny som viste mer ville
   // vært et løfte om flater økten får 403 på.
@@ -360,4 +374,148 @@ test("kontekstpanel: rutenettet vet at sonen er borte", () => {
     /\[data-kontekst="tom"\]\s*\{[^}]*grid-template-areas:\s*"venstre hoved"/);
   assert.match(blokk,
     /\[data-kontekst="tom"\]\[data-meny="skjult"\][^}]*"hoved"/);
+});
+
+// ---------------------------------------------------------------------
+// ANDRE RUNDE (eiers skjermbilder 4/9: «mobil: ubrukelig»)
+// ---------------------------------------------------------------------
+
+test("bunnmeny: «Mer» lister ikke modulflatene om igjen", () => {
+  // MIN EGEN FEIL, sett på eiers telefon: «Mer» gikk over ALLE ruter og
+  // tok med modulflatene, som alt står i modulmenyen med området sitt.
+  // Samme rute i to menyer på samme skjerm — og den ene uten konteksten
+  // som gjør den forståelig.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `r.modulflate`-filteret.
+  const { rot } = skall({ ruter: [...RUTER,
+    { nokkel: "nokkeltall", modulflate: 16 },
+    { nokkel: "kunnskap", modulflate: 9 }] });
+  const iMer = [...rot.querySelectorAll(".skall-bunn-mer-valg")]
+    .map((v) => v.getAttribute("href"));
+  assert.equal(iMer.includes("#/nokkeltall"), false, iMer.join(" "));
+  assert.equal(iMer.includes("#/kunnskap"), false, iMer.join(" "));
+  // …og plattformflatene står der fortsatt.
+  assert.ok(iMer.includes("#/policy"));
+});
+
+test("skall: modulmenyen er lukket på en smal skjerm", () => {
+  // EIERS ORD: «mobil: ubrukelig». Menyen sto ÅPEN ved start, og på en
+  // telefon stables sonene — så hele modulmenyen lå FORAN innholdet. Du
+  // åpnet en flate og fikk en meny.
+  //
+  // Terskelen leses ÉN gang ved bygging. En meny som åpner og lukker seg
+  // selv mens du endrer vindusbredde ville tatt fra deg valget du tok.
+  const ekte = window.matchMedia;
+  window.matchMedia = (q) => ({ matches: q.includes("60rem") });
+  try {
+    const { rot } = skall();
+    const kropp = rot.querySelector(".skall-kropp");
+    assert.equal(kropp.dataset.meny, "skjult",
+      "menyen sto åpen foran innholdet på en telefon");
+    // BEGGE BRYTERNE SIER DET SAMME fra første tegning.
+    const moduler = valgene(rot).find((v) =>
+      v.textContent.includes(t("ui.shell.moduler")));
+    assert.equal(moduler.getAttribute("aria-expanded"), "false");
+    const topp = [...rot.querySelectorAll("button")].find((b) =>
+      b.textContent === t("ui.shell.vis_meny"));
+    assert.ok(topp, "toppbryteren sa «skjul» over en skjult meny");
+  } finally {
+    window.matchMedia = ekte;
+  }
+});
+
+test("skall: på bred skjerm står menyen åpen som før", () => {
+  const ekte = window.matchMedia;
+  window.matchMedia = () => ({ matches: false });
+  try {
+    const { rot } = skall();
+    assert.equal(rot.querySelector(".skall-kropp").dataset.meny, "apen");
+  } finally {
+    window.matchMedia = ekte;
+  }
+});
+
+test("faneraden ruller på smal skjerm, den brekker ikke", () => {
+  // Elleve områdefaner med `flex-wrap: wrap` ble FIRE RADER på eiers
+  // telefon — omtrent 40 % av skjermen, før første modul. Fanene løste
+  // én lang liste og laget en ny.
+  //
+  // En fanerad er en RAD. Når den brekker er den ikke lenger en rad,
+  // den er et rutenett man må lese.
+  const k = css("komponenter");
+  const blokk = k.slice(k.indexOf("/* --- Andre runde på skallet"));
+  assert.match(blokk,
+    /\.skall-venstre \.faner-liste\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(blokk,
+    /\.skall-venstre \.faner-liste\s*\{[^}]*overflow-x:\s*auto/);
+  // …og fanen er et trykkmål som alle andre.
+  assert.match(blokk, /\.skall-venstre \.fane\s*\{[^}]*min-height:\s*44px/);
+  assert.match(blokk, /\.skall-modul\s*\{[^}]*min-height:\s*44px/);
+});
+
+test("midten er ikke klemt av forsidens tekstbredde", () => {
+  // `.skall-hoved` bærer `max-width: 1100px` fra forsiden, der det er
+  // riktig: en tekstspalte skal ikke bli uendelig bred. Inne i skallet
+  // er det feil — kolonnen er ALT avgrenset av rutenettet, og taket kom
+  // på toppen av en sidemeny på 16rem. Kortene fikk plass til to, og
+  // «ikke definert» brakk over tre linjer i en firekolonners tabell.
+  const k = css("komponenter");
+  const blokk = k.slice(k.indexOf("/* --- Andre runde på skallet"));
+  assert.match(blokk,
+    /\.skall-kropp > \.skall-hoved\s*\{[^}]*max-width:\s*none/);
+  // …og `min-width: 0`, ellers nekter rutenettkolonnen å krympe under
+  // innholdets egen minstebredde og skyver resten ut.
+  assert.match(blokk,
+    /\.skall-kropp > \.skall-hoved\s*\{[^}]*min-width:\s*0/);
+  // Taket står FORTSATT på forsiden, som ikke ligger i skallkroppen.
+  const base = css("base");
+  assert.match(base, /\.skall-hoved\s*\{[^}]*max-width:\s*var\(--innhold-maks\)/);
+});
+
+// ---------------------------------------------------------------------
+// TELEFONENS EGNE KANTER (eiers skjermbilde 4/9, forsiden)
+// ---------------------------------------------------------------------
+
+test("safe-area: metaen som gjør reglene ekte", () => {
+  // STATUSLINJA LÅ OPPÅ HEADEREN på eiers telefon: klokka og batteriet
+  // over «Disponit», og «English» klippet av høyre kant.
+  //
+  // OG DET AVDEKKET NOE VERRE: uten `viewport-fit=cover` er HELE
+  // `env(safe-area-inset-*)`-familien null. Bunnmenyens safe-area-regel
+  // fra første runde har altså stått der og evaluert til 0px hver gang,
+  // og porten min målte bare at REGELEN sto der.
+  //
+  // En regel som ser ut som et gjerde og ikke er det er verre enn ingen
+  // regel. Porten måler derfor metaen OG regelen.
+  //
+  // MUTASJONEN SOM DREPER DENNE: fjern `viewport-fit=cover`.
+  for (const fil of ["index.html", "tidsvalg.html"]) {
+    const html = readFileSync(join(ROT, "platform", "core", "ui",
+      "static", fil), "utf-8");
+    const meta = html.match(/<meta name="viewport"[\s\S]*?>/);
+    assert.ok(meta, `${fil}: ingen viewport-meta`);
+    assert.match(meta[0], /viewport-fit=cover/, fil);
+    // …og zoom er FORTSATT ikke slått av. `viewport-fit` er en
+    // utvidelse av flaten, ikke en anledning til å låse den.
+    assert.equal(/user-scalable=no|maximum-scale=1/.test(meta[0]), false,
+      `${fil}: zoom ble slått av`);
+  }
+});
+
+test("safe-area: hver kant som ligger inntil skjermkanten reserverer"
+     + " plassen", () => {
+  const k = css("komponenter");
+  const blokk = k.slice(k.indexOf("/* --- Telefonens egne kanter"));
+  // Toppen på BEGGE flatene — den offentlige og arbeidsflaten.
+  assert.match(blokk,
+    /\.site-topp\s*\{\s*padding-top:\s*env\(safe-area-inset-top/);
+  assert.match(blokk,
+    /\.skall-topp\s*\{[^}]*padding-top:\s*max\([^;]*safe-area-inset-top/);
+  // `max()`, ikke `+`: uten innhakk er innrykket null, og da skal den
+  // vanlige paddingen stå urørt.
+  assert.equal(/padding-\w+:\s*calc\([^)]*safe-area[^)]*\+/.test(blokk),
+    false, "safe-area ble lagt TIL paddingen i stedet for å måles mot den");
+  // Sidekantene også: i liggende format ligger innhakket til siden.
+  assert.match(blokk, /padding-left:\s*max\([^;]*safe-area-inset-left/);
+  assert.match(blokk, /padding-right:\s*max\([^;]*safe-area-inset-right/);
 });

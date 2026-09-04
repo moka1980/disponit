@@ -679,6 +679,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     text: t("ui.shell.skjul_meny") });
   skjul.setAttribute("aria-expanded", "true");
   skjul.setAttribute("aria-controls", "modulmeny");
+  // Bryterne settes i takt med `smal` nedenfor, etter at `kropp` finnes.
 
   // Bryteren og søket er to veier til den SAMME tilstanden, så tilstanden
   // settes ett sted. Kalles først fra en hendelse, altså etter at `kropp` er
@@ -769,7 +770,19 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   const statuslinje = el("footer", { class: "skall-status", role: "status" },
     deler.flatMap((d, i) => i ? [el("span", { text: "·" }), d] : [d]));
 
-  const kropp = el("div", { class: "skall-kropp", "data-meny": "apen",
+  // INNHOLDET FØRST PÅ EN TELEFON (eiers ord: «mobil: ubrukelig»).
+  //
+  // Menyen sto ÅPEN ved start. På en bred skjerm er det riktig — den er
+  // en kolonne ved siden av. På en telefon stables sonene, og da lå hele
+  // modulmenyen FORAN innholdet: du åpnet en flate og fikk en meny.
+  //
+  // Terskelen er den samme som bunnmenyens (60rem), og den leses ÉN gang
+  // ved bygging: en meny som åpner og lukker seg selv mens du endrer
+  // vindusbredde ville tatt fra deg valget du nettopp tok.
+  const smal = typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(max-width: 60rem)").matches : false;
+  const kropp = el("div", { class: "skall-kropp",
+    "data-meny": smal ? "skjult" : "apen",
     "data-kontekst": "tom" }, venstre, hoved, kontekst);
 
   // ------------------------------------------------------------------
@@ -830,17 +843,37 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // tommelbredde hver, altså en meny bygget for å bomme på.
   const merliste = el("div", { class: "skall-bunn-mer-liste", hidden: true,
     id: "skall-bunn-mer" });
-  const bunnmer = el("button", { type: "button", class: "skall-bunn-valg" },
-    ikon("mer"),
-    el("span", { class: "skall-bunn-tekst", text: t("ui.shell.mer") }));
-  bunnmer.setAttribute("aria-controls", "skall-bunn-mer");
-  bunnmer.setAttribute("aria-expanded", "false");
-  bunnmer.addEventListener("click", () => {
-    const apen = bunnmer.getAttribute("aria-expanded") === "true";
-    bunnmer.setAttribute("aria-expanded", apen ? "false" : "true");
-    merliste.hidden = apen;
-  });
-  bunnvalg.push(bunnmer);
+  for (const r of ruter) {
+    // MODULFLATENE HØRER TIL «MODULER», IKKE «MER» (eiers skjermbilde
+    // 4/9). Uten filteret listet «Mer» hele modulkatalogen om igjen —
+    // samme rute i to menyer på samme skjerm, og den ene av dem uten
+    // området sitt. Samme skille som toppnavigasjonen har hatt siden
+    // eiervedtaket 24/8: `!r.modulflate`.
+    if (r.modulflate || bunnknapper.has(r.nokkel)) continue;
+    merliste.append(el("a", { class: "skall-bunn-mer-valg",
+      href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) }));
+  }
+
+  // …OG KNAPPEN FINNES BARE HVIS DET ER NOE Å ÅPNE (CodeRabbit). En økt
+  // med bare bunnrutene og modulflater ville ellers fått en «Mer» som
+  // folder ut ingenting — en kontroll som ser ut som en vei videre og
+  // ikke er det. Det er samme klasse som en knapp som alltid feiler:
+  // verre enn en valgmulighet som ikke finnes.
+  const bunnmer = merliste.childNodes.length
+    ? el("button", { type: "button", class: "skall-bunn-valg" },
+      ikon("mer"),
+      el("span", { class: "skall-bunn-tekst", text: t("ui.shell.mer") }))
+    : null;
+  if (bunnmer) {
+    bunnmer.setAttribute("aria-controls", "skall-bunn-mer");
+    bunnmer.setAttribute("aria-expanded", "false");
+    bunnmer.addEventListener("click", () => {
+      const apen = bunnmer.getAttribute("aria-expanded") === "true";
+      bunnmer.setAttribute("aria-expanded", apen ? "false" : "true");
+      merliste.hidden = apen;
+    });
+    bunnvalg.push(bunnmer);
+  }
 
   bunnmoduler.addEventListener("click", () => {
     const apen = !menyErApen();
@@ -854,11 +887,10 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // «MER» BÆRER DET BUNNEN IKKE HAR PLASS TIL — og ingenting annet: en
   // rute som står begge steder ville gitt to veier til samme sted i
   // samme meny, som er en meny som ser større ut enn den er.
-  for (const r of ruter) {
-    if (bunnknapper.has(r.nokkel)) continue;
-    merliste.append(el("a", { class: "skall-bunn-mer-valg",
-      href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) }));
-  }
+  // BRYTERNE I TAKT MED STARTTILSTANDEN. `kropp` bærer den; de to
+  // kontrollene må si det samme fra første tegning, ellers står det
+  // «Skjul modulmeny» over en meny som er skjult.
+  settMeny(!smal);
 
   const bunn = el("nav", { class: "skall-bunn",
     "aria-label": t("ui.shell.bunnmeny") },

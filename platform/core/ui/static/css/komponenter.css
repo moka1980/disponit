@@ -1557,3 +1557,111 @@ th.rekrut-kandidat { white-space: normal; }
     grid-template-areas: "hoved";
   }
 }
+
+/* --- Andre runde på skallet (eiers skjermbilder 4/9) --------------------
+
+   TRE FEIL, MÅLT PÅ EIERS EGEN SKJERM.
+
+   1. FANERADEN SPISTE MOBILSKJERMEN. Elleve områdefaner med `flex-wrap:
+      wrap` ble fire rader — omtrent 40 % av en telefonskjerm, FØR første
+      modul. Fanene løste én lang liste og laget en ny.
+
+      På smal skjerm ruller raden vannrett i stedet. Det er den ene
+      formen som ikke vokser nedover: en fanerad er en RAD, og når den
+      brekker er den ikke lenger en rad — den er et rutenett man må lese.
+
+   2. MIDTEN VAR FOR SMAL. `.skall-hoved` bærer `max-width: 1100px` fra
+      forsiden, der den er riktig: en tekstspalte skal ikke bli uendelig
+      bred. Inne i skallet er den feil — der er kolonnen ALT avgrenset av
+      rutenettet, og taket kom på toppen av en sidemeny på 16rem. Kortene
+      (`minmax(20rem, 1fr)`) fikk da plass til to, og «ikke definert»
+      brakk over tre linjer i en tabell med fire kolonner.
+
+   3. KONTEKSTPANELET tok igjen plass når det var fylt, men flatene
+      bruker det ikke — det er menyens detaljvisning. Se `data-kontekst`. */
+
+/* 2: taket gjelder forsiden, ikke arbeidsflaten. */
+.skall-kropp > .skall-hoved {
+  max-width: none;
+  padding: 0;
+  min-width: 0;
+}
+
+@media (max-width: 60rem) {
+  /* 1: raden ruller, den brekker ikke. */
+  .skall-venstre .faner-liste {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* Rullingen skal føles som en rad, ikke som en tabell man mistet. */
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+  .skall-venstre .fane {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    /* 44px også her: fanene er det første man treffer i menyen. */
+    min-height: 44px;
+  }
+  /* Modullista får hele høyden den trenger når menyen først er åpnet —
+     på en telefon ER menyen skjermbildet, ikke en kolonne ved siden av.
+     Taket på 40vh hørte til den gamle formen, der menyen alltid sto
+     åpen foran innholdet. */
+  .skall-modulliste { max-height: none; }
+  .skall-modul { min-height: 44px; display: flex; align-items: center; }
+}
+
+/* --- Telefonens egne kanter (eiers skjermbilde 4/9, forsiden) -----------
+
+   STATUSLINJA LÅ OPPÅ HEADEREN. Klokka, wifi og batteriet sto over
+   «Disponit» og over språkvelgeren, og «English» var klippet av høyre
+   kant.
+
+   Årsaken var `viewport-fit=cover` i viewport-metaen: uten den er hele
+   `env(safe-area-inset-*)`-familien null, MED den strekker siden seg
+   under telefonens hjørner og innhakk — og da må hver kant som ligger
+   inntil skjermkanten selv reservere plassen.
+
+   DET ER OGSÅ GRUNNEN TIL AT BUNNMENYENS `safe-area-inset-bottom` IKKE
+   GJORDE NOE. Regelen sto der fra første runde, porten målte at den sto
+   der, og den evaluerte til null hver gang. En regel som ser ut som et
+   gjerde og ikke er det er verre enn ingen regel — porten måler nå
+   metaen OG regelen.
+
+   `max()` og ikke `+`: på en skjerm uten innhakk er innrykket null, og
+   da skal den vanlige paddingen stå urørt. */
+.site-topp {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.site-topp-rad, .site-sok-rad, .site-footer {
+  padding-left: max(var(--sp-6), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--sp-6), env(safe-area-inset-right, 0px));
+}
+.skall-topp {
+  padding-top: max(var(--sp-3), env(safe-area-inset-top, 0px));
+  padding-left: max(var(--sp-4), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--sp-4), env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 860px) {
+  .site-topp-rad, .site-sok-rad, .site-footer {
+    padding-left: max(var(--sp-3), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--sp-3), env(safe-area-inset-right, 0px));
+  }
+  /* SPRÅKVELGEREN BLE KLIPPET. `margin-left: auto` skjøv den mot en
+     kant som nå ligger under telefonens hjørne, og «English» falt
+     utenfor. Den får bryte til egen linje i stedet — to knapper er
+     ikke verdt en avkuttet etikett. */
+  .site-topp .site-sprak { flex-wrap: wrap; margin-bottom: 0; }
+  .site-sprak-knapp { min-height: 44px; }
+}
+
+@media (max-width: 60rem) {
+  .skall-topp {
+    padding-left: max(var(--sp-3), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--sp-3), env(safe-area-inset-right, 0px));
+  }
+  .skall-bunn {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}

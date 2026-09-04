@@ -2,7 +2,13 @@
 <html lang="nb" data-sprak="nb">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- `viewport-fit=cover` er FORUTSETNINGEN for at `env(safe-area-inset-*)`
+       er noe annet enn null. Uten den evaluerer hver eneste safe-area-regel
+       til 0px — reglene STÅR der og gjør ingenting, og det er verre enn at
+       de mangler: de ser ut som et gjerde. Med den må hver klebrig kant
+       selv reservere plass, og det gjør de under. -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Disponit</title>
   <!-- Én tokenkilde (RUTINER pkt. 6), deretter base + komponenter. Ingen
        inline stil: CSP style-src 'self' (klarsignal V4). -->
