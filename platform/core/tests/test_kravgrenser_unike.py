@@ -94,3 +94,90 @@ def test_ingen_invariantliste_defineres_to_ganger():
     assert dubletter == [], (
         "invariantlisten tildeles på nytt og skygger den forrige: "
         + ", ".join(dubletter))
+
+
+# ---------------------------------------------------------------------------
+# …OG DET ANDRE HULLET: en grense kan være REGISTRERT uten å være DEKKET.
+# ---------------------------------------------------------------------------
+
+#: Grenser som ennå ikke HAR en modul å dekkes av. Klynge 7s fundament
+#: registrerte fem grenser før koden (§0-regelen), og fire av modulene
+#: er ikke bygget. Listen er PINNET og ikke avledet: en grense som blir
+#: liggende her etter at modulen er bygget, er nettopp den stillheten
+#: porten under finnes for å bryte.
+#:
+#: Å FJERNE ET NAVN HERFRA ER EN DEL AV Å BYGGE MODULEN, ikke et
+#: separat opprydningsarbeid.
+UBYGDE_GRENSER = frozenset({
+    "m47-v1",   # M-47 myndighetsrapportering, migrasjon 123
+    "m50-v1",   # M-50 postjournal, migrasjon 124
+    "m52-v1",   # M-52 tollkode, migrasjon 122
+    "m53-v1",   # M-53 HMS, migrasjon 125
+})
+
+
+def _grenser_med_dekningsport() -> set[str]:
+    """Hver `krav_id` som en testfil FAKTISK slår opp.
+
+    Leser alle `test_*.py` unntatt denne fila: her nevnes `m11-v1` i
+    en docstring uten å dekkes, og en port som talte det som dekning
+    ville vært en port som målte sin egen tekst.
+    """
+    import re
+    mal = re.compile(r'KRAVGRENSER\[\s*["\']([a-z0-9-]+)["\']\s*\]')
+    ut: set[str] = set()
+    for fil in Path(__file__).resolve().parent.glob("test_*.py"):
+        if fil.name == Path(__file__).name:
+            continue
+        ut |= set(mal.findall(fil.read_text(encoding="utf-8")))
+    return ut
+
+
+def test_hver_registrert_grense_dekkes_av_en_port():
+    """EN GRENSE INGEN LESER ER EN GRENSE SOM IKKE HOLDER NOE.
+
+    `test_ingen_krav_id_registreres_to_ganger` over pinner at en grense
+    ikke OVERSKRIVES. Denne pinner at den er DEKKET — at det finnes en
+    port som faktisk slår den opp og måler invariantene mot koden.
+
+    HULLET VAR EKTE OG BLE MÅLT: fire bygde moduler — M-3, M-10, M-11
+    og M-31 — hadde grenser i `KRAVGRENSER` og porter i testfilene, men
+    INGENTING som bandt de to sammen. En invariant kunne fjernes fra
+    grensen, eller en port slettes, uten at én test merket det.
+
+    Det er samme feilklasse som nestenuhellet denne fila ble skrevet
+    for, sett fra den andre siden: der forsvant innholdet i en grense
+    ved overskriving, her kunne det forsvinne ved forsømmelse.
+
+    MUTASJONEN SOM DREPER DENNE: registrer en ny grense i
+    `manifestskjema.py` uten å skrive en port for den.
+    """
+    from manifestskjema import KRAVGRENSER
+    dekket = _grenser_med_dekningsport()
+    udekket = sorted(
+        k for k, g in KRAVGRENSER.items()
+        if (g.get("invarianter") or ()) and k not in dekket
+        and k not in UBYGDE_GRENSER)
+    assert udekket == [], (
+        "grenser uten en port som leser dem — en registrert grense"
+        " ingen måler mot koden er en grense som ikke holder noe: "
+        + ", ".join(udekket))
+
+
+def test_de_ubygde_grensene_er_faktisk_ubygde():
+    """…OG LISTEN OVER SKAL KRYMPE, ALDRI VOKSE I STILLHET.
+
+    Et navn som blir liggende i `UBYGDE_GRENSER` etter at modulen er
+    bygget, er et unntak som har overlevd grunnen sin — og da måler
+    porten over mindre enn den ser ut til.
+
+    MUTASJONEN SOM DREPER DENNE: bygg M-52 uten å stryke `m52-v1`.
+    """
+    from manifestskjema import KRAVGRENSER
+    ukjente = sorted(k for k in UBYGDE_GRENSER if k not in KRAVGRENSER)
+    assert ukjente == [], f"navn uten grense: {ukjente}"
+    dekket = _grenser_med_dekningsport()
+    overlevd = sorted(UBYGDE_GRENSER & dekket)
+    assert overlevd == [], (
+        "disse har fått en dekningsport og skal ut av"
+        " UBYGDE_GRENSER: " + ", ".join(overlevd))

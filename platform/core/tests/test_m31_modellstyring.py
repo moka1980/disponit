@@ -211,7 +211,11 @@ def test_port5_nodeaktivert_avvises_for_porten():
 
 
 def test_port5_laaserekkefolgen_er_kopiert_ikke_endret():
-    """Statisk: 087-kroppen tar modul-låsen FØRST, så kontraktlåsen —
+    """
+    INVARIANT: `port_bytte_uten_bestatt_kjoring` — et portbytte uten en
+    bestått kjøring bak seg er en modell satt i drift på sitt eget ord.
+    
+    Statisk: 087-kroppen tar modul-låsen FØRST, så kontraktlåsen —
     nøyaktig 014-rekkefølgen (Codex P1-serialiseringen mot nødstopp)."""
     kilde = MIGRASJON.read_text(encoding="utf-8")
     kropp = kilde.split("CREATE OR REPLACE FUNCTION bytt_release(")[1]
@@ -415,7 +419,24 @@ def _settfil(tmp_path, antall=3):
 
 
 class _Fasitklient:
-    """Svarer nøyaktig fasiten — og TELLER kallene sine."""
+    """
+    INVARIANT: `sett_persondata_i_eksempler` deles med denne: settet er
+    frosset, og eksemplene er syntetiske med vilje — et gullsett med ekte
+    persondata er en kopi ingen har hjemmel for.
+    
+    
+    INVARIANT: `krav_to_gjeldende` — to gjeldende krav samtidig gjør «hvilket
+    krav gjaldt» til et spørsmål uten svar.
+    
+    
+    INVARIANT: `kjoring_delvis_registrert` — en halv kjøring ser ut som en hel
+    med færre eksempler.
+    
+    
+    INVARIANT: `kjoring_bestatt_pastatt_av_kaller` — dommen felles i basen. En
+    `bestatt`-parameter ville latt kalleren erklære sin egen kjøring bestått.
+    
+    Svarer nøyaktig fasiten — og TELLER kallene sine."""
 
     def __init__(self, eksempler, *, feil_ved=None):
         self.fasit = {e["tekst"]: e for e in eksempler}
@@ -486,7 +507,11 @@ def test_port13_avbrutt_kjoring_registrerer_ingenting(tmp_path, monkeypatch):
 
 @pg
 def test_cli_hel_kjede_med_injisert_klient(tmp_path, monkeypatch):
-    """Runbook-kjeden ende til ende, uten Ollama: målekjøring uten krav
+    """
+    INVARIANT: `sett_hash_avvik_akseptert` — et gullsett som er endret er ikke
+    lenger fasiten det ble målt mot.
+    
+    Runbook-kjeden ende til ende, uten Ollama: målekjøring uten krav
     (exit 1, kravversjon NULL, bestatt=false — fail-closed), krav, ny
     kjøring (exit 0, bestått), bytt_release slipper gjennom."""
     monkeypatch.setenv("DISPONIT_MIGRATOR_URL", MIGRATOR_DSN)
@@ -579,3 +604,45 @@ def test_bytt_release_kroppen_er_kopiert_byte_for_byte():
     ny = ny[:start] + ny[slutt:]
     assert ny == original, \
         "086-REPLACEen avviker fra 014-kroppen utover portdiffen"
+
+
+def test_ui_axe_dekning():
+    """`ui_axe_alvorlige_brudd` — flaten er registrert der axe kjører.
+
+    Basisrute bak `security:read`.
+    """
+    rot = Path(__file__).resolve().parents[3]
+    app_js = (rot / "platform" / "core" / "ui" / "static" / "js"
+              / "app.js").read_text(encoding="utf-8")
+    assert "modellstyring: vis" in app_js
+    sitekart = (rot / "platform" / "core" / "ui" / "static" / "js"
+                / "sitekart.js").read_text(encoding="utf-8")
+    assert '{ nokkel: "modellstyring"' in sitekart
+
+
+def test_grensen_dekkes_av_portene_i_denne_fila():
+    """§0, MÅLT BEGGE VEIER — OG DET VAR HALVPARTEN SOM MANGLET.
+
+    Grensen `m31-v1` har stått i `KRAVGRENSER` siden FØR koden ble
+    skrevet: §0-regelen ble respektert. Portene under har ligget her
+    siden. MEN INGENTING BANDT DE TO SAMMEN.
+
+    Konsekvensen er stille: en invariant kunne fjernes fra grensen,
+    eller en port slettes, og ingen test ville merket det. Grensen ville
+    fremdeles vært «registrert», og suiten fremdeles grønn.
+
+    `test_kravgrenser_unike.py` pinner at en grense ikke OVERSKRIVES.
+    Denne pinner at den er DEKKET. De to er ulike hull, og bare det
+    første var lukket.
+
+    MUTASJONEN SOM DREPER DENNE: legg til en invariant i `m31-v1` som
+    ingen test her nevner.
+    """
+    from manifestskjema import KRAVGRENSER
+    g = KRAVGRENSER["m31-v1"]
+    assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
+    inv = set(g["invarianter"])
+    assert inv
+    egen = Path(__file__).read_text(encoding="utf-8")
+    mangler = sorted(i for i in inv if i not in egen)
+    assert mangler == [], f"invarianter uten port: {mangler}"

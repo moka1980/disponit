@@ -4472,5 +4472,9 @@
   "ui.ehf.feil.generell": "Something went wrong. Try again.",
   "ui.ehf.feil.tilstand": "That action is not legal in this state.",
   "ui.ehf.feil.urettet_formfeil": "The document has a defect without a correction. Marking it ready now is asking a human to sign that something is in order when it is not.",
-  "ui.ehf.feil.validering_avvist": "The validation was rejected. Is the rule set in force today, and has the document already been judged against this very set?"
+  "ui.ehf.feil.validering_avvist": "The validation was rejected. Is the rule set in force today, and has the document already been judged against this very set?",
+  "site.modul.m10.navn": "Backup and restore agent",
+  "site.modul.m10.tekst": "Verifies that the backup can actually be restored, and records every measurement as a row. Fewer than ten tables or a dump under 1 KiB is not a weak verification — it is a sign the restore hit the wrong database, and it is rejected.",
+  "site.modul.m11.navn": "Integration and self-test agent",
+  "site.modul.m11.tekst": "Runs the platform's probes and separates «red» from «not set up here» — the latter is never alerted on. The self-test cannot report its own death, so a missed run is reported by the notification sender."
 }
