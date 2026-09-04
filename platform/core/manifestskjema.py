@@ -1797,6 +1797,160 @@ KRAVGRENSER["m55-v1"] = {
 }
 
 
+# --------------------------------------------------------------------
+# KLYNGE 7 — «de fem der regelen er myndighetens» (121–125).
+#
+# Registrert FØR koden (§0-regelen). Se docs/KLYNGE7-FUNDAMENT.md for
+# hele dommen; det korte er dette:
+#
+# Alle fem står overfor en MYNDIGHET, og regelen er derfor ikke vår.
+# Den endres, og den endres uten å si fra. EN FORELDET REGEL SER
+# NØYAKTIG UT SOM EN RIKTIG REGEL — det er forskjellen fra en feil:
+# en feil gir et avvik noen ser, mens en foreldet HS-kode gir et svar
+# som er velformet, selvsikkert og galt.
+#
+# Derfor bærer ALLE FEM invarianten `<noe>_uten_<regel>versjon`, og
+# alle fem har en utløpsvakt: en avgjørelse regnet under en utløpt
+# regel er et sveipefunn, ikke et stille galt svar.
+# --------------------------------------------------------------------
+
+M54_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN RETTET FAKTURA. Spesifikasjonens
+    # vakt sier «retting klargjøres maskinelt, utsending signeres av
+    # menneske», og en faktura sendt to ganger er et dobbelt
+    # betalingskrav.
+    "modulen_sendte_faktura",
+    "modulen_signerte_utsending",
+    # KLYNGENS DELTE INVARIANT. EHF-formatet får nye versjoner, og et
+    # avvik funnet mot en gammel versjon er en foreldet dom som ser
+    # velformet ut.
+    "validering_uten_skjemaversjon",
+    "validering_mot_utlopt_skjema",
+    "retting_uten_avviksreferanse",
+    "validering_overskrevet",
+    "tenantlekkasje_i_ehfregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m54-v1"] = {
+    "invarianter": M54_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M52_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen DEKLARERER INGENTING. En HS-kode er en
+    # RETTSLIG PÅSTAND om hva en vare er, og feil kode gir bot — som
+    # treffer kunden, ikke oss.
+    "modulen_deklarerte",
+    "modulen_signerte_utsending",
+    # ET FORSLAG UTEN GRUNNLAG ER VERRE ENN INGEN FORSLAG: en kode et
+    # menneske stempler fordi den sto der, produserer falsk trygghet.
+    "forslag_uten_grunnlag",
+    "forslag_uten_nomenklaturversjon",
+    "forslag_mot_utlopt_nomenklatur",
+    "forslag_overskrevet",
+    "sikkerhetsterskel_hardkodet",
+    "tenantlekkasje_i_tollregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m52-v1"] = {
+    "invarianter": M52_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M47_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN INNSENDING. En innsending til en
+    # myndighet er bindende og kan ikke kalles tilbake.
+    "modulen_sendte_innsending",
+    "modulen_signerte_utsending",
+    # OG HER ER FRAVÆRET IKKE NOK — det skiller M-47 fra klynge 6.
+    # For de fem der var skaden å HANDLE. Her er skaden ogsa å LA
+    # VÆRE: en frist som går uten innsending er nøyaktig det modulen
+    # ble bygget for å hindre. EN STILLE M-47 ER VERRE ENN INGEN M-47.
+    "frist_uten_varsel",
+    "sveipefeil_uten_stoy",
+    "plikt_uten_hjemmel",
+    "plikt_uten_regelversjon",
+    "plikt_mot_utlopt_regel",
+    "plikt_overskrevet",
+    "varselfrist_hardkodet",
+    "tenantlekkasje_i_pliktregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m47-v1"] = {
+    "invarianter": M47_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M50_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN INNSYNSBEGJÆRING OG INGEN
+    # HENVENDELSE, og den HENTER IKKE SELV.
+    #
+    # Grunnen er ikke den nærliggende: postjournaler ER offentlige.
+    # Det som treffer er at de inneholder NAVNGITTE PRIVATPERSONER, og
+    # at en systematisk høsting er en helt annen behandling enn et
+    # enkeltoppslag et menneske gjør. Formålsbegrensningen gjelder
+    # uansett kilde.
+    "modulen_hentet_eksternt",
+    "modulen_sendte_henvendelse",
+    # HVERT TREFF BÆRER FORMÅLET SITT. «Vi fant det på nett» er ikke et
+    # rettslig grunnlag.
+    "treff_uten_formaal",
+    "treff_uten_kildeversjon",
+    "treff_overskrevet",
+    "personopplysning_uten_sletteplan",
+    "tenantlekkasje_i_journalregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m50-v1"] = {
+    "invarianter": M50_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M53_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen VARSLER INGEN MYNDIGHET og LUKKER INGEN SAK.
+    "modulen_varslet_myndighet",
+    "modulen_lukket_avvik_selv",
+    # DEN ENESTE MODULEN SOM MOTTAR DATA OM EN ANSATT FRA EN ANSATT.
+    #
+    # VARSLERVERNET ER DEN SKARPESTE: et avvik kan være et varsel etter
+    # arbeidsmiljøloven kap. 2 A, og vernet er verdiløst hvis
+    # mottakeren lekker identitet. ANONYMT AVVIK ER EN FØRSTEKLASSES
+    # TILSTAND, ikke et tomt navnefelt — et felt som KAN fylles blir
+    # fylt.
+    "varsler_identitet_lekket",
+    "anonymt_avvik_kan_spores",
+    "evidenskjede_baerer_varsler",
+    # OPPBEVARINGSPLIKT MOT SLETTEPLIKT. Arbeidstilsynet krever at
+    # avvik bevares; GDPR krever at personopplysninger slettes. M-30
+    # eier sletteretten, og konflikten er REELL — den oppdages ellers
+    # først den dagen noen ber om sletting.
+    "avvik_uten_oppbevaringshjemmel",
+    "sletting_uten_m30_avklaring",
+    "avvik_overskrevet",
+    "tenantlekkasje_i_avviksregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m53-v1"] = {
+    "invarianter": M53_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den
 #: identiteten aksepten binder. En aksept autoriserer flippet av dem;

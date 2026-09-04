@@ -1,0 +1,80 @@
+# M-50 POSTJOURNAL- OG INNSYNSVAKT — OFFENTLIG ER IKKE FRITT.
+#
+# `m50-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 124
+# tildelt i docs/KLYNGE7-FUNDAMENT.md.
+#
+# v1 SENDER INGEN INNSYNSBEGJÆRING OG INGEN HENVENDELSE.
+#
+# DOMMEN, OG DEN ER IKKE DEN NÆRLIGGENDE: postjournaler ER offentlige,
+# så den vanlige innvendingen mot utgående oppslag treffer ikke. Det
+# som treffer er noe annet.
+#
+# EN POSTJOURNAL INNEHOLDER NAVNGITTE PRIVATPERSONER. At en opplysning
+# er offentlig tilgjengelig gjør den ikke fri å samle, sammenstille og
+# bruke til salg — formålsbegrensningen gjelder uansett kilde, og en
+# systematisk høsting er en helt annen behandling enn et enkeltoppslag
+# et menneske gjør. Det er derfor modulen er en VAKT og ikke en
+# høstemaskin.
+#
+# DERFOR: v1 REGISTRERER JOURNALPOSTER ET MENNESKE HAR HENTET, og
+# knytter dem til en sak. Den henter ikke selv. Et automatisk søk mot
+# hver kommunes journal hører hjemme i oppdragskontraktens
+# `ekstern_lesing` med målautorisasjon og frekvensgrense — ikke i en
+# modulfil, og ikke uten at formålet er skrevet ned.
+#
+# HVERT TREFF BÆRER FORMÅLET SITT. Uten det er sammenstillingen en
+# behandling ingen kan gjøre rede for, og «vi fant det på nett» er
+# ikke et rettslig grunnlag.
+#
+# JOURNALENS FORMAT ER KOMMUNENS, OG DET ENDRES. Klyngens delte
+# invariant: hver registrering bærer kildeversjonen sin.
+#
+# GRENSEN MOT M-18: M-18 eier ONBOARDINGEN av en kunde vi har.
+# M-50 finner en sak som KAN bli en kunde. Overgangen er et menneskes.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m50_postjournal
+navn: Postjournal- og innsynsvakt
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m50-v1` bærer invarianten
+# `treff_uten_formaal` — en sammenstilling av offentlige data uten et
+# skrevet formål er en behandling ingen kan gjøre rede for.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m30_personvern
+  - m37_unntak
+kjerne: platform/modules/m50_postjournal
+i18n_prefiks: postjournal
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: journalposter med KJENT fasit for hva som er et treff,
+      kjørt likt lokalt og på staging.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert treff har formål, kilde og kildeversjon i
+      evidenskjeden. «Vi fant det på nett» er ikke et grunnlag.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: postjournalsveipen bygget, og at en feil i den ikke lar
+      et treff uten formål se registrert ut.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

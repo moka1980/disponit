@@ -1,0 +1,92 @@
+# M-53 HMS- OG AVVIKSMOTTAK — DEN ENESTE MODULEN SOM MOTTAR DATA OM EN
+# ANSATT FRA EN ANSATT.
+#
+# `m53-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 125
+# tildelt i docs/KLYNGE7-FUNDAMENT.md. BYGGES SIST i klyngen, og
+# grunnen står under.
+#
+# M-53 HØRER EGENTLIG IKKE HJEMME I DENNE KLYNGEN, og det skal stå
+# skrevet. De fire andre PRODUSERER noe som skal ut av huset. Dette er
+# en INNBOKS, og risikoen ligger et helt annet sted.
+#
+# TRE TING INGEN AV DE FIRE ANDRE HAR:
+#
+#   1. HELSEOPPLYSNINGER. En skademelding inneholder særlige
+#      kategorier etter GDPR art. 9 — ikke som en mulighet, som
+#      normaltilfellet.
+#
+#   2. VARSLERVERN. Et avvik kan være et varsel etter
+#      arbeidsmiljøloven kap. 2 A. Den som varsler har rett til vern
+#      mot gjengjeldelse, og vernet er verdiløst hvis mottakeren
+#      lekker identitet. DERFOR ER ANONYMT AVVIK EN FØRSTEKLASSES
+#      TILSTAND I DATAMODELLEN, ikke et tomt navnefelt: et felt som
+#      KAN fylles blir fylt.
+#
+#   3. OPPBEVARINGSPLIKT SOM KOLLIDERER MED SLETTEPLIKT.
+#      Arbeidstilsynet krever at avvik bevares. GDPR krever at
+#      personopplysninger slettes. M-30 eier sletteretten; M-53 vil ha
+#      rader M-30 ikke får røre.
+#
+# PUNKT 3 ER DET FARLIGSTE, fordi det er en konflikt mellom to moduler
+# vi ALT har bygget — og den oppdages først den dagen noen ber om
+# sletting. Grensesnittet mot M-30 avklares FØR koden. Det er hele
+# grunnen til at modulen står sist i klyngen.
+#
+# v1 TAR IMOT OG DOKUMENTERER. Den varsler ingen myndighet, sender
+# ingen melding, og lukker ingen sak. Et avvik lukkes av et menneske
+# med en begrunnelse.
+#
+# GRENSEN MOT M-37: M-37 eier UNNTAKSKØEN — arbeid som venter på et
+# menneske. M-53 eier AVVIKSREGISTERET, som er lovpålagt og har sin
+# egen oppbevaringstid. Et avvik kan henvises til køen; det er ikke
+# det samme som å bo der.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m53_hms
+navn: HMS- og avviksmottak
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m53-v1` bærer invarianten
+# `varsler_identitet_lekket`, og M-30 står her fordi konflikten mellom
+# oppbevaringsplikt og sletteplikt er REELL og må avklares i koden.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m30_personvern
+  - m37_unntak
+kjerne: platform/modules/m53_hms
+i18n_prefiks: hms
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: avvik med KJENT fasit, OG et anonymt avvik i settet.
+      Anonymitet som bare er testet med ekte navn er ikke testet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at evidenskjeden IKKE bærer varslerens identitet. Dette
+      er den ene modulen der en fullstendig revisjonslogg er feil —
+      loggen skal vise at et avvik ble mottatt, ikke av hvem.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: HMS-sveipen bygget, og at en feil i den ikke avslører en
+      anonym varsler gjennom en feilmelding, en telling eller en
+      tidsrekkefølge.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen. OG:
+      en rullbakk må ikke gjenopprette rader M-30 har slettet.

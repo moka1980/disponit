@@ -4261,5 +4261,15 @@
   "ui.merkevare.skjema.aktiv_ok": "Merket er oppdatert.",
   "ui.merkevare.feil.generell": "Noe gikk galt. Prøv igjen.",
   "ui.merkevare.feil.tilstand": "Handlingen er ikke lovlig i denne tilstanden.",
-  "ui.merkevare.feil.vurdering": "Vurderingen ble avvist. Er tersklene satt, og er funnet åpent?"
+  "ui.merkevare.feil.vurdering": "Vurderingen ble avvist. Er tersklene satt, og er funnet åpent?",
+  "site.modul.m54.navn": "EHF- og Peppol-avviksretter",
+  "site.modul.m54.tekst": "Fakturaens FORM mot standarden, med skjemaversjonen på hver validering. v1 sender ingen rettet faktura: en faktura sendt to ganger er et dobbelt betalingskrav, og et avvik funnet mot en utløpt skjemaversjon er en foreldet dom som ser velformet ut.",
+  "site.modul.m52.navn": "Toll- og HS-kodeagent",
+  "site.modul.m52.tekst": "Forslaget til HS-kode, med nomenklaturversjonen og hva forslaget hviler på. v1 deklarerer ingenting: en HS-kode er en rettslig påstand om hva varen er, feil kode gir bot, og et forslag uten grunnlag produserer falsk trygghet.",
+  "site.modul.m47.navn": "Myndighetsrapporteringsagent",
+  "site.modul.m47.tekst": "Plikten, hjemmelen og fristen. v1 sender ingen innsending — men her er fraværet ikke nok: en frist som går uten at noen har sett den er nøyaktig skaden modulen finnes for å hindre, så en stille rapporteringsagent er verre enn ingen.",
+  "site.modul.m50.navn": "Postjournal- og innsynsvakt",
+  "site.modul.m50.tekst": "Journalposten, saken og formålet den ble registrert for. v1 henter ingenting selv: at en opplysning er offentlig gjør den ikke fri å samle og sammenstille, og «vi fant det på nett» er ikke et rettslig grunnlag.",
+  "site.modul.m53.navn": "HMS- og avviksmottak",
+  "site.modul.m53.tekst": "Avviket, tiltaket og oppbevaringshjemmelen. Anonymt avvik er en egen tilstand og ikke et tomt navnefelt: et felt som kan fylles blir fylt, og et varslervern som lekker identitet er verdiløst."
 }

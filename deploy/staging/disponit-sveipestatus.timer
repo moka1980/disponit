@@ -1,17 +1,26 @@
 # 115: én gang i døgnet, ETTER hele sveipestigen.
 #
-# KLOKKESLETTET ER 10:05 UTC fordi rekkefølgen er poenget:
+# KLOKKESLETTET ER 11:20 UTC fordi rekkefølgen er poenget:
 # observatøren skal lese flåtens tilstand ETTER at flåten har kjørt,
 # ikke før. Kjørte den 02:00, ville hver eneste sveip sett ut som
 # «ikke kjørt i dag», og varselet vært en falsk alarm hver natt.
 #
-# DEN STO 08:35 TIL M-48 (116) KOM. Klyngefundamentet fordelte
-# 08:50–09:50 til klynge 6s fem sveip, og observatøren er flyttet
-# BAKENFOR HELE den stigen med én gang i stedet for å skyves femten
-# minutter fem ganger. Gapet fra 09:50 til 10:05 er tomt i dag og
-# fylles etter hvert som M-49, M-46, M-51 og M-55 lander —
-# `test_timeren_gaar_etter_hele_stigen` holder rekkefølgen ærlig
-# uansett hvilken vei det går.
+# DEN HAR FLYTTET TO GANGER, OG BEGGE GANGER PÅ SAMME MÅTE. Den sto
+# 08:35 til M-48 (116) kom, og 10:05 gjennom hele klynge 6. Nå
+# fordeler klynge 7 (121–125) 10:05–11:05 til fem nye sveip, og
+# observatøren flyttes BAKENFOR HELE den stigen med én gang i stedet
+# for å skyves femten minutter fem ganger.
+#
+# GAPET FRA 09:50 TIL 11:20 ER TOMT I DAG og fylles etter hvert som
+# M-54, M-52, M-47, M-50 og M-53 lander. Det er med vilje: klyngens
+# fundament flytter observatøren FØR modulene kommer, så ingen
+# modul-PR trenger å røre denne fila — og to PR-er som begge flyttet
+# den ville gitt en fletting der et tapt klokkeslett ser ut som
+# ingenting. `test_timeren_gaar_etter_hele_stigen` holder rekkefølgen
+# ærlig uansett hvilken vei det går.
+#
+# 08:35 STÅR FORTSATT LEDIG. Klyngen holdes SAMLET i stigen, så de fem
+# kan leses som fem i `systemctl list-timers`.
 #
 # `RandomizedDelaySec=15min` og ikke 30: vinduet må være ferdig før
 # varselsenderen henter køen, og spredningen har mindre å tjene her —
@@ -25,7 +34,7 @@
 Description=Disponit sveipestatus-timer
 
 [Timer]
-OnCalendar=*-*-* 10:05:00 UTC
+OnCalendar=*-*-* 11:20:00 UTC
 RandomizedDelaySec=15min
 Persistent=true
 

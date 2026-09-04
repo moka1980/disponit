@@ -192,6 +192,17 @@ TILSKUDDEIER=disponit_tilskudd_eier         # M-51 eier tilskuddsregisteret
 TILSKUDDSSVEIP=disponit_tilskuddssveip      # M-51s ordningsfrist-sveip
 MERKEVAREIER=disponit_merkevare_eier        # M-55 eier merkevarefunnene
 MERKEVARESVEIP=disponit_merkevaresveip      # M-55s ubehandlet-funn-sveip
+# Klynge 7 (121-125): regelen er myndighetens.
+EHFEIER=disponit_ehf_eier                   # M-54 eier EHF-avviksregisteret
+EHFSVEIP=disponit_ehfsveip                  # M-54s utlopt-skjema-sveip
+TOLLKODEEIER=disponit_tollkode_eier         # M-52 eier tollkoderegisteret
+TOLLKODESVEIP=disponit_tollkodesveip        # M-52s utlopt-nomenklatur-sveip
+MYNDIGHETEIER=disponit_myndighet_eier       # M-47 eier pliktregisteret
+MYNDIGHETSSVEIP=disponit_myndighetssveip    # M-47s fristsveip
+POSTJOURNALEIER=disponit_postjournal_eier   # M-50 eier journalregisteret
+POSTJOURNALSVEIP=disponit_postjournalsveip  # M-50s formaal-sveip
+HMSEIER=disponit_hms_eier                   # M-53 eier avviksregisteret
+HMSSVEIP=disponit_hmssveip                  # M-53s ubehandlet-avvik-sveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -202,7 +213,8 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$KONTOVAKTSVEIP" "$BETALINGSSVEIP" "$ADRESSESVEIP" \
          "$LONNSSVEIP" "$KAMPANJESVEIP" "$MOTPARTSSVEIP" \
          "$SANKSJONSSVEIP" "$ANBUDSSVEIP" "$TILSKUDDSSVEIP" \
-         "$MERKEVARESVEIP"; do
+         "$MERKEVARESVEIP" "$EHFSVEIP" "$TOLLKODESVEIP" \
+         "$MYNDIGHETSSVEIP" "$POSTJOURNALSVEIP" "$HMSSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -216,7 +228,8 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$PRISBOKEIER" "$BEHOLDNINGEIER" "$KONTOVAKTEIER" \
          "$BETALINGEIER" "$ADRESSEEIER" "$LONNEIER" "$KAMPANJEEIER" \
          "$MOTPARTEIER" "$SANKSJONEIER" "$ANBUDEIER" "$TILSKUDDEIER" \
-         "$MERKEVAREIER"; do
+         "$MERKEVAREIER" "$EHFEIER" "$TOLLKODEEIER" \
+         "$MYNDIGHETEIER" "$POSTJOURNALEIER" "$HMSEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -318,6 +331,11 @@ sudo -u postgres psql -qc "GRANT $SANKSJONEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $ANBUDEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $TILSKUDDEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MERKEVAREIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $EHFEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $TOLLKODEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MYNDIGHETEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $POSTJOURNALEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $HMSEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

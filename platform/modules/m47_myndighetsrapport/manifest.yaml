@@ -1,0 +1,79 @@
+# M-47 MYNDIGHETSRAPPORTERINGSAGENT — FRISTEN ER PRODUKTET.
+#
+# `m47-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 123
+# tildelt i docs/KLYNGE7-FUNDAMENT.md.
+#
+# v1 SENDER INGEN INNSENDING.
+#
+# DOMMEN: en innsending til en myndighet er BINDENDE og kan ikke
+# kalles tilbake. Feil tall i en pålagt rapport er ikke en feil man
+# retter — det er en korrigert innsending med sin egen historikk, og i
+# noen tilfeller et avvik myndigheten ser.
+#
+# MEN HER ER FRAVÆRET IKKE NOK, OG DET SKILLER M-47 FRA KLYNGE 6.
+#
+# For de fem i klynge 6 var skaden å HANDLE. Her er skaden også å LA
+# VÆRE: en frist som går uten innsending er nøyaktig det modulen ble
+# bygget for å hindre. En modul som klargjør et utkast og lar fristen
+# passere i stillhet, har forårsaket skaden den skulle avverge.
+#
+# DERFOR ER v1s PRODUKT FRISTVAKTEN, ikke dokumentet. Utkastet er
+# sekundært; det som må virke er at ingen frist går uten at et
+# menneske har sett den. En stille M-47 er verre enn ingen M-47.
+#
+# INNSENDINGSKRAVET ER MYNDIGHETENS, OG DET ENDRES. Klyngens delte
+# invariant: hver plikt bærer hjemmelen og versjonen sin, og en plikt
+# som ikke er bekreftet innenfor sitt gyldighetsvindu er et sveipefunn.
+#
+# GRENSEN MOT M-34: M-34 eier SERTIFISERING og etterlevelse av
+# standarder man velger. M-47 eier PÅLAGTE innsendinger med frist. Den
+# ene er noe man kan la være; den andre er ikke.
+#
+# GRENSEN MOT M-21: M-21 eier avtalefrister — våre egne kontrakter.
+# M-47s frister er lovpålagte, og forskjellen er hvem som sanksjonerer.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m47_myndighetsrapport
+navn: Myndighetsrapporteringsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m47-v1` bærer invarianten
+# `frist_uten_varsel` — en frist ingen har sett er hele skaden.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m47_myndighetsrapport
+i18n_prefiks: myndighetsrapport
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: plikter med KJENTE frister, kjørt likt lokalt og på
+      staging. En fristberegning som varierer mellom miljøene er ikke
+      en frist.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver plikt har hjemmel og versjon i evidenskjeden, og
+      at hvert fristvarsel er en rad noen kan peke på etterpå.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: myndighetssveipen bygget, og at en feil i den gjør
+      STØY, ikke stillhet. En sveip som feiler stille lar fristen gå.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
