@@ -713,6 +713,33 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm54_sveip_ehf(integer)',                                            'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valider_dokument(text,uuid,uuid,uuid,text)',                    'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valideringene(text,uuid)',                                      'disponit_ehf_eier'),
+    -- 122 (M-52): tollkoderegisterets doerer og tollkodesveipen.
+    -- INGEN AV DEM DEKLARERER, og ingen avgir et forslag uten
+    -- grunnlag: `m52_avgi_forslag` skriver forslaget og grunnene i
+    -- SAMME setning.
+    --
+    -- `m52_nomenklatur_frosset()` og `m52_forslag_frosset()` staar
+    -- IKKE her: radvaktene lages etter `RESET ROLE` i seksjon 6 og
+    -- eies av migratoren.
+    ('FUNCTION', 'm52_avgi_forslag(text,uuid,uuid,uuid,integer,text[],text[],text[],date[],text)', 'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_evidens(text,uuid,text,text,jsonb)',                            'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_forslagene(text,uuid)',                                         'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_funnene(text,boolean)',                                         'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_grunnene(text,uuid)',                                           'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_kravene(text)',                                                  'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_lukk_funn(text,uuid,text,text)',                                'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_merk_klart(text,uuid,text)',                                    'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_nomenklatur_gyldig(date,date)',                                 'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_nomenklaturene(text,integer)',                                  'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_registrer_nomenklatur(text,uuid,text,text,date,date,text,text,text)', 'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_registrer_vare(text,uuid,text,text,text,text,text,text)',       'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_registrer_varenummer(text,uuid,uuid,text,text,integer,text)',   'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_sett_gyldig_til(text,uuid,date,text)',                          'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_sett_krav(text,integer,integer,integer,text,text)',             'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_sveip_tollkode(integer)',                                       'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_tollstatus(text)',                                              'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_varene(text,integer)',                                          'disponit_tollkode_eier'),
+    ('FUNCTION', 'm52_varenumrene(text,uuid,integer)',                                'disponit_tollkode_eier'),
     ('FUNCTION', 'm46_utkastene(text,uuid)',                                          'disponit_anbud_eier'),
     ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),

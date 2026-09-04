@@ -474,6 +474,9 @@ MERKEVARESVEIP_DSN=("DISPONIT_MERKEVARESVEIP_URL=$DB"
 # M-54 (121). Rollen ble opprettet av klynge 7-fundamentet (#377).
 EHFSVEIP_DSN=("DISPONIT_EHFSVEIP_URL=$DB"
               "DISPONIT_TEST_EHFSVEIP_DSN=${DB}_test")
+# M-52 (122). Rollen ble opprettet av klynge 7-fundamentet (#377).
+TOLLKODESVEIP_DSN=("DISPONIT_TOLLKODESVEIP_URL=$DB"
+                   "DISPONIT_TEST_TOLLKODESVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -512,6 +515,7 @@ sikre_rolle_dsn "$ANBUDSSVEIP" "${ANBUDSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$TILSKUDDSSVEIP" "${TILSKUDDSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$MERKEVARESVEIP" "${MERKEVARESVEIP_DSN[@]}"
 sikre_rolle_dsn "$EHFSVEIP" "${EHFSVEIP_DSN[@]}"
+sikre_rolle_dsn "$TOLLKODESVEIP" "${TOLLKODESVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

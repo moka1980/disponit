@@ -1,0 +1,22 @@
+# M-52 (122): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `utlopsvarsel_dogn` og
+# `forslagsfrist_dogn` måles begge i DØGN — og en nomenklatur som
+# avvikles, avvikles på en DATO.
+#
+# KLOKKESLETTET ER 10:20, klynge 7s andre plass i stigen 10:05–11:05.
+# `disponit-sveipestatus.timer` (115) står bakerst på 11:20.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at regelverket vi klassifiserer mot er avviklet.
+
+[Unit]
+Description=Disponit tollkodesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 10:20:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

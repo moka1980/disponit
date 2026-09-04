@@ -1,0 +1,86 @@
+# M-52 (122): tollkodesveipen for regelverk som er avviklet.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (122): et avviklet regelverk UTEN en gyldig etterfølger er
+# `nomenklatur_utlopt`; et som avvikles innen tenantens varselvindu er
+# `nomenklatur_utloper_snart`; en kode som hviler på et regelverk som
+# siden er avviklet er `forslag_mot_utlopt_nomenklatur`; en vare ingen
+# har klassifisert innen fristen er `vare_uten_forslag`; et forslag
+# under tenantens NÅVÆRENDE terskel er `forslag_under_terskel`; et
+# forslag over terskel som ingen har merket klart er
+# `forslag_ikke_klart`; og en tenant uten terskler er `ingen_krav`.
+#
+# SVEIPEN KLASSIFISERER IKKE, OG DET ER MODULENS VIKTIGSTE FRAVÆR. En
+# HS-kode er en RETTSLIG PÅSTAND om hva en vare er. Lot vi sveipen
+# klassifisere selv, ville slike påstander oppstått om natten uten at
+# noen ba om det — og feil kode gir bot, som treffer KUNDEN.
+#
+# OG DEN MERKER INGENTING KLART. «Klar til deklarering» er en tilstand
+# et menneske setter; deklarasjonen selv finnes ikke i v1.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til et tollvesen eller ned til en tolltariff.
+# Nomenklaturen registreres av et menneske som har lest den; gjerdet
+# mot automatisk henting står i koden (`tollkodesveip.py` importerer
+# ingenting som kan snakke ut).
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille tollkodesveip
+# er et regelverk som er avviklet uten at noen har sett det — og en
+# kode mot en avviklet nomenklatur er et velformet og galt svar.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_tollkodesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m52_sveip_tollkode`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit tollkodesveip (avviklet nomenklatur og koder under den)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_TOLLKODESVEIP_URL:/etc/disponit/tollkodesveip/DISPONIT_TOLLKODESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_tollkodesveip
+# Sveipen er ETT funksjonskall som gjør seks setninger per tenant, alle
+# indeksdekket (`nomenklatur_gyldige_idx`, `varenummer_oppslag_idx`,
+# `tollforslag_vare_idx`, `forslagsgrunn_forslag_idx`,
+# `tollfunn_apne_idx`). Går dette over ti minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
