@@ -1,0 +1,91 @@
+# M-55 (120): merkevaresveipen for funn ingen har sett på.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (120): et åpent funn uten vurdering er `funn_uten_vurdering`; en
+# forveksling over tenantens egen terskel som ingen har henvist er
+# `forveksling_ikke_henvist`; en vurdering gjort under en annen
+# terskel enn den som gjelder nå er
+# `vurdering_med_utdatert_terskel`; et åpent funn eldre enn tenantens
+# frist er `funn_eldre_enn_frist`; et aktivt merke uten et eneste
+# funn er `merkevare_uten_funn`; og en tenant uten terskler er
+# `ingen_terskler`.
+#
+# SVEIPEN VURDERER IKKE, OG DET ER MODULENS VIKTIGSTE FRAVÆR. En
+# forvekslingsvurdering er inngangen til en ANKLAGE MOT EN NAVNGITT
+# PART. Lot vi sveipen regne selv, ville vurderinger oppstått om
+# natten uten at noen ba om det — og vakten sier at modulen
+# dokumenterer og rapporterer; enhver reaksjon besluttes av menneske.
+#
+# OG DEN HENVISER IKKE. Henvisningen til M-37s unntakskø er modulens
+# eneste utgang, og en automatisk henvisning ville vært en sak reist
+# av en tidsplan.
+#
+# DEN SENDER INGENTING. 120 har ingen mottaker, ingen kravtekst og
+# ingen utboks — det er ikke en regel vi håndhever, det er en handling
+# som ikke finnes.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til et domeneregister eller en annonseplattform.
+# Bevaringskopiene registreres av den som tok dem; gjerdet mot
+# automatisk henting står i koden (`merkevaresveip.py` importerer
+# ingenting som kan snakke ut) og i porten som måler det.
+#
+# ETT VARSEL, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille merkevaresveip
+# er forvekslinger ingen har sett på.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_merkevaresveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m55_sveip_merkevare`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit merkevaresveip (uvurderte og uhenviste funn -> varsel)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_MERKEVARESVEIP_URL:/etc/disponit/merkevaresveip/DISPONIT_MERKEVARESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_merkevaresveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`merkevarefunn_apne_idx`,
+# `forvekslingsvurdering_funn_idx`, `merkevarevarsel_apne_idx`,
+# `merkevarevarsel_funnivaa_unik`). Går dette over ti minutter, henger
+# noe — og da er avbrudd riktig svar: varslene er idempotente, så neste
+# døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

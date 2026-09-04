@@ -657,6 +657,35 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm51_sett_ordningaktiv(text,uuid,boolean,text)',                     'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_sveip_tilskudd(integer)',                                       'disponit_tilskudd_eier'),
     ('FUNCTION', 'm51_tilskuddsstatus(text)',                                         'disponit_tilskudd_eier'),
+    -- 120 (M-55): merkevareregisterets doerer og merkevaresveipen.
+    -- INGEN AV DEM SENDER ET KRAV ELLER EN KLAGE, og ingen kan
+    -- registrere et funn uten bevaringskopi: `merkevarefunn.kopi_id`
+    -- er NOT NULL med fremmednoekkel.
+    --
+    -- `m55_funn_frosset()` staar IKKE her: radvakten lages etter
+    -- `RESET ROLE` i seksjon 6 og eies av migratoren.
+    ('FUNCTION', 'm55_algoritmeversjon()',                                            'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_bevaringskopiene(text,integer)',                                'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_evidens(text,uuid,text,text,jsonb)',                            'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_funnene(text,uuid,integer)',                                    'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_grunnlag(text,text,boolean)',                                   'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_henvis_funn(text,uuid,uuid,text)',                              'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_kravene(text)',                                                 'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_likhet(text,text)',                                             'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_lukk_funn(text,uuid,text,text)',                                'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_lukk_varsel(text,uuid,text,text)',                              'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_merkene(text,integer)',                                         'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_merkevarestatus(text)',                                         'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_normaliser(text)',                                              'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_registrer_bevaringskopi(text,uuid,text,timestamp with time zone,text,bigint,text,text,text)', 'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_registrer_funn(text,uuid,uuid,uuid,text,text,text,text,text)',  'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_registrer_merkevare(text,uuid,text,text,text,text,text[],date,text)', 'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_sett_krav(text,integer,integer,integer,text,text)',             'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_sett_merkevare_aktiv(text,uuid,boolean,text)',                  'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_sveip_merkevare(integer)',                                      'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_varslene(text,boolean)',                                        'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_vurder_funn(text,uuid,uuid,text)',                              'disponit_merkevare_eier'),
+    ('FUNCTION', 'm55_vurderingene(text,uuid)',                                       'disponit_merkevare_eier'),
     ('FUNCTION', 'm46_utkastene(text,uuid)',                                          'disponit_anbud_eier'),
     ('FUNCTION', 'm49_treffene(text,uuid)',                                           'disponit_sanksjon_eier'),
     ('FUNCTION', 'm48_versjonene(text,uuid)',                                         'disponit_motpart_eier'),

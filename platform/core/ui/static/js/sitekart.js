@@ -484,6 +484,16 @@ const BASISRUTER = [
   // FLATEN SENDER INGEN SØKNAD, og den kan ikke sette et beløp uten
   // kildepost: `tilskuddsestimat` i 119 har ingen beløpskolonne.
   { nokkel: "tilskudd", scope: "okonomi:read", modulflate: 51 },
+  // M-55 (120): merkevare- og IP-overvåkeren. MODULFLATE bak
+  // `okonomi:read` — et merkevarefunn er DOKUMENTASJON, og et krav
+  // sendt på et automatisk funn ville vært en anklage mot en navngitt
+  // part.
+  //
+  // FLATEN SENDER INGEN KRAV OG INGEN KLAGE, og den kan ikke
+  // registrere et funn uten bevaringskopi: `merkevarefunn.kopi_id` i
+  // 120 er NOT NULL med fremmednøkkel. Fraværene er portene
+  // `modulen_sendte_krav` og `funn_uten_bevaringskopi`.
+  { nokkel: "merkevare", scope: "okonomi:read", modulflate: 55 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

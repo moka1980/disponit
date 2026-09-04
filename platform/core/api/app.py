@@ -1678,6 +1678,75 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tilskudd as tilskuddmodul
         return tilskuddmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-55 (120): merkevare- og IP-overvåkeren. MODULEN SENDER INGEN
+    # KRAV OG INGEN KLAGE, og hvert funn peker på en bevaringskopi —
+    # begge er fravær i datamodellen, ikke sjekker. Modulens eneste
+    # utgang er `/henvis`, som fester en peker til M-37s unntakskø.
+    def merkevare_bilde(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.merkevarebilde(tjeneste, request)
+
+    def merkevare_alle_funn(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.alle_funn_endepunkt(tjeneste, request)
+
+    def merkevare_kopier(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.bevaringskopier_endepunkt(tjeneste,
+                                                        request)
+
+    def merkevare_varsler(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.varsler_endepunkt(tjeneste, request)
+
+    def merkevare_funn_for_merke(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.funn_endepunkt(tjeneste, request)
+
+    def merkevare_vurderinger(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.vurderinger_endepunkt(tjeneste, request)
+
+    def merkevare_krav(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.krav_endepunkt(tjeneste, request)
+
+    def merkevare_merke(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.registrer_merkevare_endepunkt(tjeneste,
+                                                            request)
+
+    def merkevare_kopi(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.registrer_kopi_endepunkt(tjeneste,
+                                                       request)
+
+    def merkevare_funn_ny(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.registrer_funn_endepunkt(tjeneste,
+                                                       request)
+
+    def merkevare_vurder(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.vurder_endepunkt(tjeneste, request)
+
+    def merkevare_henvis(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.henvis_endepunkt(tjeneste, request)
+
+    def merkevare_lukk_funn(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.lukk_funn_endepunkt(tjeneste, request)
+
+    def merkevare_aktiv(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.sett_merke_aktiv_endepunkt(tjeneste,
+                                                         request)
+
+    def merkevare_lukk_varsel(request: Request) -> Response:
+        from . import merkevare as merkevaremodul
+        return merkevaremodul.lukk_varsel_endepunkt(tjeneste, request)
+
     # M-46 (118): anbuds- og konkurransevakten. MODULEN SENDER
     # INGEN TILBUD, og hvert faktapunkt i et utkast peker på et
     # kildedokument — begge er fravær i datamodellen, ikke sjekker.
@@ -2656,6 +2725,37 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/tilskudd/{ordning_id:uuid}/funn/lukk",
               tilskudd_lukk_funn, methods=["POST"]),
+        # M-55 (120). REKKEFØLGEN ER IKKE VILKÅRLIG: de faste
+        # stiene står FØR `{merkevare_id:uuid}`, ellers ville
+        # `/v1/merkevare/funn` blitt lest som en merkevare-id.
+        Route("/v1/merkevare", merkevare_bilde, methods=["GET"]),
+        Route("/v1/merkevare/funn", merkevare_alle_funn,
+              methods=["GET"]),
+        Route("/v1/merkevare/bevaringskopier", merkevare_kopier,
+              methods=["GET"]),
+        Route("/v1/merkevare/varsler", merkevare_varsler,
+              methods=["GET"]),
+        Route("/v1/merkevare/funn/{funn_id:uuid}/vurderinger",
+              merkevare_vurderinger, methods=["GET"]),
+        Route("/v1/merkevare/krav", merkevare_krav, methods=["POST"]),
+        Route("/v1/merkevare/merke", merkevare_merke,
+              methods=["POST"]),
+        Route("/v1/merkevare/bevaringskopi", merkevare_kopi,
+              methods=["POST"]),
+        Route("/v1/merkevare/funn", merkevare_funn_ny,
+              methods=["POST"]),
+        Route("/v1/merkevare/funn/{funn_id:uuid}/vurder",
+              merkevare_vurder, methods=["POST"]),
+        Route("/v1/merkevare/funn/{funn_id:uuid}/henvis",
+              merkevare_henvis, methods=["POST"]),
+        Route("/v1/merkevare/funn/{funn_id:uuid}/lukk",
+              merkevare_lukk_funn, methods=["POST"]),
+        Route("/v1/merkevare/varsel/{varsel_id:uuid}/lukk",
+              merkevare_lukk_varsel, methods=["POST"]),
+        Route("/v1/merkevare/{merkevare_id:uuid}/funn",
+              merkevare_funn_for_merke, methods=["GET"]),
+        Route("/v1/merkevare/{merkevare_id:uuid}/aktiv",
+              merkevare_aktiv, methods=["POST"]),
         Route("/v1/anbud", anbud_bilde, methods=["GET"]),
         Route("/v1/anbud/funn", anbud_funn, methods=["GET"]),
         Route("/v1/anbud/kilder", anbud_kilder, methods=["GET"]),
@@ -3704,6 +3804,32 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/aktiv"):
         "bestilling:opprett",
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
+    # M-55 (120): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `/henvis` er IKKE en utsendingsrute — den
+    # fester en peker til M-37s unntakskø, og der beslutter et
+    # menneske. Det finnes ingen rute som sender et krav.
+    ("GET",  "/v1/merkevare"):                   "okonomi:read",
+    ("GET",  "/v1/merkevare/funn"):              "okonomi:read",
+    ("GET",  "/v1/merkevare/bevaringskopier"):   "okonomi:read",
+    ("GET",  "/v1/merkevare/varsler"):           "okonomi:read",
+    ("GET",  "/v1/merkevare/funn/{funn_id:uuid}/vurderinger"):
+        "okonomi:read",
+    ("GET",  "/v1/merkevare/{merkevare_id:uuid}/funn"):
+        "okonomi:read",
+    ("POST", "/v1/merkevare/krav"):              "bestilling:opprett",
+    ("POST", "/v1/merkevare/merke"):             "bestilling:opprett",
+    ("POST", "/v1/merkevare/bevaringskopi"):     "bestilling:opprett",
+    ("POST", "/v1/merkevare/funn"):              "bestilling:opprett",
+    ("POST", "/v1/merkevare/funn/{funn_id:uuid}/vurder"):
+        "bestilling:opprett",
+    ("POST", "/v1/merkevare/funn/{funn_id:uuid}/henvis"):
+        "bestilling:opprett",
+    ("POST", "/v1/merkevare/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/merkevare/varsel/{varsel_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/merkevare/{merkevare_id:uuid}/aktiv"):
         "bestilling:opprett",
     # M-46 (118): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett`. `/klart` er IKKE en innsendingsrute — den

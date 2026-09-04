@@ -117,5 +117,6 @@
   "116_m48_motpartsregister.sql": "d1525a3306c1f17e79b9e31f2c23d5d2311d78d0ff87a09e6e28a3f81c277493",
   "117_m49_sanksjonskontroll.sql": "14c8d05c1bc5ba67cbad4c7eb2cac75ed5bd3d28ab96d09e76cbd180e754d2a8",
   "118_m46_anbudsregister.sql": "1efc29d5c5d7fe1f04319546d195417aa18658fe0ae59b4f79036e0e23ab91df",
-  "119_m51_tilskuddsregister.sql": "ede176f293b9c24cf385496853799cbcc5eb32706dd6c87e20a388ba42e53445"
+  "119_m51_tilskuddsregister.sql": "ede176f293b9c24cf385496853799cbcc5eb32706dd6c87e20a388ba42e53445",
+  "120_m55_merkevarefunn.sql": "537f83857d7629a4fc82732cfa7bb6e1a3e12bb746a9e06f81d91d46bd204410"
 }
