@@ -83,6 +83,8 @@ KJENTE_EIERROLLER = (
     "disponit_anbud_eier",  # M-46, migrasjon 118
     "disponit_tilskudd_eier",  # M-51, migrasjon 119
     "disponit_merkevare_eier",  # M-55, migrasjon 120
+    # Klynge 7 «de fem der regelen er myndighetens» (121-125).
+    "disponit_ehf_eier",        # M-54, migrasjon 121
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.

@@ -1337,3 +1337,59 @@ export const settMerkevareAktiv = (merkevareId, aktiv, idem) =>
 export const lukkMerkevarevarsel = (varselId, notat, idem) =>
   _muter(`/v1/merkevare/varsel/${encodeURIComponent(varselId)}/lukk`,
          "POST", { notat }, idem || nyIdempotensnokkel());
+
+// M-54 (121): EHF- og Peppol-avviksretteren. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `sendFaktura` HER, OG DET KAN IKKE FINNES: 121 har
+// ingen mottaker, ingen utboks og ingen «sendt»-kolonne. En faktura
+// sendt to ganger er et DOBBELT BETALINGSKRAV.
+//
+// `merkRettingKlar` SETTER EN TILSTAND HOS OSS. Signaturen hører til
+// v2, og forutsetningen for v2 er målt: hvor ofte klargjøringen er
+// feil.
+//
+// `settEhfGyldigTil` FINNES FORDI REGELEN ER MYNDIGHETENS: et
+// standardorgan som kunngjør i juni at EHF 3.0 trekkes 31. desember,
+// er nettopp den endringen modulen skal følge med på. Alt annet ved
+// regelsettet er frosset.
+export const settEhfkrav = (krav, idem) =>
+  _muter("/v1/ehf/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const registrerEhfregelsett = (sett, idem) =>
+  _muter("/v1/ehf/regelsett", "POST", sett,
+         idem || nyIdempotensnokkel());
+
+export const settEhfGyldigTil = (regelsettId, gyldigTil, idem) =>
+  _muter(`/v1/ehf/regelsett/${encodeURIComponent(regelsettId)}`
+         + "/gyldig-til",
+         "POST", { gyldig_til: gyldigTil },
+         idem || nyIdempotensnokkel());
+
+export const registrerEhfregel = (regel, idem) =>
+  _muter("/v1/ehf/regel", "POST", regel,
+         idem || nyIdempotensnokkel());
+
+export const registrerEhfdokument = (dokument, idem) =>
+  _muter("/v1/ehf/dokument", "POST", dokument,
+         idem || nyIdempotensnokkel());
+
+export const registrerEhffelter = (dokumentId, felter, idem) =>
+  _muter(`/v1/ehf/dokument/${encodeURIComponent(dokumentId)}/felter`,
+         "POST", { felter }, idem || nyIdempotensnokkel());
+
+export const validerEhfdokument = (dokumentId, regelsettId, idem) =>
+  _muter(`/v1/ehf/dokument/${encodeURIComponent(dokumentId)}/valider`,
+         "POST", { regelsett_id: regelsettId },
+         idem || nyIdempotensnokkel());
+
+export const registrerEhfretting = (avvikId, retting, idem) =>
+  _muter(`/v1/ehf/avvik/${encodeURIComponent(avvikId)}/retting`,
+         "POST", retting, idem || nyIdempotensnokkel());
+
+export const merkRettingKlar = (rettingId, idem) =>
+  _muter(`/v1/ehf/retting/${encodeURIComponent(rettingId)}/klar`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const lukkEhffunn = (funnId, notat, idem) =>
+  _muter(`/v1/ehf/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", { notat }, idem || nyIdempotensnokkel());

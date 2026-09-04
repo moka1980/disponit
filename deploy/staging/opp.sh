@@ -87,6 +87,7 @@ disponit-sanksjonssveip.service disponit-sanksjonssveip.timer
 disponit-anbudssveip.service disponit-anbudssveip.timer
 disponit-tilskuddssveip.service disponit-tilskuddssveip.timer
 disponit-merkevaresveip.service disponit-merkevaresveip.timer
+disponit-ehfsveip.service disponit-ehfsveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -400,6 +401,16 @@ if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_MERKEVARESVEIP_URL:-}" ] 
   echo "AVBRUTT: DISPONIT_MERKEVARESVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_merkevaresveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 121 (M-54): EHF-sveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# En stille EHF-sveip er en standard som er gått ut uten at noen har
+# sett det — og en foreldet regel ser ut som en riktig regel.
+if ! ( set -a; . "$MILJOFIL"; set +a; [ -n "${DISPONIT_EHFSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_EHFSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_ehfsveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1241,6 +1252,17 @@ if [ -z "${DISPONIT_MERKEVARESVEIP_URL:-}" ]; then
 fi
 skriv_cred merkevaresveip DISPONIT_MERKEVARESVEIP_URL "$DISPONIT_MERKEVARESVEIP_URL"
 
+# 121 (M-54): EHF-sveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/ehfsveip
+if [ -z "${DISPONIT_EHFSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_EHFSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen ehfsveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred ehfsveip DISPONIT_EHFSVEIP_URL "$DISPONIT_EHFSVEIP_URL"
+
 # 118 (M-46): anbudssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/anbudssveip
 if [ -z "${DISPONIT_ANBUDSSVEIP_URL:-}" ]; then
@@ -1458,6 +1480,7 @@ disponit-sanksjonssveip.timer
 disponit-anbudssveip.timer
 disponit-tilskuddssveip.timer
 disponit-merkevaresveip.timer
+disponit-ehfsveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1781,6 +1804,10 @@ systemctl stop disponit-tilskuddssveip.timer \
 # sveipen tar ikke kopier.
 systemctl stop disponit-merkevaresveip.timer \
     disponit-merkevaresveip.service 2>/dev/null || true
+# 121 (M-54): EHF-sveipen stoppes i samme vindu — funnene er
+# idempotente. Ingen dom går tapt: valideringene står i basen.
+systemctl stop disponit-ehfsveip.timer \
+    disponit-ehfsveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -1994,6 +2021,8 @@ systemctl enable --now disponit-anbudssveip.timer
 systemctl enable --now disponit-tilskuddssveip.timer
 # 120 (M-55): merkevaresveipen, én gang i døgnet med spredning.
 systemctl enable --now disponit-merkevaresveip.timer
+# 121 (M-54): EHF-sveipen, én gang i døgnet med spredning.
+systemctl enable --now disponit-ehfsveip.timer
 # 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.

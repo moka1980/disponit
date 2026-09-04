@@ -1678,6 +1678,72 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tilskudd as tilskuddmodul
         return tilskuddmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-54 (121): EHF- og Peppol-avviksretteren. MODULEN SENDER INGEN
+    # FAKTURA — 121 har ingen mottaker og ingen utboks — og den
+    # VALIDERER IKKE MOT ET UTLØPT REGELSETT: en dom felt under en
+    # foreldet regel ser velformet ut og er gal.
+    def ehf_bilde(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.ehfbilde(tjeneste, request)
+
+    def ehf_funn(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.funn_endepunkt(tjeneste, request)
+
+    def ehf_regler(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.regler_endepunkt(tjeneste, request)
+
+    def ehf_avvik(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.avvik_endepunkt(tjeneste, request)
+
+    def ehf_valideringer(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.valideringer_endepunkt(tjeneste, request)
+
+    def ehf_krav(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.krav_endepunkt(tjeneste, request)
+
+    def ehf_regelsett(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.registrer_regelsett_endepunkt(tjeneste,
+                                                      request)
+
+    def ehf_gyldig_til(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.sett_gyldig_til_endepunkt(tjeneste, request)
+
+    def ehf_regel(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.registrer_regel_endepunkt(tjeneste, request)
+
+    def ehf_dokument(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.registrer_dokument_endepunkt(tjeneste,
+                                                     request)
+
+    def ehf_felter(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.registrer_felter_endepunkt(tjeneste, request)
+
+    def ehf_valider(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.valider_endepunkt(tjeneste, request)
+
+    def ehf_retting(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.registrer_retting_endepunkt(tjeneste, request)
+
+    def ehf_klar(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.merk_klar_endepunkt(tjeneste, request)
+
+    def ehf_lukk_funn(request: Request) -> Response:
+        from . import ehf as ehfmodul
+        return ehfmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-55 (120): merkevare- og IP-overvåkeren. MODULEN SENDER INGEN
     # KRAV OG INGEN KLAGE, og hvert funn peker på en bevaringskopi —
     # begge er fravær i datamodellen, ikke sjekker. Modulens eneste
@@ -2725,6 +2791,33 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/tilskudd/{ordning_id:uuid}/funn/lukk",
               tilskudd_lukk_funn, methods=["POST"]),
+        # M-54 (121). Samme rekkefølgeregel som M-55 under: faste
+        # stier FØR parametriserte, ellers ville `/v1/ehf/regel`
+        # blitt lest som en id.
+        Route("/v1/ehf", ehf_bilde, methods=["GET"]),
+        Route("/v1/ehf/funn", ehf_funn, methods=["GET"]),
+        Route("/v1/ehf/krav", ehf_krav, methods=["POST"]),
+        Route("/v1/ehf/regelsett", ehf_regelsett, methods=["POST"]),
+        Route("/v1/ehf/regel", ehf_regel, methods=["POST"]),
+        Route("/v1/ehf/dokument", ehf_dokument, methods=["POST"]),
+        Route("/v1/ehf/regelsett/{regelsett_id:uuid}/regler",
+              ehf_regler, methods=["GET"]),
+        Route("/v1/ehf/regelsett/{regelsett_id:uuid}/gyldig-til",
+              ehf_gyldig_til, methods=["POST"]),
+        Route("/v1/ehf/validering/{validering_id:uuid}/avvik",
+              ehf_avvik, methods=["GET"]),
+        Route("/v1/ehf/dokument/{dokument_id:uuid}/valideringer",
+              ehf_valideringer, methods=["GET"]),
+        Route("/v1/ehf/dokument/{dokument_id:uuid}/felter",
+              ehf_felter, methods=["POST"]),
+        Route("/v1/ehf/dokument/{dokument_id:uuid}/valider",
+              ehf_valider, methods=["POST"]),
+        Route("/v1/ehf/avvik/{avvik_id:uuid}/retting", ehf_retting,
+              methods=["POST"]),
+        Route("/v1/ehf/retting/{retting_id:uuid}/klar", ehf_klar,
+              methods=["POST"]),
+        Route("/v1/ehf/funn/{funn_id:uuid}/lukk", ehf_lukk_funn,
+              methods=["POST"]),
         # M-55 (120). REKKEFØLGEN ER IKKE VILKÅRLIG: de faste
         # stiene står FØR `{merkevare_id:uuid}`, ellers ville
         # `/v1/merkevare/funn` blitt lest som en merkevare-id.
@@ -3804,6 +3897,34 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/aktiv"):
         "bestilling:opprett",
     ("POST", "/v1/tilskudd/{ordning_id:uuid}/funn/lukk"):
+        "bestilling:opprett",
+    # M-54 (121): LESINGEN bærer `okonomi:read`, SKRIVINGEN
+    # `bestilling:opprett`. `/klar` er IKKE en utsendingsrute — den
+    # setter en tilstand hos oss, og signaturen finnes ikke i v1.
+    # `/valider` NEKTER mot et utløpt regelsett.
+    ("GET",  "/v1/ehf"):                         "okonomi:read",
+    ("GET",  "/v1/ehf/funn"):                    "okonomi:read",
+    ("GET",  "/v1/ehf/regelsett/{regelsett_id:uuid}/regler"):
+        "okonomi:read",
+    ("GET",  "/v1/ehf/validering/{validering_id:uuid}/avvik"):
+        "okonomi:read",
+    ("GET",  "/v1/ehf/dokument/{dokument_id:uuid}/valideringer"):
+        "okonomi:read",
+    ("POST", "/v1/ehf/krav"):                    "bestilling:opprett",
+    ("POST", "/v1/ehf/regelsett"):               "bestilling:opprett",
+    ("POST", "/v1/ehf/regel"):                   "bestilling:opprett",
+    ("POST", "/v1/ehf/dokument"):                "bestilling:opprett",
+    ("POST", "/v1/ehf/regelsett/{regelsett_id:uuid}/gyldig-til"):
+        "bestilling:opprett",
+    ("POST", "/v1/ehf/dokument/{dokument_id:uuid}/felter"):
+        "bestilling:opprett",
+    ("POST", "/v1/ehf/dokument/{dokument_id:uuid}/valider"):
+        "bestilling:opprett",
+    ("POST", "/v1/ehf/avvik/{avvik_id:uuid}/retting"):
+        "bestilling:opprett",
+    ("POST", "/v1/ehf/retting/{retting_id:uuid}/klar"):
+        "bestilling:opprett",
+    ("POST", "/v1/ehf/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-55 (120): LESINGEN bærer `okonomi:read`, SKRIVINGEN
     # `bestilling:opprett`. `/henvis` er IKKE en utsendingsrute — den
