@@ -4261,5 +4261,15 @@
   "ui.merkevare.skjema.aktiv_ok": "The mark is updated.",
   "ui.merkevare.feil.generell": "Something went wrong. Try again.",
   "ui.merkevare.feil.tilstand": "That action is not legal in this state.",
-  "ui.merkevare.feil.vurdering": "The assessment was rejected. Are the thresholds set, and is the finding open?"
+  "ui.merkevare.feil.vurdering": "The assessment was rejected. Are the thresholds set, and is the finding open?",
+  "site.modul.m54.navn": "EHF and Peppol correction agent",
+  "site.modul.m54.tekst": "The invoice's FORM against the standard, with the schema version on every validation. v1 sends no corrected invoice: an invoice sent twice is a double claim for payment, and a defect found against an expired schema version is a stale verdict that looks well-formed.",
+  "site.modul.m52.navn": "Customs and HS code agent",
+  "site.modul.m52.tekst": "The proposed HS code, with the nomenclature version and what the proposal rests on. v1 declares nothing: an HS code is a legal claim about what the goods are, the wrong code brings a fine, and a proposal without a basis manufactures false confidence.",
+  "site.modul.m47.navn": "Regulatory filing agent",
+  "site.modul.m47.tekst": "The obligation, its legal basis and its deadline. v1 files nothing — but here absence is not enough: a deadline that passes unseen is exactly the harm the module exists to prevent, so a silent filing agent is worse than none.",
+  "site.modul.m50.navn": "Public records and access watch",
+  "site.modul.m50.tekst": "The journal entry, the case, and the purpose it was registered for. v1 fetches nothing itself: a fact being public does not make it free to collect and combine, and «we found it online» is not a legal basis.",
+  "site.modul.m53.navn": "Health, safety and incident intake",
+  "site.modul.m53.tekst": "The incident, the measure taken, and the retention basis. An anonymous report is its own state rather than an empty name field: a field that can be filled gets filled, and whistleblower protection that leaks identity is worthless."
 }

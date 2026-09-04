@@ -1,0 +1,74 @@
+# M-52 TOLL- OG HS-KODEAGENT — FEIL KODE GIR BOT, IKKE FORSINKELSE.
+#
+# `m52-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 122
+# tildelt i docs/KLYNGE7-FUNDAMENT.md.
+#
+# v1 DEKLARERER INGENTING.
+#
+# DOMMEN: en HS-kode er en RETTSLIG PÅSTAND om hva en vare er.
+# Spesifikasjonen sier det rett ut — feil kode gir bot, ikke bare
+# forsinkelse — og boten treffer kunden, ikke oss. v1 foreslår, og
+# forslaget er ikke en deklarasjon.
+#
+# ET FORSLAG UTEN GRUNNLAG ER VERRE ENN INGEN FORSLAG. En kode et
+# menneske stempler fordi den sto der, produserer falsk trygghet: den
+# ser like ferdig ut som en kode noen har tenkt på. Derfor bærer hvert
+# forslag HVA det hviler på — hvilken nomenklaturversjon, hvilken
+# regeltekst, hvilken tidligere klassifisering — og døra NEKTER å
+# foreslå når grunnlaget er tynt.
+#
+# HS-NOMENKLATUREN REVIDERES. Klyngens delte invariant: hvert forslag
+# bærer nomenklaturversjonen sin, og en versjon som er utløpt gjør
+# forslaget til et sveipefunn.
+#
+# GRENSEN MOT M-28: M-28 eier TRANSPORTEN — hvor varen er og når den
+# kommer. M-52 eier FORTOLLINGEN — hva varen er, rettslig. En vare kan
+# være framme og feilklassifisert.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m52_tollkode
+navn: Toll- og HS-kodeagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m52-v1` bærer invarianten
+# `forslag_uten_grunnlag` — en kode uten hva den hviler på er en
+# gjetning i rettslig form.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m52_tollkode
+i18n_prefiks: tollkode
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: varer med KJENT riktig HS-kode, kjørt likt lokalt og på
+      staging. Et forslag som varierer mellom miljøene er ikke et
+      forslag — det er en tilfeldighet i rettslig form.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert forslag har nomenklaturversjon og grunnlag i
+      evidenskjeden. Uten dem kan ingen etterprøve hvorfor koden ble
+      foreslått.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: tollkodesveipen bygget, og at en feil i den ikke lar et
+      forslag uten grunnlag se begrunnet ut.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

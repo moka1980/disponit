@@ -1,0 +1,75 @@
+# M-54 EHF- OG PEPPOL-AVVIKSRETTER — REGELEN ER EUs, IKKE VÅR.
+#
+# `m54-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 121
+# tildelt i docs/KLYNGE7-FUNDAMENT.md.
+#
+# v1 SENDER INGEN RETTET FAKTURA.
+#
+# DOMMEN: spesifikasjonens egen vakt sier «retting klargjøres
+# maskinelt, utsending signeres av menneske». En faktura sendt to
+# ganger er et dobbelt betalingskrav, og en rettet faktura som gikk ut
+# uten at noen så på rettingen er nettopp det. v1 klargjør; ingen
+# utboks, ingen mottaker, ingen signatur.
+#
+# HVER VALIDERING BÆRER SKJEMAVERSJONEN SIN. EHF-formatet får nye
+# versjoner, og et avvik funnet mot en gammel versjon er ikke et
+# avvik — det er en foreldet dom som ser velformet ut. Klyngens delte
+# invariant, og her er den lettest å se om er riktig: «hva er gyldig
+# EHF» er XML mot et skjema, ikke en vurdering.
+#
+# REGELEN KAN BLI GAMMEL, OG SVEIPEN SIER FRA. En skjemaversjon har en
+# gyldighet; en validering regnet under en utløpt versjon er et
+# sveipefunn, ikke et stille galt svar.
+#
+# GRENSEN MOT M-14: M-14 kontrollerer fakturaens INNHOLD mot
+# bestilling, avtale og mottak. M-54 kontrollerer dens FORM mot en
+# teknisk standard. En faktura kan være formriktig og innholdsmessig
+# gal, og omvendt — derfor to moduler og ikke en utvidelse.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m54_ehf
+navn: EHF- og Peppol-avviksretter
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: grensen `m54-v1` bærer invarianten
+# `validering_uten_skjemaversjon` — en dom uten versjonen den ble tatt
+# under kan ingen etterprøve når standarden har flyttet seg.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m54_ehf
+i18n_prefiks: ehf
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: fakturaer med KJENT fasit for hvilke som er formriktige
+      og hvilke som ikke er det, kjørt likt lokalt og på staging.
+      Valideringen er deterministisk eller ingenting.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver validering har skjemaversjon og avviksliste i
+      evidenskjeden. En dom uten versjonen kan ingen etterprøve.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: EHF-sveipen bygget, og at en feil i den ikke lar en
+      faktura validert mot en UTLØPT skjemaversjon se godkjent ut.
+      En foreldet regel ser nøyaktig ut som en riktig regel.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
