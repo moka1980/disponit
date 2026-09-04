@@ -1,0 +1,22 @@
+# M-55 (120): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `funnfrist_dogn` og
+# `henvisningsfrist_dogn` måles begge i DØGN.
+#
+# KLOKKESLETTET ER 09:50, klyngefundamentets siste plass i stigen
+# 08:50–09:50. `disponit-sveipestatus.timer` (115) står bakerst og
+# leser flåtens tilstand ETTER at flåten har kjørt.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage en forveksling ingen har sett på.
+
+[Unit]
+Description=Disponit merkevaresveip-timer
+
+[Timer]
+OnCalendar=*-*-* 09:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1287,3 +1287,53 @@ export const leggIKampanjeplan = (kampanjeId, mottakerId, idem) =>
 export const settKampanjemottakerAktiv = (mottakerId, aktiv, idem) =>
   _muter(`/v1/kampanje/mottaker/${encodeURIComponent(mottakerId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// M-55 (120): merkevare- og IP-overvåkeren. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `sendKrav` HER, INGEN `sendKlage`, INGEN MOTTAKER —
+// OG DET KAN IKKE FINNES: 120 har ingen kolonne å skrive et krav til.
+// Et krav sendt på et automatisk funn er en ANKLAGE MOT EN NAVNGITT
+// PART, og en feilaktig anklage er ikke reversibel ved å trekke den.
+//
+// MODULENS ENESTE UTGANG ER `henvisMerkevarefunn`, som fester en peker
+// til en sak i M-37s unntakskø. Der beslutter et menneske.
+//
+// OG `registrerMerkevarefunn` TAR ALLTID EN `kopi_id`. Det er ikke en
+// validering her — `merkevarefunn.kopi_id` er NOT NULL med
+// fremmednøkkel, så et funn uten bevaringskopi kan ikke uttrykkes.
+export const settMerkevarekrav = (krav, idem) =>
+  _muter("/v1/merkevare/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerMerkevare = (merke, idem) =>
+  _muter("/v1/merkevare/merke", "POST", merke,
+         idem || nyIdempotensnokkel());
+
+export const registrerBevaringskopi = (kopi, idem) =>
+  _muter("/v1/merkevare/bevaringskopi", "POST", kopi,
+         idem || nyIdempotensnokkel());
+
+export const registrerMerkevarefunn = (funn, idem) =>
+  _muter("/v1/merkevare/funn", "POST", funn,
+         idem || nyIdempotensnokkel());
+
+export const vurderMerkevarefunn = (funnId, idem) =>
+  _muter(`/v1/merkevare/funn/${encodeURIComponent(funnId)}/vurder`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const henvisMerkevarefunn = (funnId, unntakId, idem) =>
+  _muter(`/v1/merkevare/funn/${encodeURIComponent(funnId)}/henvis`,
+         "POST", { unntak_id: unntakId },
+         idem || nyIdempotensnokkel());
+
+export const lukkMerkevarefunn = (funnId, begrunnelse, idem) =>
+  _muter(`/v1/merkevare/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", { begrunnelse }, idem || nyIdempotensnokkel());
+
+export const settMerkevareAktiv = (merkevareId, aktiv, idem) =>
+  _muter(`/v1/merkevare/${encodeURIComponent(merkevareId)}/aktiv`,
+         "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+export const lukkMerkevarevarsel = (varselId, notat, idem) =>
+  _muter(`/v1/merkevare/varsel/${encodeURIComponent(varselId)}/lukk`,
+         "POST", { notat }, idem || nyIdempotensnokkel());

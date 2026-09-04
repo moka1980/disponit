@@ -61,6 +61,7 @@ jobs:
       DISPONIT_TEST_SANKSJONSSVEIP_DSN: postgresql://disponit_sanksjonssveip:sank@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_ANBUDSSVEIP_DSN: postgresql://disponit_anbudssveip:anbu@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_TILSKUDDSSVEIP_DSN: postgresql://disponit_tilskuddssveip:tils@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_MERKEVARESVEIP_DSN: postgresql://disponit_merkevaresveip:merk@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:

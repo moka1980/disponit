@@ -70,6 +70,7 @@ FLAATEN: dict[str, int] = {
     "lagersveip": 30,
     "leverandorsveip": 30,
     "lonnssveip": 30,
+    "merkevaresveip": 30,
     "motpartssveip": 30,
     "onboardingsveip": 30,
     "personvernsveip": 30,
