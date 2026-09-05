@@ -713,6 +713,33 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm54_sveip_ehf(integer)',                                            'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valider_dokument(text,uuid,uuid,uuid,text)',                    'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valideringene(text,uuid)',                                      'disponit_ehf_eier'),
+    -- 123 (M-47): pliktregisterets doerer og myndighetssveipen.
+    -- INGEN AV DEM SENDER INN. En innsending til en myndighet er
+    -- BINDENDE og kan ikke kalles tilbake — `m47_registrer_bevis`
+    -- registrerer at et MENNESKE har sendt inn, et annet sted.
+    --
+    -- MEN HER ER FRAVAERET IKKE NOK: en frist som gaar uten
+    -- innsending er nettopp skaden. Derfor eier sveipen to funn ingen
+    -- kan lukke for haand (`m47_funn_er_sveipens`).
+    --
+    -- `m47_regelverk_frosset()` staar IKKE her: radvakten lages etter
+    -- `RESET ROLE` og eies av migratoren, som i 122.
+    ('FUNCTION', 'm47_bildet(text,integer)',                                         'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_evidens(text,uuid,text,text,jsonb)',                           'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_funn_er_sveipens(text)',                                       'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_funnene(text,boolean)',                                        'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_lukk_funn(text,uuid,text,text)',                               'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_pliktene(text,integer)',                                       'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_plikttypene(text,integer)',                                    'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_regelverk_gyldig(date,date)',                                  'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_regelverkene(text,integer)',                                   'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_registrer_bevis(text,uuid,uuid,date,text,text,text,text)',     'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_registrer_plikt(text,uuid,uuid,uuid,date,date,date,text)',     'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_registrer_plikttype(text,uuid,text,text,text,text,text)',      'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_registrer_regelverk(text,uuid,text,text,text,text,date,date,text,text,text)', 'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_sett_gyldig_til(text,uuid,date,text)',                         'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_sett_krav(text,integer,integer,integer,text,text)',            'disponit_myndighet_eier'),
+    ('FUNCTION', 'm47_sveip_myndighetsplikt(integer)',                               'disponit_myndighet_eier'),
     -- 122 (M-52): tollkoderegisterets doerer og tollkodesveipen.
     -- INGEN AV DEM DEKLARERER, og ingen avgir et forslag uten
     -- grunnlag: `m52_avgi_forslag` skriver forslaget og grunnene i

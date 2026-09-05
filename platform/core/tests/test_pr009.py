@@ -576,7 +576,10 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 121 (M-54): EHF-sveipens EGEN DSN, av samme grunn.
         "DISPONIT_EHFSVEIP_URL",
         # 122 (M-52): tollkodesveipens EGEN DSN, av samme grunn.
-        "DISPONIT_TOLLKODESVEIP_URL")})
+        "DISPONIT_TOLLKODESVEIP_URL",
+        # 123 (M-47): fristsveipens EGEN DSN — og her er stillheten
+        # selve skaden, ikke bare et manglende varsel.
+        "DISPONIT_MYNDIGHETSSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -673,6 +676,12 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     sti_toll = rot / "tollkodesveip/DISPONIT_TOLLKODESVEIP_URL"
     assert sti_toll.read_text(
         encoding="utf-8") == "verdi-DISPONIT_TOLLKODESVEIP_URL"
+    # 123 (M-47): fristsveipens EGEN DSN. EN STILLE M-47 ER VERRE ENN
+    # INGEN M-47 — en sveip uten DSN lar fristen gå, og det er nøyaktig
+    # skaden modulen finnes for å hindre.
+    sti_mynd = rot / "myndighetssveip/DISPONIT_MYNDIGHETSSVEIP_URL"
+    assert sti_mynd.read_text(
+        encoding="utf-8") == "verdi-DISPONIT_MYNDIGHETSSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -1176,7 +1185,9 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 121 (M-54): EHF-sveipens EGEN DSN, av samme grunn.
         "DISPONIT_EHFSVEIP_URL",
         # 122 (M-52): tollkodesveipens EGEN DSN, av samme grunn.
-        "DISPONIT_TOLLKODESVEIP_URL")})
+        "DISPONIT_TOLLKODESVEIP_URL",
+        # 123 (M-47): fristsveipens EGEN DSN, av samme grunn.
+        "DISPONIT_MYNDIGHETSSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

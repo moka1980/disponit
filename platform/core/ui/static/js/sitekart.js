@@ -511,6 +511,12 @@ const BASISRUTER = [
   // setning. Fraværene er portene `modulen_deklarerte` og
   // `forslag_uten_grunnlag`.
   { nokkel: "tollkode", scope: "okonomi:read", modulflate: 52 },
+  // M-47 (123): myndighetsrapporteringsagenten. MODULFLATE bak
+  // `okonomi:read` — flatens svakeste ledd, som resten av klyngen.
+  // Modulen SENDER INGEN INNSENDING; men her er fraværet ikke nok, for
+  // en frist som går uten innsending er nettopp skaden. Flaten viser
+  // derfor det som HAR gått galt først.
+  { nokkel: "myndighet", scope: "okonomi:read", modulflate: 47 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

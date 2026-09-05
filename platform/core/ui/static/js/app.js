@@ -51,6 +51,7 @@ import { visTilskudd } from "./flater/tilskudd.js";
 import { visMerkevare } from "./flater/merkevare.js";
 import { visEhf } from "./flater/ehf.js";
 import { visTollkode } from "./flater/tollkode.js";
+import { visMyndighet } from "./flater/myndighet.js";
 import { visBetaling } from "./flater/betaling.js";
 import { visKampanje } from "./flater/kampanje.js";
 import { visLonn } from "./flater/lonn.js";
@@ -144,6 +145,7 @@ const FLATER = {
   merkevare: visMerkevare,
   ehf: visEhf,
   tollkode: visTollkode,
+  myndighet: visMyndighet,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

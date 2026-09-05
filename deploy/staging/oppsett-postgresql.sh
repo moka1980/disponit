@@ -334,6 +334,7 @@ sudo -u postgres psql -qc "GRANT $MERKEVAREIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $EHFEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $TOLLKODEEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $MYNDIGHETEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MYNDIGHETEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POSTJOURNALEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $HMSEIER TO $MIGRATOR WITH INHERIT FALSE"
 
@@ -477,6 +478,10 @@ EHFSVEIP_DSN=("DISPONIT_EHFSVEIP_URL=$DB"
 # M-52 (122). Rollen ble opprettet av klynge 7-fundamentet (#377).
 TOLLKODESVEIP_DSN=("DISPONIT_TOLLKODESVEIP_URL=$DB"
                    "DISPONIT_TEST_TOLLKODESVEIP_DSN=${DB}_test")
+# 123 (M-47): fristsveipens egen DSN. En stille myndighetssveip lar en
+# frist gå — og det er skaden modulen finnes for å hindre.
+MYNDIGHETSSVEIP_DSN=("DISPONIT_MYNDIGHETSSVEIP_URL=$DB"
+                     "DISPONIT_TEST_MYNDIGHETSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -516,6 +521,7 @@ sikre_rolle_dsn "$TILSKUDDSSVEIP" "${TILSKUDDSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$MERKEVARESVEIP" "${MERKEVARESVEIP_DSN[@]}"
 sikre_rolle_dsn "$EHFSVEIP" "${EHFSVEIP_DSN[@]}"
 sikre_rolle_dsn "$TOLLKODESVEIP" "${TOLLKODESVEIP_DSN[@]}"
+sikre_rolle_dsn "$MYNDIGHETSSVEIP" "${MYNDIGHETSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
