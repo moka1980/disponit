@@ -1144,3 +1144,62 @@ def test_en_uke_kan_ikke_maales_paa_sin_egen_siste_dag():
             rt.execute(
                 "SELECT * FROM m15_registrer_maaling(%s,%s,%s,%s,%s,%s)",
                 (t, pid, 1, -1, None, "u-kari"))
+
+
+@pg
+def test_hver_baneuke_slutter_paa_sin_egen_siste_dag():
+    """129 ENDRET BETYDNINGEN AV `ukeslutt` UTEN Å ETTERFYLLE
+    (CodeRabbit, MINOR pa #392).
+
+    128 skrev `ukeslutt` som FORSTE dag i neste uke; 129 skriver den
+    som SISTE dag i uken, og flippet begge leserne med. En rad skrevet
+    av 128 ville derfor blitt malbar en dag for sent.
+
+    JEG ETTERFYLTE IKKE, og grunnen skal sta:
+
+      * `prognosebane` er append-only, handhevet for alle inkludert
+        migrator. En korrigerende UPDATE matte slatt av vakten - og en
+        migrasjon som slar av append-only-vakten for a rette et tall
+        er noyaktig den dora tabellen finnes for a stenge.
+      * Staging sto pa migrasjon 127 da 129 ble skrevet: tabellen
+        eksisterte ikke der. En base som migrerer fra bunnen kjorer
+        128 og 129 i samme pass, uten at noen rekker a lage en
+        prognose mellom dem.
+
+    HVA DENNE PORTEN KAN MALE, OG HVA DEN IKKE KAN: `prognosebane` har
+    FORCE ROW LEVEL SECURITY, sa selv migrator ser bare sin egen
+    tenant. Porten kan derfor IKKE revidere en etterlatt 128-rad hos
+    en fremmed tenant - det sporsmalet er besvart av staging-beviset
+    over, ikke av en test. Det den maler er SKRIVEREN: at
+    `m15_lag_prognose` legger ukeslutt pa ukens siste dag, hver uke,
+    slik at 128-konvensjonen ikke kan snike seg inn igjen.
+
+    MUTASJONEN SOM DREPER DENNE: skriv `k.til` igjen i stedet for
+    `k.til - 1` i `m15_lag_prognose`.
+    """
+    t = _tenantnavn("ukeslutt")
+    with _to() as (rt, mg):
+        _krav(rt, t, horisont=13)
+        mid = _modell(rt, t)
+        _post(rt, t)
+        pid, _ = _prognose(rt, t, mid)
+        _sett_kontekst(mg, t)
+        rader = mg.execute(
+            "SELECT count(*) FROM prognosebane WHERE tenant=%s"
+            "   AND prognose_id=%s", (t, pid)).fetchone()[0]
+        gale = mg.execute(
+            "SELECT b.uke_nr, b.ukeslutt, p.laget_dato"
+            "  FROM prognosebane b"
+            "  JOIN likviditetsprognose p"
+            "    ON p.tenant = b.tenant"
+            "   AND p.prognose_id = b.prognose_id"
+            " WHERE b.tenant=%s AND b.prognose_id=%s"
+            "   AND b.ukeslutt"
+            "       <> p.laget_dato + (b.uke_nr * 7) - 1",
+            (t, pid)).fetchall()
+        mg.rollback()
+    # En tom bane ville gjort porten gronn uten a male noe.
+    assert rader == 13, f"forventet 13 baneuker, fikk {rader}"
+    assert gale == [], (
+        "baneuker der `ukeslutt` ikke er ukens siste dag - enten er"
+        f" 128-konvensjonen i live, eller 129 er reversert: {gale}")
