@@ -123,8 +123,8 @@ UBYGDE_GRENSER = frozenset({
     # bygge modulen, ikke et separat opprydningsarbeid — og
     # `test_de_ubygde_grensene_er_faktisk_ubygde` er den som krever
     # det. Den falt i det øyeblikket 128 landet, som den skal.
-    "m33-v1",   # M-33 prognose, migrasjon 129
-    "m36-v1",   # M-36 optimalisator, migrasjon 130
+    "m33-v1",   # M-33 prognose, migrasjon 130
+    "m36-v1",   # M-36 optimalisator, migrasjon 131
 })
 
 
