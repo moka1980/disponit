@@ -566,6 +566,13 @@ const BASISRUTER = [
   // Modulen publiserer ingenting selv: den gjør et utkast klart,
   // og et menneske med et navn tar det ut i verden.
   { nokkel: "innhold", scope: "security:read", modulflate: 20 },
+  // M-43 (135): tale og telefoni. MODULFLATE bak `security:read`
+  // — en transkripsjon er hva navngitte mennesker sa i en
+  // samtale, og et opptak er en behandling av
+  // personopplysninger med hjemmel.
+  // Modulen inngår ingen avtale og gir ingen økonomiske løfter:
+  // den nedtegner hva som ble sagt, og sier først hva den er.
+  { nokkel: "telefoni", scope: "security:read", modulflate: 43 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

@@ -97,6 +97,7 @@ disponit-prognosesveip.service disponit-prognosesveip.timer
 disponit-optimalisatorsveip.service disponit-optimalisatorsveip.timer
 disponit-motesveip.service disponit-motesveip.timer
 disponit-innholdssveip.service disponit-innholdssveip.timer
+disponit-telefonisveip.service disponit-telefonisveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -502,6 +503,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_INNHOLDSSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_innholdssveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 135 (M-43): telefonisveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille telefonisveip er en eskalering ingen tok, mens den
+# andre parten fikk beskjed om at noen skulle ta over.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_TELEFONISVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_TELEFONISVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_telefonisveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1460,6 +1472,18 @@ fi
 skriv_cred innholdssveip DISPONIT_INNHOLDSSVEIP_URL \
     "$DISPONIT_INNHOLDSSVEIP_URL"
 
+# 135 (M-43): telefonisveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/telefonisveip
+if [ -z "${DISPONIT_TELEFONISVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_TELEFONISVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen telefonisveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred telefonisveip DISPONIT_TELEFONISVEIP_URL \
+    "$DISPONIT_TELEFONISVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1710,6 +1734,7 @@ disponit-prognosesveip.timer
 disponit-optimalisatorsveip.timer
 disponit-motesveip.timer
 disponit-innholdssveip.timer
+disponit-telefonisveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -2066,6 +2091,10 @@ systemctl stop disponit-motesveip.timer \
 # idempotente, og kildevinduet står i `innholdskrav`, ikke i sveipen.
 systemctl stop disponit-innholdssveip.timer \
     disponit-innholdssveip.service 2>/dev/null || true
+# 135 (M-43): telefonisveipen stoppes i samme vindu. Funnene er
+# idempotente, og fristene står i `telefonikrav`, ikke i sveipen.
+systemctl stop disponit-telefonisveip.timer \
+    disponit-telefonisveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2296,6 +2325,8 @@ systemctl enable --now disponit-optimalisatorsveip.timer
 systemctl enable --now disponit-motesveip.timer
 # 134 (M-20): innholdssveipen, 12:50 — klynge 9s andre trinn.
 systemctl enable --now disponit-innholdssveip.timer
+# 135 (M-43): telefonisveipen, 13:05 — klynge 9s tredje trinn.
+systemctl enable --now disponit-telefonisveip.timer
 # 115: sveipestatusen, ETTER hele stigen (12:35 fra og med 133, og
 # flyttet helt til 13:35 fordi klynge 9s øvrige slot alt er tildelt).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at

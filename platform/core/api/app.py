@@ -2149,6 +2149,91 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import innhold as innholdsmodul
         return innholdsmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-43 TALE- OG TELEFONIAGENT (135). DET FINNES INGEN RUTE SOM
+    # INNGÅR EN AVTALE ELLER LOVER PENGER.
+    #
+    # Vaktsetningen krever eksplisitt policy for begge, og v1 har ingen
+    # vei dit i det hele tatt — ikke en avslått vei, ikke en vei bak en
+    # bryter. Det finnes ingen kropp med et beløp i.
+    #
+    # `/samtale` NEKTER hvis identifikasjonen er datert før samtalen
+    # startet, eller kom senere enn tenantens frist. DEN SOM TROR HUN
+    # SNAKKER MED ET MENNESKE, SVARER ANNERLEDES.
+    #
+    # `/linje` NEKTER en linje datert før identifikasjonen: INGENTING
+    # BLE SAGT FØR VI SA HVA VI ER.
+    #
+    # `/opptak` arver 133s fire nekt ordrett, og gyldigheten måles med
+    # M-7s egen funksjon — ikke med en kopi.
+    def telefoni_bilde(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.telefonibilde(tjeneste, request)
+
+    def telefoni_samtaler(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.samtaler_endepunkt(tjeneste, request)
+
+    def telefoni_hjemler(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.hjemler_endepunkt(tjeneste, request)
+
+    def telefoni_regler(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.regler_endepunkt(tjeneste, request)
+
+    def telefoni_funn(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.funn_endepunkt(tjeneste, request)
+
+    def telefoni_transkripsjon(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.transkripsjon_endepunkt(tjeneste, request)
+
+    def telefoni_krav(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.krav_endepunkt(tjeneste, request)
+
+    def telefoni_hjemmel_ny(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.registrer_hjemmel_endepunkt(tjeneste, request)
+
+    def telefoni_regel_ny(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.registrer_regel_endepunkt(tjeneste, request)
+
+    def telefoni_regel_avvikle(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.avvikle_regel_endepunkt(tjeneste, request)
+
+    def telefoni_samtale_ny(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.start_samtale_endepunkt(tjeneste, request)
+
+    def telefoni_samtale_avslutt(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.avslutt_samtale_endepunkt(tjeneste, request)
+
+    def telefoni_opptak(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.start_opptak_endepunkt(tjeneste, request)
+
+    def telefoni_linje(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.registrer_linje_endepunkt(tjeneste, request)
+
+    def telefoni_eskaler(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.eskaler_endepunkt(tjeneste, request)
+
+    def telefoni_eskalering_lukk(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.lukk_eskalering_endepunkt(tjeneste, request)
+
+    def telefoni_lukk_funn(request: Request) -> Response:
+        from . import telefoni as telefonimodul
+        return telefonimodul.lukk_funn_endepunkt(tjeneste, request)
+
+
 
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
@@ -3507,6 +3592,34 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               innhold_tilbake, methods=["POST"]),
         Route("/v1/innhold/funn/{funn_id:uuid}/lukk",
               innhold_lukk_funn, methods=["POST"]),
+        Route("/v1/telefoni", telefoni_bilde, methods=["GET"]),
+        Route("/v1/telefoni/samtaler", telefoni_samtaler,
+              methods=["GET"]),
+        Route("/v1/telefoni/hjemler", telefoni_hjemler, methods=["GET"]),
+        Route("/v1/telefoni/regler", telefoni_regler, methods=["GET"]),
+        Route("/v1/telefoni/funn", telefoni_funn, methods=["GET"]),
+        Route("/v1/telefoni/krav", telefoni_krav, methods=["POST"]),
+        Route("/v1/telefoni/hjemmel", telefoni_hjemmel_ny,
+              methods=["POST"]),
+        Route("/v1/telefoni/regel", telefoni_regel_ny, methods=["POST"]),
+        Route("/v1/telefoni/regel/{regel_id:uuid}/avvikle",
+              telefoni_regel_avvikle, methods=["POST"]),
+        Route("/v1/telefoni/samtale", telefoni_samtale_ny,
+              methods=["POST"]),
+        Route("/v1/telefoni/samtale/{samtale_id:uuid}/transkripsjon",
+              telefoni_transkripsjon, methods=["GET"]),
+        Route("/v1/telefoni/samtale/{samtale_id:uuid}/avslutt",
+              telefoni_samtale_avslutt, methods=["POST"]),
+        Route("/v1/telefoni/samtale/{samtale_id:uuid}/opptak",
+              telefoni_opptak, methods=["POST"]),
+        Route("/v1/telefoni/samtale/{samtale_id:uuid}/linje",
+              telefoni_linje, methods=["POST"]),
+        Route("/v1/telefoni/samtale/{samtale_id:uuid}/eskaler",
+              telefoni_eskaler, methods=["POST"]),
+        Route("/v1/telefoni/eskalering/{eskalering_id:uuid}/lukk",
+              telefoni_eskalering_lukk, methods=["POST"]),
+        Route("/v1/telefoni/funn/{funn_id:uuid}/lukk",
+              telefoni_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4833,6 +4946,31 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/innhold/publisering/{publisering_id:uuid}/tilbake"):
         "bestilling:opprett",
     ("POST", "/v1/innhold/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("GET",  "/v1/telefoni"):                    "security:read",
+    ("GET",  "/v1/telefoni/samtaler"):           "security:read",
+    ("GET",  "/v1/telefoni/hjemler"):            "security:read",
+    ("GET",  "/v1/telefoni/regler"):             "security:read",
+    ("GET",  "/v1/telefoni/funn"):               "security:read",
+    ("GET",  "/v1/telefoni/samtale/{samtale_id:uuid}/transkripsjon"):
+        "security:read",
+    ("POST", "/v1/telefoni/krav"):               "bestilling:opprett",
+    ("POST", "/v1/telefoni/hjemmel"):            "bestilling:opprett",
+    ("POST", "/v1/telefoni/regel"):              "bestilling:opprett",
+    ("POST", "/v1/telefoni/samtale"):            "bestilling:opprett",
+    ("POST", "/v1/telefoni/regel/{regel_id:uuid}/avvikle"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/samtale/{samtale_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/samtale/{samtale_id:uuid}/opptak"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/samtale/{samtale_id:uuid}/linje"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/samtale/{samtale_id:uuid}/eskaler"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/eskalering/{eskalering_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/telefoni/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser
