@@ -294,7 +294,8 @@ det samme som en forpliktelse noen har bekreftet.
 | 128 | M-15 | `128_m15_likviditet.sql` | 1. **Landet 5/9.** |
 | 129 | — | `129_m15_ukevindu.sql` | rettelse, se under |
 | ~~129~~ **130** | M-33 | `130_m33_prognose.sql` | 2. **Landet 5/9.** |
-| ~~130~~ **131** | M-36 | `131_m36_optimalisator.sql` | 3. |
+| ~~129~~ ~~130~~ **131** | — | `131_m33_rettelser.sql` | rettelse, se under |
+| ~~130~~ ~~131~~ **132** | M-36 | `132_m36_optimalisator.sql` | 3. |
 
 **M-33 OG M-36 FLYTTET ETT HAKK, og grunnen skal stå her — et tildelt
 migrasjonsnummer som stille bytter plass er nøyaktig den slags
@@ -308,6 +309,16 @@ tidligere uke å falle i. Migrasjoner er forward-only, så rettelsen tok
 modulnummer** (125/126 gjorde det samme for klynge 7). Mønsteret er
 verdt å se: nummeret er ikke en plan, det er en kø — og en systemisk
 feil i det som ALT er merget går foran en modul som ennå ikke finnes.
+
+**OG FJERDE GANG, SAMME KVELD: 131 (`131_m33_rettelser.sql`).**
+CodeRabbits gjennomgang av #394 fant at M-33s glidende snitt delte på
+uker tenanten ikke hadde levd — en ny tenant fikk et forventet nivå
+langt under det virkelige, og sveipen reiste
+`slaar_ikke_naiv_baseline` mot en modell som aldri fikk sitt eget
+vindu. **Funnet som skulle si «modellen er ikke god nok» ville sagt
+«tenanten er ny».** Det er den samme feilformen fila selv advarer mot
+for tom historikk, brukt motsatt vei — og den rammet modulens egen
+hovedinvariant, ikke en detalj. M-36 flyttes til 132.
 
 **Rekkefølgen er begrunnet.** M-15 først fordi den er den mest
 KONKRETE: en kontantbane er et tall man kan ta feil av på en målbar
@@ -340,15 +351,35 @@ skal lese flåtens tilstand ETTER at flåten har kjørt, og
 `test_timeren_gaar_etter_hele_stigen` gjør det til en måling og ikke
 en huskeregel.
 
-**GJORT 5/9, I M-33s PR (130).** Se avsnittet under for hvorfor den ventet — og `test_timeren_gaar_etter_hele_stigen` i `test_m33_prognose.py` måler den nå, ved å SAMMENLIGNE klokkeslettene i stedet for å pinne et literal.
+**GJORT 5/9, I M-33s PR (130).**
+`test_timeren_gaar_etter_hele_stigen` i `test_m33_prognose.py` måler
+den nå, ved å SAMMENLIGNE klokkeslettene i stedet for å pinne et
+literal. `test_m54_ehf.py` pinnet `11:20` som literal og ble skrevet
+om i samme PR — den målte at noen husket å redigere testen, ikke
+rekkefølgen.
 
-**FLYTTINGEN BLE IKKE GJORT I FUNDAMENTET, OG DET VAR RIKTIG.** Dette fundamentet
-tildeler klokkeslettene; det installerer ingen timer. Flytter man
-sveipestatus nå, står den i halvannen time og leser en flåte som ikke
-har fått nye medlemmer ennå — og `test_m54_ehf.py` pinner 11:20 mot
-dagens stige, med rette. **Flyttingen hører til M-33s PR**, som er den
-første som faktisk legger en timer bak 11:20. Et fundament som endrer
-drift for noe som ennå ikke finnes, er et fundament som gjetter.
+**FLYTTINGEN BLE IKKE GJORT I FUNDAMENTET, OG DET VAR RIKTIG.** Et
+fundament tildeler klokkeslettene; det installerer ingen timer. Hadde
+sveipestatus flyttet da dette ble skrevet, ville den stått i halvannen
+time og lest en flåte uten nye medlemmer — og `test_m54_ehf.py` pinnet
+den gamle stigen, med rette på det tidspunktet. **Flyttingen hørte til
+M-33s PR**, som er den første som faktisk legger en timer bak 11:20.
+Et fundament som endrer drift for noe som ennå ikke finnes, gjetter.
+
+**OG KLOKKESLETTET ALENE VAR IKKE NOK (rettet i 131, etter
+CodeRabbit).** `RandomizedDelaySec` etablerer ingen rekkefølge — den
+finnes for å hindre at timere fyrer samtidig. M-33 hadde 30 minutters
+spredning og inntil 10 minutters kjøretid, altså verst tenkelig slutt
+12:15, mens statussveipen kan starte 12:05 med null spredning.
+Statussveipen ville lest forrige døgns tilstandsfil og meldt en FALSK
+«uteblitt». M-33s spredning er derfor 15 minutter: 11:35 + 15 + 10 =
+12:00.
+
+**DEN SAMME OVERLAPPEN FINNES I RESTEN AV FLÅTEN** — stigens trinn er
+15 minutter fra hverandre mens hver sveip har inntil 30 minutters
+spredning. Det er en egen sak, meldt sammen med parallelliseringen, og
+det står her fordi den neste som legger en sveip i stigen må gjøre
+regnestykket.
 
 Fem eiere og fem sveipere av samme grunn som før: en delt sveiperolle
 måtte hatt EXECUTE på alle kryss-tenant-definerne, og en feil i én

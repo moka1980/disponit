@@ -38,7 +38,12 @@ FEM NEKT SOM ER VERDT Å KJENNE:
 
   * `POST /maaling` NEKTER en uke som ikke er over. Målingen kan ikke
     rettes, så et delresultat registrert som endelig ville stått for
-    alltid.
+    alltid. MEN ET GJENSPILL MED SAMME TALL ER IKKE ET NEKT (131): en
+    klient som mistet svaret og prøver igjen, får den lagrede raden.
+    Å svare 400 der ville fortalt at en skriving som LYKTES hadde
+    feilet — og siden dette er den eneste veien til å lukke
+    `prognose_uten_maaling`, kunne kalleren ikke engang se hva som
+    skjedde.
 
   * `POST /funn/{id}/lukk` NEKTER på `prognose_uten_maaling` og
     `slaar_ikke_naiv_baseline`. De to lukkes av at tilstanden

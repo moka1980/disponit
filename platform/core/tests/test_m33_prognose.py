@@ -190,7 +190,11 @@ def _historikk(mg, tenant, *, uker=8, minutter=None):
          "u-test"))
     for k in range(1, uker + 1):
         m = minutter[k - 1] if minutter else (uker + 1 - k) * 100
-        if m <= 0:
+        # EN UKE DER INGEN JOBBET ER EN EKTE OBSERVASJON, og raden må
+        # finnes: uten den ser døra ingen historikk i den uken, og
+        # dekningsvinduet blir kortere enn det faktisk er. `None`
+        # betyr «ingen registrering», 0 betyr «null minutter».
+        if m is None:
             continue
         mg.execute(
             "INSERT INTO timeregistrering (tenant, time_id, taker_id,"
@@ -1600,3 +1604,266 @@ def test_en_tapt_tilstandsfil_er_ogsa_en_feilet_kjoring():
     assert linje["tilstand_lagret"] == 0
     # …OG `feilet` LYVER IKKE om sveipen.
     assert linje["feilet"] == 0
+
+
+# =====================================================================
+# 131: RETTELSENE FRA CODERABBITS GJENNOMGANG AV #394.
+#
+# Gjennomgangen ga ÅTTE funn. Seks er dekket av porter her — fire i
+# dørene (migrasjon 131), én i timeren, og skillet mellom dem står i
+# migrasjonens topptekst. De to siste er bagateller i andre modulers
+# tekster og hører ikke hjemme i M-33s suite.
+# =====================================================================
+
+@pg
+def test_snittet_deler_ikke_paa_uker_tenanten_ikke_har_levd():
+    """DEN ALVORLIGSTE AV GJENNOMGANGENS ÅTTE FUNN, og den rammet
+    modulens hovedinvariant.
+
+    `avg(minutter)` gikk over ALLE `grunnlag_uker` blokker. En blokk
+    uten rader bidro med 0 — også blokker som ligger FØR tenantens
+    aller første timeregistrering.
+
+    En tenant med tre ukers historikk og `grunnlag_uker = 8` fikk
+    derfor et forventet nivå på under halvparten av det virkelige,
+    mens `grunnlag_antall_uker` sa 3. RADEN OG DIVISOREN VAR IKKE
+    ENIGE.
+
+    OG KONSEKVENSEN: et snitt som ligger for lavt taper for
+    basislinjen HVER målte uke, og sveipen reiser
+    `slaar_ikke_naiv_baseline` mot en modell som aldri fikk sitt eget
+    vindu. Funnet som skulle si «modellen er ikke god nok» ville sagt
+    «tenanten er ny».
+
+    Her: tre uker med 600, 500, 400 minutter (ferskest først). Snittet
+    over de DEKKEDE blokkene er 500. Over alle åtte ville det vært
+    (600+500+400)/8 = 188.
+
+    MUTASJONEN SOM DREPER DENNE: fjern
+    `WHERE v_dato - ((b.k - 1) * 7) > v_forste`.
+    """
+    with _to() as (rt, mg):
+        t = _tenantnavn("dekning")
+        _krav(rt, t, grunnlag=8)
+        _historikk(mg, t, uker=3, minutter=[400, 500, 600])
+        mid = _modell(rt, t)
+        pid, rad = _prognose(rt, t, mid)
+        _sett_kontekst(rt, t)
+        bane = rt.execute("SELECT * FROM m33_banen(%s,%s)",
+                          (t, pid)).fetchone()
+        rt.rollback()
+    assert rad[2] == 3, f"dekningen ble ikke 3 uker: {rad[2]}"
+    assert bane[2] == 500, (
+        f"snittet delte på uker tenanten ikke har levd: {bane[2]}"
+        " (skulle vært 500, ikke 188)")
+    # BASISLINJEN ER UBERØRT: forrige uke er fortsatt forrige uke.
+    assert bane[5] == 400
+
+
+@pg
+def test_en_tenant_med_bare_en_hel_uke_faar_ingen_prognose():
+    """Med én blokk ER snittet forrige uke.
+
+    Da er modellen sin egen basislinje: den kan ikke tape, og
+    `slaar_ikke_naiv_baseline` blir et funn ingen kan reise. Samme dom
+    som `grunnlag_uker >= 2`, håndhevet på DATAENE i stedet for på
+    grensen — en grense kan settes riktig mens dataene ikke rekker.
+    """
+    with _to() as (rt, mg):
+        t = _tenantnavn("enuke")
+        _krav(rt, t, grunnlag=8)
+        _historikk(mg, t, uker=1, minutter=[600])
+        mid = _modell(rt, t)
+        _sett_kontekst(rt, t)
+        with pytest.raises(psycopg.errors.NoDataFound):
+            rt.execute("SELECT m33_lag_prognose(%s,%s,%s,%s)",
+                       (t, uuid.uuid4(), mid, "u-test"))
+        rt.rollback()
+
+
+@pg
+def test_et_lite_snitt_gir_likevel_et_intervall_med_bredde():
+    """ET PUNKT SOM PÅSTÅR Å VÆRE ET INTERVALL.
+
+    `v_punkt` er det AVRUNDEDE snittet. Med små tall runder det til 0,
+    og minstebredden — som var regnet av `v_punkt` — ble også 0. Raden
+    fikk `nedre = forventet = ovre = 0`, og CHECKen slapp den gjennom
+    fordi 0 <= 0 <= 0.
+
+    PORTEN BRUKER FIRE UKER DER ALLE ER FØRT MED NULL MINUTTER.
+
+    Første utkast brukte [1, 0, 0, 0], og den porten var GRØNN også
+    med den gamle koden: spredningen i den serien er 0,43, og
+    `ceil(0,43) = 1` reddet båndet uten at minstebredden ble prøvd.
+    En port som ikke dør av mutasjonen måler ikke det den sier.
+
+    Med fire like uker er BÅDE snittet og spredningen null, og da er
+    det ubetingede `1` det eneste som står mellom raden og et
+    intervall med bredde null. Serien er ikke oppkonstruert: en
+    timeregistrering med 0 minutter er lovlig, og fire slike uker
+    betyr «vi har ført, og ingen jobbet».
+
+    MUTASJONEN SOM DREPER DENNE: sett siste ledd i `greatest(...)`
+    tilbake til `CASE WHEN v_punkt > 0 THEN 1 ELSE 0 END`.
+    """
+    with _to() as (rt, mg):
+        t = _tenantnavn("smaatall")
+        _krav(rt, t, grunnlag=4)
+        _historikk(mg, t, uker=4, minutter=[0, 0, 0, 0])
+        mid = _modell(rt, t)
+        pid, _ = _prognose(rt, t, mid)
+        _sett_kontekst(rt, t)
+        bane = rt.execute("SELECT * FROM m33_banen(%s,%s)",
+                          (t, pid)).fetchall()
+        rt.rollback()
+    assert bane
+    for u in bane:
+        punkt, ned, opp = u[2], u[3], u[4]
+        assert ned < opp, (
+            f"uke {u[0]}: baandet har bredde null ({ned}-{opp})"
+            f" ved punkt {punkt}")
+
+
+@pg
+def test_datakvalitetsdora_binder_tenanten_til_konteksten():
+    """DEN ENESTE M-33-DØRA UTEN `krev_tenantkontekst`.
+
+    Ingen data lakk — radvakten på M-3s registre ser til det — men det
+    er verre enn en lekkasje ville vært SYNLIG: med feil tenant ga
+    funksjonen null rader og svarte `ukjent` med 0 funn. Altså
+    nøyaktig den verdien modulen behandler som den farlige, avgitt av
+    feil grunn.
+    """
+    with _to() as (rt, mg):
+        a, b = _tenantnavn("kvala"), _tenantnavn("kvalb")
+        _sett_kontekst(rt, a)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT * FROM m33_datakvalitet(%s)", (b,))
+        rt.rollback()
+        del mg
+
+
+@pg
+def test_en_gjentatt_maaling_svarer_med_raden_ikke_med_en_feil():
+    """EN SKRIVING SOM LYKTES SKAL IKKE RAPPORTERES SOM FEILET.
+
+    API-et krever `Idempotency-Key`. Uten gjenspillgrenen fanget døra
+    `unique_violation` og reiste den på nytt, og API-et oversatte den
+    til 400. En klient som mistet svaret og prøvde igjen fikk vite at
+    det feilet — og siden `POST /maaling` er den ENESTE veien til å
+    lukke `prognose_uten_maaling`, kunne den ikke engang se om funnet
+    var lukket.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IF FOUND THEN`-grenen i
+    `m33_registrer_maaling`.
+    """
+    with _to() as (rt, mg):
+        t = _tenantnavn("maalgjenspill")
+        _krav(rt, t)
+        _historikk(mg, t)
+        mid = _modell(rt, t)
+        pid, _ = _prognose(rt, t, mid)
+        _aldre_prognose(mg, t, pid, 60)
+        _sett_kontekst(rt, t)
+        a = rt.execute(
+            "SELECT * FROM m33_registrer_maaling(%s,%s,%s,%s,%s)",
+            (t, pid, 1, 700, "u-test")).fetchone()
+        rt.commit()
+        _sett_kontekst(rt, t)
+        b = rt.execute(
+            "SELECT * FROM m33_registrer_maaling(%s,%s,%s,%s,%s)",
+            (t, pid, 1, 700, "u-test")).fetchone()
+        rt.commit()
+        # …MEN ET ANNET TALL ER FORTSATT EN FEIL. To ulike
+        # forespørsler som deler nøkkel er ikke én forespørsel.
+        _sett_kontekst(rt, t)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            rt.execute("SELECT m33_registrer_maaling(%s,%s,%s,%s,%s)",
+                       (t, pid, 1, 999, "u-test"))
+        rt.rollback()
+        _sett_kontekst(mg, t)
+        n = mg.execute(
+            "SELECT count(*) FROM bemanningsmaaling WHERE tenant=%s",
+            (t,)).fetchone()[0]
+        mg.rollback()
+    assert a[4] is True and b[4] is False, "`ny` skiller ikke"
+    assert a[:4] == b[:4], "gjenspillet ga et annet svar"
+    assert n == 1, f"gjenspillet skrev en ny rad: {n}"
+
+
+@pg
+def test_en_gjentatt_avvikling_svarer_med_raden():
+    """`m33_modellvakt` avviser en ny avvikling, så et gjenspill med
+    IDENTISK dato ga 400 på noe som alt hadde lyktes.
+
+    Avvikling er enveis — det gjør ikke et gjenspill til en feil, det
+    gjør det til et spørsmål med et svar. En ANNEN dato er fortsatt
+    en feil: den ville omskrevet «hvilken modell gjaldt da».
+    """
+    with _to() as (rt, mg):
+        t = _tenantnavn("avviklgjenspill")
+        mid = _modell(rt, t)
+        _sett_kontekst(rt, t)
+        a = rt.execute(
+            "SELECT * FROM m33_avvikle_modell(%s,%s,%s,%s)",
+            (t, mid, _dag(0), "u-test")).fetchone()
+        rt.commit()
+        _sett_kontekst(rt, t)
+        b = rt.execute(
+            "SELECT * FROM m33_avvikle_modell(%s,%s,%s,%s)",
+            (t, mid, _dag(0), "u-test")).fetchone()
+        rt.commit()
+        _sett_kontekst(rt, t)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            rt.execute("SELECT m33_avvikle_modell(%s,%s,%s,%s)",
+                       (t, mid, _dag(5), "u-test"))
+        rt.rollback()
+        del mg
+    assert a[2] is True and b[2] is False
+    assert a[:2] == b[:2]
+
+
+def test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter():
+    """KLOKKESLETTET ALENE ER IKKE EN REKKEFØLGE.
+
+    `RandomizedDelaySec` etablerer ingen ordning mellom timere — den
+    finnes for å hindre at de fyrer samtidig. Med 30 minutters
+    spredning kunne prognosesveipen starte 12:05 og kjøre til 12:15,
+    mens statussveipen kan starte 12:05 med null spredning.
+    Statussveipen leser tilstandsfila og ville meldt en FALSK
+    «uteblitt».
+
+    Porten regner VERST TENKELIG SLUTT for M-33 og krever at den
+    ligger før statussveipens TIDLIGSTE start.
+
+    DEN SAMME OVERLAPPEN FINNES I RESTEN AV FLÅTEN — stigens trinn er
+    15 minutter mens hver sveip har inntil 30 minutters spredning. Det
+    er en egen sak. Porten her dekker M-33s egen del, og gjør
+    regnestykket synlig for den neste som legger en sveip i stigen.
+    """
+    katalog = ROT / "deploy" / "staging"
+
+    def _tid(fil):
+        tekst = (katalog / fil).read_text(encoding="utf-8")
+        kl = re.search(r"OnCalendar=\*-\*-\* (\d\d):(\d\d):00 UTC",
+                       tekst)
+        sp = re.search(r"RandomizedDelaySec=(\d+)min", tekst)
+        assert kl, f"{fil} har intet klokkeslett"
+        return (int(kl.group(1)) * 60 + int(kl.group(2)),
+                int(sp.group(1)) if sp else 0)
+
+    def _timeout(fil):
+        tekst = (katalog / fil).read_text(encoding="utf-8")
+        m = re.search(r"TimeoutStartSec=(\d+)min", tekst)
+        return int(m.group(1)) if m else 0
+
+    start, spredning = _tid("disponit-prognosesveip.timer")
+    kjoretid = _timeout("disponit-prognosesveip.service")
+    slutt = start + spredning + kjoretid
+    status_start, _ = _tid("disponit-sveipestatus.timer")
+    assert kjoretid > 0, "tjenesten har ingen TimeoutStartSec å regne med"
+    assert slutt <= status_start, (
+        f"prognosesveipen kan holde på til {slutt // 60}:"
+        f"{slutt % 60:02d} mens statussveipen kan starte"
+        f" {status_start // 60}:{status_start % 60:02d} — statusen"
+        " ville lest forrige døgns tilstandsfil")

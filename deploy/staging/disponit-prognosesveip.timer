@@ -17,6 +17,25 @@
 # seg bak 11:20. `test_timeren_gaar_etter_hele_stigen` gjør det til en
 # måling og ikke en huskeregel.
 #
+# `RandomizedDelaySec=15min` OG IKKE 30 (CodeRabbit, etter #394).
+#
+# Spredningen etablerer INGEN rekkefølge mellom timere — den er laget
+# for å hindre at de fyrer samtidig. Med 30 minutters spredning kunne
+# denne sveipen starte 12:05 og kjøre til 12:15 (`TimeoutStartSec`),
+# mens `disponit-sveipestatus.timer` kunne starte 12:05 med null
+# spredning. Statussveipen leser tilstandsfila vår, og ville sett
+# forrige døgns fil: EN FALSK «UTEBLITT».
+#
+# 11:35 + 15 min spredning + 10 min kjøring = 12:00, altså ferdig før
+# statussveipens tidligste start. Regnestykket står her fordi det er
+# det som gjør flyttingen til 12:05 tilstrekkelig — og fordi den neste
+# som legger en sveip i stigen må gjøre det samme regnestykket.
+#
+# DEN SAMME OVERLAPPEN FINNES I RESTEN AV FLÅTEN: stigens trinn er 15
+# minutter fra hverandre mens hver sveip har inntil 30 minutters
+# spredning. Det er en egen sak, meldt sammen med parallelliseringen.
+# Denne timeren rydder sin egen del.
+#
 # `Persistent=true`: en vert som var nede da tidspunktet passerte skal
 # likevel oppdage at en uke står umålt. Uten den ville nedetid blitt
 # til stillhet om nettopp det modulen finnes for.
@@ -26,7 +45,7 @@ Description=Disponit prognosesveip-timer
 
 [Timer]
 OnCalendar=*-*-* 11:35:00 UTC
-RandomizedDelaySec=30min
+RandomizedDelaySec=15min
 Persistent=true
 
 [Install]
