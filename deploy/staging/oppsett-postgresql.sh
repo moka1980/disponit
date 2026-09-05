@@ -210,6 +210,20 @@ PROGNOSEEIER=disponit_prognose_eier         # M-33 eier prognoseregisteret
 PROGNOSESVEIP=disponit_prognosesveip        # M-33s baseline- og maalesveip
 OPTIMALISATOREIER=disponit_optimalisator_eier   # M-36 eier tiltakskoen
 OPTIMALISATORSVEIP=disponit_optimalisatorsveip  # M-36s effektsveip
+# KLYNGE 9 (133-136): ytringene. Se docs/KLYNGE9-FUNDAMENT.md.
+#
+# DEN DELTE DOMMEN: en ytring avgitt i husets navn kan ikke tas
+# tilbake. Fire eiere og fire sveipere av samme grunn som foer: en
+# delt sveiperolle maatte hatt EXECUTE paa alle kryss-tenant-
+# definerne, og en feil i EN sveip ville baaret de andres fullmakt.
+MOTEEIER=disponit_mote_eier                 # M-7 eier moeteregisteret
+MOTESVEIP=disponit_motesveip                # M-7s aksjons- og referatsveip
+INNHOLDEIER=disponit_innhold_eier           # M-20 eier innholdsutkastene
+INNHOLDSSVEIP=disponit_innholdssveip        # M-20s publiseringssveip
+TELEFONIEIER=disponit_telefoni_eier         # M-43 eier samtaleregisteret
+TELEFONISVEIP=disponit_telefonisveip        # M-43s eskaleringssveip
+ESGEIER=disponit_esg_eier                   # M-45 eier ESG-registeret
+ESGSVEIP=disponit_esgsveip                  # M-45s kilde- og faktorsveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -222,7 +236,8 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$SANKSJONSSVEIP" "$ANBUDSSVEIP" "$TILSKUDDSSVEIP" \
          "$MERKEVARESVEIP" "$EHFSVEIP" "$TOLLKODESVEIP" \
          "$MYNDIGHETSSVEIP" "$POSTJOURNALSVEIP" "$HMSSVEIP" \
-         "$LIKVIDITETSSVEIP" "$PROGNOSESVEIP" "$OPTIMALISATORSVEIP"; do
+         "$LIKVIDITETSSVEIP" "$PROGNOSESVEIP" "$OPTIMALISATORSVEIP" \
+         "$MOTESVEIP" "$INNHOLDSSVEIP" "$TELEFONISVEIP" "$ESGSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -237,7 +252,9 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$BETALINGEIER" "$ADRESSEEIER" "$LONNEIER" "$KAMPANJEEIER" \
          "$MOTPARTEIER" "$SANKSJONEIER" "$ANBUDEIER" "$TILSKUDDEIER" \
          "$MERKEVAREIER" "$EHFEIER" "$TOLLKODEEIER" \
-         "$MYNDIGHETEIER" "$POSTJOURNALEIER" "$HMSEIER"; do
+         "$MYNDIGHETEIER" "$POSTJOURNALEIER" "$HMSEIER" \
+         "$LIKVIDITETEIER" "$PROGNOSEEIER" "$OPTIMALISATOREIER" \
+         "$MOTEEIER" "$INNHOLDEIER" "$TELEFONIEIER" "$ESGEIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -353,6 +370,10 @@ sudo -u postgres psql -qc "GRANT $HMSEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $LIKVIDITETEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $PROGNOSEEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $OPTIMALISATOREIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MOTEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $INNHOLDEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $TELEFONIEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $ESGEIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

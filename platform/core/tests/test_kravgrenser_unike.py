@@ -119,17 +119,18 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Se `docs/KLYNGE8-FUNDAMENT.md`.
 UBYGDE_GRENSER = frozenset({
-    # TOM IGJEN, 5/9 — KLYNGE 8 ER FERDIG.
+    # KLYNGE 9 — YTRINGENE. Registrert 5/9, før koden.
     #
-    # `m15-v1` sto her til 128 landet, `m33-v1` til 130, og `m36-v1`
-    # til 132. Å fjerne et navn herfra er en del av å bygge modulen,
-    # ikke et separat opprydningsarbeid — og
-    # `test_de_ubygde_grensene_er_faktisk_ubygde` er den som krever
-    # det. Den falt tre ganger denne kvelden, som den skal.
+    # Lista sto TOM i noen minutter mellom 132 og dette fundamentet.
+    # `m15-v1` gikk ut da 128 landet, `m33-v1` da 130 landet, og
+    # `m36-v1` da 132 landet — å fjerne et navn herfra er en del av å
+    # bygge modulen, ikke et separat opprydningsarbeid.
     #
-    # At lista er tom er ikke en hviledag: det er beviset på at
-    # klyngen faktisk ble ferdig, akkurat som da den sto tom mellom
-    # M-53 og klynge 8-fundamentet.
+    # Se docs/KLYNGE9-FUNDAMENT.md.
+    "m7-v1",    # M-7 møteoperasjon, migrasjon 133
+    "m20-v1",   # M-20 nettside og innhold, migrasjon 134
+    "m43-v1",   # M-43 tale og telefoni, migrasjon 135
+    "m45-v1",   # M-45 bærekraft og ESG, migrasjon 136
 })
 
 
@@ -203,6 +204,85 @@ def test_de_ubygde_grensene_er_faktisk_ubygde():
 #: KLYNGE 8s FIRE DELTE DOMMER, som en liste og ikke som en setning i
 #: et dokument. `docs/KLYNGE8-FUNDAMENT.md` sier at alle tre modulene
 #: hviler på dem — og INGENTING MÅLTE DET.
+KLYNGE9 = ("m7-v1", "m20-v1", "m43-v1", "m45-v1")
+#: M-7 OG M-43 DELER ÉN OPPTAKSHJEMMEL, IKKE TO.
+#:
+#: `samtykkehendelse` (M-44, 114) finnes, men den er markedsføringens:
+#: `mottaker_id`, `kanal`, `formal`. Den svarer på «har vi lov til å
+#: sende dette», ikke på «har vi lov til å ta opp denne samtalen».
+#: To modeller for samme hjemmel ville gitt to svar på «hadde vi lov».
+KLYNGE9_OPPTAK = ("opptak_uten_hjemmel", "opptak_uten_varsling")
+#: KILDEKRAVET er klyngens delte dom, og det står i de to modulene som
+#: PÅSTÅR noe utad om verden. M-7 har `referat_uten_kilde` og M-43
+#: `transkripsjon_uten_usikkerhet` — samme form, andre ord, fordi et
+#: referat og en transkripsjon ikke er påstander om produktet.
+KLYNGE9_KILDE = ("m20-v1", "m45-v1")
+
+
+def test_klynge9_deler_opptakshjemmelen():
+    """EN DELT HJEMMEL SOM BARE STÅR I ET DOKUMENT ER IKKE DELT.
+
+    M-7 og M-43 tar begge opp samtaler, og fundamentet slo fast at de
+    skal dele ÉN hjemmel — bygget i M-7s runde, arvet av M-43. Står
+    invarianten bare i den ene grensen, kan den andre modulen landes
+    med sin egen opptaksmodell uten at én port faller.
+
+    Det er samme feilform som klynge 8s: M-36 hadde først bare
+    `prognose_uten_maaling`, som om den målte uten å prognostisere.
+
+    MUTASJONEN SOM DREPER DENNE: ta `opptak_uten_hjemmel` ut av
+    `m43-v1`.
+    """
+    from manifestskjema import KRAVGRENSER
+    mangler = {}
+    for krav_id in ("m7-v1", "m43-v1"):
+        inv = set(KRAVGRENSER[krav_id]["invarianter"])
+        savnet = [d for d in KLYNGE9_OPPTAK if d not in inv]
+        if savnet:
+            mangler[krav_id] = savnet
+    assert mangler == {}, (
+        "opptakshjemmelen er delt i fundamentet, men ikke i grensen:"
+        f" {mangler}")
+
+
+def test_klynge9_krever_kilde_der_modulen_paastaar_noe():
+    """KLYNGENS DELTE DOM, MÅLT.
+
+    «Ingen udokumenterte produktpåstander» (M-20) og «ingen påstand
+    uten datagrunnlag» (M-45) er den SAMME setningen, skrevet av to
+    forfattere som ikke visste om hverandre. Derfor bærer begge
+    grensene `paastand_uten_kilde` med nøyaktig samme navn.
+
+    En påstand uten kilde kan ikke etterprøves, og den som skal svare
+    for den finner ikke hva den hviler på.
+    """
+    from manifestskjema import KRAVGRENSER
+    mangler = [k for k in KLYNGE9_KILDE
+               if "paastand_uten_kilde"
+               not in KRAVGRENSER[k]["invarianter"]]
+    assert mangler == [], (
+        f"klyngens kildekrav mangler i: {mangler}")
+
+
+def test_klynge9_star_i_ubygde_til_modulene_er_bygget():
+    """De fire er registrert FØR koden, og står her til de landes.
+
+    EN GRENSE SOM ER UTE AV LISTA MÅ HA EN PORT SOM DEKKER DEN — det
+    er hele bytteforholdet, og det er den samme porten som tømte lista
+    tre ganger for klynge 8.
+    """
+    dekket = _grenser_med_dekningsport()
+    for krav_id in KLYNGE9:
+        if krav_id in UBYGDE_GRENSER:
+            assert krav_id not in dekket, (
+                f"{krav_id} har en dekningsport, men står fortsatt"
+                " som ubygd")
+        else:
+            assert krav_id in dekket, (
+                f"{krav_id} er ute av UBYGDE_GRENSER uten en port som"
+                " dekker grensen")
+
+
 KLYNGE8 = ("m15-v1", "m33-v1", "m36-v1")
 KLYNGE8_DELTE = (
     "prognose_uten_horisont",

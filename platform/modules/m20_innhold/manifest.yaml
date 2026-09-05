@@ -1,0 +1,70 @@
+# M-20 NETTSIDE- OG INNHOLDSAGENT — KLYNGE 9s ANDRE.
+#
+# `m20-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 134
+# tildelt i docs/KLYNGE9-FUNDAMENT.md.
+#
+# KLYNGENS DELTE DOM: EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS
+# TILBAKE. En rollback fjerner siden; den fjerner ikke at noen leste
+# den og handlet på den.
+#
+# UTKASTFORMEN FINNES ALT, FIRE GANGER — og M-1s er ordrett M-20s.
+# Verifisert mot basen: `policyutkast` har `basert_pa_versjon`,
+# `basert_pa_hash`, `rollback_av_versjon`, `innholds_hash`, `status`
+# og `aktivert_revisjon`. Vaktsetningens «publisering krever policy,
+# forhåndsvisning og automatisk rollback» ER den formen, bygget for
+# policyer. M-20 arver den og finner ikke opp en femte.
+#
+# DET SOM ER NYTT ER KILDEKRAVET. En policy hviler på en beslutning;
+# en produktpåstand må hvile på et DOKUMENT noen kan slå opp.
+# `paastand_uten_kilde` bærer samme navn i M-45s grense, fordi «ingen
+# udokumenterte produktpåstander» og «ingen påstand uten datagrunnlag»
+# er den samme setningen skrevet av to forfattere som ikke visste om
+# hverandre.
+#
+# V1-DOMMEN: MODULEN PUBLISERER INGENTING SELV. Et utkast blir klart;
+# aktiveringen er et menneskes.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m20_innhold
+navn: Nettside- og innholdsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+kjerne: platform/modules/m20_innhold
+i18n_prefiks: innhold
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et utkast med en produktpåstand UTEN kilde, slik at
+      porten kan måle at det ikke blir klart til publisering.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver aktivering kan spores til utkastversjonen og
+      hashen den hvilte på — ellers kan «hva sto der da?» ikke
+      besvares etter en rollback.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en rollback FAKTISK ruller tilbake, målt ved at den
+      forrige versjonen står etterpå. En rollback som bare setter et
+      flagg er pynt.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen — og merk
+      at dette er noe ANNET enn innholdsrollbacken over.

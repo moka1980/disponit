@@ -1,0 +1,77 @@
+# M-7 MØTEOPERASJONSAGENT — KLYNGE 9s FØRSTE.
+#
+# `m7-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 133
+# tildelt i docs/KLYNGE9-FUNDAMENT.md. BYGGES FØRST i klyngen.
+#
+# KLYNGENS DELTE DOM: EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS
+# TILBAKE — og den som leser den vet ikke at en maskin skrev den.
+#
+# M-7 BYGGES FØRST AV TO GRUNNER. Den er DEN SISTE FASE-1-MODULEN I
+# HELE KATALOGEN — katalogens egen rekkefølge sier den er overmoden.
+# Og den bygger OPPTAKSHJEMMELEN som M-43 arver: to modeller for samme
+# hjemmel ville gitt to svar på «hadde vi lov».
+#
+# SAMTYKKEREGISTERET FINNES, MEN DET ER MARKEDSFØRINGENS. Verifisert
+# mot basen: `samtykkehendelse` (M-44, 114) er nøklet på
+# `mottaker_id`, `kanal` og `formal` — den svarer på «har vi lov til å
+# sende dette», ikke på «har vi lov til å ta opp denne samtalen». Et
+# fundament som stoppet ved navnet ville tildelt feil register.
+#
+# M-8 ER EN NABO, IKKE ET FUNDAMENT. `m8_slot`/`m8_slotvalg` (082) er
+# tidsbooking mot eksterne — «finn et tidspunkt som passer». M-8 finner
+# tidspunktet, M-7 eier det som skjer i møtet. En modul som utvidet
+# slotregisteret til å bære referater ville gjort tidsbooking til
+# møteledelse i stillhet.
+#
+# V1-DOMMEN: MODULEN FATTER INGEN BESLUTNING. En «beslutning» i et
+# referat er noe MENNESKER tok; modulen kan skrive den ned, ikke fatte
+# den. Og «lav sikkerhet merkes som ubekreftet» er vaktsetningens
+# egen: et referat som utelater at maskinen var usikker, er en påstand
+# om at den ikke var det.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m07_moteoperasjon
+navn: Møteoperasjonsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m08_kalender
+kjerne: platform/modules/m07_moteoperasjon
+i18n_prefiks: mote
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et møte der transkripsjonen er KJENT usikker, slik at
+      porten kan måle at usikkerheten står i referatet og ikke bare i
+      loggen.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert opptak kan spores til hjemmelen og varslingen
+      som gjorde det lovlig. Et opptak uten det er ikke sporbart —
+      det er ulovlig.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et forsøk på opptak UTEN hjemmel gir et funn og ikke
+      et opptak. Rekkefølgen er hele poenget: nektet må komme før
+      mikrofonen.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

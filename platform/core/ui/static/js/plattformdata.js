@@ -154,6 +154,19 @@ export const MODULSTATUS = {
   15: "bygges",     // m15_likviditet: under_utvikling, ikke_i_drift
   33: "bygges",     // m33_prognose: under_utvikling, ikke_i_drift
   36: "bygges",     // m36_optimalisator: under_utvikling
+  // KLYNGE 9 — YTRINGENE. Registrert med grensene, før koden.
+  //
+  // EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS TILBAKE — og den som
+  // leser den vet ikke at en maskin skrev den. Klynge 7s feilform
+  // kunne slås opp, klynge 8s kunne måles mot horisonten. Denne kan
+  // ingen av delene: det som er lest kan ikke uleses, og en rollback
+  // fjerner siden — ikke at noen handlet på den.
+  //
+  // Flippes av en modulaksept, aldri av en byggemilepæl.
+  7: "bygges",      // m7_moteoperasjon: under_utvikling, ikke_i_drift
+  20: "bygges",     // m20_innhold: under_utvikling, ikke_i_drift
+  43: "bygges",     // m43_telefoni: under_utvikling, ikke_i_drift
+  45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -509,6 +522,34 @@ const MODULER = [
     navn_nokkel: "site.modul.m36.navn",
     fase_nokkel: "site.fase.global",
     tekst_nokkel: "site.modul.m36.tekst",
+  },
+  {
+    id: 7,
+    navn_nokkel: "site.modul.m7.navn",
+    // `autopiloter`, ikke en ny nøkkel: M-8 (kalender) er M-7s
+    // nærmeste nabo i «Samarbeid og HR», og den står der. Første
+    // utkast fant på `site.fase.grunnmur`, som ikke finnes i noen
+    // locale — og ingenting fanget det før CodeRabbit.
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m7.tekst",
+  },
+  {
+    id: 20,
+    navn_nokkel: "site.modul.m20.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m20.tekst",
+  },
+  {
+    id: 43,
+    navn_nokkel: "site.modul.m43.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m43.tekst",
+  },
+  {
+    id: 45,
+    navn_nokkel: "site.modul.m45.navn",
+    fase_nokkel: "site.fase.global",
+    tekst_nokkel: "site.modul.m45.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

@@ -4506,3 +4506,131 @@ def aktiv_uten_bevis(manifest: dict) -> list[str]:
     if (manifest or {}).get("status") != "aktiv":
         return []
     return uavklarte_punkter(manifest)
+
+
+# =====================================================================
+# KLYNGE 9 — YTRINGENE (M-7, M-20, M-43, M-45).
+#
+# DEN DELTE DOMMEN: EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS
+# TILBAKE — OG DEN SOM LESER DEN VET IKKE AT EN MASKIN SKREV DEN.
+#
+# Klynge 7s feilform kunne SLÅS OPP, klynge 8s kunne MÅLES mot
+# horisonten. Denne kan ingen av delene: det som er lest kan ikke
+# uleses, og en rollback fjerner siden — ikke at noen handlet på den.
+#
+# Se docs/KLYNGE9-FUNDAMENT.md.
+# =====================================================================
+
+M7_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen REGISTRERER et møte og tar ingen beslutning.
+    # En «beslutning» i et referat er noe MENNESKER tok; modulen kan
+    # skrive den ned, ikke fatte den.
+    "modulen_fattet_beslutning",
+    # OPPTAKET ER DET ENESTE SOM IKKE KAN GJØRES UGJORT. Det er
+    # ulovlig i det øyeblikket det starter uten grunnlag, og
+    # varslingen må ha skjedd FØR.
+    "opptak_uten_hjemmel",
+    "opptak_uten_varsling",
+    # ET REFERAT UTEN KILDE ER EN PÅSTAND. Den som skal svare for det
+    # som står der, må finne hva det hviler på.
+    "referat_uten_kilde",
+    # «Lav sikkerhet merkes som ubekreftet» (vaktsetningen). Et
+    # referat som utelater at maskinen var usikker, er en påstand om
+    # at den ikke var det.
+    "usikkerhet_skjult",
+    # En aksjon uten eier er en aksjon ingen gjør.
+    "aksjon_uten_eier",
+    "referat_overskrevet",
+    "tenantlekkasje_i_moteregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m7-v1"] = {
+    "invarianter": M7_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M20_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen PUBLISERER INGENTING SELV. Et utkast blir
+    # klart; aktiveringen er et menneskes, på M-1s form.
+    "modulen_publiserte_selv",
+    "publisering_uten_menneske",
+    # VAKTSETNINGENS KJERNE: «ingen udokumenterte produktpåstander».
+    # En påstand uten kilde kan ikke etterprøves.
+    "paastand_uten_kilde",
+    # «Publisering krever policy, forhåndsvisning og automatisk
+    # rollback» — alle tre, og alle tre er målbare.
+    "publisering_uten_forhaandsvisning",
+    "publisering_uten_rollback",
+    "utkast_overskrevet",
+    "tenantlekkasje_i_innholdsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m20-v1"] = {
+    "invarianter": M20_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M43_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen INNGÅR INGEN AVTALE og gir ingen økonomiske
+    # løfter. Vaktsetningen krever eksplisitt policy for begge, og v1
+    # har ingen vei dit i det hele tatt.
+    "modulen_inngikk_avtale",
+    "modulen_ga_okonomisk_lofte",
+    # «Agenten identifiserer seg alltid som automatisert.» Den som
+    # tror hun snakker med et menneske, svarer annerledes.
+    "agenten_skjulte_at_den_er_automatisert",
+    # DELT MED M-7, OG DET ER MENINGEN: én opptakshjemmel, ikke to.
+    # To modeller for samme hjemmel gir to svar på «hadde vi lov».
+    "opptak_uten_hjemmel",
+    "opptak_uten_varsling",
+    # En transkripsjon uten usikkerhet er en påstand om at maskinen
+    # hørte riktig.
+    "transkripsjon_uten_usikkerhet",
+    # «Eskaleringsregler er kundens» — en eskalering uten en regel å
+    # peke på er modulens egen beslutning.
+    "eskalering_uten_regel",
+    "samtale_overskrevet",
+    "tenantlekkasje_i_samtaleregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m43-v1"] = {
+    "invarianter": M43_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M45_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen SENDER INGEN RAPPORT. Den samler, regner og
+    # stopper der — innsendingen til en myndighet er et menneskes.
+    "modulen_sendte_rapport",
+    # VAKTSETNINGENS KJERNE, ORD FOR ORD: «alle tall må ha kilde og
+    # faktorversjon», «estimater merkes eksplisitt som estimat»,
+    # «ingen påstand uten datagrunnlag».
+    "tall_uten_kilde",
+    "tall_uten_faktorversjon",
+    "estimat_ikke_merket",
+    "paastand_uten_kilde",
+    # «Standardversjoner låses per rapportperiode.» Et tall regnet med
+    # fjorårets faktor og lest som årets er feil på nøyaktig den måten
+    # CSRD skal hindre. Dette er klynge 7s dom anvendt på
+    # rapporteringsstandarden selv.
+    "standardversjon_laast_per_periode",
+    "rapport_overskrevet",
+    "tenantlekkasje_i_esgregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m45-v1"] = {
+    "invarianter": M45_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
