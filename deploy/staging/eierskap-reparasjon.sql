@@ -1256,7 +1256,42 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm53_registrer_tiltak(text,uuid,uuid,text,boolean,date,text)',                 'disponit_hms_eier'),
     ('FUNCTION', 'm53_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_hms_eier'),
     ('FUNCTION', 'm53_sveip_hms(integer)',                                                      'disponit_hms_eier'),
-    ('FUNCTION', 'm53_tiltakene(text,uuid)',                                                    'disponit_hms_eier');
+    ('FUNCTION', 'm53_tiltakene(text,uuid)',                                                    'disponit_hms_eier'),
+    -- 128 (M-15): likviditetsregisterets doerer og sveipen.
+    --
+    -- PROGNOSEN, BANEN OG MAALINGEN ER APPEND-ONLY, og modulrollen har
+    -- ikke UPDATE paa dem. Doerene bruker derfor INGEN `FOR UPDATE`
+    -- paa de tre — laasen ville krevd en rett rollen med vilje ikke
+    -- har, og kappl0pet fanges av primaernoekkelen i stedet.
+    --
+    -- `m15_lag_prognose` skriver prognosen OG banen i samme setning:
+    -- var banen et eget kall, ville en prognose uten bane eksistert i
+    -- vinduet mellom de to — og en prognose uten bane er en paastand
+    -- uten innhold som likevel teller som «maalt» i funnlogikken.
+    --
+    -- De fem radvaktene (`m15_modell_frosset()`,
+    -- `m15_prognose_append_only()`, `m15_tiltak_frosset()`,
+    -- `m15_post_frosset()`) staar IKKE her: de eies av migrator, som
+    -- eier tabellene triggerne henger paa.
+    ('FUNCTION', 'm15_banen(text,uuid)',                                                        'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_bildet(text)',                                                            'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_evidens(text,uuid,text,text,jsonb)',                                      'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_foresla_tiltak(text,uuid,text,bigint,text,text,text)',                    'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_funn_er_sveipens(text)',                                                  'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_funnene(text,boolean)',                                                   'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_lag_prognose(text,uuid,uuid,integer,text)',                               'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_lukk_funn(text,uuid,text,text)',                                          'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_modell_gyldig(date,date)',                                                'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_modellene(text)',                                                         'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_postene(text,integer)',                                                   'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_prognosene(text,integer)',                                                'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_registrer_maaling(text,uuid,integer,bigint,bigint,text)',                 'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_registrer_modell(text,uuid,text,text,text,text,date,date,text)',          'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_registrer_post(text,uuid,text,text,bigint,date,text,date,text)',          'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_sveip_likviditet(integer)',                                               'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_tiltakene(text,integer)',                                                 'disponit_likviditet_eier'),
+    ('FUNCTION', 'm15_vurder_tiltak(text,uuid,text,text,text)',                                 'disponit_likviditet_eier');
 
 DO $$
 DECLARE

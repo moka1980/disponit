@@ -1569,3 +1569,50 @@ export const anonymiserAvvik = (avvikId, kropp, idem) =>
 export const lukkHmsfunn = (funnId, kropp, idem) =>
   _muter(`/v1/hms/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-15 LIKVIDITETS- OG KOSTNADSAGENT (128).
+//
+// DET FINNES INGEN `iverksettTiltak`. `vurderTiltak` tar `vurdert`
+// eller `avvist`, og der stopper modulen — oppsigelsen av et
+// abonnement går gjennom M-41s policykontrollerte vei.
+//
+// `registrerMaaling` ER DEN ENESTE VEIEN TIL Å LUKKE
+// `prognose_uten_maaling`, klyngens funn ingen kan klikke bort. Den
+// tar det FAKTISKE tallet og ingenting annet: om målingen traff
+// intervallet regnes av båndet som står på raden, ikke av kalleren.
+// ---------------------------------------------------------------------
+export const settLikviditetskrav = (krav, idem) =>
+  _muter("/v1/likviditet/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerLikviditetsmodell = (modell, idem) =>
+  _muter("/v1/likviditet/modell", "POST", modell,
+         idem || nyIdempotensnokkel());
+
+export const registrerLikviditetspost = (post, idem) =>
+  _muter("/v1/likviditet/post", "POST", post,
+         idem || nyIdempotensnokkel());
+
+export const lagPrognose = (kropp, idem) =>
+  _muter("/v1/likviditet/prognose", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const registrerMaaling = (prognoseId, kropp, idem) =>
+  _muter(`/v1/likviditet/prognose/${encodeURIComponent(prognoseId)}`
+         + "/maaling",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const foreslaaTiltak = (tiltak, idem) =>
+  _muter("/v1/likviditet/tiltak", "POST", tiltak,
+         idem || nyIdempotensnokkel());
+
+export const vurderTiltak = (tiltakId, kropp, idem) =>
+  _muter(`/v1/likviditet/tiltak/${encodeURIComponent(tiltakId)}`
+         + "/vurder",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkLikviditetsfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/likviditet/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

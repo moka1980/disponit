@@ -175,13 +175,35 @@ runde: en prognose regnet på data M-3 har flagget som mangelfulle, må
 BÆRE det flagget — ikke nektes. Å nekte ville gjort modulen ubrukelig
 i nettopp den situasjonen den er nyttigst.
 
-### M-15 har inngangsdataene sine
+### M-15 har inngangsdataene sine — MEN IKKE LØNNEN
 
-Verifisert mot basen: `bankkonto`/`bankpost` (M-13, 101), `fordring`
-(M-23, 104), `abonnementsperiode` (M-41, 111), lønnsgrunnlaget (M-39,
-113). M-15 trenger ingen ny integrasjon for v1 — den trenger en
-FORKLARING av hvordan de fire settes sammen, og den forklaringen er
-modulens egentlige produkt.
+**RETTET 5/9, under byggingen av 128.** Dette avsnittet listet
+opprinnelig lønnsgrunnlaget (M-39, 113) blant M-15s inngangsdata.
+**Det stemte ikke.**
+
+**M-39 måler timer, ikke kroner.** `arbeidsplan.planlagt_minutter_dag`
+er minutter; `lonnstaker` har navn og ekstern referanse. Det finnes
+INGEN sats noe sted i huset — verifisert mot katalogen: ingen kolonne
+heter `timelonn`, `sats`, `maanedslonn` eller noe i den familien
+utenfor moms, toll og støtteordninger.
+
+Dette er den SAMME feilformen dette dokumentet selv fanget for M-36
+(«leser en KPI-katalog som ikke finnes»), og andre gang i klyngen at
+en antakelse ikke overlevde møtet med skjemaet. Lærdommen står:
+
+> **ET FUNDAMENT KAN TILDELE NUMRE OG ROLLER UTEN Å LESE KODEN. DET
+> KAN IKKE TILDELE DATA.**
+
+**Konsekvensen, og den gjør modulen bedre:** forpliktelser huset ikke
+kan PRISE, registreres av et menneske i `likviditetspost`. Lønn,
+husleie, skattetrekk. Da vet vi ALLTID hvem som satte tallet, og
+prognosen kan aldri hvile på en utledning ingen har sett.
+
+Det som FAKTISK finnes, verifisert mot basen: `bankkonto`/`bankpost`
+(M-13, 101) og `fordring` (M-23, 104). `abonnementsperiode` (M-41,
+111) har heller ingen beløpskolonne — `betalingshendelse.forventet_ore`
+er det nærmeste, og v1 bruker den ikke: en forventet betaling er ikke
+det samme som en forpliktelse noen har bekreftet.
 
 ## Tildelte migrasjonsnumre
 

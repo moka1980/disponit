@@ -119,7 +119,10 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Se `docs/KLYNGE8-FUNDAMENT.md`.
 UBYGDE_GRENSER = frozenset({
-    "m15-v1",   # M-15 likviditet, migrasjon 128
+    # `m15-v1` STO HER TIL 5/9. Å fjerne et navn herfra er en del av å
+    # bygge modulen, ikke et separat opprydningsarbeid — og
+    # `test_de_ubygde_grensene_er_faktisk_ubygde` er den som krever
+    # det. Den falt i det øyeblikket 128 landet, som den skal.
     "m33-v1",   # M-33 prognose, migrasjon 129
     "m36-v1",   # M-36 optimalisator, migrasjon 130
 })
@@ -234,8 +237,22 @@ def test_klynge8_deler_prognosedommene():
 
 
 def test_klynge8_star_i_ubygde_til_modulene_er_bygget():
-    """De tre er registrert FØR koden, og skal stå her til de landes."""
+    """De tre er registrert FØR koden, og står her til de landes.
+
+    EN GRENSE SOM ER UTE AV LISTA MÅ HA EN PORT SOM DEKKER DEN. Det er
+    hele bytteforholdet: navnet forsvinner herfra i det øyeblikket en
+    testfil faktisk slår grensen opp og måler invariantene mot koden.
+
+    `m15-v1` gikk ut 5/9, da 128 landet med
+    `test_m15_likviditet.py`.
+    """
+    dekket = _grenser_med_dekningsport()
     for krav_id in KLYNGE8:
-        assert krav_id in UBYGDE_GRENSER, (
-            f"{krav_id} er ute av UBYGDE_GRENSER — er modulen bygget,"
-            " skal den også ha en port som dekker grensen")
+        if krav_id in UBYGDE_GRENSER:
+            assert krav_id not in dekket, (
+                f"{krav_id} har en dekningsport, men står fortsatt"
+                " som ubygd")
+        else:
+            assert krav_id in dekket, (
+                f"{krav_id} er ute av UBYGDE_GRENSER uten en port som"
+                " dekker grensen")

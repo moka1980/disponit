@@ -507,6 +507,9 @@ POSTJOURNALSVEIP_DSN=("DISPONIT_POSTJOURNALSVEIP_URL=$DB"
 # som rollen, og `opp.sh` avbryter uten den.
 HMSSVEIP_DSN=("DISPONIT_HMSSVEIP_URL=$DB"
               "DISPONIT_TEST_HMSSVEIP_DSN=${DB}_test")
+# 128 (M-15): likviditetssveipens DSN.
+LIKVIDITETSSVEIP_DSN=("DISPONIT_LIKVIDITETSSVEIP_URL=$DB"
+                      "DISPONIT_TEST_LIKVIDITETSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -549,6 +552,7 @@ sikre_rolle_dsn "$TOLLKODESVEIP" "${TOLLKODESVEIP_DSN[@]}"
 sikre_rolle_dsn "$MYNDIGHETSSVEIP" "${MYNDIGHETSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$POSTJOURNALSVEIP" "${POSTJOURNALSVEIP_DSN[@]}"
 sikre_rolle_dsn "$HMSSVEIP" "${HMSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$LIKVIDITETSSVEIP" "${LIKVIDITETSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
