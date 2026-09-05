@@ -124,7 +124,7 @@ UBYGDE_GRENSER = frozenset({
     # opprydningsarbeid — og `test_de_ubygde_grensene_er_faktisk_ubygde`
     # er den som krever det. Den falt i det øyeblikket 128 landet, og
     # igjen da 130 landet, som den skal.
-    "m36-v1",   # M-36 optimalisator, migrasjon 131
+    "m36-v1",   # M-36 optimalisator, migrasjon 132
 })
 
 
