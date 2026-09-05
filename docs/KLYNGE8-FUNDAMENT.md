@@ -209,9 +209,23 @@ det samme som en forpliktelse noen har bekreftet.
 
 | Nr | Modul | Fil | Bygges |
 |----|-------|-----|--------|
-| 128 | M-15 | `128_m15_likviditet.sql` | 1. |
-| 129 | M-33 | `129_m33_prognose.sql` | 2. |
-| 130 | M-36 | `130_m36_optimalisator.sql` | 3. |
+| 128 | M-15 | `128_m15_likviditet.sql` | 1. **Landet 5/9.** |
+| 129 | — | `129_m15_ukevindu.sql` | rettelse, se under |
+| ~~129~~ **130** | M-33 | `130_m33_prognose.sql` | 2. |
+| ~~130~~ **131** | M-36 | `131_m36_optimalisator.sql` | 3. |
+
+**M-33 OG M-36 FLYTTET ETT HAKK, og grunnen skal stå her — et tildelt
+migrasjonsnummer som stille bytter plass er nøyaktig den slags
+opplysning ingen finner igjen:** CodeRabbit fant på #391, etter merge,
+at penger med forfall NØYAKTIG I DAG falt mellom to uker i M-15s
+bane — uke 1 hadde eksklusiv nedre grense, og det finnes ingen
+tidligere uke å falle i. Migrasjoner er forward-only, så rettelsen tok
+129 (`129_m15_ukevindu.sql`).
+
+**Dette er tredje gang i denne kjeden at en etterfunnet feil skyver et
+modulnummer** (125/126 gjorde det samme for klynge 7). Mønsteret er
+verdt å se: nummeret er ikke en plan, det er en kø — og en systemisk
+feil i det som ALT er merget går foran en modul som ennå ikke finnes.
 
 **Rekkefølgen er begrunnet.** M-15 først fordi den er den mest
 KONKRETE: en kontantbane er et tall man kan ta feil av på en målbar

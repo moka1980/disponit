@@ -1045,3 +1045,102 @@ def test_en_post_som_utloper_slutter_aa_forfalle():
     assert rader, "posten forfalt aldri"
     assert max(r[0] for r in rader) <= 7, (
         "en post som utløper etter 40 døgn belastet banen senere")
+
+
+@pg
+def test_forfall_i_dag_faller_ikke_mellom_to_uker():
+    """PENGER MED FORFALL I DAG FALT INGEN STEDER (CodeRabbit, 129).
+
+    Uke 1 hadde `fra = current_date`, og hvert ukepredikat var
+    eksklusivt på nedre grense. En forpliktelse med forfall NØYAKTIG I
+    DAG traff derfor ingen uke — det finnes ingen tidligere uke å falle
+    i — og beløpet var ikke dekket noe annet sted heller:
+    `startsaldo_ore` kommer fra `bankpost`, som bare holder BOKFØRTE
+    bevegelser.
+
+    SAMME FARLIGE RETNING SOM GJENTAKELSESFEILEN: banen undertalte det
+    som skal ut, så kontantlinjen så bedre ut enn den er — på den ene
+    dagen den betyr mest.
+
+    MUTASJONEN SOM DREPER DENNE: sett `>` tilbake på nedre grense.
+    """
+    t = _tenantnavn("idag")
+    with _to() as (rt, _mg):
+        _krav(rt, t, horisont=13)
+        mid = _modell(rt, t)
+        _post(rt, t, belop=-7000000, forfall=I_DAG,
+              gjentakelse="engang")
+        pid, rad = _prognose(rt, t, mid)
+        _sett_kontekst(rt, t)
+        uke1 = rt.execute(
+            "SELECT ut_ore, punkt_ore FROM m15_banen(%s,%s)"
+            " WHERE uke_nr = 1", (t, pid)).fetchone()
+    assert uke1[0] == -7000000, (
+        "en regning som forfaller i dag traff ingen uke")
+    assert uke1[1] == -7000000
+    # …og døra rapporterte det laveste punktet riktig.
+    assert rad[4] == -7000000
+
+
+@pg
+def test_ukevinduet_er_husets_egen_halvaapne_definisjon():
+    """`[fra, til)` — SAMME SOM M-16 HAR HATT SIDEN FASE 2.
+
+    En ny vindusaritmetikk i hver modul er selve feilen. M-16s §3 sier
+    om sine egne kortspørringer at «ingen kortspørring har egen
+    vindusaritmetikk»; denne modulen har det nå heller ikke.
+
+    Porten måler at ukene verken overlapper eller etterlater hull: en
+    dato tilhører NØYAKTIG én uke.
+    """
+    t = _tenantnavn("vindu")
+    with _to() as (rt, _mg):
+        _krav(rt, t, horisont=13)
+        mid = _modell(rt, t)
+        # Én post per dag de første femten dagene.
+        for n in range(15):
+            _post(rt, t, belop=-100, forfall=_dag(n),
+                  gjentakelse="engang")
+        pid, _ = _prognose(rt, t, mid)
+        _sett_kontekst(rt, t)
+        rader = rt.execute(
+            "SELECT uke_nr, ut_ore, ukeslutt FROM m15_banen(%s,%s)"
+            " ORDER BY uke_nr", (t, pid)).fetchall()
+    # FEMTEN DAGER, SYV PER UKE: 7 + 7 + 1.
+    assert rader[0][1] == -700, rader[0]
+    assert rader[1][1] == -700, rader[1]
+    assert rader[2][1] == -100, rader[2]
+    assert sum(r[1] for r in rader) == -1500, "en dag falt bort"
+    # `ukeslutt` ER SISTE FAKTISKE DAG, ikke den første i neste uke.
+    assert rader[0][2] == _dag(6), rader[0][2]
+    assert rader[1][2] == _dag(13), rader[1][2]
+
+
+@pg
+def test_en_uke_kan_ikke_maales_paa_sin_egen_siste_dag():
+    """UKEN ER IKKE OVER FØR DAGEN ETTER SISTE DAG.
+
+    Med `ukeslutt` som siste faktiske dag måtte begge lesningene
+    flyttes: døra nekter nå på `>=`, og `kan_maales` krever `<`. En
+    måling avgitt på ukens siste dag ville vært et delvis tall som ser
+    ut som et endelig.
+    """
+    t = _tenantnavn("sistedag")
+    with _to() as (rt, mg):
+        _krav(rt, t)
+        mid = _modell(rt, t)
+        _post(rt, t)
+        pid, _ = _prognose(rt, t, mid)
+        # Flytt uke 1 slik at siste dag ER i dag.
+        _aldre_prognose(mg, t, pid, 6)
+        _sett_kontekst(rt, t)
+        kan = rt.execute(
+            "SELECT ukeslutt, kan_maales FROM m15_banen(%s,%s)"
+            " WHERE uke_nr = 1", (t, pid)).fetchone()
+        assert kan[0] == I_DAG, kan
+        assert kan[1] is False, "ukens siste dag ble meldt målbar"
+        _sett_kontekst(rt, t)
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            rt.execute(
+                "SELECT * FROM m15_registrer_maaling(%s,%s,%s,%s,%s,%s)",
+                (t, pid, 1, -1, None, "u-kari"))
