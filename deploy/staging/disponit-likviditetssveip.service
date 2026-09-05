@@ -1,0 +1,71 @@
+# M-15 (128): likviditetssveipen. MÅLINGEN ER PRODUKTET.
+#
+# SVEIPEN LAGER INGEN PROGNOSE, OG DEN MÅLER INGEN. Den sier fra om at
+# en prognose ikke er målt — og der stopper den. En sveip som målte
+# selv ville hentet saldoen og sammenlignet i stillhet, og da hadde
+# modulen gitt seg selv karakter. Målingen er en handling med en
+# ansvarlig.
+#
+# KLYNGENS DELTE DOM: en gal prognose ser nøyaktig ut som en riktig
+# prognose — helt til horisonten er passert, og da har alle sluttet å
+# se. `prognose_uten_maaling` er derfor et funn ingen kan lukke.
+#
+# SVEIPEN SIER HELLER IKKE OPP NOE OG BETALER INGENTING. Katalogens
+# vaktsetning sier at oppsigelser og betalinger går gjennom egne
+# policykontrollerte moduler, og gjerdet står i koden:
+# `likviditetssveip.py` importerer ingenting som kan snakke ut.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut til en bank.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# likviditetssveip er en kontantbane som går under null uten at noen
+# får vite det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_likviditetssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m15_sveip_likviditet`. INGEN
+# tabellrettigheter — heller ikke på bankpostene modulen leser.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit likviditetssveip (umålte prognoser og baner under null)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_LIKVIDITETSSVEIP_URL:/etc/disponit/likviditetssveip/DISPONIT_LIKVIDITETSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_likviditetssveip
+# Sveipen er ETT funksjonskall som gjør to setninger per tenant, begge
+# indeksdekket (`likviditetsmodell_gjeldende`,
+# `likviditetsprognose_nyeste`, `likviditetsfunn_apne_idx`). Går dette
+# over ti minutter, henger noe — og da er avbrudd riktig svar: funnene
+# er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

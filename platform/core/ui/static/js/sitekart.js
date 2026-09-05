@@ -531,6 +531,11 @@ const BASISRUTER = [
   // imot, måler fristene og sier fra. Anonymt avvik er en TILSTAND og
   // ikke et tomt navnefelt: et felt som kan fylles blir fylt.
   { nokkel: "hms", scope: "security:read", modulflate: 53 },
+  // M-15 (128): likviditets- og kostnadsagent. MODULFLATE bak
+  // `okonomi:read` — dette er bank, fordringer og kontantbane, altså
+  // finansleserens eget bord. Modulen sier ingenting opp og betaler
+  // ingenting: et kostnadstiltak er et forslag.
+  { nokkel: "likviditet", scope: "okonomi:read", modulflate: 15 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

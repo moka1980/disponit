@@ -53,6 +53,7 @@ SVEIPENE = (
     ("myndighetssveip", "m47_sveip_myndighetsplikt"),
     ("postjournalsveip", "m50_sveip_postjournal"),
     ("hmssveip", "m53_sveip_hms"),
+    ("likviditetssveip", "m15_sveip_likviditet"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

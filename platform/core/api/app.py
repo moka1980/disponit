@@ -1794,6 +1794,73 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # FRAVÆRET IKKE NOK: en frist som går uten innsending er nøyaktig
     # det modulen ble bygget for å hindre. En stille M-47 er verre enn
     # ingen M-47.
+    # M-15 LIKVIDITETS- OG KOSTNADSAGENT (128). DET FINNES INGEN RUTE
+    # SOM SIER OPP NOE, OG INGEN SOM BETALER. Et kostnadstiltak kan
+    # bli `vurdert` eller `avvist` av et menneske, og der stopper
+    # modulen — oppsigelsen går gjennom M-41s policykontrollerte vei.
+    #
+    # `/maaling` ER DEN ENESTE VEIEN TIL Å LUKKE `prognose_uten_maaling`,
+    # klyngens funn ingen kan klikke bort.
+    def likv_bilde(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.likviditetsbilde(tjeneste, request)
+
+    def likv_prognoser(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.prognoser_endepunkt(tjeneste, request)
+
+    def likv_bane(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.bane_endepunkt(tjeneste, request)
+
+    def likv_poster(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.poster_endepunkt(tjeneste, request)
+
+    def likv_modeller(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.modeller_endepunkt(tjeneste, request)
+
+    def likv_tiltak(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.tiltak_endepunkt(tjeneste, request)
+
+    def likv_funn(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.funn_endepunkt(tjeneste, request)
+
+    def likv_krav(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.krav_endepunkt(tjeneste, request)
+
+    def likv_modell_ny(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.registrer_modell_endepunkt(tjeneste, request)
+
+    def likv_post_ny(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.registrer_post_endepunkt(tjeneste, request)
+
+    def likv_prognose_ny(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.lag_prognose_endepunkt(tjeneste, request)
+
+    def likv_maaling(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.registrer_maaling_endepunkt(tjeneste, request)
+
+    def likv_tiltak_ny(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.foresla_tiltak_endepunkt(tjeneste, request)
+
+    def likv_vurder(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.vurder_tiltak_endepunkt(tjeneste, request)
+
+    def likv_lukk_funn(request: Request) -> Response:
+        from . import likviditet as likvmodul
+        return likvmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
     # tiltak å vise til.
@@ -3028,6 +3095,31 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               journ_anonymiser, methods=["POST"]),
         Route("/v1/journal/funn/{funn_id:uuid}/lukk",
               journ_lukk_funn, methods=["POST"]),
+        # M-15 (128). Faste stier FØR parametriserte.
+        Route("/v1/likviditet", likv_bilde, methods=["GET"]),
+        Route("/v1/likviditet/prognoser", likv_prognoser,
+              methods=["GET"]),
+        Route("/v1/likviditet/poster", likv_poster, methods=["GET"]),
+        Route("/v1/likviditet/modeller", likv_modeller,
+              methods=["GET"]),
+        Route("/v1/likviditet/tiltak", likv_tiltak, methods=["GET"]),
+        Route("/v1/likviditet/funn", likv_funn, methods=["GET"]),
+        Route("/v1/likviditet/krav", likv_krav, methods=["POST"]),
+        Route("/v1/likviditet/modell", likv_modell_ny,
+              methods=["POST"]),
+        Route("/v1/likviditet/post", likv_post_ny, methods=["POST"]),
+        Route("/v1/likviditet/prognose", likv_prognose_ny,
+              methods=["POST"]),
+        Route("/v1/likviditet/tiltak", likv_tiltak_ny,
+              methods=["POST"]),
+        Route("/v1/likviditet/prognose/{prognose_id:uuid}/bane",
+              likv_bane, methods=["GET"]),
+        Route("/v1/likviditet/prognose/{prognose_id:uuid}/maaling",
+              likv_maaling, methods=["POST"]),
+        Route("/v1/likviditet/tiltak/{tiltak_id:uuid}/vurder",
+              likv_vurder, methods=["POST"]),
+        Route("/v1/likviditet/funn/{funn_id:uuid}/lukk",
+              likv_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4217,6 +4309,35 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/journal/person/{person_id:uuid}/anonymiser"):
         "bestilling:opprett",
     ("POST", "/v1/journal/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-15 (128). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
+    #
+    # Lesescopet er `okonomi:read` og IKKE `security:read` som M-53s,
+    # og skillet er datasettet: dette er bank, fordringer og
+    # kontantbane — finansleserens eget bord. De eneste
+    # personopplysningene er navnet på den som registrerte en
+    # forpliktelse eller lukket et funn.
+    #
+    # INGEN RUTE SIER OPP NOE OG INGEN BETALER — det finnes ingen
+    # `/iverksett`, og porten leser denne tabellen.
+    ("GET",  "/v1/likviditet"):                  "okonomi:read",
+    ("GET",  "/v1/likviditet/prognoser"):        "okonomi:read",
+    ("GET",  "/v1/likviditet/poster"):           "okonomi:read",
+    ("GET",  "/v1/likviditet/modeller"):         "okonomi:read",
+    ("GET",  "/v1/likviditet/tiltak"):           "okonomi:read",
+    ("GET",  "/v1/likviditet/funn"):             "okonomi:read",
+    ("GET",  "/v1/likviditet/prognose/{prognose_id:uuid}/bane"):
+        "okonomi:read",
+    ("POST", "/v1/likviditet/krav"):             "bestilling:opprett",
+    ("POST", "/v1/likviditet/modell"):           "bestilling:opprett",
+    ("POST", "/v1/likviditet/post"):             "bestilling:opprett",
+    ("POST", "/v1/likviditet/prognose"):         "bestilling:opprett",
+    ("POST", "/v1/likviditet/tiltak"):           "bestilling:opprett",
+    ("POST", "/v1/likviditet/prognose/{prognose_id:uuid}/maaling"):
+        "bestilling:opprett",
+    ("POST", "/v1/likviditet/tiltak/{tiltak_id:uuid}/vurder"):
+        "bestilling:opprett",
+    ("POST", "/v1/likviditet/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

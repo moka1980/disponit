@@ -1,0 +1,29 @@
+# M-15 (128): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `maalefrist_dogn`,
+# `grunnlag_maks_alder_dogn` og `modellvarsel_dogn` måles alle i DØGN,
+# og en prognosehorisont er en DATO. Å sveipe oftere ville ikke gitt
+# et eneste nytt funn; å sveipe sjeldnere ville latt en målefrist
+# passere mellom to kjøringer, og da hadde en prognose stått umålt
+# uten at noen visste det.
+#
+# KLOKKESLETTET ER 08:35 — det ledige hullet, som ble tomt da
+# sveipestatus flyttet for M-48. M-15 hører hjemme sammen med
+# avstemmings- og betalingssveipene tidlig på morgenen, ikke etter
+# klynge 7: den leser de samme bankpostene, og en kontantbane regnet
+# før dagens øvrige sveip er en bane regnet på gårsdagens tall uansett.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at en prognose står umålt. Uten den ville nedetid
+# blitt til stillhet om nettopp det modulen finnes for.
+
+[Unit]
+Description=Disponit likviditetssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 08:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

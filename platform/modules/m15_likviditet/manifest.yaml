@@ -10,10 +10,17 @@
 #
 # M-15 BYGGES FØRST FORDI DEN ER DEN MEST KONKRETE. En kontantbane er
 # et tall man kan ta feil av på en målbar måte, og inngangsdataene
-# finnes allerede i huset — `bankkonto`/`bankpost` (M-13, 101),
-# `fordring` (M-23, 104), `abonnementsperiode` (M-41, 111) og
-# lønnsgrunnlaget (M-39, 113). Den etablerer klyngens form på det
-# tilfellet der «tok vi feil» er lettest å avgjøre.
+# finnes allerede i huset: `bankkonto`/`bankpost` (M-13, 101) og
+# `fordring` (M-23, 104). Den etablerer klyngens form på det tilfellet
+# der «tok vi feil» er lettest å avgjøre.
+#
+# MEN IKKE LØNNEN, og det ble oppdaget under byggingen: M-39 MÅLER
+# TIMER, IKKE KRONER. Det finnes ingen sats noe sted i huset. En modul
+# som «utledet» lønnskostnaden fra timer uten pris ville regnet på et
+# tall den fant på — og et oppfunnet tall i en likviditetsprognose er
+# verre enn ingen prognose, fordi det ser like presist ut som de
+# riktige. Forpliktelser huset ikke kan PRISE registreres derfor av et
+# menneske i `likviditetspost`, og navnet står på raden.
 #
 # TRE TING SOM ER NOT NULL, OG HVORFOR:
 #
@@ -49,7 +56,6 @@ avhengigheter:
   - m02_revisjonslogg
   - m13_avstemming
   - m23_fordring
-  - m39_lonnsgrunnlag
   - m41_betaling
 kjerne: platform/modules/m15_likviditet
 i18n_prefiks: likviditet
