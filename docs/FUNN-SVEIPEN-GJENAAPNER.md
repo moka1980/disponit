@@ -1,7 +1,10 @@
 # Sveipen gjenåpner det et menneske har lukket
 
-**Funnet 5. september 2026, av CodeRabbit på M-50 (124). Gjelder ti
-merget migrasjoner i tillegg.**
+**Funnet 5. september 2026, av CodeRabbit på M-50 (124).**
+
+**RETTET SAMME DAG, i 125.** Første utgave av dette dokumentet listet
+ti merget migrasjoner. Den lista var gal, og rettingen står under
+«Hva som faktisk gjaldt».
 
 ## Hva som er galt
 
@@ -58,27 +61,71 @@ verre, er det en **annen funntype** og dermed en annen rad — et lukket
 `*_funn_lukking`-CHECK-en, som krever at `lukket_ts` er `NULL` når
 raden er åpen. Alle fire kolonnene må derfor settes sammen.
 
-## Hva som gjenstår
+## Hva som faktisk gjaldt
 
-Migrasjoner er forward-only, så de ti under må rettes av en NY
-migrasjon som erstatter sveipefunksjonene:
+Lista i første utgave ble skrevet av hukommelse og var **gal på tre
+måter**. Tallene under er talt, ikke husket:
 
-| Migrasjon | Modul | Lukkbare funntyper som gjenåpnes |
-|---|---|---|
-| 112 | M-19 adresseregister | — må gjennomgås |
-| 113 | M-39 lønnsgrunnlag | — |
-| 114 | M-44 kampanjeregister | — |
-| 116 | M-48 motpartsregister | — |
-| 117 | M-49 sanksjonskontroll | — |
-| 118 | M-46 anbudsregister | — |
-| 119 | M-51 tilskuddsregister | — |
-| 121 | M-54 EHF | — |
-| 122 | M-52 tollkode | `nomenklatur_utloper_snart`, `forslag_under_terskel`, `forslag_ikke_klart`, `vare_uten_forslag`, `ingen_krav` |
-| 123 | M-47 myndighetsrapport | `frist_naermer_seg`, `regelverk_utloper_snart`, `ingen_krav` |
+* **112, 113 og 114 hørte ikke hjemme der.** De har ingen lukkedør —
+  ingen kan lukke et funn, og da bryter en ubetinget gjenåpning ikke
+  noe.
+* **120 (M-55) manglet.** Den treffer `merkevarevarsel`, ikke
+  `merkevarefunn`, og et navnesøk på «funn» gikk forbi den.
+* **Det verste sto ikke der i det hele tatt:** 116, 117, 118 og 119 har
+  **ingen `lukket_av`-kolonne**. Dørene tar imot en `p_aktor`, skriver
+  den i revisjonsloggen og lar raden være anonym. Ingen som leser
+  funnlista ser hvem som lukket — og sveipen kunne umulig skilt sin
+  egen lukking fra et menneskes, fordi opplysningen ikke fantes.
 
-**Og porten må skjerpes samme sted:** hver modul trenger en test som
-lukker et funn, kjører sveipen, og leser raden på nytt. Uten den er
-fiksen like usynlig som feilen var.
+**Det faktiske omfanget: ni tabeller i ni migrasjoner, 116–124.**
 
-Ingen av disse har rukket å gjøre skade i drift: sveipene er ikke
-aktive på staging ennå, og ingen tenant har lukket et funn.
+| Migrasjon | Modul | Tabell | Hadde `lukket_av` |
+|---|---|---|---|
+| 116 | M-48 motpartsregister | `motpartsfunn` | nei |
+| 117 | M-49 sanksjonskontroll | `sanksjonsfunn` | nei |
+| 118 | M-46 anbudsregister | `anbudsfunn` | nei |
+| 119 | M-51 tilskuddsregister | `tilskuddsfunn` | nei |
+| 120 | M-55 merkevare | `merkevarevarsel` | ja |
+| 121 | M-54 EHF | `ehffunn` | ja |
+| 122 | M-52 tollkode | `tollfunn` | ja |
+| 123 | M-47 myndighetsrapport | `myndighetsfunn` | ja |
+| 124 | M-50 postjournal | `journalfunn` | ja (rettet i 124) |
+
+## Hvordan det ble rettet: 125, i basen og ikke i sytten kall
+
+Den nærliggende fiksen — skrive om `DO UPDATE`-blokken på hvert av de
+sytten stedene — ville krevd at ni store sveipefunksjoner ble gjenskapt
+ordrett bortsett fra én klausul. Gjenskaping av tusen linjer for å
+endre fire er der nye feil kommer fra.
+
+Verre: det ville rettet fortiden og ikke fremtiden. Modul nummer ti
+kopierer sveipen fra modul nummer ni, slik 116–124 alle kopierte
+hverandre.
+
+**Regelen bor derfor på raden.** `sveipefunn_lukkevern()` er én
+trigger foran hver UPDATE på alle ni tabellene:
+
+* går raden fra åpen til lukket uten at noen navnga seg, stemples
+  sveipens navn på;
+* går den fra lukket til åpen, avgjør `lukket_av` hva som skjer: var
+  det sveipens egen lukking, gjenåpnes den og sporet ryddes; var det
+  et menneske, **står lukkingen**.
+
+Vakten **retter stille, den feiler ikke**. En exception her ville
+drept hele nattens sveip på det første funnet noen hadde lukket.
+
+I tillegg fikk 116–119 kolonnene `lukket_av` og `lukkenotat`. **Seks**
+av de ni fikk en ny CHECK som gjør en lukket rad uten navn
+urepresenterbar — 120, 121 og 122 hadde den allerede, gjennom
+kombinasjonen `apen = (lukket_ts IS NULL)` og
+`num_nulls(lukket_ts, lukket_av, lukkenotat) IN (0, 3)`.
+
+## Porten som manglet
+
+Portene målte at `m*_lukk_funn` SVARTE `apen = false`. Ingen av dem
+kjørte sveipen etterpå. `platform/core/tests/test_sveipevern.py` gjør
+begge deler, og mutasjonen er verifisert: uten triggeren står raden
+igjen som **åpen** med `kari` i `lukket_av`.
+
+Ingen av disse rakk å gjøre skade i drift: sveipene er ikke aktive på
+staging, og ingen tenant har lukket et funn.
