@@ -89,6 +89,12 @@ KJENTE_EIERROLLER = (
     "disponit_myndighet_eier",  # M-47, migrasjon 123
     "disponit_postjournal_eier",  # M-50, migrasjon 124
     "disponit_hms_eier",        # M-53, migrasjon 127
+    # Klynge 8 «prognosene» (128-130) — registrert med grensene,
+    # før koden. En rolle står i listen fordi den er DESIGNET til
+    # å eie objekter, ikke fordi den eier noen ennå.
+    "disponit_likviditet_eier",     # M-15, migrasjon 128
+    "disponit_prognose_eier",       # M-33, migrasjon 129
+    "disponit_optimalisator_eier",  # M-36, migrasjon 130
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.

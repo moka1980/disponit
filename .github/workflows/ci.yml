@@ -70,6 +70,16 @@ jobs:
       # klyngefundamentet; uten DSN-en faller testen tilbake til
       # migrator, som ikke har EXECUTE — og porten måler da ingenting.
       DISPONIT_TEST_HMSSVEIP_DSN: postgresql://disponit_hmssveip:hmss@127.0.0.1:5432/disponit_test
+      # Klynge 8 (128-130). DSN-ene legges inn SAMMEN MED ROLLENE, og
+      # det er lærdommen fra M-53: der ble rollen opprettet av klynge
+      # 7s fundament, DSN-en aldri lagt til, og fem porter feilet i CI
+      # etter å ha vært grønne lokalt — fordi testen falt tilbake til
+      # migrator, som ikke har EXECUTE på sveipedøra. Rollen og
+      # DSN-en hører sammen; å skille dem er å legge igjen en felle
+      # til den som bygger modulen.
+      DISPONIT_TEST_LIKVIDITETSSVEIP_DSN: postgresql://disponit_likviditetssveip:likv@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_PROGNOSESVEIP_DSN: postgresql://disponit_prognosesveip:prog@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_OPTIMALISATORSVEIP_DSN: postgresql://disponit_optimalisatorsveip:opti@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -164,6 +174,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_myndighetssveip LOGIN PASSWORD 'mynd'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_postjournalsveip LOGIN PASSWORD 'post'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_hmssveip LOGIN PASSWORD 'hmss'"
+          # Klynge 8 (128-130): prognosene.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_likviditetssveip LOGIN PASSWORD 'likv'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prognosesveip LOGIN PASSWORD 'prog'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_optimalisatorsveip LOGIN PASSWORD 'opti'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_faktura_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prosjekt_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prisbok_eier NOLOGIN"
@@ -183,6 +197,9 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_myndighet_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_postjournal_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_hms_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_likviditet_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prognose_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_optimalisator_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
@@ -259,6 +276,9 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_myndighet_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_postjournal_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_hms_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_likviditet_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_prognose_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_optimalisator_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"

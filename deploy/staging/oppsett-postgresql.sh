@@ -203,6 +203,13 @@ POSTJOURNALEIER=disponit_postjournal_eier   # M-50 eier journalregisteret
 POSTJOURNALSVEIP=disponit_postjournalsveip  # M-50s formaal-sveip
 HMSEIER=disponit_hms_eier                   # M-53 eier avviksregisteret
 HMSSVEIP=disponit_hmssveip                  # M-53s ubehandlet-avvik-sveip
+# KLYNGE 8 (128-130): prognosene. Se docs/KLYNGE8-FUNDAMENT.md.
+LIKVIDITETEIER=disponit_likviditet_eier     # M-15 eier kontantprognosen
+LIKVIDITETSSVEIP=disponit_likviditetssveip  # M-15s maalesveip
+PROGNOSEEIER=disponit_prognose_eier         # M-33 eier prognoseregisteret
+PROGNOSESVEIP=disponit_prognosesveip        # M-33s baseline- og maalesveip
+OPTIMALISATOREIER=disponit_optimalisator_eier   # M-36 eier tiltakskoen
+OPTIMALISATORSVEIP=disponit_optimalisatorsveip  # M-36s effektsveip
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -214,7 +221,8 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$LONNSSVEIP" "$KAMPANJESVEIP" "$MOTPARTSSVEIP" \
          "$SANKSJONSSVEIP" "$ANBUDSSVEIP" "$TILSKUDDSSVEIP" \
          "$MERKEVARESVEIP" "$EHFSVEIP" "$TOLLKODESVEIP" \
-         "$MYNDIGHETSSVEIP" "$POSTJOURNALSVEIP" "$HMSSVEIP"; do
+         "$MYNDIGHETSSVEIP" "$POSTJOURNALSVEIP" "$HMSSVEIP" \
+         "$LIKVIDITETSSVEIP" "$PROGNOSESVEIP" "$OPTIMALISATORSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -338,6 +346,13 @@ sudo -u postgres psql -qc "GRANT $POSTJOURNALEIER TO $MIGRATOR WITH INHERIT FALS
 sudo -u postgres psql -qc "GRANT $MYNDIGHETEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $POSTJOURNALEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $HMSEIER TO $MIGRATOR WITH INHERIT FALSE"
+# Klynge 8 (128-130): prognosene. Medlemskapene her og i `ci.yml` må
+# være de SAMME — `test_ci_og_verten_gir_migrator_de_samme_rollene`
+# måler det, fordi en CI som er grønn på noe verten ikke kan kjøre er
+# verre enn en rød CI.
+sudo -u postgres psql -qc "GRANT $LIKVIDITETEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $PROGNOSEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $OPTIMALISATOREIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

@@ -1950,6 +1950,117 @@ KRAVGRENSER["m53-v1"] = {
     "punktbinding": {},
 }
 
+# =====================================================================
+# KLYNGE 8 — PROGNOSENE. Registrert FØR koden (§0-regelen).
+# Se `docs/KLYNGE8-FUNDAMENT.md`.
+#
+# DEN DELTE DOMMEN: EN GAL PROGNOSE SER NØYAKTIG UT SOM EN RIKTIG
+# PROGNOSE — HELT TIL HORISONTEN ER PASSERT, OG DA HAR ALLE SLUTTET Å
+# SE.
+#
+# Klynge 7s feilform var «en foreldet regel ser ut som en riktig
+# regel». Denne er den samme ett hakk verre: en foreldet regel kan
+# SLÅS OPP, en prognose har ingenting å slå opp mot før tiden har
+# gått — og da er den uinteressant, fordi nå vet vi jo hva som skjedde.
+#
+# Derfor er ikke klyngens vanskeligste problem å LAGE prognoser. Det
+# er å sørge for at de blir MÅLT, og `prognose_uten_maaling` er
+# invarianten alle tre deler.
+# =====================================================================
+
+M15_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen UTFØRER INGENTING. Den finner et
+    # kostnadstiltak og STOPPER der; oppsigelsen av et abonnement går
+    # gjennom M-41s policykontrollerte vei, av et menneske.
+    "modulen_sa_opp_abonnement",
+    "modulen_utforte_betaling",
+    # PROGNOSEN MÅ KUNNE ETTERPRØVES. Uten horisont finnes det ikke
+    # noe tidspunkt å måle mot, og «stemte den?» blir ubesvarlig.
+    "prognose_uten_horisont",
+    "prognose_uten_modellversjon",
+    "prognose_uten_intervall",
+    "prognose_uten_maaling",
+    # ALDEREN PÅ INNGANGSDATAENE ER EN DEL AV PROGNOSEN. Banksaldoen
+    # er fra i går, prognosen fra i dag — og forskjellen er ikke null.
+    "prognose_mot_utdatert_grunnlag",
+    # Et tiltak ingen har vurdert reversibiliteten av, er et tiltak
+    # ingen kan angre.
+    "tiltak_uten_reversibilitet",
+    "prognose_overskrevet",
+    "tenantlekkasje_i_likviditetsregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m15-v1"] = {
+    "invarianter": M15_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M33_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: PROGNOSER ER IKKE FAKTA. Ingen personalavgjørelse og
+    # ingen automatisk handling — katalogens egen vaktsetning.
+    "modulen_utforte_handling",
+    "prognose_presentert_som_faktum",
+    "prognose_uten_horisont",
+    "prognose_uten_modellversjon",
+    "prognose_uten_intervall",
+    "prognose_uten_maaling",
+    # BASELINE. En modell som ikke slår «samme som forrige uke» bærer
+    # autoritet den ikke har fortjent, og det er verre enn ingen
+    # modell: den ser ut som kunnskap.
+    "slaar_ikke_naiv_baseline",
+    "backtest_uten_baseline",
+    # M-3 (092) flagger mangelfulle data. En prognose regnet på dem
+    # skal BÆRE flagget, ikke nektes — å nekte ville gjort modulen
+    # ubrukelig i nettopp den situasjonen den er nyttigst.
+    "prognose_uten_datakvalitetsflagg",
+    "prognose_overskrevet",
+    "tenantlekkasje_i_prognoseregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m33-v1"] = {
+    "invarianter": M33_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M36_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, OG DEN SKARPESTE I HELE KATALOGEN.
+    #
+    # M-36 er den ENESTE modulen som har en oppfatning om de andre
+    # modulene. En optimalisator som finner at den beste forbedringen
+    # er «gi M-36 lov til å gjøre X», er ikke ødelagt — den gjør
+    # nøyaktig det den ble bedt om. Derfor må fullmaktsutvidelse være
+    # UREPRESENTERBAR, ikke frarådet.
+    "modulen_utvidet_egen_fullmakt",
+    "modulen_iverksatte_tiltak",
+    "modulen_overstyrte_en_annen_moduls_grense",
+    # «KORRELASJON PRESENTERES IKKE SOM ÅRSAK» ER ET KRAV TIL
+    # DATAMODELLEN, ikke til teksten på skjermen: hvert tiltaksforslag
+    # bærer `grunnlagstype` fra et lukket sett.
+    "korrelasjon_presentert_som_aarsak",
+    "tiltak_uten_grunnlagstype",
+    "tiltak_uten_reversibilitet",
+    # PORTEFØLJESTOPP. Katalogens vaktsetning krever at den finnes, og
+    # en stoppknapp som ikke virker er verre enn ingen.
+    "portefoljestopp_uten_virkning",
+    "prognose_uten_maaling",
+    "rangering_overskrevet",
+    "tenantlekkasje_i_tiltaksregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m36-v1"] = {
+    "invarianter": M36_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
 
 #: KATALOGAKSENE (A-vedtaket på #152, K2): `status` og `driftstilstand`
 #: er katalogens AVLESNING av en aksepthendelse — de er ikke del av den

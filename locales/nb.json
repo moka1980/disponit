@@ -5144,5 +5144,11 @@
   "ui.hms.undertittel": "Avviket, tiltaket og oppbevaringshjemmelen. Modulen varsler ingen myndighet og lukker ingen avvik.",
   "ui.hms.versjon": "Versjon",
   "ui.hms.vist_av": "Viser {vist} av høyst {grense}",
-  "ui.nav.hms": "HMS- og avviksmottak"
+  "ui.nav.hms": "HMS- og avviksmottak",
+  "site.modul.m15.navn": "Likviditets- og kostnadsagent",
+  "site.modul.m15.tekst": "Kontantbanen 13 uker fram, med intervall og ikke bare et tall — og hver prognose måles mot det som faktisk skjedde. v1 sier ingenting opp og betaler ingenting: et kostnadstiltak er et forslag, og utførelsen går gjennom modulen som eier den.",
+  "site.modul.m33.navn": "Prediksjons- og scenarioagent",
+  "site.modul.m33.tekst": "Prognoser med målbar usikkerhet, backtestet mot en naiv baseline. En modell som ikke slår «samme som forrige uke» bærer autoritet den ikke har fortjent. Prognoser er ikke fakta, og ingen personalavgjørelse hviler på dem.",
+  "site.modul.m36.navn": "Bedriftsoptimalisator",
+  "site.modul.m36.tekst": "Rangerer forbedringer på tvers av modulene uten å røre grensene deres. Hvert forslag bærer om grunnlaget er korrelasjon, eksperiment eller regel — for korrelasjon presentert som årsak er den feilen som ser mest ut som innsikt."
 }

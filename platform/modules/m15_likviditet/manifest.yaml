@@ -1,0 +1,89 @@
+# M-15 LIKVIDITETS- OG KOSTNADSAGENT — KLYNGE 8s FØRSTE.
+#
+# `m15-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 128
+# tildelt i docs/KLYNGE8-FUNDAMENT.md. BYGGES FØRST i klyngen.
+#
+# KLYNGENS DELTE DOM: EN GAL PROGNOSE SER NØYAKTIG UT SOM EN RIKTIG
+# PROGNOSE — helt til horisonten er passert, og da har alle sluttet å
+# se. Klyngens vanskeligste problem er derfor ikke å LAGE prognoser,
+# men å sørge for at de blir MÅLT.
+#
+# M-15 BYGGES FØRST FORDI DEN ER DEN MEST KONKRETE. En kontantbane er
+# et tall man kan ta feil av på en målbar måte, og inngangsdataene
+# finnes allerede i huset — `bankkonto`/`bankpost` (M-13, 101),
+# `fordring` (M-23, 104), `abonnementsperiode` (M-41, 111) og
+# lønnsgrunnlaget (M-39, 113). Den etablerer klyngens form på det
+# tilfellet der «tok vi feil» er lettest å avgjøre.
+#
+# TRE TING SOM ER NOT NULL, OG HVORFOR:
+#
+#   1. `horisont` — en prognose uten et tidspunkt den kan etterprøves
+#      mot er ikke en prognose, det er en mening med tall i.
+#   2. `modellversjon` — snapshotet, ikke en fremmednøkkel. En modell
+#      som kunne endres i ettertid ville gjort hvert snapshot til en
+#      påstand om noe som ikke lenger står noe sted.
+#   3. `nedre`/`ovre` — et punktestimat uten usikkerhet er ikke en
+#      presis prognose, det er en upresis prognose som har mistet
+#      informasjonen om hvor upresis den er.
+#
+# v1 UTFØRER INGENTING. Et kostnadstiltak er et FORSLAG. Oppsigelsen
+# av et abonnement går gjennom M-41s policykontrollerte vei, av et
+# menneske — katalogens egen vaktsetning sier det, og modulen holder
+# den i datamodellen: ingen kolonne betyr «sagt opp» eller «betalt».
+#
+# GRENSEN MOT M-13: M-13 avstemmer det som HAR skjedd. M-15 sier noe
+# om det som kommer. Den ene er bokføring, den andre er en gjetning
+# med intervall — og å blande dem er nøyaktig feilen klyngen finnes
+# for å hindre.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m15_likviditet
+navn: Likviditets- og kostnadsagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: de fire registrene prognosen leser, og
+# policymotoren som eier enhver utførelse modulen selv ikke gjør.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m13_avstemming
+  - m23_fordring
+  - m41_betaling
+kjerne: platform/modules/m15_likviditet
+i18n_prefiks: likviditet
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en historikk med KJENT fasit — altså en periode der vi
+      vet hva som faktisk skjedde, slik at målingen mot utfall kan
+      etterprøves. Et datasett uten fasit tester bare at koden kjører.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver prognose kan spores til modellversjonen og
+      inngangsdataene den ble regnet på. En prognose uten det er
+      ikke etterprøvbar, uansett hvor riktig den var.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: målesveipen bygget, og at en feilet måling gir et FUNN
+      og ikke stillhet. En prognosemodul som slutter å måle seg selv
+      blir gradvis dårligere uten at noen oppdager det.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen. OG: en
+      rullbakk må ikke gjenopprette en prognose som er MÅLT — den
+      målingen er historikk.

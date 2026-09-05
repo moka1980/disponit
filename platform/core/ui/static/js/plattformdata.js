@@ -143,6 +143,17 @@ export const MODULSTATUS = {
   47: "bygges",     // m47_myndighetsrapport: under_utvikling
   50: "bygges",     // m50_postjournal: under_utvikling, ikke_i_drift
   53: "bygges",     // m53_hms: under_utvikling, ikke_i_drift
+  // KLYNGE 8 — PROGNOSENE. Registrert med grensene, før koden.
+  //
+  // EN GAL PROGNOSE SER NØYAKTIG UT SOM EN RIKTIG PROGNOSE, helt til
+  // horisonten er passert — og da har alle sluttet å se. Derfor er
+  // ikke klyngens vanskeligste problem å lage prognoser, men å sørge
+  // for at de blir MÅLT.
+  //
+  // Flippes av en modulaksept, aldri av en byggemilepæl.
+  15: "bygges",     // m15_likviditet: under_utvikling, ikke_i_drift
+  33: "bygges",     // m33_prognose: under_utvikling, ikke_i_drift
+  36: "bygges",     // m36_optimalisator: under_utvikling
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -478,6 +489,26 @@ const MODULER = [
     navn_nokkel: "site.modul.m53.navn",
     fase_nokkel: "site.fase.autopiloter",
     tekst_nokkel: "site.modul.m53.tekst",
+  },
+  // KLYNGE 8 (128-130): prognosene. Fasene er katalogens egne
+  // (`katalog.js`): M-15 er fase 2, M-33 og M-36 er fase 4.
+  {
+    id: 15,
+    navn_nokkel: "site.modul.m15.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m15.tekst",
+  },
+  {
+    id: 33,
+    navn_nokkel: "site.modul.m33.navn",
+    fase_nokkel: "site.fase.global",
+    tekst_nokkel: "site.modul.m33.tekst",
+  },
+  {
+    id: 36,
+    navn_nokkel: "site.modul.m36.navn",
+    fase_nokkel: "site.fase.global",
+    tekst_nokkel: "site.modul.m36.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,
