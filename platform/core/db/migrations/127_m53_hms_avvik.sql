@@ -732,24 +732,52 @@ REVOKE ALL ON FUNCTION m53_registrer_regel(TEXT, UUID, TEXT, TEXT,
 -- kall kappløp om samme id. To kopier av den samme sammenligningen
 -- ville før eller siden gått fra hverandre, og da ville den ene veien
 -- godtatt noe den andre nektet.
+-- BARE SKALARER I SIGNATUREN, og det er en RETTELSE (CodeRabbit).
+--
+-- Første utgave tok `public.hmsavvik` — radtypen — som parameter.
+-- Det leser fint, men designtabellen i
+-- `deploy/staging/eierskap-reparasjon.sql` lagrer signaturen slik
+-- `regprocedure` skriver den, og den skriver et SAMMENSATT
+-- argument UTEN skjema når typen er synlig i `search_path`.
+-- Reparasjonen slår opp raden med `to_regprocedure('public.' ||
+-- ident)`, som kvalifiserer FUNKSJONSNAVNET men ikke ARGUMENTTYPEN.
+-- Faller `public` ut av `search_path`, blir oppslaget NULL, raden
+-- hoppes over i stillhet, og funksjonen blir stående hos feil eier.
+--
+-- Å kvalifisere typen i designtabellen ville løst det ene tilfellet
+-- og brutt `test_designtabellen_dekker_alle_privilegert_eide_objekter`,
+-- som sammenligner mot `regprocedure`s EGEN skrivemåte. Da er det
+-- bedre å fjerne klassen: ingen sammensatte argumenter, ingen
+-- avhengighet av `search_path`.
+--
+-- FUNKSJONEN LESER RADEN SELV. Begge kallstedene holder alt låsen,
+-- så oppslaget er billig og ser samme rad.
 CREATE FUNCTION m53_krev_samme_avvik(
-    p_rad public.hmsavvik, p_avvikstype TEXT, p_melderform TEXT,
-    p_beskrivelse TEXT, p_sted TEXT, p_hendelsesdato DATE)
-RETURNS VOID LANGUAGE plpgsql IMMUTABLE
+    p_tenant TEXT, p_avvik_id UUID, p_avvikstype TEXT,
+    p_melderform TEXT, p_beskrivelse TEXT, p_sted TEXT,
+    p_hendelsesdato DATE)
+RETURNS VOID LANGUAGE plpgsql
 SET search_path = pg_catalog AS $$
+DECLARE v_rad public.hmsavvik%ROWTYPE;
 BEGIN
-    IF p_rad.avvikstype IS DISTINCT FROM p_avvikstype
-       OR p_rad.melderform IS DISTINCT FROM p_melderform
-       OR p_rad.beskrivelse IS DISTINCT FROM btrim(p_beskrivelse)
-       OR p_rad.sted IS DISTINCT FROM btrim(p_sted)
-       OR p_rad.hendelsesdato IS DISTINCT FROM p_hendelsesdato THEN
+    SELECT * INTO v_rad FROM public.hmsavvik
+     WHERE tenant = p_tenant AND avvik_id = p_avvik_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'm53_krev_samme_avvik: ukjent avvik %',
+            p_avvik_id USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_rad.avvikstype IS DISTINCT FROM p_avvikstype
+       OR v_rad.melderform IS DISTINCT FROM p_melderform
+       OR v_rad.beskrivelse IS DISTINCT FROM btrim(p_beskrivelse)
+       OR v_rad.sted IS DISTINCT FROM btrim(p_sted)
+       OR v_rad.hendelsesdato IS DISTINCT FROM p_hendelsesdato THEN
         RAISE EXCEPTION 'm53_meld_avvik: avvik % finnes med annet'
-            ' innhold', p_rad.avvik_id
+            ' innhold', p_avvik_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 END $$;
-REVOKE ALL ON FUNCTION m53_krev_samme_avvik(public.hmsavvik, TEXT,
-    TEXT, TEXT, TEXT, DATE) FROM PUBLIC;
+REVOKE ALL ON FUNCTION m53_krev_samme_avvik(TEXT, UUID, TEXT, TEXT,
+    TEXT, TEXT, DATE) FROM PUBLIC;
 
 -- ---------------------------------------------------------------------
 -- MOTTAKSDØRA — MODULENS TYNGSTE, OG DEN ENESTE SOM KAN LEKKE EN
@@ -884,8 +912,8 @@ BEGIN
      WHERE tenant = p_tenant AND avvik_id = p_avvik_id FOR UPDATE;
     IF FOUND THEN
         PERFORM public.m53_krev_samme_avvik(
-            v_gml, p_avvikstype, p_melderform, p_beskrivelse, p_sted,
-            p_hendelsesdato);
+            p_tenant, p_avvik_id, p_avvikstype, p_melderform,
+            p_beskrivelse, p_sted, p_hendelsesdato);
         -- STILLE JA. Fristen og hjemmelen kommer fra RADEN, ikke fra
         -- en ny beregning: et gjenspill en uke senere skal ikke gi et
         -- annet svar enn det første kallet fikk.
@@ -929,8 +957,8 @@ BEGIN
         SELECT * INTO v_gml FROM public.hmsavvik
          WHERE tenant = p_tenant AND avvik_id = p_avvik_id FOR UPDATE;
         PERFORM public.m53_krev_samme_avvik(
-            v_gml, p_avvikstype, p_melderform, p_beskrivelse, p_sted,
-            p_hendelsesdato);
+            p_tenant, p_avvik_id, p_avvikstype, p_melderform,
+            p_beskrivelse, p_sted, p_hendelsesdato);
         RETURN QUERY SELECT
             v_gml.oppbevaring_til, v_gml.oppbevaring_hjemmel,
             v_gml.regelversjon, v_gml.helseopplysninger,

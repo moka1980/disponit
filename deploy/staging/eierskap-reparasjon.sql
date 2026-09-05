@@ -1246,7 +1246,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm53_evidens(text,uuid,text,text,jsonb)',                                      'disponit_hms_eier'),
     ('FUNCTION', 'm53_funn_er_sveipens(text)',                                                  'disponit_hms_eier'),
     ('FUNCTION', 'm53_funnene(text,boolean)',                                                   'disponit_hms_eier'),
-    ('FUNCTION', 'm53_krev_samme_avvik(hmsavvik,text,text,text,text,date)',      'disponit_hms_eier'),
+    ('FUNCTION', 'm53_krev_samme_avvik(text,uuid,text,text,text,text,date)',       'disponit_hms_eier'),
     ('FUNCTION', 'm53_lukk_funn(text,uuid,text,text)',                                          'disponit_hms_eier'),
     ('FUNCTION', 'm53_meld_avvik(text,uuid,text,text,text,text,date,text,text,text)',           'disponit_hms_eier'),
     ('FUNCTION', 'm53_oppbevaringsgrunnlag(text,uuid)',                                         'disponit_hms_eier'),
