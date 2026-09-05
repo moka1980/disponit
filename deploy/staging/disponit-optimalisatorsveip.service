@@ -1,0 +1,79 @@
+# M-36 (132): optimalisatorsveipen. MÅLINGEN AV EFFEKTEN ER PRODUKTET.
+#
+# SVEIPEN RANGERER INGENTING OG IVERKSETTER INGENTING. Den sier fra om
+# at en effekt ikke er målt, om at det øverste forslaget hviler bare på
+# korrelasjon, og om at en porteføljestopp har blitt stående — og der
+# stopper den. En sveip som målte effekten selv ville gitt modulen
+# karakter av seg selv. Målingen er en handling med en ansvarlig, og
+# siden den ikke kan rettes, står navnet der for alltid.
+#
+# KLYNGENS DELTE DOM: en gal prognose ser nøyaktig ut som en riktig
+# prognose — helt til horisonten er passert, og da har alle sluttet å
+# se. `rangering_uten_maaling` er derfor et funn ingen kan lukke.
+#
+# M-36s VAKTSETNING ER EN ADVARSEL: en optimalisator som finner at den
+# beste forbedringen er «gi M-36 lov til X», er ikke ødelagt — den gjør
+# nøyaktig det den ble bedt om. Derfor er fullmaktsutvidelse
+# UREPRESENTERBAR: modulrollen har ingen rettighet på `policyer`,
+# `policyutkast` eller `policyaktivering`, og det finnes ingen dør som
+# skriver dit.
+#
+# SVEIPEN IVERKSETTER INGEN TILTAK. Statussettet har ingen
+# `iverksatt`, og gjerdet står i koden: `optimalisatorsveip.py`
+# importerer ingenting som kan snakke ut.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut for å utføre et tiltak.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# optimalisatorsveip er en rangering ingen har målt effekten av — og
+# som fortsetter å bli lest som en anbefaling.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_optimalisatorsveip` har nøyaktig
+# ÉN rettighet: EXECUTE på `m36_sveip_optimalisering`. INGEN
+# tabellrettigheter — heller ikke på de 32 funnregistrene modulen
+# leser.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit optimalisatorsveip (umålte effekter, korrelasjon på topp, stopp som blir stående)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_OPTIMALISATORSVEIP_URL:/etc/disponit/optimalisatorsveip/DISPONIT_OPTIMALISATORSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_optimalisatorsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`rangering_ferskeste`, primærnøklene på posten og
+# målingen, `optimaliseringsfunn_ett_apent`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

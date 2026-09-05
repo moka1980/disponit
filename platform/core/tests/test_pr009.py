@@ -591,7 +591,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 130 (M-33): prognosesveipens EGEN DSN. En stille sveip her er
         # en modell som taper for «samme som forrige uke» uten at noen
         # får vite det — og som fortsetter å bli lest som analyse.
-        "DISPONIT_PROGNOSESVEIP_URL")})
+        "DISPONIT_PROGNOSESVEIP_URL",
+        # 132 (M-36): optimalisatorsveipens EGEN DSN. En stille sveip
+        # her er en rangering ingen har målt effekten av — og som
+        # fortsetter å bli lest som en anbefaling.
+        "DISPONIT_OPTIMALISATORSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -712,6 +716,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
     sti_prog = rot / "prognosesveip/DISPONIT_PROGNOSESVEIP_URL"
     assert sti_prog.read_text(
         encoding="utf-8") == "verdi-DISPONIT_PROGNOSESVEIP_URL"
+    # 132 (M-36): optimalisatorsveipens EGEN DSN.
+    sti_opti = (rot
+                / "optimalisatorsveip/DISPONIT_OPTIMALISATORSVEIP_URL")
+    assert sti_opti.read_text(
+        encoding="utf-8") == "verdi-DISPONIT_OPTIMALISATORSVEIP_URL"
 
 
 def test_hver_installert_timer_blir_ogsa_startet():
@@ -1227,7 +1236,11 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 130 (M-33): prognosesveipens EGEN DSN. En stille sveip her er
         # en modell som taper for «samme som forrige uke» uten at noen
         # får vite det — og som fortsetter å bli lest som analyse.
-        "DISPONIT_PROGNOSESVEIP_URL")})
+        "DISPONIT_PROGNOSESVEIP_URL",
+        # 132 (M-36): optimalisatorsveipens EGEN DSN. En stille sveip
+        # her er en rangering ingen har målt effekten av — og som
+        # fortsetter å bli lest som en anbefaling.
+        "DISPONIT_OPTIMALISATORSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

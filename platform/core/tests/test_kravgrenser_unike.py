@@ -119,12 +119,17 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Se `docs/KLYNGE8-FUNDAMENT.md`.
 UBYGDE_GRENSER = frozenset({
-    # `m15-v1` STO HER TIL 5/9, `m33-v1` til samme kveld. Å fjerne et
-    # navn herfra er en del av å bygge modulen, ikke et separat
-    # opprydningsarbeid — og `test_de_ubygde_grensene_er_faktisk_ubygde`
-    # er den som krever det. Den falt i det øyeblikket 128 landet, og
-    # igjen da 130 landet, som den skal.
-    "m36-v1",   # M-36 optimalisator, migrasjon 132
+    # TOM IGJEN, 5/9 — KLYNGE 8 ER FERDIG.
+    #
+    # `m15-v1` sto her til 128 landet, `m33-v1` til 130, og `m36-v1`
+    # til 132. Å fjerne et navn herfra er en del av å bygge modulen,
+    # ikke et separat opprydningsarbeid — og
+    # `test_de_ubygde_grensene_er_faktisk_ubygde` er den som krever
+    # det. Den falt tre ganger denne kvelden, som den skal.
+    #
+    # At lista er tom er ikke en hviledag: det er beviset på at
+    # klyngen faktisk ble ferdig, akkurat som da den sto tom mellom
+    # M-53 og klynge 8-fundamentet.
 })
 
 

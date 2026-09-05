@@ -1917,6 +1917,86 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import prognose as progmodul
         return progmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-36 BEDRIFTSOPTIMALISATOR (132). DET FINNES INGEN RUTE SOM
+    # IVERKSETTER ET TILTAK, OG INGEN SOM ENDRER EN POLICY.
+    #
+    # Vaktsetningen er «kan aldri utvide egen fullmakt», og den er en
+    # ADVARSEL: en optimalisator som finner at den beste forbedringen
+    # er «gi M-36 lov til X», gjør nøyaktig det den ble bedt om.
+    # Derfor finnes det ingen rute mot `policyer`, `policyutkast`
+    # eller `policyaktivering` — og `tiltaksforslag.status` har ingen
+    # `iverksatt`.
+    #
+    # `/rangering` NEKTER med aktiv porteføljestopp. Det er stoppens
+    # hele virkning, og den eneste M-36 lovlig kan ha.
+    def opti_bilde(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.optimalisatorbilde(tjeneste, request)
+
+    def opti_rangeringer(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.rangeringer_endepunkt(tjeneste, request)
+
+    def opti_tiltak(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.tiltak_endepunkt(tjeneste, request)
+
+    def opti_modeller(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.modeller_endepunkt(tjeneste, request)
+
+    def opti_funn(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.funn_endepunkt(tjeneste, request)
+
+    def opti_signaler(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.signaler_endepunkt(tjeneste, request)
+
+    def opti_rangering(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.rangering_endepunkt(tjeneste, request)
+
+    def opti_krav(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.krav_endepunkt(tjeneste, request)
+
+    def opti_modell_ny(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.registrer_modell_endepunkt(tjeneste, request)
+
+    def opti_modell_avvikle(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.avvikle_modell_endepunkt(tjeneste, request)
+
+    def opti_tiltak_ny(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.foresla_tiltak_endepunkt(tjeneste, request)
+
+    def opti_vurder(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.vurder_tiltak_endepunkt(tjeneste, request)
+
+    def opti_stopp_ny(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.sett_stopp_endepunkt(tjeneste, request)
+
+    def opti_stopp_opphev(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.opphev_stopp_endepunkt(tjeneste, request)
+
+    def opti_rangere(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.rangere_endepunkt(tjeneste, request)
+
+    def opti_effekt(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.registrer_effekt_endepunkt(tjeneste, request)
+
+    def opti_lukk_funn(request: Request) -> Response:
+        from . import optimalisator as optimodul
+        return optimodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
     # tiltak å vise til.
@@ -3196,6 +3276,38 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               prog_maaling, methods=["POST"]),
         Route("/v1/prognose/funn/{funn_id:uuid}/lukk",
               prog_lukk_funn, methods=["POST"]),
+        # M-36 (132). Faste stier FØR parametriserte.
+        Route("/v1/optimalisator", opti_bilde, methods=["GET"]),
+        Route("/v1/optimalisator/rangeringer", opti_rangeringer,
+              methods=["GET"]),
+        Route("/v1/optimalisator/tiltak", opti_tiltak,
+              methods=["GET"]),
+        Route("/v1/optimalisator/modeller", opti_modeller,
+              methods=["GET"]),
+        Route("/v1/optimalisator/funn", opti_funn, methods=["GET"]),
+        Route("/v1/optimalisator/signaler", opti_signaler,
+              methods=["GET"]),
+        Route("/v1/optimalisator/krav", opti_krav, methods=["POST"]),
+        Route("/v1/optimalisator/modell", opti_modell_ny,
+              methods=["POST"]),
+        Route("/v1/optimalisator/tiltak", opti_tiltak_ny,
+              methods=["POST"]),
+        Route("/v1/optimalisator/stopp", opti_stopp_ny,
+              methods=["POST"]),
+        Route("/v1/optimalisator/rangering", opti_rangere,
+              methods=["POST"]),
+        Route("/v1/optimalisator/modell/{modell_id:uuid}/avvikle",
+              opti_modell_avvikle, methods=["POST"]),
+        Route("/v1/optimalisator/tiltak/{tiltak_id:uuid}/vurder",
+              opti_vurder, methods=["POST"]),
+        Route("/v1/optimalisator/stopp/{stopp_id:uuid}/opphev",
+              opti_stopp_opphev, methods=["POST"]),
+        Route("/v1/optimalisator/rangering/{rangering_id:uuid}",
+              opti_rangering, methods=["GET"]),
+        Route("/v1/optimalisator/rangering/{rangering_id:uuid}/effekt",
+              opti_effekt, methods=["POST"]),
+        Route("/v1/optimalisator/funn/{funn_id:uuid}/lukk",
+              opti_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4438,6 +4550,39 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/prognose/prognose/{prognose_id:uuid}/maaling"):
         "bestilling:opprett",
     ("POST", "/v1/prognose/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-36 (132). INGEN RUTE IVERKSETTER ET TILTAK — det finnes ingen
+    # `/iverksett`, og `tiltaksforslag.status` har ingen slik verdi.
+    # INGEN RUTE ENDRER EN POLICY heller: fullmaktsutvidelse er
+    # urepresenterbar, ikke frarådet, og porten leser denne tabellen.
+    #
+    # LESESCOPET ER `okonomi:read` fordi tiltakene anslås i ØRE og
+    # rangeres på penger. Merk hva det IKKE gir: rangeringen bærer
+    # `kilde_modul` og `kilde_funntype`, ikke funnenes innhold. En
+    # finansleser ser AT det finnes tolv åpne HMS-funn, ikke hva de
+    # gjelder.
+    ("GET",  "/v1/optimalisator"):               "okonomi:read",
+    ("GET",  "/v1/optimalisator/rangeringer"):   "okonomi:read",
+    ("GET",  "/v1/optimalisator/tiltak"):        "okonomi:read",
+    ("GET",  "/v1/optimalisator/modeller"):      "okonomi:read",
+    ("GET",  "/v1/optimalisator/funn"):          "okonomi:read",
+    ("GET",  "/v1/optimalisator/signaler"):      "okonomi:read",
+    ("GET",  "/v1/optimalisator/rangering/{rangering_id:uuid}"):
+        "okonomi:read",
+    ("POST", "/v1/optimalisator/krav"):          "bestilling:opprett",
+    ("POST", "/v1/optimalisator/modell"):        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/tiltak"):        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/stopp"):         "bestilling:opprett",
+    ("POST", "/v1/optimalisator/rangering"):     "bestilling:opprett",
+    ("POST", "/v1/optimalisator/modell/{modell_id:uuid}/avvikle"):
+        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/tiltak/{tiltak_id:uuid}/vurder"):
+        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/stopp/{stopp_id:uuid}/opphev"):
+        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/rangering/{rangering_id:uuid}/effekt"):
+        "bestilling:opprett",
+    ("POST", "/v1/optimalisator/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

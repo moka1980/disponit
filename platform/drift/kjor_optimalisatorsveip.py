@@ -1,4 +1,4 @@
-"""Inngangspunkt for `disponit-prognosesveip.service` (M-33, 130).
+"""Inngangspunkt for `disponit-optimalisatorsveip.service` (M-36, 132).
 
 Telleren for sammenhengende feil lever i en liten tilstandsfil, ikke i
 minnet: hver kjøring er en egen prosess (`Type=oneshot`), så «to feilede
@@ -16,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import prognosesveip
+from . import optimalisatorsveip
 
 
 def _tilstandsfil() -> Path:
@@ -25,17 +25,17 @@ def _tilstandsfil() -> Path:
     Unit-filen setter `StateDirectory=disponit`, så systemd oppretter
     katalogen med arbeiderens egen eier FØR ExecStart og oppgir den i
     $STATE_DIRECTORY. Den hardkodede stien beholdes kun som fallback for
-    kjøring utenfor systemd; $DISPONIT_PROGNOSESVEIPTILSTAND overstyrer
+    kjøring utenfor systemd; $DISPONIT_OPTIMALISATORSVEIPTILSTAND overstyrer
     alt (tester, manuell drift).
     """
-    eksplisitt = os.environ.get("DISPONIT_PROGNOSESVEIPTILSTAND")
+    eksplisitt = os.environ.get("DISPONIT_OPTIMALISATORSVEIPTILSTAND")
     if eksplisitt:
         return Path(eksplisitt)
     statedir = os.environ.get("STATE_DIRECTORY")
     if statedir:
         # systemd oppgir en kolonseparert liste når flere er deklarert.
-        return Path(statedir.split(":")[0]) / "prognosesveip.json"
-    return Path("/var/lib/disponit/prognosesveip.json")
+        return Path(statedir.split(":")[0]) / "optimalisatorsveip.json"
+    return Path("/var/lib/disponit/optimalisatorsveip.json")
 
 
 def _les_feiltelling() -> int:
@@ -100,7 +100,7 @@ def _skriv_feiltelling(n: int) -> bool:
             os.unlink(tmp)   # ingen etterlatte .tmp-filer i tilstandskatalogen
         except OSError:
             pass
-        print(json.dumps({"hendelse": "prognosesveiptilstand_skrivefeil",
+        print(json.dumps({"hendelse": "optimalisatorsveiptilstand_skrivefeil",
                           "sti": str(fil), "feil": str(e)}), file=sys.stderr)
         return False
 
@@ -132,18 +132,18 @@ def main() -> int:
         n = _les_feiltelling() + 1
         lagret = _skriv_feiltelling(n)
         print(json.dumps({
-            "hendelse": "prognosesveip", "tenanter": 0,
+            "hendelse": "optimalisatorsveip", "tenanter": 0,
             "nye_funn": 0, "oppdaterte_funn": 0, "lukkede_funn": 0,
             "feilet": 1, "hoppet_over": 0, "sammenhengende_feil": n,
-            "alarm": int(n >= prognosesveip.ALARM_ETTER_FEIL),
+            "alarm": int(n >= optimalisatorsveip.ALARM_ETTER_FEIL),
             "tilstand_lagret": int(lagret),
             "grunn": "hemmeligheter_kunne_ikke_lastes",
         }))
         return 2
-    dsn = os.environ.get("DISPONIT_PROGNOSESVEIP_URL")
+    dsn = os.environ.get("DISPONIT_OPTIMALISATORSVEIP_URL")
     if not dsn:
         # INGEN fallback til DATABASE_URL. Runtime-rollen har med vilje
-        # ikke EXECUTE på sveipen (130 REVOKEr den), så en fallback ville
+        # ikke EXECUTE på sveipen (132 REVOKEr den), så en fallback ville
         # bare byttet en tydelig oppstartsnekt mot «permission denied» i
         # journalen hver natt.
         # …OG DEN TELLER SOM EN FEILET KJØRING (CodeRabbit, 118).
@@ -154,12 +154,12 @@ def main() -> int:
         n = _les_feiltelling() + 1
         lagret = _skriv_feiltelling(n)
         print(json.dumps({
-            "hendelse": "prognosesveip", "tenanter": 0,
+            "hendelse": "optimalisatorsveip", "tenanter": 0,
             "nye_funn": 0, "oppdaterte_funn": 0, "lukkede_funn": 0,
             "feilet": 1, "hoppet_over": 0, "sammenhengende_feil": n,
-            "alarm": int(n >= prognosesveip.ALARM_ETTER_FEIL),
+            "alarm": int(n >= optimalisatorsveip.ALARM_ETTER_FEIL),
             "tilstand_lagret": int(lagret),
-            "grunn": "DISPONIT_PROGNOSESVEIP_URL mangler",
+            "grunn": "DISPONIT_OPTIMALISATORSVEIP_URL mangler",
         }))
         return 2
 
@@ -168,31 +168,31 @@ def main() -> int:
         conn = _koble(dsn)
     except Exception:
         # Databasen utilgjengelig ER en feilet kjøring — telleren skal
-        # øke akkurat som ved en feilet `m33_sveip_prognose()`,
+        # øke akkurat som ved en feilet `m36_sveip_optimalisering()`,
         # ellers utløser en vedvarende tilkoblingsfeil aldri alarmen den
         # skal.
         n = tidligere + 1
         lagret = _skriv_feiltelling(n)
         print(json.dumps({
-            "hendelse": "prognosesveip", "tenanter": 0, "nye_funn": 0,
+            "hendelse": "optimalisatorsveip", "tenanter": 0, "nye_funn": 0,
             "oppdaterte_funn": 0, "lukkede_funn": 0,
             "feilet": 1, "hoppet_over": 0, "sammenhengende_feil": n,
-            "alarm": int(n >= prognosesveip.ALARM_ETTER_FEIL),
+            "alarm": int(n >= optimalisatorsveip.ALARM_ETTER_FEIL),
             "tilstand_lagret": int(lagret),
             "grunn": "tilkobling_feilet",
         }))
         return 1
 
     try:
-        r = prognosesveip.kjor(conn, tidligere_feil=tidligere)
+        r = optimalisatorsveip.kjor(conn, tidligere_feil=tidligere)
     except Exception:
         # Siste skanse: slipper et unntak likevel ut av `kjor()`, er
         # kjøringen feilet — og telleren MÅ persisteres her, ellers
         # nullstiller hver feilende kjøring alarmen den skulle bygge opp
         # mot.
-        r = prognosesveip.Sveipresultat(
+        r = optimalisatorsveip.Sveipresultat(
             feilet=True,
-            alarm_utlost=tidligere + 1 >= prognosesveip.ALARM_ETTER_FEIL)
+            alarm_utlost=tidligere + 1 >= optimalisatorsveip.ALARM_ETTER_FEIL)
     finally:
         try:
             conn.close()
@@ -208,15 +208,15 @@ def main() -> int:
         feil_n = tidligere + 1 if r.feilet else 0
         lagret = _skriv_feiltelling(feil_n)
     print(json.dumps({
-        "hendelse": "prognosesveip",
+        "hendelse": "optimalisatorsveip",
         "tenanter": r.tenanter,
         "nye_funn": r.nye,
         "oppdaterte_funn": r.oppdaterte,
         "lukkede_funn": r.lukkede,
-        # INGEN `forlatte`: M-48 rydder forlatte reservasjoner, M-33
-        # har ingenting tilsvarende. En umålt uke ryddes ikke av
-        # noen — den lukkes av at målingen kommer, og det er hele
-        # poenget med funnet.
+        # INGEN `forlatte`: M-48 rydder forlatte reservasjoner, M-36
+        # har ingenting tilsvarende. En umålt rangeringspost ryddes
+        # ikke av noen — den lukkes av at effekten måles, og det er
+        # hele poenget med funnet.
         #
         # INGEN `avkortet`: sveipen tar tenantlisten opp til taket og
         # har ikke noe per-tenant-tak å rapportere. Å bære med seg

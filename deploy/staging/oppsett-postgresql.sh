@@ -517,6 +517,9 @@ LIKVIDITETSSVEIP_DSN=("DISPONIT_LIKVIDITETSSVEIP_URL=$DB"
 # migrator og målte en base der SP-7-skillet ikke fantes.
 PROGNOSESVEIP_DSN=("DISPONIT_PROGNOSESVEIP_URL=$DB"
                    "DISPONIT_TEST_PROGNOSESVEIP_DSN=${DB}_test")
+# 132 (M-36): optimalisatorsveipens DSN.
+OPTIMALISATORSVEIP_DSN=("DISPONIT_OPTIMALISATORSVEIP_URL=$DB"
+                        "DISPONIT_TEST_OPTIMALISATORSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -561,6 +564,7 @@ sikre_rolle_dsn "$POSTJOURNALSVEIP" "${POSTJOURNALSVEIP_DSN[@]}"
 sikre_rolle_dsn "$HMSSVEIP" "${HMSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$LIKVIDITETSSVEIP" "${LIKVIDITETSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$PROGNOSESVEIP" "${PROGNOSESVEIP_DSN[@]}"
+sikre_rolle_dsn "$OPTIMALISATORSVEIP" "${OPTIMALISATORSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

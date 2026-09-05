@@ -1338,7 +1338,55 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm33_registrer_maaling(text,uuid,integer,bigint,text)',                        'disponit_prognose_eier'),
     ('FUNCTION', 'm33_registrer_modell(text,uuid,text,text,text,text,date,date,text)',          'disponit_prognose_eier'),
     ('FUNCTION', 'm33_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_prognose_eier'),
-    ('FUNCTION', 'm33_sveip_prognose(integer)',                                                 'disponit_prognose_eier');
+    ('FUNCTION', 'm33_sveip_prognose(integer)',                                                 'disponit_prognose_eier'),
+    -- 132 (M-36): optimalisatorens doerer og sveipen.
+    --
+    -- RANGERINGEN, POSTEN OG MAALINGEN ER APPEND-ONLY, og modulrollen
+    -- har ikke UPDATE paa dem. Doerene bruker derfor INGEN
+    -- `FOR UPDATE` paa de tre.
+    --
+    -- `m36_apne_funn` OG `m36_udekkede_registre` STAAR HER selv om de
+    -- bare leser: de er SECURITY DEFINER og loper som modulrollen, og
+    -- det er nettopp den som har `SELECT` paa de 32 funnregistrene.
+    -- Eide migrator dem, ville de lest med migrators rettigheter —
+    -- altsaa forbi radvakten.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN. Parseren stopper ved det
+    -- foerste setningsskillet, og et slikt tegn her ville kuttet
+    -- VALUES-lista i stillhet. Jeg gjorde akkurat den feilen i 130s
+    -- runde, to ganger.
+    --
+    -- SIGNATURENE ER TYPER, IKKE PARAMETERNAVN. Foerste utkast brukte
+    -- `pg_get_function_identity_arguments`, som gir `p_tenant text` —
+    -- og da matchet ingen av de 24 radene. Huset skriver typene alene.
+    --
+    -- Radvaktene (`m36_evidensvakt()`, `m36_modellvakt()`,
+    -- `m36_tiltaksvakt()`, `m36_stoppvakt()`) staar IKKE her: de eies
+    -- av migrator, som eier tabellene triggerne henger paa.
+    ('FUNCTION', 'm36_apne_funn(text)',                                                                       'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_avvikle_modell(text,uuid,date,text)',                                                   'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_bildet(text)',                                                                          'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_evidens(text,uuid,text,text,jsonb)',                                                    'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_foresla_tiltak(text,uuid,text,text,text,text,text,text,bigint,text)',                   'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_funn_er_sveipens(text)',                                                                'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_lukk_funn(text,uuid,text,text)',                                                        'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_modell_gyldig(date,date)',                                                              'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_modellregister(text)',                                                                  'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_opphev_stopp(text,uuid,text,text)',                                                     'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_optimaliseringsfunn(text,integer)',                                                     'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_rangere(text,uuid,uuid,text)',                                                          'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_rangeringen(text,uuid)',                                                                'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_rangeringsregister(text,integer)',                                                      'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_registrer_effekt(text,uuid,integer,bigint,text)',                                       'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_registrer_modell(text,uuid,text,text,text,text,integer,date,date,text)',                'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_sett_krav(text,integer,integer,integer,text,text)',                                     'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_sett_stopp(text,uuid,text,text)',                                                       'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_stopp_aktiv(text)',                                                                     'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_stoppen(text)',                                                                         'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_sveip_optimalisering(integer)',                                                         'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_tiltakene(text,integer)',                                                               'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_udekkede_registre()',                                                                   'disponit_optimalisator_eier'),
+    ('FUNCTION', 'm36_vurder_tiltak(text,uuid,text,text,text)',                                               'disponit_optimalisator_eier');
 
 DO $$
 DECLARE

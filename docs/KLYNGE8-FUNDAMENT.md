@@ -139,6 +139,64 @@ og M-30 sletter ingenting. Antakelsen var skrevet ned i et
 fundamentdokument og feil, og den ble oppdaget først da noen leste
 099. Derfor står avklaringen her, målt mot koden.
 
+### FUNNET M-36 GA: REGISTRENE DELER FORMEN, MEN IKKE HELT
+
+**SKREVET 5/9, under byggingen av 132.** Avklaringen over sa at M-36
+v1 leser de ÅPNE FUNNENE fra modulregistrene. Det holder — men
+registrene er ikke så like som setningen antyder, og det ble målt mot
+basen før første linje kode:
+
+* **33 registre står i `m36_funnregister`**, og 32 av dem LESES —
+  `merkevarefunn` står der for å være dekket, men er en
+  observasjonstabell uten funntype.
+* **30 av de 33** har husets form: `tenant`, `funntype` og `apen`.
+* `kvalitetsfunn` (M-3, 092) har **ingen `apen`** — hver rad ER et
+  åpent funn, og lukking skjer ved at raden forsvinner.
+* `retensjonsfunn` bruker **`lukket_maaling IS NULL`**.
+* M-55 skiller **observasjon fra varsel**: `merkevarefunn` har verken
+  `apen` eller `funntype`, mens `merkevarevarsel` har `apen` og
+  `varseltype`.
+
+**EN OPTIMALISATOR SOM ANTOK ÉN FORM VILLE LEST 30 AV 32 OG MELDT RENT
+FOR DE TO SISTE** — og for `merkevarefunn` ville den lest en tabell
+som ikke bærer funntyper i det hele tatt. Det er samme feilform som den blinde sveipen i 130: den
+ser ut som en vellykket kjøring.
+
+Derfor bærer modulen et EKSPLISITT register — `m36_funnregister` — med
+tabellnavn, modul, typekolonne og hvordan «åpen» er kodet. `m36_rangere`
+NEKTER når et funnregister mangler i det, og en port faller når en ny
+`*funn`-tabell dukker opp utenfor. **Den neste modulens funnregister
+kan ikke falle ut av synet i stillhet** — den som bygger modul 37 må ta
+stilling til om optimalisatoren skal se den.
+
+**OG DET KREVDE TRETTI EIERE Å FÅ LOV.** Registrene eies av 30 ulike
+roller, så granten avgis av hver enkelt eier, ikke av migrator. At det
+er slik er selv en måling: ingen enkelt rolle ser hele funnbildet i
+dag, og M-36 er den første som ber om å få gjøre det. Rettigheten er
+`SELECT` og bare det.
+
+### PORTEFØLJESTOPPEN STANSER M-36, IKKE PORTEFØLJEN
+
+Vaktsetningen krever at en porteføljestopp er «tilgjengelig», og
+`portefoljestopp_uten_virkning` krever at den VIRKER. Men det eneste
+M-36 lovlig kan stanse er sin egen produksjon: å stanse en annen modul
+ville vært `modulen_overstyrte_en_annen_moduls_grense`.
+
+Virkningen er derfor ekte og målbar — med aktiv stopp NEKTER
+`m36_rangere` — men det er **ikke en nødbrems for driften**, og både
+migrasjonen, API-et og flaten sier det i klartekst. Navnet lover mer
+enn stoppen kan holde, og da skal teksten si hva den faktisk gjør.
+
+### FIRE AV M-36s INVARIANTER ER M-33s PROGNOSEFORM
+
+`prognose_uten_horisont`, `_modellversjon`, `_intervall` og
+`_maaling` går igjen. Det er ikke en feil i grensen: **hvert rangert
+tiltak bærer en effektprognose som må måles etterpå.** Formen er
+bygget to ganger før (128, 130), og den tredje gangen kostet lite —
+inkludert 131s lærdom om at et bånd med bredde null er et punkt som
+later som det er et intervall. `rangeringspost` har derfor en CHECK på
+`nedre < ovre` fra fødselen, ikke bare `NOT NULL`.
+
 ### M-36 leser en «KPI-katalog» som ikke finnes
 
 Katalogen sier at M-36s input er «KPI-katalog, modulresultater,
@@ -295,7 +353,7 @@ det samme som en forpliktelse noen har bekreftet.
 | 129 | — | `129_m15_ukevindu.sql` | rettelse, se under |
 | ~~129~~ **130** | M-33 | `130_m33_prognose.sql` | 2. **Landet 5/9.** |
 | ~~129~~ ~~130~~ **131** | — | `131_m33_rettelser.sql` | rettelse, se under |
-| ~~130~~ ~~131~~ **132** | M-36 | `132_m36_optimalisator.sql` | 3. |
+| ~~130~~ ~~131~~ **132** | M-36 | `132_m36_optimalisator.sql` | 3. **Landet 5/9. KLYNGEN ER FERDIG.** |
 
 **M-33 OG M-36 FLYTTET ETT HAKK, og grunnen skal stå her — et tildelt
 migrasjonsnummer som stille bytter plass er nøyaktig den slags

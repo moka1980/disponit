@@ -337,7 +337,13 @@ export function funntabell(funn, lukk) {
     // og lista i 130 kunne gli fra hverandre.
     if (lukk && f.kan_lukkes) {
       handling.append(knappMed(t("ui.prognose.lukk"), () => lukk(f)));
-    } else if (f.apen) {
+    } else if (f.apen && !f.kan_lukkes) {
+      // `!f.kan_lukkes` OG IKKE BARE `f.apen` (CodeRabbit).
+      //
+      // Betingelsen sto på `lukk`-tilbakekallet, som er `null` for en
+      // LESER uten skrivescope. Da fikk leseren «lukkes av sveipen»
+      // på HVERT åpent funn — også de et menneske faktisk kan lukke.
+      // Det er en påstand om hvem som eier funnet, og den var feil.
       handling.append(el("span", { class: "muted",
         text: t("ui.prognose.lukkes_av_sveipen") }));
     }

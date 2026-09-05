@@ -1,6 +1,6 @@
 # 115: én gang i døgnet, ETTER hele sveipestigen.
 #
-# KLOKKESLETTET ER 12:05 UTC fordi rekkefølgen er poenget:
+# KLOKKESLETTET ER 12:20 UTC fordi rekkefølgen er poenget:
 # observatøren skal lese flåtens tilstand ETTER at flåten har kjørt,
 # ikke før. Kjørte den 02:00, ville hver eneste sveip sett ut som
 # «ikke kjørt i dag», og varselet vært en falsk alarm hver natt.
@@ -11,7 +11,7 @@
 # observatøren flyttes BAKENFOR HELE den stigen med én gang i stedet
 # for å skyves femten minutter fem ganger.
 #
-# GAPET FRA 09:50 TIL 12:05 ER TOMT I DAG og fylles etter hvert som
+# GAPET FRA 09:50 TIL 12:20 ER TOMT I DAG og fylles etter hvert som
 # M-54, M-52, M-47, M-50 og M-53 lander. Det er med vilje: klyngens
 # fundament flytter observatøren FØR modulene kommer, så ingen
 # modul-PR trenger å røre denne fila — og to PR-er som begge flyttet
@@ -21,13 +21,26 @@
 #
 # 08:35 STÅR IKKE LEDIG LENGER: M-15 (128) tok det.
 #
-# FLYTTET FRA 11:20 TIL 12:05 I M-33s PR (130). Klynge 8 la de to
-# siste sveipene BAK klynge 7 — M-33 på 11:35 og M-36 på 11:50 — og en
-# statussveip som ble stående på 11:20 ville lest flåtens tilstand FØR
-# to av medlemmene hadde kjørt. Den ville rapportert dem som uteblitt
-# hver eneste natt.
+# FLYTTET TO GANGER, OG ANDRE GANG ER LÆRDOMMEN.
 #
-# FLYTTINGEN HØRTE TIL DEN FØRSTE TIMEREN BAK 11:20, ikke til
+# 11:20 → 12:05 i M-33s PR (130): klynge 8 la de to siste sveipene BAK
+# klynge 7, og en statussveip på 11:20 ville lest flåtens tilstand FØR
+# to av medlemmene hadde kjørt.
+#
+# 12:05 → 12:20 i M-36s PR (132), OG DET VAR ET REGNESTYKKE INGEN
+# HADDE GJORT: et klokkeslett er ikke en rekkefølge.
+# `RandomizedDelaySec` finnes for å hindre samtidighet, ikke for å
+# ordne. Det som må gå opp er START + SPREDNING + `TimeoutStartSec`
+# for HVER overvåket sveip, og M-36 på 11:50 + 10 + 10 = 12:10
+# passerte 12:05. Statussveipen ville lest forrige døgns tilstandsfil
+# og meldt en FALSK «uteblitt».
+#
+# Porten `test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter`
+# gjør regnestykket til en måling, i begge modulenes suiter. DEN NESTE
+# SOM LEGGER EN SVEIP I STIGEN MÅ GJØRE DET SAMME REGNESTYKKET — og
+# porten faller hvis han lar være.
+#
+# FLYTTINGEN HØRER TIL TIMEREN SOM GJØR DEN NØDVENDIG, ikke til
 # fundamentet: et fundament som endrer drift for noe som ennå ikke
 # finnes, gjetter. Da M-33 kom, var flyttingen en måling — og
 # `test_timeren_gaar_etter_hele_stigen` er den målingen.
@@ -44,7 +57,7 @@
 Description=Disponit sveipestatus-timer
 
 [Timer]
-OnCalendar=*-*-* 12:05:00 UTC
+OnCalendar=*-*-* 12:20:00 UTC
 RandomizedDelaySec=15min
 Persistent=true
 
