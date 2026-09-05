@@ -42,7 +42,17 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // 38 flippet planlagt → bygges 31/8: manifestet (m38_ruter) er
   // avlesningens kilde, og fairness/cachen er levert (#314/#316).
   assert.equal(modulStatus(38), "bygges");
-  assert.equal(modulStatus(45), "planlagt");
+  // EN MODUL SOM IKKE FINNES I KATALOGEN I DET HELE TATT — det er
+  // dette testens navn faktisk påstår, og det som ikke flytter seg.
+  //
+  // Her sto `modulStatus(45)` til 5/9. M-45 ble registrert med klynge
+  // 9-fundamentet, og da falt testen — ikke fordi noe var galt, men
+  // fordi den brukte en ekte, ubygd modul som stedfortreder for
+  // «ukjent». Hver klynge ville flyttet den på nytt.
+  assert.equal(modulStatus(99), "planlagt");
+  // …OG EN EKTE MODUL SOM ENNÅ IKKE ER REGISTRERT. M-28 hører til
+  // klynge 10 og flyttes DA, med det fundamentet — ikke før.
+  assert.equal(modulStatus(28), "planlagt");
 });
 
 test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => {
@@ -280,4 +290,30 @@ test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
 
 test("modulmerke: tenantens modul-ID-er vises som M-<id>", () => {
   assert.deepEqual([1, 2].map(modulmerke), ["M-1", "M-2"]);
+});
+
+test("hver fase_nokkel og navn_nokkel finnes i BEGGE locales", () => {
+  // JEG FANT OPP `site.fase.grunnmur` I KLYNGE 9-FUNDAMENTET, og
+  // ingen port så det. Nøkkelen finnes ikke i noen locale, så
+  // katalogen ville vist selve nøkkelstrengen som fasenavn — på
+  // begge språk, for én modul, uten at én test falt.
+  //
+  // `t()` faller trygt tilbake til nøkkelen selv (i18n §3), og det er
+  // riktig for en ukjent nøkkel i drift. Men det gjør også at en
+  // oppdiktet nøkkel ser ut som en fungerende: skjermen viser noe,
+  // og «noe» er ikke tomt.
+  //
+  // MUTASJONEN SOM DREPER DENNE: bytt en fase_nokkel til noe som
+  // ikke står i locales.
+  const kilde = readFileSync(join(ROT, "platform", "core", "ui",
+    "static", "js", "plattformdata.js"), "utf8");
+  const brukt = new Set(
+    [...kilde.matchAll(/"(site\.(?:fase|modul)\.[a-z0-9_.]+)"/g)]
+      .map((m) => m[1]));
+  assert.ok(brukt.size > 50, `fant bare ${brukt.size} nøkler`);
+  for (const [sprak, kart] of LOKALER) {
+    const mangler = [...brukt].filter((k) => !(k in kart)).sort();
+    assert.deepEqual(mangler, [],
+      `nøkler uten tekst i ${sprak}: ${mangler.join(", ")}`);
+  }
 });

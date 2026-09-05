@@ -1,0 +1,73 @@
+# M-43 TALE- OG TELEFONIAGENT — KLYNGE 9s TREDJE.
+#
+# `m43-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 135
+# tildelt i docs/KLYNGE9-FUNDAMENT.md.
+#
+# KLYNGENS DELTE DOM: EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS
+# TILBAKE — OG DEN SOM LESER DEN VET IKKE AT EN MASKIN SKREV DEN.
+#
+# HER ER ANDRE HALVDEL AV DOMMEN BOKSTAVELIG. Vaktsetningen sier
+# «agenten identifiserer seg alltid som automatisert», og grunnen er
+# ikke høflighet: DEN SOM TROR HUN SNAKKER MED ET MENNESKE, SVARER
+# ANNERLEDES. Hun oppgir mer, hun stoler på et løfte, og hun tror en
+# innrømmelse er hørt av noen som kan handle på den.
+#
+# OPPTAKSHJEMMELEN ARVES FRA M-7, DEN BYGGES IKKE PÅ NYTT. Fundamentet
+# slo fast at de to deler ÉN, og `opptak_uten_hjemmel` /
+# `opptak_uten_varsling` står i BEGGE grensene nettopp for at en av
+# modulene ikke skal kunne landes med sin egen modell.
+#
+# `samtykkehendelse` (M-44, 114) ER IKKE DEN HJEMMELEN. Den er nøklet
+# på mottaker, kanal og formål — markedsføringssamtykke, ikke
+# opptaksgrunnlag.
+#
+# V1-DOMMEN: MODULEN INNGÅR INGEN AVTALE OG GIR INGEN ØKONOMISKE
+# LØFTER. Vaktsetningen krever eksplisitt policy for begge; v1 har
+# ingen vei dit i det hele tatt. Og «eskaleringsregler er kundens» —
+# en eskalering uten en regel å peke på er modulens egen beslutning.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m43_telefoni
+navn: Tale- og telefoniagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m07_moteoperasjon
+  - m17_kundeservice
+kjerne: platform/modules/m43_telefoni
+i18n_prefiks: telefoni
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en samtale der transkripsjonen er KJENT usikker, og en
+      der motparten ikke er varslet — slik at porten kan måle at den
+      andre aldri blir til et opptak.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver samtale kan spores til hjemmelen, varslingen og
+      identifiseringen. At agenten sa fra at den er automatisert, må
+      være noe man kan SLÅ OPP — ikke noe man antar.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et forsøk på å inngå en avtale eller gi et
+      økonomisk løfte gir et funn og ingen avtale.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

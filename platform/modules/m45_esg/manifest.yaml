@@ -1,0 +1,87 @@
+# M-45 BÆREKRAFTS- OG ESG-AGENT — KLYNGE 9s SISTE.
+#
+# `m45-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 136
+# tildelt i docs/KLYNGE9-FUNDAMENT.md. BYGGES SIST i klyngen: den har
+# mest å registrere og minst å arve.
+#
+# KLYNGENS DELTE DOM: EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS
+# TILBAKE. For M-45 har den et eget navn i loven: GRØNNVASKING.
+#
+# MODULEN HAR INGEN INNGANGSDATA. INGEN. Katalogen sier at den «henter
+# energi-, transport-, innkjøps- og avfallsdata fra kildesystemer» —
+# ingen av dem finnes. Verifisert mot basen: ingen tabell har en
+# kolonne som heter `mengde`, `kwh`, `liter`, `km` eller `volum` i en
+# betydning modulen kan bruke.
+#
+# Dette er FJERDE gang i to klynger at et fundament tildelte data det
+# ikke hadde lest (M-36s KPI-katalog, M-15s lønnssats, M-33s
+# historikk). Lærdommen står: ET FUNDAMENT KAN TILDELE NUMRE OG ROLLER
+# UTEN Å LESE KODEN. DET KAN IKKE TILDELE DATA.
+#
+# KONSEKVENSEN, OG DEN GJØR MODULEN BEDRE — akkurat som for M-15:
+# mengden registreres av et MENNESKE, med kilde og faktorversjon.
+# `likviditetspost` finnes fordi huset ikke kan prise lønn; M-45s
+# tilsvarende register finnes fordi huset ikke måler energi. Da vet vi
+# ALLTID hvem som oppga tallet, og rapporten kan aldri hvile på en
+# utledning ingen har sett.
+#
+# FAKTORVERSJONEN ER IKKE PYNT. Utslippsfaktorer endres mellom
+# rapportår, og et tall regnet med fjorårets faktor og lest som årets
+# er feil på nøyaktig den måten CSRD skal hindre.
+#
+# M-45 ER EN KLYNGE 7-MODUL I FORKLEDNING, og det skal stå: den er den
+# ENESTE av de fire som rapporterer til en MYNDIGHET (CSRD/ESRS).
+# Regelen er ikke vår, og den endres uten å si fra.
+# `standardversjon_laast_per_periode` er klynge 7s dom — «en foreldet
+# regel ser nøyaktig ut som en riktig regel» — anvendt på
+# rapporteringsstandarden selv.
+#
+# V1-DOMMEN: MODULEN SENDER INGEN RAPPORT. Den samler, regner og
+# stopper der; innsendingen er et menneskes.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m45_esg
+navn: Bærekrafts- og ESG-agent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. IKKE «kildesystemer for energi og
+# transport» — de finnes ikke, og en avhengighet til noe som ikke
+# finnes er en løgn manifestet ikke skal bære.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m03_datakvalitet
+kjerne: platform/modules/m45_esg
+i18n_prefiks: esg
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: to rapportperioder med ULIKE faktorversjoner på samme
+      mengde, slik at porten kan måle at tallet følger periodens
+      faktor og ikke den nyeste.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert tall kan spores til kilden og faktorversjonen.
+      Et tall uten det er ikke revisjonsklart — det er en påstand.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et estimat som IKKE er merket som estimat gir et
+      funn og ikke en rapportlinje.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

@@ -118,3 +118,57 @@ def test_ci_og_verten_gir_migrator_de_samme_rollene():
         "verten gir migrator medlemskap ci.yml ikke gir — da måler CI"
         " noe annet enn det som rulles ut: "
         + ", ".join(sorted(vert - ci)))
+
+
+def test_hver_rolle_som_grantes_blir_ogsaa_opprettet():
+    """KLYNGE 8s FUNDAMENT BRAKK STAGING-OPPSETTET, OG INGEN PORT SÅ DET.
+
+    `oppsett-postgresql.sh` erklærte `LIKVIDITETEIER`, `PROGNOSEEIER` og
+    `OPTIMALISATOREIER`, og GRANTet dem til migrator — men la dem aldri
+    inn i `CREATE ROLE`-løkka. Skriptet har `set -euo pipefail`, så på
+    en FERSK vert ville det stoppet med «role does not exist», og hele
+    staging-oppsettet med det.
+
+    Det bet ikke, fordi rollene alt fantes på verten fra en tidligere
+    manuell kjøring. DET ER NØYAKTIG DEN FARLIGE FORMEN: skriptet er
+    ødelagt bare for den som starter på nytt, og det er den som trenger
+    det mest.
+
+    Samme familie som DSN-hullet etter M-47, som lot deployen stå død i
+    to uker: en erklæring uten den handlingen som gjør den sann.
+
+    Porten leser SKRIPTET, ikke basen — en base der rollene tilfeldigvis
+    finnes ville gjort porten grønn av feil grunn.
+
+    MUTASJONEN SOM DREPER DENNE: ta ett rollenavn ut av
+    `CREATE ROLE`-løkkene og la GRANTen stå.
+    """
+    import re
+    sti = (ROT / "deploy" / "staging" / "oppsett-postgresql.sh")
+    kode = sti.read_text(encoding="utf-8")
+
+    # TO FORMER SKAPER ROLLER I DETTE SKRIPTET, og porten må se
+    # begge — første utkast så bare den ene og meldte `DOMENEEIER` og
+    # `ADJUDIKATOR` som manglende. De opprettes med hver sin egen
+    # linje fordi de trenger `BYPASSRLS` og en egen kommentar.
+    #
+    # EN PORT SOM MELDER FEIL DER DET IKKE ER NOEN, blir slått av.
+    opprettet: set[str] = set()
+
+    #   1. `for r in "$A" "$B" ...; do ... CREATE ROLE ... done`
+    for blokk in re.finditer(
+            r"for r in ((?:.|\n)*?); do((?:.|\n)*?)done", kode):
+        if "CREATE ROLE" not in blokk.group(2):
+            continue
+        opprettet |= set(re.findall(r"\$\{?(\w+)\}?", blokk.group(1)))
+
+    #   2. `CREATE ROLE $X ...` direkte, med egne flagg.
+    opprettet |= set(re.findall(r"CREATE ROLE \$\{?(\w+)\}?", kode))
+
+    grantet = set(re.findall(
+        r'GRANT \$\{?(\w+)\}? TO \$\{?\w+\}? WITH INHERIT FALSE', kode))
+
+    mangler = sorted(grantet - opprettet)
+    assert mangler == [], (
+        "roller som GRANTes men aldri opprettes — skriptet stopper på"
+        f" en fersk vert: {mangler}")
