@@ -47,6 +47,10 @@ pg = pytest.mark.skipif(
 # ingen lukkedør, og en ubetinget gjenåpning bryter da ikke noe. 120
 # treffer `merkevarevarsel` og ikke `merkevarefunn` — et navnesøk på
 # «funn» gikk forbi den da jeg skrev funndokumentet.
+#: 125s etterfylling av rader som ble lukket FØR `lukket_av` fantes.
+#: 126 gjør den GJENÅPNBAR — se porten under.
+SENTINEL = "ukjent_for_125"
+
 TABELLER = {
     "motpartsfunn": ("m48_sveip", "116", False),
     "sanksjonsfunn": ("m49_sveip", "117", False),
@@ -392,3 +396,60 @@ def test_volatilitetsbyttet_river_ingen_indeks():
         c.rollback()
     assert not idx, f"indeks bruker en nå-STABLE funksjon: {idx}"
     assert not gen, f"generert kolonne bruker en nå-STABLE: {gen}"
+
+
+@pg
+def test_en_lukking_uten_kjent_opphav_slippes_inn_igjen():
+    """126: SPEILBILDET AV FEILEN 125 RETTET, OG DEN VERRE AV DE TO.
+
+    I 116–119 lukket sveipen selv når tilstanden var borte. De radene
+    kunne ikke bære et navn, så 125 etterfylte dem med
+    `ukjent_for_125` — og vakten leste HVER av dem som et menneskes
+    lukking. Kom tilstanden tilbake, gjenåpnet sveipen funnet, vakten
+    rullet det tilbake, og funnet var lukket FOR ALLTID (CodeRabbit).
+
+    Valget følger av hvilke to skader som står mot hverandre:
+
+        Et funn som gjenåpnes for ivrig er en irritasjon noen lukker
+        igjen. ET FUNN SOM ALDRI KOMMER TILBAKE ER STILLHET.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `IS DISTINCT FROM SENTINEL`
+    fra vakten igjen.
+    """
+    t = _tenant()
+    with _mig() as c:
+        _sett_kontekst(c, t)
+        mid = "55555555-5555-5555-5555-555555555555"
+        c.execute("INSERT INTO motpartssubjekt (tenant, motpart_id,"
+                  " organisasjonsnummer, navn_oppgitt, opprettet_av)"
+                  " VALUES (%s,%s,'123456789','A','test')", (t, mid))
+        c.execute("INSERT INTO motpartsfunn (tenant, motpart_id,"
+                  " funntype) VALUES (%s,%s,'ingen_krav')", (t, mid))
+        # EN RAD SLIK 125s ETTERFYLLING ETTERLOT DEN.
+        c.execute("UPDATE motpartsfunn SET apen=false, lukket_ts=now(),"
+                  " lukket_av=%s WHERE tenant=%s", (SENTINEL, t))
+        # SVEIPEN FINNER TILSTANDEN IGJEN.
+        c.execute("UPDATE motpartsfunn SET sist_sett_sveip=now(),"
+                  " apen=true, lukket_ts=NULL WHERE tenant=%s", (t,))
+        rad = c.execute(
+            "SELECT apen, lukket_av, lukket_ts FROM motpartsfunn"
+            " WHERE tenant=%s", (t,)).fetchone()
+        c.rollback()
+    assert rad[0] is True, (
+        "en lukking uten kjent opphav stengte funnet ute for alltid")
+    assert rad[1] is None and rad[2] is None, (
+        "lukkesporet ble stående på et gjenåpnet funn")
+
+
+def test_vakten_navngir_sentinelen_ett_sted():
+    """SENTINELEN STÅR I BÅDE ETTERFYLLINGEN OG VAKTEN.
+
+    125 skrev den ene, 126 den andre. Skrivefeil i én av dem ville
+    gitt nøyaktig den stillheten porten over måler — og ingenting
+    ville feilet.
+    """
+    ny = (ROT / "platform" / "core" / "db" / "migrations"
+          / "126_lukkevern_etterfylling.sql").read_text(encoding="utf-8")
+    gammel = MIGRASJON.read_text(encoding="utf-8")
+    assert f"'{SENTINEL}'" in gammel, "125 etterfyller ikke sentinelen"
+    assert f"'{SENTINEL}'" in ny, "126 fritar ikke sentinelen"
