@@ -713,6 +713,34 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm54_sveip_ehf(integer)',                                            'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valider_dokument(text,uuid,uuid,uuid,text)',                    'disponit_ehf_eier'),
     ('FUNCTION', 'm54_valideringene(text,uuid)',                                      'disponit_ehf_eier'),
+    -- 124 (M-50): journalregisterets doerer og postjournalsveipen.
+    -- INGEN AV DEM HENTER. Postjournaler ER offentlige, saa den
+    -- vanlige innvendingen treffer ikke. Det som treffer er at ti
+    -- tusen oppslag sammenstilt i et register er en PROFIL, og
+    -- profilen er vaar — ikke kommunens.
+    --
+    -- `m50_anonymiser` ER MODULENS RYDDEDOER, og den sletter ikke:
+    -- at vi HAR oppbevart noen skal fortsatt kunne leses, uten navnet.
+    --
+    -- `m50_kilde_frosset()` og `m50_person_frosset()` staar IKKE her:
+    -- radvaktene lages etter `RESET ROLE` og eies av migratoren.
+    ('FUNCTION', 'm50_anonymiser(text,uuid,text)',                                   'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_bildet(text,integer)',                                         'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_evidens(text,uuid,text,text,jsonb)',                           'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_funn_er_sveipens(text)',                                       'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_funnene(text,boolean)',                                        'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_kilde_gyldig(date,date)',                                      'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_kildene(text,integer)',                                        'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_lukk_funn(text,uuid,text,text)',                               'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_opprett_sak(text,uuid,text,text,text,text)',                   'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_personene(text,uuid)',                                         'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_postene(text,integer)',                                        'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_registrer_kilde(text,uuid,text,text,text,text,date,date,text,text,text)', 'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_registrer_post(text,uuid,uuid,uuid,text,date,text,text,text,date,text[],text[],date[],text)', 'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_sakene(text,integer)',                                         'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_sett_gyldig_til(text,uuid,date,text)',                         'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_sett_krav(text,integer,integer,integer,text,text)',            'disponit_postjournal_eier'),
+    ('FUNCTION', 'm50_sveip_postjournal(integer)',                                   'disponit_postjournal_eier'),
     -- 123 (M-47): pliktregisterets doerer og myndighetssveipen.
     -- INGEN AV DEM SENDER INN. En innsending til en myndighet er
     -- BINDENDE og kan ikke kalles tilbake — `m47_registrer_bevis`

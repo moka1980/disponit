@@ -1,0 +1,86 @@
+# M-50 (124): postjournalsveipen. VAKTEN, IKKE HØSTEMASKINEN.
+#
+# SVEIPEN HENTER INGENTING, og det er modulens viktigste fravær.
+#
+# Den nærliggende begrunnelsen treffer ikke: postjournaler ER
+# offentlige. Det som treffer er at de inneholder NAVNGITTE
+# PRIVATPERSONER, og at ti tusen oppslag sammenstilt i et register er
+# en PROFIL — som er vår, ikke kommunens. En sveip som hentet selv
+# ville vært nettopp den høstemaskinen.
+#
+# SVEIPEN ANONYMISERER HELLER IKKE. Å slette en personopplysning
+# automatisk ville sett riktig ut, og vært galt: sletting er en
+# handling med en ansvarlig. Sveipen SIER FRA at fristen er passert;
+# den rydder ikke etter oss uten at noen vet det.
+#
+# Regelen eies av databasen (124): en avviklet kildeversjon uten gyldig
+# etterfølger er `kilde_utlopt`; en post lest i et format som siden er
+# lagt om er `post_mot_utlopt_kilde`; en slettefrist som HAR gått mens
+# raden fortsatt bærer et navn er `slettefrist_passert`; og en tenant
+# uten oppbevaringsgrenser er `ingen_krav`.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til en kommunes journal. Postene registreres av et
+# menneske som har lest dem; gjerdet mot automatisk henting står i
+# koden (`postjournalsveip.py` importerer ingenting som kan snakke ut).
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# postjournalsveip er navngitte privatpersoner oppbevart etter vår egen
+# slettefrist, uten at noen har sett det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_postjournalsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m50_sveip_postjournal`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit postjournalsveip (slettefrister og kildeversjoner som er gått ut)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_POSTJOURNALSVEIP_URL:/etc/disponit/postjournalsveip/DISPONIT_POSTJOURNALSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_postjournalsveip
+# Sveipen er ETT funksjonskall som gjør seks setninger per tenant, alle
+# indeksdekket (`journalkilde_gyldig_idx`, `journalperson_frist_idx`,
+# `journalpost_kilde_idx`, `journalfunn_apne_idx`,
+# `tollfunn_apne_idx`). Går dette over ti minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

@@ -1736,6 +1736,59 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tollkode as tollmodul
         return tollmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-50 (124): postjournal- og innsynsvakten. MODULEN HENTER
+    # INGENTING — 124 har ingen `hentet_automatisk` og ingen utgående
+    # vei. Postjournaler ER offentlige; det som treffer er at ti tusen
+    # oppslag sammenstilt i et register er en PROFIL, og profilen er
+    # vår, ikke kommunens.
+    def journ_bilde(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.journalbilde(tjeneste, request)
+
+    def journ_kilder(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.kilder_endepunkt(tjeneste, request)
+
+    def journ_poster(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.poster_endepunkt(tjeneste, request)
+
+    def journ_personer(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.personer_endepunkt(tjeneste, request)
+
+    def journ_funn(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.funn_endepunkt(tjeneste, request)
+
+    def journ_krav(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.krav_endepunkt(tjeneste, request)
+
+    def journ_kilde_ny(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.registrer_kilde_endepunkt(tjeneste, request)
+
+    def journ_gyldig_til(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.sett_gyldig_til_endepunkt(tjeneste, request)
+
+    def journ_sak(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.opprett_sak_endepunkt(tjeneste, request)
+
+    def journ_post_ny(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.registrer_post_endepunkt(tjeneste, request)
+
+    def journ_anonymiser(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.anonymiser_endepunkt(tjeneste, request)
+
+    def journ_lukk_funn(request: Request) -> Response:
+        from . import postjournal as journmodul
+        return journmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-47 (123): myndighetsrapporteringsagenten. MODULEN SENDER INGEN
     # INNSENDING — 123 har ingen mottaker og ingen utboks — men her er
     # FRAVÆRET IKKE NOK: en frist som går uten innsending er nøyaktig
@@ -2902,6 +2955,23 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               tilskudd_lukk_funn, methods=["POST"]),
         # M-52 (122). Faste stier FØR parametriserte, ellers ville
         # `/v1/toll/vare` blitt lest som en id.
+        # M-50 (124). Faste stier FØR parametriserte.
+        Route("/v1/journal", journ_bilde, methods=["GET"]),
+        Route("/v1/journal/kilder", journ_kilder, methods=["GET"]),
+        Route("/v1/journal/poster", journ_poster, methods=["GET"]),
+        Route("/v1/journal/funn", journ_funn, methods=["GET"]),
+        Route("/v1/journal/krav", journ_krav, methods=["POST"]),
+        Route("/v1/journal/kilde", journ_kilde_ny, methods=["POST"]),
+        Route("/v1/journal/sak", journ_sak, methods=["POST"]),
+        Route("/v1/journal/post", journ_post_ny, methods=["POST"]),
+        Route("/v1/journal/post/{post_id:uuid}/personer",
+              journ_personer, methods=["GET"]),
+        Route("/v1/journal/kilde/{kilde_id:uuid}/gyldig-til",
+              journ_gyldig_til, methods=["POST"]),
+        Route("/v1/journal/person/{person_id:uuid}/anonymiser",
+              journ_anonymiser, methods=["POST"]),
+        Route("/v1/journal/funn/{funn_id:uuid}/lukk",
+              journ_lukk_funn, methods=["POST"]),
         # M-47 (123). Faste stier FØR parametriserte, ellers ville
         # `/v1/myndighet/plikttype` blitt lest som en id.
         Route("/v1/myndighet", mynd_bilde, methods=["GET"]),
@@ -4055,6 +4125,25 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # `bestilling:opprett`. `/klart` er IKKE en deklarasjonsrute — den
     # setter en tilstand hos oss. `/forslag` NEKTER uten grunnlag, mot
     # en avviklet nomenklatur, og under tenantens terskel.
+    # M-50 (124). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
+    # INGEN RUTE HENTER — det finnes ingen `/hent`, ingen `/sok` og
+    # ingen `/hoest`, og porten leser denne tabellen.
+    ("GET",  "/v1/journal"):                     "okonomi:read",
+    ("GET",  "/v1/journal/kilder"):              "okonomi:read",
+    ("GET",  "/v1/journal/poster"):              "okonomi:read",
+    ("GET",  "/v1/journal/funn"):                "okonomi:read",
+    ("GET",  "/v1/journal/post/{post_id:uuid}/personer"):
+        "okonomi:read",
+    ("POST", "/v1/journal/krav"):                "bestilling:opprett",
+    ("POST", "/v1/journal/kilde"):               "bestilling:opprett",
+    ("POST", "/v1/journal/sak"):                 "bestilling:opprett",
+    ("POST", "/v1/journal/post"):                "bestilling:opprett",
+    ("POST", "/v1/journal/kilde/{kilde_id:uuid}/gyldig-til"):
+        "bestilling:opprett",
+    ("POST", "/v1/journal/person/{person_id:uuid}/anonymiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/journal/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
     # M-47 (123). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
     # INGEN RUTE SENDER INN — det finnes ingen `/send`, ingen
     # `/innsending` og ingen `/signer`, og porten leser denne tabellen.

@@ -1,0 +1,27 @@
+# M-50 (124): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `slettevarsel_dogn` og
+# `kildevarsel_dogn` måles begge i DØGN — og en slettefrist er en DATO.
+# Å sveipe oftere ville ikke gitt et eneste nytt funn; å sveipe
+# sjeldnere ville latt en slettefrist passere mellom to kjøringer, og
+# da hadde vi oppbevart en navngitt privatperson lenger enn vi selv
+# hadde bestemt uten å vite det.
+#
+# KLOKKESLETTET ER 10:50, klynge 7s fjerde plass i stigen 10:05–11:05.
+# `disponit-sveipestatus.timer` (115) står bakerst på 11:20.
+#
+# `Persistent=true`, OG HER BETYR DET MER ENN ANDRE STEDER: en vert som
+# var nede da tidspunktet passerte skal likevel oppdage at en
+# slettefrist har gått. Uten den ville nedetid blitt til stillhet om at
+# vi oppbevarer noen for lenge.
+
+[Unit]
+Description=Disponit postjournalsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 10:50:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

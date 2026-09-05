@@ -1487,3 +1487,49 @@ export const registrerPliktbevis = (pliktId, bevis, idem) =>
 export const lukkMyndighetsfunn = (funnId, notat, idem) =>
   _muter(`/v1/myndighet/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", { notat }, idem || nyIdempotensnokkel());
+
+// M-50 (124): postjournal- og innsynsvakten. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `hent` HER, OG DET KAN IKKE FINNES: 124 har ingen
+// `hentet_automatisk` og ingen utgående vei. Postjournaler ER
+// offentlige — det som treffer er at ti tusen oppslag sammenstilt i et
+// register er en PROFIL, og profilen er vår, ikke kommunens.
+//
+// `registrerJournalpost` TAR ALLTID PERSONENE MED. Det er ikke en
+// validering her — døra skriver posten og personene i SAMME setning,
+// så en journalpost med navngitte privatpersoner ikke kan eksistere
+// uten slettefrister.
+//
+// `anonymiserPerson` SLETTER IKKE. Den tømmer navnet og setter et
+// spor: at vi HAR oppbevart noen skal fortsatt kunne leses, uten
+// navnet. Sletting ville fjernet beviset på at vi hadde den.
+export const settJournalkrav = (krav, idem) =>
+  _muter("/v1/journal/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerJournalkilde = (kilde, idem) =>
+  _muter("/v1/journal/kilde", "POST", kilde,
+         idem || nyIdempotensnokkel());
+
+export const settKildeGyldigTil = (kildeId, gyldigTil, idem) =>
+  _muter(`/v1/journal/kilde/${encodeURIComponent(kildeId)}`
+         + "/gyldig-til",
+         "POST", { gyldig_til: gyldigTil },
+         idem || nyIdempotensnokkel());
+
+export const opprettJournalsak = (sak, idem) =>
+  _muter("/v1/journal/sak", "POST", sak,
+         idem || nyIdempotensnokkel());
+
+export const registrerJournalpost = (post, idem) =>
+  _muter("/v1/journal/post", "POST", post,
+         idem || nyIdempotensnokkel());
+
+export const anonymiserPerson = (personId, idem) =>
+  _muter(`/v1/journal/person/${encodeURIComponent(personId)}`
+         + "/anonymiser",
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const lukkJournalfunn = (funnId, notat, idem) =>
+  _muter(`/v1/journal/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", { notat }, idem || nyIdempotensnokkel());
