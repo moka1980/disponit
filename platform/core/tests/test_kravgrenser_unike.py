@@ -109,7 +109,6 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #: Å FJERNE ET NAVN HERFRA ER EN DEL AV Å BYGGE MODULEN, ikke et
 #: separat opprydningsarbeid.
 UBYGDE_GRENSER = frozenset({
-    "m47-v1",   # M-47 myndighetsrapportering, migrasjon 123
     "m50-v1",   # M-50 postjournal, migrasjon 124
     "m53-v1",   # M-53 HMS, migrasjon 125
 })

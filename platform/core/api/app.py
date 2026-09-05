@@ -1736,6 +1736,57 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tollkode as tollmodul
         return tollmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-47 (123): myndighetsrapporteringsagenten. MODULEN SENDER INGEN
+    # INNSENDING — 123 har ingen mottaker og ingen utboks — men her er
+    # FRAVÆRET IKKE NOK: en frist som går uten innsending er nøyaktig
+    # det modulen ble bygget for å hindre. En stille M-47 er verre enn
+    # ingen M-47.
+    def mynd_bilde(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.myndighetsbilde(tjeneste, request)
+
+    def mynd_regelverk_les(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.regelverk_endepunkt(tjeneste, request)
+
+    def mynd_plikter_les(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.plikter_endepunkt(tjeneste, request)
+
+    def mynd_funn(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.funn_endepunkt(tjeneste, request)
+
+    def mynd_krav(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.krav_endepunkt(tjeneste, request)
+
+    def mynd_regelverk_ny(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.registrer_regelverk_endepunkt(tjeneste,
+                                                       request)
+
+    def mynd_gyldig_til(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.sett_gyldig_til_endepunkt(tjeneste, request)
+
+    def mynd_plikttype(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.registrer_plikttype_endepunkt(tjeneste,
+                                                       request)
+
+    def mynd_plikt_ny(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.registrer_plikt_endepunkt(tjeneste, request)
+
+    def mynd_bevis(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.registrer_bevis_endepunkt(tjeneste, request)
+
+    def mynd_lukk_funn(request: Request) -> Response:
+        from . import myndighetsrapport as myndmodul
+        return myndmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-54 (121): EHF- og Peppol-avviksretteren. MODULEN SENDER INGEN
     # FAKTURA — 121 har ingen mottaker og ingen utboks — og den
     # VALIDERER IKKE MOT ET UTLØPT REGELSETT: en dom felt under en
@@ -2851,6 +2902,26 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               tilskudd_lukk_funn, methods=["POST"]),
         # M-52 (122). Faste stier FØR parametriserte, ellers ville
         # `/v1/toll/vare` blitt lest som en id.
+        # M-47 (123). Faste stier FØR parametriserte, ellers ville
+        # `/v1/myndighet/plikttype` blitt lest som en id.
+        Route("/v1/myndighet", mynd_bilde, methods=["GET"]),
+        Route("/v1/myndighet/regelverk", mynd_regelverk_les,
+              methods=["GET"]),
+        Route("/v1/myndighet/plikter", mynd_plikter_les,
+              methods=["GET"]),
+        Route("/v1/myndighet/funn", mynd_funn, methods=["GET"]),
+        Route("/v1/myndighet/krav", mynd_krav, methods=["POST"]),
+        Route("/v1/myndighet/regelverk", mynd_regelverk_ny,
+              methods=["POST"]),
+        Route("/v1/myndighet/plikttype", mynd_plikttype,
+              methods=["POST"]),
+        Route("/v1/myndighet/plikt", mynd_plikt_ny, methods=["POST"]),
+        Route("/v1/myndighet/regelverk/{regelverk_id:uuid}/gyldig-til",
+              mynd_gyldig_til, methods=["POST"]),
+        Route("/v1/myndighet/plikt/{plikt_id:uuid}/bevis", mynd_bevis,
+              methods=["POST"]),
+        Route("/v1/myndighet/funn/{funn_id:uuid}/lukk",
+              mynd_lukk_funn, methods=["POST"]),
         Route("/v1/toll", toll_bilde, methods=["GET"]),
         Route("/v1/toll/funn", toll_funn, methods=["GET"]),
         Route("/v1/toll/krav", toll_krav, methods=["POST"]),
@@ -3984,6 +4055,23 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # `bestilling:opprett`. `/klart` er IKKE en deklarasjonsrute — den
     # setter en tilstand hos oss. `/forslag` NEKTER uten grunnlag, mot
     # en avviklet nomenklatur, og under tenantens terskel.
+    # M-47 (123). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
+    # INGEN RUTE SENDER INN — det finnes ingen `/send`, ingen
+    # `/innsending` og ingen `/signer`, og porten leser denne tabellen.
+    ("GET",  "/v1/myndighet"):                   "okonomi:read",
+    ("GET",  "/v1/myndighet/regelverk"):         "okonomi:read",
+    ("GET",  "/v1/myndighet/plikter"):           "okonomi:read",
+    ("GET",  "/v1/myndighet/funn"):              "okonomi:read",
+    ("POST", "/v1/myndighet/krav"):              "bestilling:opprett",
+    ("POST", "/v1/myndighet/regelverk"):         "bestilling:opprett",
+    ("POST", "/v1/myndighet/regelverk/{regelverk_id:uuid}/gyldig-til"):
+        "bestilling:opprett",
+    ("POST", "/v1/myndighet/plikttype"):         "bestilling:opprett",
+    ("POST", "/v1/myndighet/plikt"):             "bestilling:opprett",
+    ("POST", "/v1/myndighet/plikt/{plikt_id:uuid}/bevis"):
+        "bestilling:opprett",
+    ("POST", "/v1/myndighet/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
     ("GET",  "/v1/toll"):                        "okonomi:read",
     ("GET",  "/v1/toll/funn"):                   "okonomi:read",
     ("GET",  "/v1/toll/nomenklatur/{nomenklatur_id:uuid}/varenummer"):

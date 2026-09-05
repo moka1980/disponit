@@ -1,0 +1,25 @@
+# M-47 (123): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `varselfrist_dogn` og
+# `regelvarsel_dogn` måles begge i DØGN — og en innsendingsfrist er en
+# DATO. Å sveipe oftere ville ikke gitt et eneste nytt funn; å sveipe
+# sjeldnere ville latt en frist passere mellom to kjøringer.
+#
+# KLOKKESLETTET ER 10:35, klynge 7s tredje plass i stigen 10:05–11:05.
+# `disponit-sveipestatus.timer` (115) står bakerst på 11:20.
+#
+# `Persistent=true`, OG HER BETYR DET MER ENN ANDRE STEDER: en vert som
+# var nede da tidspunktet passerte skal likevel oppdage at en frist har
+# gått. Uten den ville nedetid på verten blitt til stillhet om en frist
+# — og stillhet er nøyaktig skaden modulen finnes for å hindre.
+
+[Unit]
+Description=Disponit myndighetssveip-timer
+
+[Timer]
+OnCalendar=*-*-* 10:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

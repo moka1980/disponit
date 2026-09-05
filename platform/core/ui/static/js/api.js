@@ -1439,3 +1439,51 @@ export const merkForslagKlart = (forslagId, idem) =>
 export const lukkTollfunn = (funnId, notat, idem) =>
   _muter(`/v1/toll/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", { notat }, idem || nyIdempotensnokkel());
+
+// M-47 (123): myndighetsrapporteringsagenten. Alle bærer SP-2-nøkkel.
+//
+// DET FINNES INGEN `sendInn` HER, OG DET KAN IKKE FINNES: 123 har ingen
+// mottaker, ingen utboks og ingen signatur. En innsending til en
+// myndighet er BINDENDE og kan ikke kalles tilbake.
+//
+// `registrerPliktbevis` SENDER IKKE. Den registrerer at et MENNESKE har
+// sendt inn, et annet sted, og bærer kvitteringsreferansen myndigheten
+// ga DEM. Vi har ingen kanal til myndigheten og påstår ikke å ha det.
+//
+// MEN HER ER FRAVÆRET IKKE NOK: en frist som går uten innsending er
+// nøyaktig det modulen ble bygget for å hindre. Derfor finnes `frist`
+// på hver rad, `dogn_til_frist` med fortegn, og to funn ingen kan lukke.
+export const settMyndighetskrav = (krav, idem) =>
+  _muter("/v1/myndighet/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerRegelverk = (regelverk, idem) =>
+  _muter("/v1/myndighet/regelverk", "POST", regelverk,
+         idem || nyIdempotensnokkel());
+
+export const settRegelverkGyldigTil = (regelverkId, gyldigTil, idem) =>
+  _muter(`/v1/myndighet/regelverk/${encodeURIComponent(regelverkId)}`
+         + "/gyldig-til",
+         "POST", { gyldig_til: gyldigTil },
+         idem || nyIdempotensnokkel());
+
+export const registrerPlikttype = (plikttype, idem) =>
+  _muter("/v1/myndighet/plikttype", "POST", plikttype,
+         idem || nyIdempotensnokkel());
+
+// NAVNET ER `registrerRapportplikt`, IKKE `registrerPlikt`: M-21 eier
+// det navnet, og det er ikke bare en kollisjon — det er GRENSEN mellom
+// modulene. M-21s plikter er avtalefrister, altså våre egne kontrakter.
+// M-47s er lovpålagte innsendinger. Forskjellen er hvem som
+// sanksjonerer, og to funksjoner med samme navn ville skjult den.
+export const registrerRapportplikt = (plikt, idem) =>
+  _muter("/v1/myndighet/plikt", "POST", plikt,
+         idem || nyIdempotensnokkel());
+
+export const registrerPliktbevis = (pliktId, bevis, idem) =>
+  _muter(`/v1/myndighet/plikt/${encodeURIComponent(pliktId)}/bevis`,
+         "POST", bevis, idem || nyIdempotensnokkel());
+
+export const lukkMyndighetsfunn = (funnId, notat, idem) =>
+  _muter(`/v1/myndighet/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", { notat }, idem || nyIdempotensnokkel());

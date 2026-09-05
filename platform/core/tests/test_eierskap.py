@@ -86,6 +86,7 @@ KJENTE_EIERROLLER = (
     # Klynge 7 «de fem der regelen er myndighetens» (121-125).
     "disponit_ehf_eier",        # M-54, migrasjon 121
     "disponit_tollkode_eier",   # M-52, migrasjon 122
+    "disponit_myndighet_eier",  # M-47, migrasjon 123
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.

@@ -1,0 +1,95 @@
+# M-47 (123): myndighetssveipen. MODULENS PRODUKT, IKKE ET ANDRE GJERDE.
+#
+# For de andre modulene er sveipen et andre gjerde. HER ER DEN
+# PRODUKTET. En plikt som ligger i registeret uten at noen ser på den er
+# ikke overvåket — den er arkivert. Det er sveipen som gjør den til en
+# frist noen VET om.
+#
+# Sveipen legger INGEN logikk oppå regelen. Regelen eies av databasen
+# (123): et avviklet regelverk UTEN gyldig etterfølger er
+# `regelverk_utlopt`; et som avvikles innen tenantens varselvindu er
+# `regelverk_utloper_snart`; en plikt som hviler på et regelverk som
+# siden er avviklet er `plikt_mot_utlopt_regelverk`; en frist innenfor
+# varselvinduet er `frist_naermer_seg`; en frist som HAR gått uten at
+# noen sendte inn er `frist_passert_uten_bevis`; og en tenant uten
+# varselfrist er `ingen_krav`.
+#
+# SVEIPEN SENDER IKKE INN, OG DET ER MODULENS VIKTIGSTE FRAVÆR. En
+# innsending til en myndighet er BINDENDE og kan ikke kalles tilbake.
+# Lot vi sveipen sende, ville bindende innsendinger oppstått om natten
+# uten at noen ba om det.
+#
+# MEN HER ER FRAVÆRET IKKE NOK. For klynge 6 var skaden å HANDLE, og
+# avholdenhet var hele svaret. Her er skaden OGSÅ Å LA VÆRE: en frist
+# som går uten innsending er nøyaktig det modulen ble bygget for å
+# hindre. EN STILLE M-47 ER VERRE ENN INGEN M-47.
+#
+# DERFOR ER `RestrictAddressFamilies` HER ET GJERDE OG IKKE EN
+# FORMALITET. Den slipper AF_INET fordi DATABASEN nås over TCP — ikke
+# fordi noe skal ut til Altinn eller ned til en fristkalender. Fristene
+# registreres av et menneske som har lest dem; gjerdet mot automatisk
+# henting står i koden (`myndighetssveip.py` importerer ingenting som
+# kan snakke ut).
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM, og den alarmen er en
+# INVARIANT her (`sveipefeil_uten_stoy`), ikke en bekvemmelighet. En
+# sveip som feiler stille lar fristen gå — og har forårsaket skaden den
+# skulle avverge. Det er målt i dette huset: plattformens egen
+# auto-utrulling feilet fem netter på rad, returnerte feilkode, og
+# ingen så det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_myndighetssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m47_sveip_myndighetsplikt`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit myndighetssveip (frister, hjemler og innsendinger som mangler)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+# Se disponit-domenerevalidering.service: `drift` (platform/) og `db`
+# (platform/core/db) er søskenpakker, ikke nøstet — releaseroten alene
+# eksponerer ingen av dem.
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+# Feiltelleren lever i en fil fordi hver kjøring er en egen prosess
+# (`Type=oneshot`): «to feilede kjøringer på rad» kan ikke observeres av
+# kjøringen selv. `StateDirectory` lar systemd opprette katalogen med
+# riktig eier FØR ExecStart og oppgir den i $STATE_DIRECTORY. Samme
+# katalog og samme eier som de andre sveipene — de deler Unix-identitet,
+# så et eget navn ville bare gitt enda en katalog med samme rettigheter.
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_MYNDIGHETSSVEIP_URL:/etc/disponit/myndighetssveip/DISPONIT_MYNDIGHETSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_myndighetssveip
+# Sveipen er ETT funksjonskall som gjør seks setninger per tenant, alle
+# indeksdekket (`regelverk_gyldig_idx`, `rapportplikt_frist_idx`,
+# `rapportplikt_regelverk_idx`, `myndighetsfunn_apne_idx`,
+# `tollfunn_apne_idx`). Går dette over ti minutter, henger noe — og da
+# er avbrudd riktig svar: funnene er idempotente, så neste døgn tar
+# kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
