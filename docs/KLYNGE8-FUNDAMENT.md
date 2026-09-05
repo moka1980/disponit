@@ -175,6 +175,88 @@ runde: en prognose regnet på data M-3 har flagget som mangelfulle, må
 BÆRE det flagget — ikke nektes. Å nekte ville gjort modulen ubrukelig
 i nettopp den situasjonen den er nyttigst.
 
+### M-33 OG HISTORIKKEN — TO AV FIRE `dep` FINNES IKKE
+
+**SKREVET 5/9, under byggingen av 130.** Fundamentet skrev at M-33s
+`dep` er «datakvalitet, historikk, evaluering og KPI-katalog». To av
+de fire finnes ikke som tabeller. **Tredje gang i denne klyngen at et
+fundament tildelte data det ikke hadde lest** — etter M-36s
+KPI-katalog og M-15s lønnssats.
+
+**HVA SOM FAKTISK FINNES, verifisert mot basen:**
+
+* `timeregistrering` (M-39, 113) — FAKTISK ARBEIDET TID. Minutter, per
+  person, per dato, med `kilde` i et lukket sett.
+* `arbeidsplan` (M-39, 113) — PLANLAGT kapasitet, versjonert per taker.
+* `kvalitetsfunn` og `kvalitetsprofil` (M-3, 092) — datakvaliteten.
+
+**HISTORIKKEN ER `timeregistrering` OG IKKE `arbeidsplan`, og det er
+en dom:** en prognose regnet på PLANEN prognoserer planen. Den ville
+vært perfekt og verdiløs — modellen ville spådd nøyaktig det noen alt
+hadde skrevet ned, og «slår modellen basislinjen?» ville handlet om
+hvor stabil planleggeren er, ikke om hvor godt vi forstår arbeidet.
+HISTORIKKEN MÅ VÆRE NOE INGEN BESTEMTE PÅ FORHÅND.
+
+**LEGG MERKE TIL AT DET SAMME FUNNET SOM SVEKKET M-15, BÆRER M-33.**
+M-39 måler timer og ikke kroner. For M-15 betydde det at
+lønnskostnaden måtte registreres av et menneske. For M-33 er timer
+nøyaktig det modulen skal prognosere — samme fravær, motsatt
+konsekvens.
+
+### `slaar_ikke_naiv_baseline` KREVER AT MODELLEN KAN TAPE
+
+**Klyngen gjorde funnet til et av dem ingen kan lukke. Det er bare
+ekte hvis modellen faktisk KAN tape for basislinjen.** En v1 som
+«prognoserte» ved å kopiere forrige uke ville hatt null avvik mot
+basislinjen for alltid, invarianten ville vært grønn i all evighet, og
+den ville ikke målt noe som helst.
+
+Derfor er v1-modellen et GLIDENDE SNITT over `grunnlag_uker` hele
+uker, og basislinjen er «samme som forrige uke». De to er
+FORSKJELLIGE tall, og på en tenant med stigende eller sesongpreget
+bemanning taper snittet regelmessig. **Det er meningen.**
+
+Det følger to ting av dette som står i 130:
+
+1. `grunnlag_uker` har minstverdi **2**, ikke 1. Med én observert uke
+   ER snittet forrige uke — modellen er sin egen basislinje og kan
+   ikke tape.
+2. **Likhet teller som tap** (`>=`, ikke `>`). En modell som er
+   nøyaktig like god som å kopiere forrige uke har ikke tilført noe,
+   og den koster tillit fordi den ser ut som analyse.
+
+### «REN» OG «UKJENT» DATAKVALITET ER IKKE SAMME TILSTAND
+
+`prognose_uten_datakvalitetsflagg` kunne vært løst med en boolsk
+`data_ok`. Det ville vært galt, og galt i den farlige retningen:
+`kvalitetsfunn` er tom for en tenant både når M-3 har kjørt og ikke
+funnet noe, OG når M-3 aldri har sett på tenanten. En boolsk kolonne
+ville gjort det andre til det første, og prognosen ville båret et
+kvalitetsstempel ingen hadde utstedt.
+
+Derfor er `datakvalitet` et lukket sett på **tre**: `ren`, `flagget`,
+`ukjent`. Samme form som `lukket_av`-dommen i 125 — den stille
+standardverdien er den farlige, og den skal være urepresenterbar.
+
+**Og prognosen nektes aldri på flagget data.** Å nekte ville gjort
+modulen ubrukelig i nettopp den situasjonen den er nyttigst — når noe
+er galt og noen må planlegge likevel.
+
+### FUNNET RIGGEN GA, SOM LESING IKKE VILLE GITT
+
+**En sveip uten tenantkontekst ser NULL RADER, ikke alle.** Første
+utkast av `m33_sveip_prognose` spurte på tvers av tenanter i ett svep.
+Tabellene har `FORCE ROW LEVEL SECURITY`, så spørringen ville passert
+ingen policy — sveipen ville rapportert null funn hver natt, med grønn
+exit-kode.
+
+**Det er den farligste feilformen en sveip kan ha: den ser ut som en
+vellykket kjøring.** Samme familie som klyngens egen dom — en gal
+prognose ser ut som en riktig prognose; her ser en blind sveip ut som
+en ren base. Sveipen går derfor ÉN TENANT OM GANGEN med konteksten
+satt, og `m33_sveip_tenantliste` er den snevre kryss-tenant-policyen
+som lar løkka hente tenantlisten før konteksten finnes.
+
 ### M-15 har inngangsdataene sine — MEN IKKE LØNNEN
 
 **RETTET 5/9, under byggingen av 128.** Dette avsnittet listet
@@ -211,7 +293,7 @@ det samme som en forpliktelse noen har bekreftet.
 |----|-------|-----|--------|
 | 128 | M-15 | `128_m15_likviditet.sql` | 1. **Landet 5/9.** |
 | 129 | — | `129_m15_ukevindu.sql` | rettelse, se under |
-| ~~129~~ **130** | M-33 | `130_m33_prognose.sql` | 2. |
+| ~~129~~ **130** | M-33 | `130_m33_prognose.sql` | 2. **Landet 5/9.** |
 | ~~130~~ **131** | M-36 | `131_m36_optimalisator.sql` | 3. |
 
 **M-33 OG M-36 FLYTTET ETT HAKK, og grunnen skal stå her — et tildelt
@@ -258,7 +340,9 @@ skal lese flåtens tilstand ETTER at flåten har kjørt, og
 `test_timeren_gaar_etter_hele_stigen` gjør det til en måling og ikke
 en huskeregel.
 
-**FLYTTINGEN GJØRES IKKE HER, OG DET ER MED VILJE.** Dette fundamentet
+**GJORT 5/9, I M-33s PR (130).** Se avsnittet under for hvorfor den ventet — og `test_timeren_gaar_etter_hele_stigen` i `test_m33_prognose.py` måler den nå, ved å SAMMENLIGNE klokkeslettene i stedet for å pinne et literal.
+
+**FLYTTINGEN BLE IKKE GJORT I FUNDAMENTET, OG DET VAR RIKTIG.** Dette fundamentet
 tildeler klokkeslettene; det installerer ingen timer. Flytter man
 sveipestatus nå, står den i halvannen time og leser en flåte som ikke
 har fått nye medlemmer ennå — og `test_m54_ehf.py` pinner 11:20 mot

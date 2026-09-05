@@ -1861,6 +1861,62 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import likviditet as likvmodul
         return likvmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-33 PREDIKSJONS- OG SCENARIOAGENT (130). DET FINNES INGEN RUTE
+    # SOM ANSETTER, SIER OPP ELLER FLYTTER EN VAKT.
+    #
+    # Vaktsetningen er «prognoser er ikke fakta; ingen
+    # personalavgjørelse eller automatisk handling uten separat
+    # policy», og fraværet av en slik rute er hele håndhevelsen: det
+    # finnes ingen tabell for beslutninger, ingen status som kan bli
+    # `iverksatt`, og ingen kolonne som peker på en ansatt.
+    #
+    # `/maaling` ER DEN ENESTE VEIEN TIL Å LUKKE `prognose_uten_maaling`
+    # — og ingen vei lukker `slaar_ikke_naiv_baseline`. Den lukkes av
+    # at modellen faktisk blir bedre.
+    def prog_bilde(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.prognosebilde(tjeneste, request)
+
+    def prog_prognoser(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.prognoser_endepunkt(tjeneste, request)
+
+    def prog_modeller(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.modeller_endepunkt(tjeneste, request)
+
+    def prog_funn(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.funn_endepunkt(tjeneste, request)
+
+    def prog_bane(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.bane_endepunkt(tjeneste, request)
+
+    def prog_krav(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.krav_endepunkt(tjeneste, request)
+
+    def prog_modell_ny(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.registrer_modell_endepunkt(tjeneste, request)
+
+    def prog_modell_avvikle(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.avvikle_modell_endepunkt(tjeneste, request)
+
+    def prog_prognose_ny(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.lag_prognose_endepunkt(tjeneste, request)
+
+    def prog_maaling(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.registrer_maaling_endepunkt(tjeneste, request)
+
+    def prog_lukk_funn(request: Request) -> Response:
+        from . import prognose as progmodul
+        return progmodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
     # tiltak å vise til.
@@ -3120,6 +3176,26 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               likv_vurder, methods=["POST"]),
         Route("/v1/likviditet/funn/{funn_id:uuid}/lukk",
               likv_lukk_funn, methods=["POST"]),
+        # M-33 (130). Faste stier FØR parametriserte.
+        Route("/v1/prognose", prog_bilde, methods=["GET"]),
+        Route("/v1/prognose/prognoser", prog_prognoser,
+              methods=["GET"]),
+        Route("/v1/prognose/modeller", prog_modeller,
+              methods=["GET"]),
+        Route("/v1/prognose/funn", prog_funn, methods=["GET"]),
+        Route("/v1/prognose/krav", prog_krav, methods=["POST"]),
+        Route("/v1/prognose/modell", prog_modell_ny,
+              methods=["POST"]),
+        Route("/v1/prognose/prognose", prog_prognose_ny,
+              methods=["POST"]),
+        Route("/v1/prognose/modell/{modell_id:uuid}/avvikle",
+              prog_modell_avvikle, methods=["POST"]),
+        Route("/v1/prognose/prognose/{prognose_id:uuid}/bane",
+              prog_bane, methods=["GET"]),
+        Route("/v1/prognose/prognose/{prognose_id:uuid}/maaling",
+              prog_maaling, methods=["POST"]),
+        Route("/v1/prognose/funn/{funn_id:uuid}/lukk",
+              prog_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4338,6 +4414,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/likviditet/tiltak/{tiltak_id:uuid}/vurder"):
         "bestilling:opprett",
     ("POST", "/v1/likviditet/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-33 (130). INGEN RUTE TAR EN PERSONALAVGJØRELSE — det finnes
+    # ingen `/ansett`, ingen `/siopp` og ingen `/iverksett`, og porten
+    # leser denne tabellen.
+    #
+    # LESESCOPET ER `okonomi:read` OG IKKE noe strengere, og det er
+    # ikke en forglemmelse: grunnlaget er `timeregistrering` (M-39),
+    # som allerede leses med samme scope av lønnsmodulen. Et strengere
+    # scope her ville skjult et AGGREGAT for noen som ser hver enkelt
+    # rad — altså en grense som ser ut som vern og ikke er det.
+    ("GET",  "/v1/prognose"):                   "okonomi:read",
+    ("GET",  "/v1/prognose/prognoser"):         "okonomi:read",
+    ("GET",  "/v1/prognose/modeller"):          "okonomi:read",
+    ("GET",  "/v1/prognose/funn"):              "okonomi:read",
+    ("GET",  "/v1/prognose/prognose/{prognose_id:uuid}/bane"):
+        "okonomi:read",
+    ("POST", "/v1/prognose/krav"):              "bestilling:opprett",
+    ("POST", "/v1/prognose/modell"):            "bestilling:opprett",
+    ("POST", "/v1/prognose/prognose"):          "bestilling:opprett",
+    ("POST", "/v1/prognose/modell/{modell_id:uuid}/avvikle"):
+        "bestilling:opprett",
+    ("POST", "/v1/prognose/prognose/{prognose_id:uuid}/maaling"):
+        "bestilling:opprett",
+    ("POST", "/v1/prognose/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

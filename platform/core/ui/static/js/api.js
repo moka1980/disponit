@@ -1616,3 +1616,46 @@ export const vurderTiltak = (tiltakId, kropp, idem) =>
 export const lukkLikviditetsfunn = (funnId, kropp, idem) =>
   _muter(`/v1/likviditet/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-33 PREDIKSJONS- OG SCENARIOAGENT (130).
+//
+// DET FINNES INGEN `ansett`, INGEN `siOpp` OG INGEN `flyttVakt`.
+// Modulen lager en bane og stopper der — vaktsetningen sier at ingen
+// personalavgjørelse tas uten separat policy, og fraværet av en slik
+// funksjon her ER håndhevelsen.
+//
+// `registrerBemanningsmaaling` ER DEN ENESTE VEIEN TIL Å LUKKE
+// `prognose_uten_maaling`. Den tar det FAKTISKE tallet og ingenting
+// annet: om målingen traff intervallet regnes av båndet som står på
+// raden, ikke av kalleren.
+//
+// DET FINNES HELLER INGEN VEI TIL Å LUKKE `slaar_ikke_naiv_baseline`.
+// Den lukkes av at modellen faktisk blir bedre — ikke av et klikk.
+// ---------------------------------------------------------------------
+export const settPrognosekrav = (krav, idem) =>
+  _muter("/v1/prognose/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerPrognosemodell = (modell, idem) =>
+  _muter("/v1/prognose/modell", "POST", modell,
+         idem || nyIdempotensnokkel());
+
+export const avviklPrognosemodell = (modellId, kropp, idem) =>
+  _muter(`/v1/prognose/modell/${encodeURIComponent(modellId)}`
+         + "/avvikle",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lagBemanningsprognose = (kropp, idem) =>
+  _muter("/v1/prognose/prognose", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const registrerBemanningsmaaling = (prognoseId, kropp, idem) =>
+  _muter(`/v1/prognose/prognose/${encodeURIComponent(prognoseId)}`
+         + "/maaling",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkPrognosefunn = (funnId, kropp, idem) =>
+  _muter(`/v1/prognose/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

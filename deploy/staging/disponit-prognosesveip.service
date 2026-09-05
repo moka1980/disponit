@@ -1,0 +1,76 @@
+# M-33 (130): prognosesveipen. DOMMEN ER PRODUKTET.
+#
+# SVEIPEN LAGER INGEN PROGNOSE OG MÅLER INGEN UKE. Den sier fra om at
+# en uke ikke er målt, og den feller dom over modellen når nok uker ER
+# målt — og der stopper den. En sveip som målte selv ville hentet
+# timelistene og sammenlignet i stillhet, og da hadde modulen gitt seg
+# selv karakter. Målingen er en handling med en ansvarlig, og siden den
+# ikke kan rettes, står navnet der for alltid.
+#
+# KLYNGENS DELTE DOM: en gal prognose ser nøyaktig ut som en riktig
+# prognose — helt til horisonten er passert, og da har alle sluttet å
+# se.
+#
+# M-33s EGEN: EN MODELL SOM IKKE KAN TAPE, HAR IKKE VUNNET.
+# `slaar_ikke_naiv_baseline` er bare et ekte funn fordi v1-modellen
+# (glidende snitt) og basislinjen («samme som forrige uke») er
+# forskjellige tall.
+#
+# SVEIPEN TAR INGEN PERSONALAVGJØRELSE. Vaktsetningen sier det rett
+# ut, og gjerdet står i koden: `prognosesveip.py` importerer
+# ingenting som kan snakke ut.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut til et lønnssystem.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille prognosesveip
+# er en modell som taper for «samme som forrige uke» uten at noen får
+# vite det — og som fortsetter å bli lest som analyse.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_prognosesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m33_sveip_prognose`. INGEN tabellrettigheter
+# — heller ikke på timeregistreringene modulen leser.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit prognosesveip (umålte uker og modeller som taper for basislinjen)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_PROGNOSESVEIP_URL:/etc/disponit/prognosesveip/DISPONIT_PROGNOSESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_prognosesveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`bemanningsprognose_ferskeste`, primærnøklene på banen
+# og målingen, `prognosefunn_ett_apent`). Går dette over ti minutter,
+# henger noe — og da er avbrudd riktig svar: funnene er idempotente, så
+# neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

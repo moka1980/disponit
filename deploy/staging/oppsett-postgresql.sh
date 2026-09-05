@@ -510,6 +510,13 @@ HMSSVEIP_DSN=("DISPONIT_HMSSVEIP_URL=$DB"
 # 128 (M-15): likviditetssveipens DSN.
 LIKVIDITETSSVEIP_DSN=("DISPONIT_LIKVIDITETSSVEIP_URL=$DB"
                       "DISPONIT_TEST_LIKVIDITETSSVEIP_DSN=${DB}_test")
+# 130 (M-33): prognosesveipens DSN. Rollen ble tildelt av
+# klynge 8-fundamentet, men en ROLLE UTEN DSN er en sveip som ikke kan
+# koble seg til. Det var 127s feil, og den kostet en rød CI: fem
+# porter var grønne lokalt og røde i CI fordi testen falt tilbake til
+# migrator og målte en base der SP-7-skillet ikke fantes.
+PROGNOSESVEIP_DSN=("DISPONIT_PROGNOSESVEIP_URL=$DB"
+                   "DISPONIT_TEST_PROGNOSESVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -553,6 +560,7 @@ sikre_rolle_dsn "$MYNDIGHETSSVEIP" "${MYNDIGHETSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$POSTJOURNALSVEIP" "${POSTJOURNALSVEIP_DSN[@]}"
 sikre_rolle_dsn "$HMSSVEIP" "${HMSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$LIKVIDITETSSVEIP" "${LIKVIDITETSSVEIP_DSN[@]}"
+sikre_rolle_dsn "$PROGNOSESVEIP" "${PROGNOSESVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

@@ -536,6 +536,14 @@ const BASISRUTER = [
   // finansleserens eget bord. Modulen sier ingenting opp og betaler
   // ingenting: et kostnadstiltak er et forslag.
   { nokkel: "likviditet", scope: "okonomi:read", modulflate: 15 },
+  // M-33 (130): prediksjons- og scenarioagent. MODULFLATE bak
+  // `okonomi:read` — grunnlaget er `timeregistrering` (M-39), som
+  // allerede leses med samme scope av lønnsmodulen. Et strengere
+  // scope her ville skjult et AGGREGAT for noen som ser hver enkelt
+  // rad, altså en grense som ser ut som vern og ikke er det.
+  // Modulen tar ingen personalavgjørelse: den lager en bane og
+  // stopper der.
+  { nokkel: "prognose", scope: "okonomi:read", modulflate: 33 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

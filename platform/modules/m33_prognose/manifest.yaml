@@ -30,7 +30,11 @@
 # `disponit-sveipestatus.timer` til 12:05. Fundamentet tildeler
 # klokkeslettet; det installerer ingen timer.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# TO AKSER, ÆRLIG LEST (5/9): KODEN FINNES — 130 er merget, med
+# API, flate, sveip og porter. Aksepthendelsen finnes IKKE, og
+# ingen release er kjørt. `status` og `driftstilstand` står
+# derfor uendret: de flippes av en modulaksept, ALDRI av en
+# byggemilepæl. At koden er skrevet er ikke at noen har sagt ja.
 id: m33_prognose
 navn: Prediksjons- og scenarioagent
 versjon: 0.1.0
@@ -42,6 +46,13 @@ avhengigheter:
   - m01_policy
   - m02_revisjonslogg
   - m03_datakvalitet
+  # LAGT TIL 5/9, UNDER BYGGINGEN AV 130. Fundamentet skrev at M-33s
+  # `dep` er «datakvalitet, historikk, evaluering og KPI-katalog». To
+  # av de fire finnes ikke som tabeller. HISTORIKKEN ER M-39s
+  # `timeregistrering` — faktisk arbeidet tid, minutter per person per
+  # dato. Ikke `arbeidsplan`: en prognose regnet på PLANEN prognoserer
+  # planen, og ville vært perfekt og verdiløs.
+  - m39_lonnsgrunnlag
 kjerne: platform/modules/m33_prognose
 i18n_prefiks: prognose
 
@@ -49,28 +60,39 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      Modulen er bygget (130, 5/9) og portene er grønne lokalt og i
+      CI. KREVER FORTSATT: suitekjøring PÅ STAGING med modulens andel
+      pinnet og stagingidentitet bundet. En grønn CI er ikke en grønn
+      staging.
   syntetisk_datasett_likt_lokalt:
     status: nei
     notat: >-
-      KREVER: en tidsserie der den naive baselinen er KJENT, slik at
-      «slår modellen den?» er et faktum og ikke en påstand.
+      Portene har en slik tidsserie: stigende bemanning der snittet er
+      450 og basislinjen 800, og der begge utfall er målt — modellen
+      taper på 900, vinner på 460. KREVER FORTSATT: at det samme
+      datasettet finnes PÅ STAGING.
   revisjonslogg_korrekt:
     status: nei
     notat: >-
-      KREVER: at backtesten er sporbar — hvilken baseline, hvilket
-      vindu, hvilken modellversjon. En backtest ingen kan gjenskape
-      er en påstand om at vi har testet.
+      Sporbarheten ER bygget: `bemanningsprognose` bærer
+      `modellversjon`, `baselinje`, `grunnlag_uker`,
+      `grunnlag_siste_dato` og `datakvalitet` som NOT NULL, og
+      `m33_evidens` skriver hver handling til revisjonsloggen. KREVER
+      FORTSATT: en verifisert kjede PÅ STAGING.
   feilinjisering_til_unntakskø:
     status: nei
     notat: >-
-      KREVER: at en modell som slutter å slå baselinen gir et FUNN,
-      ikke en stille degradering.
+      Funnet finnes: `slaar_ikke_naiv_baseline` reises av sveipen når
+      modellens samlede absoluttavvik er større enn ELLER LIK
+      basislinjens over minst `domsgrunnlag_uker` målte uker, og
+      lukkes bare av at modellen faktisk blir bedre. KREVER FORTSATT:
+      en injisert feil på staging.
   ytelse_bestatt:
     status: nei
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Taket er satt (500 tenanter per kjøring, `TimeoutStartSec=10min`)
+      og sveipens tre setninger er indeksdekket. KREVER FORTSATT: en
+      MÅLT kjøring — et tak er ikke en måling.
   rollback_testet:
     status: nei
     notat: >-

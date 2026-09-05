@@ -6,7 +6,7 @@
 # sjeldnere ville latt en frist passere mellom to kjøringer.
 #
 # KLOKKESLETTET ER 10:35, klynge 7s tredje plass i stigen 10:05–11:05.
-# `disponit-sveipestatus.timer` (115) står bakerst på 11:20.
+# `disponit-sveipestatus.timer` (115) står bakerst på 12:05.
 #
 # `Persistent=true`, OG HER BETYR DET MER ENN ANDRE STEDER: en vert som
 # var nede da tidspunktet passerte skal likevel oppdage at en frist har
