@@ -56,6 +56,7 @@ SVEIPENE = (
     ("likviditetssveip", "m15_sveip_likviditet"),
     ("prognosesveip", "m33_sveip_prognose"),
     ("optimalisatorsveip", "m36_sveip_optimalisering"),
+    ("motesveip", "m7_sveip_moter"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

@@ -1386,7 +1386,52 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm36_sveip_optimalisering(integer)',                                                         'disponit_optimalisator_eier'),
     ('FUNCTION', 'm36_tiltakene(text,integer)',                                                               'disponit_optimalisator_eier'),
     ('FUNCTION', 'm36_udekkede_registre()',                                                                   'disponit_optimalisator_eier'),
-    ('FUNCTION', 'm36_vurder_tiltak(text,uuid,text,text,text)',                                               'disponit_optimalisator_eier');
+    ('FUNCTION', 'm36_vurder_tiltak(text,uuid,text,text,text)',                                               'disponit_optimalisator_eier'),
+    -- 133 (M-7): moeteregisterets doerer og sveipen.
+    --
+    -- REFERATPUNKTET, BESLUTNINGEN OG OPPTAKET ER APPEND-ONLY, og
+    -- modulrollen har verken UPDATE eller DELETE paa dem. Et referat
+    -- som kan skrives om er ikke et referat -- det er et utkast noen
+    -- kan endre etterpaa. En RETTELSE er derfor et NYTT punkt som
+    -- PEKER paa det gamle, og begge staar.
+    --
+    -- `m7_referatet` OG `m7_bildet` STAAR HER selv om de bare leser:
+    -- de er SECURITY DEFINER og loper som modulrollen. Eide migrator
+    -- dem, ville de lest med migrators rettigheter -- altsaa forbi
+    -- radvakten.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN. Parseren stopper ved det
+    -- foerste setningsskillet.
+    --
+    -- SIGNATURENE ER TYPER, IKKE PARAMETERNAVN, og tidsstempeltypen
+    -- staar skrevet slik huset skriver den -- «timestamp with time
+    -- zone». Aliaset `timestamptz` ville matchet ingenting, og
+    -- reparasjonen ville da flatet doera til migrator i stillhet.
+    --
+    -- Radvaktene (`m7_motevakt()`, `m7_hjemmelvakt()`,
+    -- `m7_aksjonsvakt()`, `m7_evidensvakt()`) staar IKKE her: de eies
+    -- av migrator, som eier tabellene triggerne henger paa.
+    ('FUNCTION', 'm7_aksjonene(text,integer)',                                                                  'disponit_mote_eier'),
+    ('FUNCTION', 'm7_avslutt_hjemmel(text,uuid,date,text)',                                                     'disponit_mote_eier'),
+    ('FUNCTION', 'm7_beslutningene(text,uuid)',                                                                 'disponit_mote_eier'),
+    ('FUNCTION', 'm7_bildet(text)',                                                                             'disponit_mote_eier'),
+    ('FUNCTION', 'm7_evidens(text,uuid,text,text,jsonb)',                                                       'disponit_mote_eier'),
+    ('FUNCTION', 'm7_funn_er_sveipens(text)',                                                                   'disponit_mote_eier'),
+    ('FUNCTION', 'm7_hjemmel_gyldig(date,date)',                                                                'disponit_mote_eier'),
+    ('FUNCTION', 'm7_hjemmelregister(text)',                                                                    'disponit_mote_eier'),
+    ('FUNCTION', 'm7_lukk_aksjon(text,uuid,text,text,text)',                                                    'disponit_mote_eier'),
+    ('FUNCTION', 'm7_lukk_funn(text,uuid,text,text)',                                                           'disponit_mote_eier'),
+    ('FUNCTION', 'm7_motefunn(text,integer)',                                                                   'disponit_mote_eier'),
+    ('FUNCTION', 'm7_moteregister(text,integer)',                                                               'disponit_mote_eier'),
+    ('FUNCTION', 'm7_referatet(text,uuid)',                                                                     'disponit_mote_eier'),
+    ('FUNCTION', 'm7_registrer_aksjon(text,uuid,uuid,text,text,date,text)',                                     'disponit_mote_eier'),
+    ('FUNCTION', 'm7_registrer_beslutning(text,uuid,uuid,text,text,timestamp with time zone,uuid,text)',        'disponit_mote_eier'),
+    ('FUNCTION', 'm7_registrer_hjemmel(text,uuid,text,text,text,date,date,text)',                               'disponit_mote_eier'),
+    ('FUNCTION', 'm7_registrer_mote(text,uuid,text,timestamp with time zone,timestamp with time zone,text,text[],text,text)', 'disponit_mote_eier'),
+    ('FUNCTION', 'm7_registrer_referatpunkt(text,uuid,uuid,integer,text,text,text,integer,uuid,text)',          'disponit_mote_eier'),
+    ('FUNCTION', 'm7_sett_krav(text,integer,integer,integer,text,text)',                                        'disponit_mote_eier'),
+    ('FUNCTION', 'm7_start_opptak(text,uuid,uuid,uuid,timestamp with time zone,text,text[],timestamp with time zone,text)', 'disponit_mote_eier'),
+    ('FUNCTION', 'm7_sveip_moter(integer)',                                                                     'disponit_mote_eier');
 
 DO $$
 DECLARE

@@ -595,7 +595,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 132 (M-36): optimalisatorsveipens EGEN DSN. En stille sveip
         # her er en rangering ingen har målt effekten av — og som
         # fortsetter å bli lest som en anbefaling.
-        "DISPONIT_OPTIMALISATORSVEIP_URL")})
+        "DISPONIT_OPTIMALISATORSVEIP_URL",
+        # 133 (M-7): møtesveipens EGEN DSN. En stille sveip her
+        # er et møte som gikk uten referat og en aksjon over
+        # frist — og et ubekreftet punkt ingen har lest.
+        "DISPONIT_MOTESVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -1240,7 +1244,11 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 132 (M-36): optimalisatorsveipens EGEN DSN. En stille sveip
         # her er en rangering ingen har målt effekten av — og som
         # fortsetter å bli lest som en anbefaling.
-        "DISPONIT_OPTIMALISATORSVEIP_URL")})
+        "DISPONIT_OPTIMALISATORSVEIP_URL",
+        # 133 (M-7): møtesveipens EGEN DSN. En stille sveip her
+        # er et møte som gikk uten referat og en aksjon over
+        # frist — og et ubekreftet punkt ingen har lest.
+        "DISPONIT_MOTESVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

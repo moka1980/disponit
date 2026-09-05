@@ -1,6 +1,6 @@
 # 115: én gang i døgnet, ETTER hele sveipestigen.
 #
-# KLOKKESLETTET ER 12:20 UTC fordi rekkefølgen er poenget:
+# KLOKKESLETTET ER 13:35 UTC fordi rekkefølgen er poenget:
 # observatøren skal lese flåtens tilstand ETTER at flåten har kjørt,
 # ikke før. Kjørte den 02:00, ville hver eneste sveip sett ut som
 # «ikke kjørt i dag», og varselet vært en falsk alarm hver natt.
@@ -11,7 +11,7 @@
 # observatøren flyttes BAKENFOR HELE den stigen med én gang i stedet
 # for å skyves femten minutter fem ganger.
 #
-# GAPET FRA 09:50 TIL 12:20 ER TOMT I DAG og fylles etter hvert som
+# GAPET FRA 09:50 TIL 13:35 ER TOMT I DAG og fylles etter hvert som
 # M-54, M-52, M-47, M-50 og M-53 lander. Det er med vilje: klyngens
 # fundament flytter observatøren FØR modulene kommer, så ingen
 # modul-PR trenger å røre denne fila — og to PR-er som begge flyttet
@@ -29,6 +29,20 @@
 #
 # 12:05 → 12:20 i M-36s PR (132), OG DET VAR ET REGNESTYKKE INGEN
 # HADDE GJORT: et klokkeslett er ikke en rekkefølge.
+#
+# 12:20 → 13:35 i M-7s PR (133), OG DEN FLYTTINGEN GÅR LENGER ENN
+# M-7 STRENGT TATT TRENGER. Grunnen skal stå:
+#
+# M-7 alene krever bare 12:50 (12:35 + 5 + 10). Men klynge
+# 9-fundamentet har ALT tildelt 12:50, 13:05 og 13:20 til M-20, M-43
+# og M-45. Hvert mellomliggende tall ville derfor landet PÅ et slot
+# som er reservert, og statussveipen måtte flyttet igjen tre ganger —
+# hver gang forbi en sveip som ennå ikke finnes.
+#
+# 13:35 er det eneste tallet som ikke kolliderer med en tildelt plass,
+# og det er valgt av den grunnen — ikke fordi M-45 er bygget. Prisen
+# er at statussveipen står 45 minutter bak flåten til klynge 9 er
+# ferdig. Det er en ærlig pris, og den står her.
 # `RandomizedDelaySec` finnes for å hindre samtidighet, ikke for å
 # ordne. Det som må gå opp er START + SPREDNING + `TimeoutStartSec`
 # for HVER overvåket sveip, og M-36 på 11:50 + 10 + 10 = 12:10
@@ -57,7 +71,7 @@
 Description=Disponit sveipestatus-timer
 
 [Timer]
-OnCalendar=*-*-* 12:20:00 UTC
+OnCalendar=*-*-* 13:35:00 UTC
 RandomizedDelaySec=15min
 Persistent=true
 

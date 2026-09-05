@@ -95,6 +95,18 @@ KJENTE_EIERROLLER = (
     "disponit_likviditet_eier",     # M-15, migrasjon 128
     "disponit_prognose_eier",       # M-33, migrasjon 129
     "disponit_optimalisator_eier",  # M-36, migrasjon 130
+    # Klynge 9 «ytringene» (133-136). Rollene ble opprettet av
+    # fundamentet i BEGGE kjedene, men denne listen stod igjen —
+    # og en eierrolle utenfor den er usynlig for begge
+    # paritetstestene: designfilen kan ikke navngi den, og
+    # `test_designtabellen_dekker_alle_privilegert_eide_objekter`
+    # spør ikke basen om den. Alle fire står her nå, slik klynge
+    # 8 gjorde det, så de tre neste modul-PR-ene ikke rører den
+    # samme litteralen.
+    "disponit_mote_eier",        # M-7, migrasjon 133
+    "disponit_innhold_eier",     # M-20, migrasjon 134
+    "disponit_telefoni_eier",    # M-43, migrasjon 135
+    "disponit_esg_eier",         # M-45, migrasjon 136
 )
 
 #: Speil av designtabellen i SQL-filen — paritetstesten binder dem sammen.
