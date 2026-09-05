@@ -5,7 +5,7 @@
 # går ut på en DATO.
 #
 # KLOKKESLETTET ER 10:05, klynge 7s første plass i stigen 10:05–11:05.
-# `disponit-sveipestatus.timer` (115) står bakerst på 12:05 og leser
+# `disponit-sveipestatus.timer` (115) står bakerst på 12:20 og leser
 # flåtens tilstand ETTER at flåten har kjørt.
 #
 # `Persistent=true`: en vert som var nede da tidspunktet passerte skal

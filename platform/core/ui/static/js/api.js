@@ -1659,3 +1659,63 @@ export const registrerBemanningsmaaling = (prognoseId, kropp, idem) =>
 export const lukkPrognosefunn = (funnId, kropp, idem) =>
   _muter(`/v1/prognose/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-36 BEDRIFTSOPTIMALISATOR (132).
+//
+// DET FINNES INGEN `iverksettTiltak`, OG INGEN VEI MOT EN POLICY.
+// `vurderTiltaksforslag` tar `vurdert` eller `avvist`, og der stopper
+// modulen — utførelsen går gjennom modulen som EIER handlingen, på
+// M-41s policykontrollerte vei.
+//
+// Vaktsetningen sier «kan aldri utvide egen fullmakt», og fraværet av
+// en slik funksjon HER er en del av håndhevelsen: den andre delen er
+// at modulrollen ikke har rettigheter på policytabellene.
+//
+// `settPortefoljestopp` VIRKER: med aktiv stopp nekter `lagRangering`.
+// Det er det eneste modulen lovlig kan stanse.
+// ---------------------------------------------------------------------
+export const settOptimaliseringskrav = (krav, idem) =>
+  _muter("/v1/optimalisator/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerOptimaliseringsmodell = (modell, idem) =>
+  _muter("/v1/optimalisator/modell", "POST", modell,
+         idem || nyIdempotensnokkel());
+
+export const avviklOptimaliseringsmodell = (modellId, kropp, idem) =>
+  _muter(`/v1/optimalisator/modell/${encodeURIComponent(modellId)}`
+         + "/avvikle",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const foreslaTiltak = (tiltak, idem) =>
+  _muter("/v1/optimalisator/tiltak", "POST", tiltak,
+         idem || nyIdempotensnokkel());
+
+export const vurderTiltaksforslag = (tiltakId, kropp, idem) =>
+  _muter(`/v1/optimalisator/tiltak/${encodeURIComponent(tiltakId)}`
+         + "/vurder",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const settPortefoljestopp = (kropp, idem) =>
+  _muter("/v1/optimalisator/stopp", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const opphevPortefoljestopp = (stoppId, kropp, idem) =>
+  _muter(`/v1/optimalisator/stopp/${encodeURIComponent(stoppId)}`
+         + "/opphev",
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lagRangering = (kropp, idem) =>
+  _muter("/v1/optimalisator/rangering", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const registrerEffekt = (rangeringId, kropp, idem) =>
+  _muter(`/v1/optimalisator/rangering/`
+         + `${encodeURIComponent(rangeringId)}/effekt`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkOptimaliseringsfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/optimalisator/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

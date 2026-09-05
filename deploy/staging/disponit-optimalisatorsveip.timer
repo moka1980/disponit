@@ -1,0 +1,42 @@
+# M-36 (132): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `maalefrist_dogn` måles i DØGN, og
+# en rangeringspost har en horisont som slutter på en DATO. Å sveipe
+# oftere ville ikke gitt et eneste nytt funn; å sveipe sjeldnere ville
+# latt en målefrist passere mellom to kjøringer, og da hadde en effekt
+# stått umålt uten at noen visste det.
+#
+# KLOKKESLETTET ER 11:50 — SISTE TRINN I STIGEN, som klynge
+# 8-fundamentet tildelte. M-36 leser de ÅPNE FUNNENE fra 32 registre,
+# og en rangering laget før dagens øvrige sveip har kjørt ville hvilt
+# på gårsdagens funnbilde.
+#
+# `RandomizedDelaySec=10min` OG IKKE 30 (131s lærdom).
+#
+# Spredningen etablerer INGEN rekkefølge mellom timere — den er laget
+# for å hindre at de fyrer samtidig. Regnestykket som må gå opp er:
+# START + SPREDNING + `TimeoutStartSec` skal være FØR statussveipens
+# tidligste start. Her: 11:50 + 10 + 10 = 12:10.
+#
+# DET GÅR IKKE OPP MOT 12:05, og derfor flytter denne PR-en
+# `disponit-sveipestatus.timer` til 12:20. Fundamentet tildelte 12:05
+# den gang M-36 var tenkt uten dette regnestykket; da M-33 landet på
+# 11:35 med 15 minutters spredning ble 12:05 akkurat nok for DEN, men
+# ikke for et trinn til. `test_sveipen_rekker_aa_bli_ferdig_...` i
+# begge modulenes suiter måler det, og porten er grunnen til at det
+# ble oppdaget her og ikke i drift.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at en effekt står umålt. Uten den ville nedetid blitt
+# til stillhet om nettopp det modulen finnes for.
+
+[Unit]
+Description=Disponit optimalisatorsveip-timer
+
+[Timer]
+OnCalendar=*-*-* 11:50:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

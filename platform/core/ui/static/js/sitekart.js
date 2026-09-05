@@ -544,6 +544,13 @@ const BASISRUTER = [
   // Modulen tar ingen personalavgjørelse: den lager en bane og
   // stopper der.
   { nokkel: "prognose", scope: "okonomi:read", modulflate: 33 },
+  // M-36 (132): bedriftsoptimalisator. MODULFLATE bak `okonomi:read`
+  // — tiltakene anslås i ØRE og rangeres på penger. Merk hva scopet
+  // IKKE gir: rangeringen bærer `kilde_modul` og `kilde_funntype`,
+  // ikke funnenes innhold. En finansleser ser AT det finnes tolv åpne
+  // HMS-funn, ikke hva de gjelder.
+  // Modulen iverksetter ingenting og kan ikke utvide egen fullmakt.
+  { nokkel: "optimalisator", scope: "okonomi:read", modulflate: 36 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

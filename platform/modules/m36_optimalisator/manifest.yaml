@@ -48,7 +48,11 @@
 # stoppknapp som ikke virker er verre enn ingen — `portefoljestopp_
 # uten_virkning` er derfor en invariant og ikke en funksjonsbeskrivelse.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# TO AKSER, ÆRLIG LEST (5/9): KODEN FINNES — 132 er merget,
+# med API, flate, sveip og porter. Aksepthendelsen finnes IKKE,
+# og ingen release er kjørt. `status` og `driftstilstand` står
+# derfor uendret: de flippes av en modulaksept, ALDRI av en
+# byggemilepæl.
 id: m36_optimalisator
 navn: Bedriftsoptimalisator
 versjon: 0.1.0
@@ -70,30 +74,45 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      Modulen er bygget (132, 5/9) og portene er grønne lokalt og i
+      CI. KREVER FORTSATT: suitekjøring PÅ STAGING med modulens andel
+      pinnet og stagingidentitet bundet. En grønn CI er ikke en grønn
+      staging.
   syntetisk_datasett_likt_lokalt:
     status: nei
     notat: >-
-      KREVER: et sett der en KJENT korrelasjon IKKE er en årsak, slik
-      at porten kan måle at modulen sier det.
+      Portene har et slikt sett: to forslag med identisk anslag der
+      det ene hviler på korrelasjon og det andre på en regel, og
+      `korrelasjon_alene_paa_topp` reises når det første havner
+      øverst. KREVER FORTSATT: at det samme datasettet finnes PÅ
+      STAGING.
   revisjonslogg_korrekt:
     status: nei
     notat: >-
-      KREVER: at hvert rangert tiltak kan spores til grunnlagstypen
-      sin. En rangering uten det er en anbefaling uten opphav.
+      Sporbarheten ER bygget: `grunnlagstype` KOPIERES inn i
+      `rangeringspost` ved avgivelse (et join ville gitt dagens verdi,
+      ikke den som gjaldt da), forslagets innhold er frosset, og
+      `kilde_modul`/`kilde_funntype` peker tilbake til registeret
+      signalet kom fra. KREVER FORTSATT: en verifisert kjede PÅ
+      STAGING.
   feilinjisering_til_unntakskø:
     status: nei
     notat: >-
-      KREVER: at porteføljestoppen FAKTISK stopper — målt ved at et
-      tiltak ikke lar seg rangere mens stoppen står. En stoppknapp
-      som bare setter et flagg er pynt.
+      Stoppen stopper: `m36_rangere` NEKTER med aktiv stopp, og
+      `test_portefoljestoppen_hindrer_en_ny_rangering` måler både
+      nektet og at rangeringen går igjen etter oppheving. MERK
+      begrensningen, som står i klartekst i modulen: stoppen stanser
+      M-36, ikke porteføljen — å stanse en annen modul ville vært å
+      overstyre dens grense. KREVER FORTSATT: en injisert feil på
+      staging.
   ytelse_bestatt:
     status: nei
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
-      Modulen leser på tvers av alle modulregistre og er den dyreste
-      sveipen i huset før den er skrevet.
+      Taket er satt (500 tenanter, `TimeoutStartSec=10min`), og
+      `m36_apne_funn` gjør ÉN spørring per register per tenant — 32
+      registre. Det er den bredeste sveipen i huset, og anslaget fra
+      fundamentet holdt. KREVER FORTSATT: en MÅLT kjøring — et tak er
+      ikke en måling.
   rollback_testet:
     status: nei
     notat: >-
