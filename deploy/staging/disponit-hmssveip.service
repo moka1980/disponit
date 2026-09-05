@@ -1,0 +1,74 @@
+# M-53 (127): HMS-sveipen. TAUSHETEN ER OGSÅ EN LEKKASJE.
+#
+# SVEIPEN VARSLER INGEN MYNDIGHET OG LUKKER INGEN AVVIK. Arbeidstilsynet
+# får ingenting fra oss i v1, og et avviksmottak som lukket avvik selv
+# ville vært en HMS-avdeling uten mennesker i.
+#
+# MEN SKADEN ER OGSÅ Å LA VÆRE (M-47s dom, 123). Et avvik ingen har
+# gjort noe med er nøyaktig det modulen ble bygget for å fange, og en
+# stille sveip er verre enn ingen sveip: noen stolte på at den så etter.
+#
+# SVEIPEN ANONYMISERER IKKE. Å tømme et navn automatisk ville sett
+# riktig ut, og vært galt TO ganger: sletting er en handling med en
+# ansvarlig, OG en for tidlig sletting er et brudd på
+# oppbevaringsplikten. Sveipen SIER FRA at fristen er passert.
+#
+# Regelen eies av databasen (127): et avvik som har stått lenger enn
+# tenantens tiltaksfrist er `avvik_ubehandlet`; en oppbevaringsfrist som
+# HAR gått mens raden fortsatt bærer et navn er `oppbevaring_utlopt`; en
+# rad som forsvant FØR fristen er `for_tidlig_anonymisert`; og et avvik
+# regnet under et avviklet regelverk er `avvik_mot_utlopt_regelverk`.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal ut til et tilsyn. Gjerdet mot utgående står
+# i koden: `hmssveip.py` importerer ingenting som kan snakke ut.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille HMS-sveip er
+# et avvik ingen har gjort noe med, i et register noen stolte på.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_hmssveip` har nøyaktig ÉN rettighet:
+# EXECUTE på `m53_sveip_hms`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit HMS-sveip (ubehandlede avvik og oppbevaringsfrister som er gått)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_HMSSVEIP_URL:/etc/disponit/hmssveip/DISPONIT_HMSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_hmssveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`hmsregelverk_gjeldende`, `hmsavvik_apne`,
+# `hmsavvik_oppbevaring`, `hmsfunn_apne_idx`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

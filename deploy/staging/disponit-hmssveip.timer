@@ -1,0 +1,28 @@
+# M-53 (127): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `tiltaksfrist_dogn`,
+# `oppbevaringsvarsel_dogn` og `regelvarsel_dogn` måles alle i DØGN — og
+# en oppbevaringsfrist er en DATO. Å sveipe oftere ville ikke gitt et
+# eneste nytt funn; å sveipe sjeldnere ville latt en oppbevaringsfrist
+# passere mellom to kjøringer, og da hadde vi oppbevart en
+# helseopplysning lenger enn vår egen hjemmel rakk uten å vite det.
+#
+# KLOKKESLETTET ER 11:05, klynge 7s femte og siste plass i stigen
+# 10:05–11:05. `disponit-sveipestatus.timer` (115) står bakerst på
+# 11:20.
+#
+# `Persistent=true`, OG HER BETYR DET MER ENN ANDRE STEDER: en vert som
+# var nede da tidspunktet passerte skal likevel oppdage at et avvik har
+# stått ubehandlet over fristen. Uten den ville nedetid blitt til
+# stillhet om nettopp det modulen finnes for.
+
+[Unit]
+Description=Disponit HMS-sveip-timer
+
+[Timer]
+OnCalendar=*-*-* 11:05:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -143,7 +143,16 @@ må huske:
 | 122 | M-52 | `122_m52_tollkode.sql` | 2. |
 | 123 | M-47 | `123_m47_myndighetsrapport.sql` | 3. |
 | 124 | M-50 | `124_m50_postjournal.sql` | 4. |
-| 125 | M-53 | `125_m53_hms_avvik.sql` | 5. |
+| ~~125~~ **127** | M-53 | `127_m53_hms_avvik.sql` | 5. |
+
+**M-53 FLYTTET FRA 125 TIL 127, og grunnen står her fordi et tildelt
+migrasjonsnummer som stille bytter plass er nøyaktig den slags
+opplysning ingen finner igjen:** CodeRabbit fant på 124 at sveipene
+gjenåpnet funn et menneske hadde lukket — i ni migrasjoner. Rettelsen
+måtte være forward-only og tok 125 (`125_sveipevern.sql`), og en
+oppfølgende retting av den tok 126
+(`126_lukkevern_etterfylling.sql`). En systemisk feil i det som ALT er
+merget går foran en modul som ennå ikke finnes.
 
 **Rekkefølgen er begrunnet.** M-54 først fordi den er den enkleste og
 den mest mekaniske: EHF-validering er XML mot et skjema, og «hva er
