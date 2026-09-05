@@ -59,6 +59,7 @@ SVEIPENE = (
     ("motesveip", "m7_sveip_moter"),
     ("innholdssveip", "m20_sveip_innhold"),
     ("telefonisveip", "m43_sveip_telefoni"),
+    ("esgsveip", "m45_sveip_esg"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

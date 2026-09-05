@@ -1913,3 +1913,63 @@ export const lukkEskalering = (eskaleringId, kropp, idem) =>
 export const lukkTelefonifunn = (funnId, kropp, idem) =>
   _muter(`/v1/telefoni/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-45 BÆREKRAFTS- OG ESG-AGENT (136).
+//
+// DET FINNES INGEN `sendRapport`. `sammenstillEsgrapport` samler
+// tallene og skriver en ny rad — det er alt. Innsendingen til et
+// tilsyn er et menneskes, og den hører hjemme i M-47.
+//
+// `registrerEsgmaaling` KREVER `er_estimat`, og feltet har ingen
+// default noe sted i kjeden: en glemt verdi ville blitt en FALSK
+// PÅSTAND om at tallet er målt.
+//
+// MENGDER OG FAKTORVERDIER SENDES SOM TEKST. `JSON.stringify` av en
+// `Number` gir en flyttallsrepresentasjon som kan flytte seg i siste
+// desimal, og «samme tall» ville fått to verdier — i en rapport et
+// tilsyn leser.
+//
+// STANDARDVERSJONEN SENDES ALDRI MED EN MÅLING: døra leser den fra
+// perioden, og de sammensatte fremmednøklene gjør at faktoren må ha
+// den samme.
+// ---------------------------------------------------------------------
+export const settEsgkrav = (krav, idem) =>
+  _muter("/v1/esg/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const registrerEsgkilde = (kilde, idem) =>
+  _muter("/v1/esg/kilde", "POST", kilde, idem || nyIdempotensnokkel());
+
+export const apneRapportperiode = (periode, idem) =>
+  _muter("/v1/esg/periode", "POST", periode,
+         idem || nyIdempotensnokkel());
+
+export const lukkRapportperiode = (periodeId, idem) =>
+  _muter(`/v1/esg/periode/${encodeURIComponent(periodeId)}/lukk`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const registrerUtslippsfaktor = (faktor, idem) =>
+  _muter("/v1/esg/faktor", "POST", faktor,
+         idem || nyIdempotensnokkel());
+
+export const avviklUtslippsfaktor = (faktorId, kropp, idem) =>
+  _muter(`/v1/esg/faktor/${encodeURIComponent(faktorId)}/avvikle`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerEsgmaaling = (periodeId, kropp, idem) =>
+  _muter(`/v1/esg/periode/${encodeURIComponent(periodeId)}/maaling`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerEsgpaastand = (periodeId, kropp, idem) =>
+  _muter(`/v1/esg/periode/${encodeURIComponent(periodeId)}/paastand`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const sammenstillEsgrapport = (periodeId, idem) =>
+  _muter(
+    `/v1/esg/periode/${encodeURIComponent(periodeId)}/sammenstill`,
+    "POST", {}, idem || nyIdempotensnokkel());
+
+export const lukkEsgfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/esg/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

@@ -1,0 +1,79 @@
+# M-45 (136): ESG-sveipen. GRUNNLAGET ER PRODUKTET.
+#
+# SVEIPEN SENDER INGEN RAPPORT, ERSTATTER INGEN ESTIMATER OG LUKKER
+# INGEN PERIODE. Den sier fra om at et estimat har stått lenger enn
+# tenantens frist uten å bli erstattet, om at en åpen periode er låst
+# til en standardversjon som har flyttet seg, og om at for mye av
+# utslippet hviler på gjetning — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en ytring avgitt i husets navn kan ikke tas
+# tilbake, og den som leser den vet ikke at en maskin skrev den. En
+# bærekraftsrapport leses av investorer, kunder og et tilsyn.
+#
+# LÅSEN ER DOMMEN, OG DEN SKAL IKKE KUNNE ENDRES AV EN NATTJOBB. En
+# sveip som låste om perioden til en nyere standardversjon ville endret
+# hvert tall i den uten at noen rørte dem.
+#
+# M-45s EGEN: MODULEN SENDER INGEN RAPPORT. Det finnes ingen kolonne
+# for «sendt» i hele modulen; innsendingen hører hjemme i M-47.
+#
+# FEM FUNNTYPER KAN ALDRI REISES HERFRA: `tall_uten_kilde`,
+# `tall_uten_faktorversjon`, `estimat_ikke_merket`,
+# `paastand_uten_kilde` og `modulen_sendte_rapport`. Alle fem er
+# utelukket av datamodellen, ikke oppdaget av en sveip.
+#
+# ET ESTIMAT ER LOV — DET ER MIDLERTIDIGHETEN SOM GJØR DET LOVLIG. Det
+# er derfor sveipen finnes: den rydder etter tiden.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi en rapport skal sendes noe sted.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille esgsveip
+# er en udokumentert påstand som blir stående på forsiden.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_esgsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m45_sveip_esg`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit ESG-sveip (estimater som ikke ble erstattet, foreldet standardversjon, for høy estimatandel)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_ESGSVEIP_URL:/etc/disponit/esgsveip/DISPONIT_ESGSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_esgsveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`esgmaaling_estimater`, `esgmaaling_periode`,
+# `rapportperiode_apne`, `utslippsfaktor_gjeldende`, `esgfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

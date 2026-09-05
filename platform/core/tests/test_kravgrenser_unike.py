@@ -130,7 +130,7 @@ UBYGDE_GRENSER = frozenset({
     # `m7-v1` gikk ut 5/9, da 133 landet med sin dekningsport.
     # `m20-v1` gikk ut 5/9, da 134 landet med sin dekningsport.
     # `m43-v1` gikk ut 5/9, da 135 landet med sin dekningsport.
-    "m45-v1",   # M-45 bærekraft og ESG, migrasjon 136
+    # `m45-v1` gikk ut 5/9, da 136 landet med sin dekningsport.
 })
 
 
