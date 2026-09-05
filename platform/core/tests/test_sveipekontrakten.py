@@ -54,6 +54,7 @@ SVEIPENE = (
     ("postjournalsveip", "m50_sveip_postjournal"),
     ("hmssveip", "m53_sveip_hms"),
     ("likviditetssveip", "m15_sveip_likviditet"),
+    ("prognosesveip", "m33_sveip_prognose"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

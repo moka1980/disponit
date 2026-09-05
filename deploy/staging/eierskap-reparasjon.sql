@@ -1291,7 +1291,54 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm15_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_likviditet_eier'),
     ('FUNCTION', 'm15_sveip_likviditet(integer)',                                               'disponit_likviditet_eier'),
     ('FUNCTION', 'm15_tiltakene(text,integer)',                                                 'disponit_likviditet_eier'),
-    ('FUNCTION', 'm15_vurder_tiltak(text,uuid,text,text,text)',                                 'disponit_likviditet_eier');
+    ('FUNCTION', 'm15_vurder_tiltak(text,uuid,text,text,text)',                                 'disponit_likviditet_eier'),
+    -- 130 (M-33): prognoseregisterets doerer og sveipen.
+    --
+    -- PROGNOSEN, BANEN OG MAALINGEN ER APPEND-ONLY, og modulrollen har
+    -- ikke UPDATE paa dem — REVOKEt staar eksplisitt i 130. Doerene
+    -- bruker derfor INGEN `FOR UPDATE` paa de tre — kappl0pet fanges
+    -- av primaernoekkelen.
+    --
+    -- INGEN SEMIKOLON I KOMMENTARENE HER. Parseren som leser denne
+    -- tabellen stopper ved det foerste setningsskillet, og et slikt
+    -- tegn inne i en kommentar kutter derfor VALUES-lista i
+    -- stillhet: designet ville sett komplett ut og manglet alt etter
+    -- kommentaren. Jeg skrev akkurat den feilen 5/9 — to ganger, for
+    -- ogsaa forklaringen paa den inneholdt tegnet — og
+    -- `test_designtabellen_speiler_migrasjonene` fanget begge. Den
+    -- TELLER radene, og det er derfor den kan se en liste som er
+    -- kuttet.
+    --
+    -- `m33_lag_prognose` skriver prognosen OG banen i samme
+    -- transaksjon: var banen et eget kall, ville en prognose uten bane
+    -- eksistert i vinduet mellom de to — og en prognose uten bane er
+    -- en paastand uten innhold som likevel teller i funnlogikken.
+    --
+    -- `m33_datakvalitet` STAAR HER selv om den bare leser: den er
+    -- SECURITY DEFINER og loper som modulrollen, og det er nettopp den
+    -- som gir den lesetilgang til M-3s registre. Eide migrator den,
+    -- ville den lest med migrators rettigheter — altsaa forbi
+    -- radvakten.
+    --
+    -- Radvaktene (`m33_evidensvakt()`, `m33_modellvakt()`) staar IKKE
+    -- her: de eies av migrator, som eier tabellene triggerne henger
+    -- paa.
+    ('FUNCTION', 'm33_avvikle_modell(text,uuid,date,text)',                                     'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_banen(text,uuid)',                                                        'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_bildet(text)',                                                            'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_datakvalitet(text)',                                                      'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_evidens(text,uuid,text,text,jsonb)',                                      'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_funn_er_sveipens(text)',                                                  'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_lag_prognose(text,uuid,uuid,text)',                                       'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_lukk_funn(text,uuid,text,text)',                                          'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_modell_gyldig(date,date)',                                                'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_modellregister(text)',                                                    'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_prognosefunn(text,integer)',                                              'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_prognoseregister(text,integer)',                                          'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_registrer_maaling(text,uuid,integer,bigint,text)',                        'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_registrer_modell(text,uuid,text,text,text,text,date,date,text)',          'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_prognose_eier'),
+    ('FUNCTION', 'm33_sveip_prognose(integer)',                                                 'disponit_prognose_eier');
 
 DO $$
 DECLARE

@@ -1196,7 +1196,17 @@ def test_manglende_dsn_teller_som_en_feilet_kjoring():
 
 
 def test_timeren_er_klynge_sjus_forste_plass():
-    """10:05 — og sveipestatus står bakerst på 11:20."""
+    """10:05 — og sveipestatus står fortsatt BAKERST.
+
+    ENDRET I M-33s PR (130): porten pinnet `11:20` som et LITERAL, og
+    da M-33 la seg på 11:35 måtte statussveipen flytte til 12:05. Et
+    literal som må rettes hver gang stigen vokser, måler ikke det den
+    later som — det den skal måle er REKKEFØLGEN.
+
+    Nå leses begge klokkeslettene og sammenlignes. Da holder porten
+    uansett hvor stigen ender, og den faller hvis noen legger en sveip
+    BAK statussveipen — som er den eneste feilen den kan fange.
+    """
     sti_t = ROT / "deploy" / "staging" / "disponit-ehfsveip.timer"
     timer = sti_t.read_text(encoding="utf-8")
     assert "OnCalendar=*-*-* 10:05:00 UTC" in timer
@@ -1204,7 +1214,12 @@ def test_timeren_er_klynge_sjus_forste_plass():
     sti_status = (ROT / "deploy" / "staging"
                   / "disponit-sveipestatus.timer")
     status = sti_status.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 11:20:00 UTC" in status
+    egen = re.search(r"OnCalendar=\*-\*-\* (\d\d:\d\d):00 UTC", timer)
+    bak = re.search(r"OnCalendar=\*-\*-\* (\d\d:\d\d):00 UTC", status)
+    assert egen and bak, "et klokkeslett mangler"
+    assert bak.group(1) > egen.group(1), (
+        f"sveipestatus ({bak.group(1)}) står ikke etter EHF-sveipen"
+        f" ({egen.group(1)})")
     sti_s = ROT / "deploy" / "staging" / "disponit-ehfsveip.service"
     tjeneste = sti_s.read_text(encoding="utf-8")
     assert ("LoadCredential=DISPONIT_EHFSVEIP_URL:"

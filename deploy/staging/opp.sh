@@ -93,6 +93,7 @@ disponit-myndighetssveip.service disponit-myndighetssveip.timer
 disponit-postjournalsveip.service disponit-postjournalsveip.timer
 disponit-hmssveip.service disponit-hmssveip.timer
 disponit-likviditetssveip.service disponit-likviditetssveip.timer
+disponit-prognosesveip.service disponit-prognosesveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -451,6 +452,20 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_LIKVIDITETSSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_likviditetssveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 130 (M-33): prognosesveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE. En stille prognosesveip er en modell som taper for «samme
+# som forrige uke» uten at noen får vite det — og som fortsetter å bli
+# lest som analyse. Deployen sto død i to uker etter M-47 nettopp
+# fordi tre slike DSN-er manglet i miljøfila; forhåndssjekken ER den
+# lærdommen.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_PROGNOSESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_PROGNOSESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_prognosesveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1362,6 +1377,18 @@ fi
 skriv_cred likviditetssveip DISPONIT_LIKVIDITETSSVEIP_URL \
     "$DISPONIT_LIKVIDITETSSVEIP_URL"
 
+# 130 (M-33): prognosesveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/prognosesveip
+if [ -z "${DISPONIT_PROGNOSESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_PROGNOSESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen prognosesveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred prognosesveip DISPONIT_PROGNOSESVEIP_URL \
+    "$DISPONIT_PROGNOSESVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1608,6 +1635,7 @@ disponit-myndighetssveip.timer
 disponit-postjournalsveip.timer
 disponit-hmssveip.timer
 disponit-likviditetssveip.timer
+disponit-prognosesveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1947,6 +1975,11 @@ systemctl stop disponit-hmssveip.timer \
     disponit-hmssveip.service 2>/dev/null || true
 systemctl stop disponit-likviditetssveip.timer \
     disponit-likviditetssveip.service 2>/dev/null || true
+# 130 (M-33): prognosesveipen stoppes i samme vindu. Funnene er
+# idempotente, så neste døgn tar kjøringen igjen — og ingen frist går
+# tapt: målefristen står i `prognosekrav`, ikke i sveipen.
+systemctl stop disponit-prognosesveip.timer \
+    disponit-prognosesveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2168,7 +2201,10 @@ systemctl enable --now disponit-myndighetssveip.timer
 systemctl enable --now disponit-postjournalsveip.timer
 systemctl enable --now disponit-hmssveip.timer
 systemctl enable --now disponit-likviditetssveip.timer
-# 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
+# 130 (M-33): prognosesveipen, 11:35 — den FØRSTE bak 11:20, og
+# grunnen til at sveipestatusen under flyttet til 12:05.
+systemctl enable --now disponit-prognosesveip.timer
+# 115: sveipestatusen, ETTER hele stigen (11:35 fra og med 130).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.
 systemctl enable --now disponit-sveipestatus.timer

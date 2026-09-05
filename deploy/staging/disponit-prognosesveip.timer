@@ -1,0 +1,33 @@
+# M-33 (130): én gang i døgnet.
+#
+# Kadensen og regelen hører sammen: `maalefrist_dogn` måles i DØGN, og
+# en baneuke slutter på en DATO. Å sveipe oftere ville ikke gitt et
+# eneste nytt funn; å sveipe sjeldnere ville latt en målefrist passere
+# mellom to kjøringer, og da hadde en uke stått umålt uten at noen
+# visste det.
+#
+# KLOKKESLETTET ER 11:35 — BAK hele klynge 7, som fundamentet tildelte.
+# M-33 leser `timeregistrering` (M-39, 07:20) og `kvalitetsfunn` (M-3),
+# og en dom felt før dagens timelister er lest ville vært en dom på
+# gårsdagens grunnlag.
+#
+# DENNE TIMEREN ER GRUNNEN TIL AT `disponit-sveipestatus.timer` FLYTTET
+# fra 11:20 til 12:05 i samme PR: statussveipen skal lese flåtens
+# tilstand ETTER at flåten har kjørt, og M-33 er den første som legger
+# seg bak 11:20. `test_timeren_gaar_etter_hele_stigen` gjør det til en
+# måling og ikke en huskeregel.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at en uke står umålt. Uten den ville nedetid blitt
+# til stillhet om nettopp det modulen finnes for.
+
+[Unit]
+Description=Disponit prognosesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 11:35:00 UTC
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

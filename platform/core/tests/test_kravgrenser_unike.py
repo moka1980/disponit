@@ -119,11 +119,11 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Se `docs/KLYNGE8-FUNDAMENT.md`.
 UBYGDE_GRENSER = frozenset({
-    # `m15-v1` STO HER TIL 5/9. Å fjerne et navn herfra er en del av å
-    # bygge modulen, ikke et separat opprydningsarbeid — og
-    # `test_de_ubygde_grensene_er_faktisk_ubygde` er den som krever
-    # det. Den falt i det øyeblikket 128 landet, som den skal.
-    "m33-v1",   # M-33 prognose, migrasjon 130
+    # `m15-v1` STO HER TIL 5/9, `m33-v1` til samme kveld. Å fjerne et
+    # navn herfra er en del av å bygge modulen, ikke et separat
+    # opprydningsarbeid — og `test_de_ubygde_grensene_er_faktisk_ubygde`
+    # er den som krever det. Den falt i det øyeblikket 128 landet, og
+    # igjen da 130 landet, som den skal.
     "m36-v1",   # M-36 optimalisator, migrasjon 131
 })
 
