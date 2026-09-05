@@ -52,6 +52,7 @@ SVEIPENE = (
     ("tollkodesveip", "m52_sveip_tollkode"),
     ("myndighetssveip", "m47_sveip_myndighetsplikt"),
     ("postjournalsveip", "m50_sveip_postjournal"),
+    ("hmssveip", "m53_sveip_hms"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),
@@ -128,6 +129,50 @@ def test_hver_sveip_i_drift_er_dekket():
         p.stem for p in DRIFT.glob("*sveip.py")
         if not p.stem.startswith("kjor_"))
     assert paa_disk == sorted(n for n, _sql in SVEIPENE), paa_disk
+
+
+def test_hver_sveip_har_sin_egen_dsn_i_ci():
+    """EN MANGLENDE DSN I `ci.yml` GJØR PORTEN STILLE, IKKE RØD.
+
+    Hver sveiptest kobler seg med `koble(<SVEIP>_DSN or MIGRATOR_DSN)`
+    — fallbacken er husets form, og den er riktig lokalt. Men i CI
+    betyr en glemt DSN at testen kjører som MIGRATOR, som ikke har
+    EXECUTE på sveipedøra. Da feiler porten med «permission denied»
+    og ser ut som en kodefeil i modulen.
+
+    DET SKJEDDE PÅ M-53 (127): rollen `disponit_hmssveip` ble
+    opprettet av klyngefundamentet, men DSN-en manglet i `ci.yml`, og
+    fem porter feilet i CI etter å ha vært grønne lokalt.
+
+    Denne porten leser `ci.yml` som tekst og krever at hver sveip i
+    `SVEIPENE` har sin egen `DISPONIT_TEST_<NAVN>_DSN` der.
+
+    MUTASJONEN SOM DREPER DENNE: fjern én DSN-linje fra `ci.yml`.
+    """
+    import re
+    ci = (ROT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8")
+    # NAVNET HENTES FRA KJØREREN, IKKE FRA FILNAVNET. De to henger
+    # ikke sammen: `begrepssveip.py` kjøres av `kjor_begrepssveip.py`,
+    # som leser `DISPONIT_KUNNSKAPSSVEIP_URL` og altså tilhører
+    # rollen `disponit_kunnskapssveip`. Et navn avledet av filnavnet
+    # ville meldt den som manglende — en port som finner på sin egen
+    # fasit finner også sine egne feil.
+    mangler = []
+    for navn, _doer in SVEIPENE:
+        kjorer = DRIFT / f"kjor_{navn}.py"
+        assert kjorer.exists(), f"{navn} har ingen kjører"
+        url = re.findall(r"DISPONIT_[A-Z0-9_]+_URL",
+                         kjorer.read_text(encoding="utf-8"))
+        assert url, f"{kjorer.name} navngir ingen DSN-variabel"
+        # `DISPONIT_X_URL` i drift ↔ `DISPONIT_TEST_X_DSN` i CI.
+        ventet = url[0].replace("DISPONIT_", "DISPONIT_TEST_", 1)
+        ventet = ventet[:-len("_URL")] + "_DSN"
+        if ventet not in ci:
+            mangler.append(f"{navn} → {ventet}")
+    assert mangler == [], (
+        "sveipene har ingen egen DSN i ci.yml og vil kjøre som"
+        f" migrator: {mangler}")
 
 
 @pytest.mark.parametrize("navn,doer", SVEIPENE)

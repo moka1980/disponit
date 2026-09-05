@@ -1794,6 +1794,62 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # FRAVÆRET IKKE NOK: en frist som går uten innsending er nøyaktig
     # det modulen ble bygget for å hindre. En stille M-47 er verre enn
     # ingen M-47.
+    # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
+    # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
+    # tiltak å vise til.
+    #
+    # `/avvik` er den eneste ruten i hele API-et som med vilje IKKE
+    # sender aktøren videre. For et anonymt avvik stanser bruker-id-en
+    # her: `revisjonslogg` er append-only siden 001, og et navn som
+    # lekker inn der kan aldri fjernes igjen.
+    def hms_bilde(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.hmsbilde(tjeneste, request)
+
+    def hms_avvik(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.avvik_endepunkt(tjeneste, request)
+
+    def hms_regelverk(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.regelverk_endepunkt(tjeneste, request)
+
+    def hms_funn(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.funn_endepunkt(tjeneste, request)
+
+    def hms_tiltak(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.tiltak_endepunkt(tjeneste, request)
+
+    def hms_grunnlag(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.grunnlag_endepunkt(tjeneste, request)
+
+    def hms_krav(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.krav_endepunkt(tjeneste, request)
+
+    def hms_regel_ny(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.registrer_regel_endepunkt(tjeneste, request)
+
+    def hms_meld(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.meld_avvik_endepunkt(tjeneste, request)
+
+    def hms_tiltak_ny(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.registrer_tiltak_endepunkt(tjeneste, request)
+
+    def hms_anonymiser(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.anonymiser_endepunkt(tjeneste, request)
+
+    def hms_lukk_funn(request: Request) -> Response:
+        from . import hms as hmsmodul
+        return hmsmodul.lukk_funn_endepunkt(tjeneste, request)
+
     def mynd_bilde(request: Request) -> Response:
         from . import myndighetsrapport as myndmodul
         return myndmodul.myndighetsbilde(tjeneste, request)
@@ -2972,6 +3028,24 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               journ_anonymiser, methods=["POST"]),
         Route("/v1/journal/funn/{funn_id:uuid}/lukk",
               journ_lukk_funn, methods=["POST"]),
+        # M-53 (127). Faste stier FØR parametriserte.
+        Route("/v1/hms", hms_bilde, methods=["GET"]),
+        Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
+        Route("/v1/hms/regelverk", hms_regelverk, methods=["GET"]),
+        Route("/v1/hms/funn", hms_funn, methods=["GET"]),
+        Route("/v1/hms/krav", hms_krav, methods=["POST"]),
+        Route("/v1/hms/regelverk", hms_regel_ny, methods=["POST"]),
+        Route("/v1/hms/avvik", hms_meld, methods=["POST"]),
+        Route("/v1/hms/avvik/{avvik_id:uuid}/tiltak", hms_tiltak,
+              methods=["GET"]),
+        Route("/v1/hms/avvik/{avvik_id:uuid}/oppbevaringsgrunnlag",
+              hms_grunnlag, methods=["GET"]),
+        Route("/v1/hms/avvik/{avvik_id:uuid}/tiltak", hms_tiltak_ny,
+              methods=["POST"]),
+        Route("/v1/hms/avvik/{avvik_id:uuid}/anonymiser",
+              hms_anonymiser, methods=["POST"]),
+        Route("/v1/hms/funn/{funn_id:uuid}/lukk", hms_lukk_funn,
+              methods=["POST"]),
         # M-47 (123). Faste stier FØR parametriserte, ellers ville
         # `/v1/myndighet/plikttype` blitt lest som en id.
         Route("/v1/myndighet", mynd_bilde, methods=["GET"]),
@@ -4143,6 +4217,57 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/journal/person/{person_id:uuid}/anonymiser"):
         "bestilling:opprett",
     ("POST", "/v1/journal/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
+    # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser
+    # denne tabellen.
+    #
+    # LESESCOPET ER `security:read` OG IKKE `okonomi:read`, og det er
+    # en RETTELSE av min egen første utgave (CodeRabbit). Jeg skrev av
+    # M-50-raden over uten å se at datasettet er et helt annet:
+    #
+    #   `GET /v1/hms/avvik` returnerer `beskrivelse`,
+    #   `helseopplysninger` og `melder_navn`. 127s eget filhode sier at
+    #   en skademelding inneholder særlige kategorier etter GDPR art. 9
+    #   «ikke som en mulighet — som normaltilfellet», og at et avvik
+    #   kan være et varsel etter arbeidsmiljøloven kap. 2 A.
+    #
+    #   `okonomi:read` er FINANSLESERENS scope (M-13, 101: bank- og
+    #   bilagsregistre). Å legge helseopplysninger om navngitte
+    #   ansatte der ville vært samme feil som M-30-raden under
+    #   beskriver: lesetilgang for alle som skal se noe helt annet.
+    #
+    # `security:read` er compliance/ops-klassen — samme sted M-12
+    # (tilgangskartet), M-34 (avviksbeskrivelser) og M-30
+    # (personvernforespørslene) ligger, og et HMS-ansvarlig
+    # personvernombuds arbeidsflate hører hjemme nettopp der.
+    #
+    # SKRIVEVEIENE BEHOLDER `bestilling:opprett`, og det er MED VILJE:
+    # den som skal MELDE et avvik er en hvilken som helst ansatt, og
+    # skulle meldingen krevd `security:read` ville en anonym melding
+    # måttet gå gjennom den HMS-ansvarlige — altså ikke vært anonym.
+    #
+    # PRISEN STÅR SKREVET, for den er reell: flaten viser REGISTERET og
+    # skjemaet på samme side, og siden må gjerdes av det STRENGESTE
+    # den viser. En egen, lavt gjerdet meldeflate for alle ansatte er
+    # en v2-jobb — ikke noe jeg finner på klokka seks om morgenen for
+    # å slippe å skrive ned at den mangler.
+    ("GET",  "/v1/hms"):                         "security:read",
+    ("GET",  "/v1/hms/avvik"):                   "security:read",
+    ("GET",  "/v1/hms/regelverk"):               "security:read",
+    ("GET",  "/v1/hms/funn"):                    "security:read",
+    ("GET",  "/v1/hms/avvik/{avvik_id:uuid}/tiltak"):
+        "security:read",
+    ("GET",  "/v1/hms/avvik/{avvik_id:uuid}/oppbevaringsgrunnlag"):
+        "security:read",
+    ("POST", "/v1/hms/krav"):                    "bestilling:opprett",
+    ("POST", "/v1/hms/regelverk"):               "bestilling:opprett",
+    ("POST", "/v1/hms/avvik"):                   "bestilling:opprett",
+    ("POST", "/v1/hms/avvik/{avvik_id:uuid}/tiltak"):
+        "bestilling:opprett",
+    ("POST", "/v1/hms/avvik/{avvik_id:uuid}/anonymiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/hms/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-47 (123). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
     # INGEN RUTE SENDER INN — det finnes ingen `/send`, ingen

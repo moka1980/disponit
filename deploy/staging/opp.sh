@@ -91,6 +91,7 @@ disponit-ehfsveip.service disponit-ehfsveip.timer
 disponit-tollkodesveip.service disponit-tollkodesveip.timer
 disponit-myndighetssveip.service disponit-myndighetssveip.timer
 disponit-postjournalsveip.service disponit-postjournalsveip.timer
+disponit-hmssveip.service disponit-hmssveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -425,6 +426,18 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_POSTJOURNALSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_postjournalsveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 127 (M-53): HMS-sveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# OG HER ER STILLHETEN SELVE SKADEN, som i M-47: et avvik ingen har
+# gjort noe med er nøyaktig det modulen ble bygget for å fange. En
+# stille HMS-sveip er et menneske som meldte fra, og ingen som svarte.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_HMSSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_HMSSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_hmssveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1313,6 +1326,17 @@ fi
 skriv_cred postjournalsveip DISPONIT_POSTJOURNALSVEIP_URL \
     "$DISPONIT_POSTJOURNALSVEIP_URL"
 
+# 127 (M-53): HMS-sveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/hmssveip
+if [ -z "${DISPONIT_HMSSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_HMSSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen hmssveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred hmssveip DISPONIT_HMSSVEIP_URL "$DISPONIT_HMSSVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1557,6 +1581,7 @@ disponit-ehfsveip.timer
 disponit-tollkodesveip.timer
 disponit-myndighetssveip.timer
 disponit-postjournalsveip.timer
+disponit-hmssveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -1892,6 +1917,8 @@ systemctl stop disponit-myndighetssveip.timer \
     disponit-myndighetssveip.service 2>/dev/null || true
 systemctl stop disponit-postjournalsveip.timer \
     disponit-postjournalsveip.service 2>/dev/null || true
+systemctl stop disponit-hmssveip.timer \
+    disponit-hmssveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2111,6 +2138,7 @@ systemctl enable --now disponit-ehfsveip.timer
 systemctl enable --now disponit-tollkodesveip.timer
 systemctl enable --now disponit-myndighetssveip.timer
 systemctl enable --now disponit-postjournalsveip.timer
+systemctl enable --now disponit-hmssveip.timer
 # 115: sveipestatusen, ETTER hele stigen (10:05 fra og med 116).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.

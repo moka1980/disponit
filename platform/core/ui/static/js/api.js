@@ -1533,3 +1533,39 @@ export const anonymiserPerson = (personId, idem) =>
 export const lukkJournalfunn = (funnId, notat, idem) =>
   _muter(`/v1/journal/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", { notat }, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-53 HMS- OG AVVIKSMOTTAK (127).
+//
+// `meldAvvik` TAR EN FERDIG KROPP OG SENDER DEN SOM DEN ER. Den legger
+// IKKE til et melderavn den ikke fikk, og den fyller ingen felt.
+// Flaten bestemmer hva som er med — for et anonymt avvik er
+// `melder_navn` ikke `null`, den er FRAVÆRENDE. Et lag som «hjelpsomt»
+// normaliserte kroppen ville vært stedet et navn kunne snike seg inn.
+//
+// `anonymiserAvvik` SLETTER IKKE. Den tømmer navnet og setter et spor:
+// at vi HAR hatt avviket er nøyaktig det Arbeidstilsynet etterprøver.
+// Sletting ville fjernet beviset på at vi hadde det.
+// ---------------------------------------------------------------------
+export const settHmskrav = (krav, idem) =>
+  _muter("/v1/hms/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const registrerHmsregel = (regel, idem) =>
+  _muter("/v1/hms/regelverk", "POST", regel,
+         idem || nyIdempotensnokkel());
+
+export const meldAvvik = (avvik, idem) =>
+  _muter("/v1/hms/avvik", "POST", avvik, idem || nyIdempotensnokkel());
+
+export const registrerTiltak = (avvikId, tiltak, idem) =>
+  _muter(`/v1/hms/avvik/${encodeURIComponent(avvikId)}/tiltak`,
+         "POST", tiltak, idem || nyIdempotensnokkel());
+
+export const anonymiserAvvik = (avvikId, kropp, idem) =>
+  _muter(`/v1/hms/avvik/${encodeURIComponent(avvikId)}/anonymiser`,
+         "POST", kropp || {}, idem || nyIdempotensnokkel());
+
+export const lukkHmsfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/hms/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

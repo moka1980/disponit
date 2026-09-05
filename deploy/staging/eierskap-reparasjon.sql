@@ -1222,7 +1222,41 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm4_siste_maaling(text)',      'disponit_lager_eier'),
     ('FUNCTION', 'm4_retensjonsbilde(text)',    'disponit_lager_eier'),
     ('FUNCTION', 'm4_retensjonskatalog(text)',  'disponit_lager_eier'),
-    ('FUNCTION', 'm4_retensjonsfunn(text)',     'disponit_lager_eier');
+    ('FUNCTION', 'm4_retensjonsfunn(text)',     'disponit_lager_eier'),
+    -- 127 (M-53): avviksregisterets doerer og HMS-sveipen.
+    --
+    -- ANONYMT AVVIK ER EN TILSTAND OG IKKE ET TOMT NAVNEFELT. Doeren
+    -- `m53_meld_avvik` nekter et anonymt avvik som baerer et navn eller
+    -- en aktoer, og skriver avviket og melderen i SAMME setning.
+    --
+    -- `m53_anonymiser` ER MODULENS RYDDEDOER, og den sletter ikke: at
+    -- vi HAR hatt avviket er nettopp det Arbeidstilsynet etterproever.
+    --
+    -- De fem radvaktene (`m53_avvik_frosset()`, `m53_regel_frosset()`,
+    -- `m53_melder_frosset()`, `m53_melder_krever_navngitt()` og
+    -- `m53_tiltak_append_only()`) staar IKKE her: de eies av migrator,
+    -- som eier tabellene triggerne henger paa.
+    --
+    -- `m53_funn_er_sveipens` og `m53_regel_gyldig` staar her OG lages av
+    -- modulrollen i 127. I 124 gjoer de det ikke, og reparasjonen
+    -- flytter dem hver gang den kjoerer.
+    ('FUNCTION', 'm53_anonymiser(text,uuid,text,text)',                                         'disponit_hms_eier'),
+    ('FUNCTION', 'm53_avvikene(text,integer)',                                                  'disponit_hms_eier'),
+    ('FUNCTION', 'm53_bildet(text)',                                                            'disponit_hms_eier'),
+    ('FUNCTION', 'm53_evidens(text,uuid,text,text,jsonb)',                                      'disponit_hms_eier'),
+    ('FUNCTION', 'm53_funn_er_sveipens(text)',                                                  'disponit_hms_eier'),
+    ('FUNCTION', 'm53_funnene(text,boolean)',                                                   'disponit_hms_eier'),
+    ('FUNCTION', 'm53_krev_samme_avvik(text,uuid,text,text,text,text,date)',       'disponit_hms_eier'),
+    ('FUNCTION', 'm53_lukk_funn(text,uuid,text,text)',                                          'disponit_hms_eier'),
+    ('FUNCTION', 'm53_meld_avvik(text,uuid,text,text,text,text,date,text,text,text)',           'disponit_hms_eier'),
+    ('FUNCTION', 'm53_oppbevaringsgrunnlag(text,uuid)',                                         'disponit_hms_eier'),
+    ('FUNCTION', 'm53_regel_gyldig(date,date)',                                                 'disponit_hms_eier'),
+    ('FUNCTION', 'm53_regelverket(text)',                                                       'disponit_hms_eier'),
+    ('FUNCTION', 'm53_registrer_regel(text,uuid,text,text,text,integer,boolean,date,date,text)', 'disponit_hms_eier'),
+    ('FUNCTION', 'm53_registrer_tiltak(text,uuid,uuid,text,boolean,date,text)',                 'disponit_hms_eier'),
+    ('FUNCTION', 'm53_sett_krav(text,integer,integer,integer,integer,text,text)',               'disponit_hms_eier'),
+    ('FUNCTION', 'm53_sveip_hms(integer)',                                                      'disponit_hms_eier'),
+    ('FUNCTION', 'm53_tiltakene(text,uuid)',                                                    'disponit_hms_eier');
 
 DO $$
 DECLARE

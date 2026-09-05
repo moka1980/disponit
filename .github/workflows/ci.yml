@@ -66,6 +66,10 @@ jobs:
       DISPONIT_TEST_TOLLKODESVEIP_DSN: postgresql://disponit_tollkodesveip:toll@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_MYNDIGHETSSVEIP_DSN: postgresql://disponit_myndighetssveip:mynd@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_POSTJOURNALSVEIP_DSN: postgresql://disponit_postjournalsveip:post@127.0.0.1:5432/disponit_test
+      # 127 (M-53): HMS-sveipens EGEN DSN. Rollen ble opprettet av
+      # klyngefundamentet; uten DSN-en faller testen tilbake til
+      # migrator, som ikke har EXECUTE — og porten måler da ingenting.
+      DISPONIT_TEST_HMSSVEIP_DSN: postgresql://disponit_hmssveip:hmss@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:

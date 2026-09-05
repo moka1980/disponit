@@ -523,6 +523,14 @@ const BASISRUTER = [
   // PROFIL, og profilen er vår. Flaten viser derfor hvem vi
   // oppbevarer, og hvor lenge.
   { nokkel: "journal", scope: "okonomi:read", modulflate: 50 },
+  // M-53 (127): HMS- og avviksmottak. MODULFLATE bak
+  // `security:read` og IKKE `okonomi:read`: flaten viser
+  // helseopplysninger etter GDPR art. 9 om navngitte ansatte, og
+  // finansleseren har ingenting her å gjøre.
+  // Modulen VARSLER INGEN MYNDIGHET og LUKKER INGEN AVVIK — den tar
+  // imot, måler fristene og sier fra. Anonymt avvik er en TILSTAND og
+  // ikke et tomt navnefelt: et felt som kan fylles blir fylt.
+  { nokkel: "hms", scope: "security:read", modulflate: 53 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

@@ -487,6 +487,11 @@ MYNDIGHETSSVEIP_DSN=("DISPONIT_MYNDIGHETSSVEIP_URL=$DB"
 # navngitte privatpersoner oppbevart etter vår egen slettefrist.
 POSTJOURNALSVEIP_DSN=("DISPONIT_POSTJOURNALSVEIP_URL=$DB"
                       "DISPONIT_TEST_POSTJOURNALSVEIP_DSN=${DB}_test")
+# 127 (M-53): HMS-sveipens DSN. En stille HMS-sveip er et menneske som
+# meldte fra, og ingen som svarte — derfor er DSN-en like obligatorisk
+# som rollen, og `opp.sh` avbryter uten den.
+HMSSVEIP_DSN=("DISPONIT_HMSSVEIP_URL=$DB"
+              "DISPONIT_TEST_HMSSVEIP_DSN=${DB}_test")
 
 sikre_rolle_dsn "$BRUKER"     "${RUNTIME_DSN[@]}"
 sikre_rolle_dsn "$MIGRATOR"   "${MIGRATOR_DSN[@]}"
@@ -528,6 +533,7 @@ sikre_rolle_dsn "$EHFSVEIP" "${EHFSVEIP_DSN[@]}"
 sikre_rolle_dsn "$TOLLKODESVEIP" "${TOLLKODESVEIP_DSN[@]}"
 sikre_rolle_dsn "$MYNDIGHETSSVEIP" "${MYNDIGHETSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$POSTJOURNALSVEIP" "${POSTJOURNALSVEIP_DSN[@]}"
+sikre_rolle_dsn "$HMSSVEIP" "${HMSSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen
