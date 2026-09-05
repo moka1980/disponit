@@ -59,6 +59,7 @@ import { visPrognose } from "./flater/prognose.js";
 import { visOptimalisator } from "./flater/optimalisator.js";
 import { visMote } from "./flater/mote.js";
 import { visInnhold } from "./flater/innhold.js";
+import { visTelefoni } from "./flater/telefoni.js";
 import { visBetaling } from "./flater/betaling.js";
 import { visKampanje } from "./flater/kampanje.js";
 import { visLonn } from "./flater/lonn.js";
@@ -160,6 +161,7 @@ const FLATER = {
   optimalisator: visOptimalisator,
   mote: visMote,
   innhold: visInnhold,
+  telefoni: visTelefoni,
 };
 
 // Lagre valget, men ikke LIT på at lagringen gikk (Codex P2 til PR #42).

@@ -1,0 +1,80 @@
+# M-43 (135): telefonisveipen. IDENTIFIKASJONEN ER PRODUKTET.
+#
+# SVEIPEN RINGER INGEN, LUKKER INGEN ESKALERING OG AVSLUTTER INGEN
+# SAMTALE. Den sier fra om at en samtale har stått åpen lenger enn
+# tenantens tak, om at en eskalering ingen tok har stått over fristen,
+# og om at en linje maskinen var usikker på verken er rettet eller
+# avklart — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en ytring avgitt i husets navn kan ikke tas
+# tilbake, og den som leser den vet ikke at en maskin skrev den. HER ER
+# DEN BOKSTAVELIG: den andre parten HØRER en stemme. En sveip som
+# lukket eskaleringen selv ville sagt at saken var håndtert fordi ingen
+# gjorde noe.
+#
+# M-43s EGEN: MODULEN INNGÅR INGEN AVTALE OG GIR INGEN ØKONOMISKE
+# LØFTER. Det finnes ingen kolonne for et beløp og ingen dør som binder
+# noe.
+#
+# FIRE FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `opptak_uten_hjemmel`, `opptak_uten_varsling`,
+# `agenten_skjulte_at_den_er_automatisert` og `eskalering_uten_regel`.
+# Alle fire er utelukket av datamodellen, ikke oppdaget av en sveip.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet da samtalen startet,
+# da opptaket startet, og da hver linje ble skrevet. Så hang
+# integrasjonen, eller ingen tok eskaleringen. Ingen dør kunne fanget
+# det, fordi ingen kalte noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noen skal ringes.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille telefonisveip
+# er en udokumentert påstand som blir stående på forsiden.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_telefonisveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m43_sveip_telefoni`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit telefonisveip (hengende samtaler, eskaleringer ingen tok, ubekreftede transkripsjonslinjer)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_TELEFONISVEIP_URL:/etc/disponit/telefonisveip/DISPONIT_TELEFONISVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_telefonisveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`samtale_apne`, `eskalering_apne`,
+# `transkripsjonslinje_ubekreftede`, `telefonifunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

@@ -78,6 +78,23 @@ export function prosent(bp) {
 }
 
 
+// DAGENS DATO I BRUKERENS EGEN SONE, IKKE I UTC.
+//
+// `new Date().toISOString().slice(0, 10)` gir UTC-datoen. Norge ligger
+// FORAN UTC, så mellom midnatt og 01/02 om natten gir den GÅRSDAGEN —
+// og en regel som ble registrert «i dag» ville da blitt forsøkt
+// avviklet dagen FØR den gjaldt. Døra nekter det, med rette, og
+// brukeren ville sett en uforklarlig feil som forsvant om morgenen.
+//
+// CodeRabbit fant den 5/9. Den var arvet fra 133s flate, og er rettet
+// begge steder.
+export function iDagLokal(naa) {
+  const d = naa || new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+
 function felt(id, tekst, kontroll, hjelp) {
   return el("div", { class: "felt" },
     el("label", { for: id, text: t(tekst) }),
@@ -891,7 +908,7 @@ export function visMote(hoved, ctx) {
     // spørsmål med to svar.
     try {
       await avsluttOpptakshjemmel(h.hjemmel_id,
-        { gyldig_til: new Date().toISOString().slice(0, 10) },
+        { gyldig_til: iDagLokal() },
         nyIdempotensnokkel());
     } catch (e) {
       if (e instanceof UautorisertFeil) { c.paaUautorisert(); return; }

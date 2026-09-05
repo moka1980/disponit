@@ -1,0 +1,42 @@
+# M-43 (135): telefonisveipen går ÉN GANG I DØGNET.
+#
+# En eskalering som ingen tok, blir ikke tatt av at noen ser på den
+# oftere. Sjeldnere ville latt en samtale henge en uke — og en åpen
+# samtale er et opptak som formelt fortsatt går.
+#
+# KLOKKESLETTET ER 13:05, klynge 9s tredje trinn (12:35, 12:50, 13:05,
+# 13:20). `disponit-sveipestatus.timer` (115) står bakerst på 13:35 og
+# leser flåtens tilstand ETTER at flåten har kjørt.
+#
+# `RandomizedDelaySec=5min` OG IKKE 30 (131/132s lærdom).
+#
+# Spredningen etablerer INGEN rekkefølge mellom timere — den finnes for
+# å hindre at de fyrer samtidig. REGNESTYKKET SOM MÅ GÅ OPP er
+# START + SPREDNING + `TimeoutStartSec` for HVER overvåket sveip, målt
+# mot statussveipens TIDLIGSTE start.
+#
+# Her: 12:35 + 5 + 10 = 12:50, og statussveipen starter tidligst 13:35
+# etter at DENNE PR-en flyttet den dit. Den flyttingen går lenger enn
+# M-43 trenger, fordi hvert mellomliggende tall ville landet på et slot
+# fundamentet alt har tildelt M-43, M-43 eller M-45 — se
+# `disponit-sveipestatus.timer` for regnestykket. Med klynge 9s fire trinn 15 minutter
+# fra hverandre er 5 minutters spredning det som får regnestykket til å
+# gå opp for ALLE fire — 30 ville ikke gjort det for noen av dem.
+#
+# `test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter` måler
+# dette for hele stigen, så en PR som glemmer det faller.
+#
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel oppdage at et møte står uten referat. Uten den ville nedetid
+# blitt til stillhet om nettopp det modulen finnes for.
+
+[Unit]
+Description=Disponit telefonisveip-timer
+
+[Timer]
+OnCalendar=*-*-* 13:05:00 UTC
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

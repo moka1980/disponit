@@ -1842,3 +1842,74 @@ export const rullTilbakePublisering = (publiseringId, kropp, idem) =>
 export const lukkInnholdsfunn = (funnId, kropp, idem) =>
   _muter(`/v1/innhold/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-43 TALE- OG TELEFONIAGENT (135).
+//
+// DET FINNES INGEN `inngaaAvtale` OG INGEN `giRabatt`. Vaktsetningen
+// krever eksplisitt policy for begge, og v1 har ingen vei dit i det
+// hele tatt — ikke en avslått vei, ikke en vei bak en bryter.
+//
+// `startSamtale` KREVER `identifisert_ts` OG `identifikasjonstekst`.
+// Døra nekter hvis identifikasjonen er datert før samtalen startet,
+// eller kom senere enn tenantens frist: DEN SOM TROR HUN SNAKKER MED
+// ET MENNESKE, SVARER ANNERLEDES.
+//
+// `registrerTranskripsjonslinje` NEKTES for en linje datert FØR
+// identifikasjonen — INGENTING BLE SAGT FØR VI SA HVA VI ER — og den
+// tar IKKE terskelen: døra leser den fra tenantens krav.
+//
+// `startSamtaleopptak` er 133s fire nekt, arvet ordrett, og
+// gyldigheten måles med M-7s egen funksjon.
+//
+// `registrerOpptakshjemmelTelefoni` SKRIVER I DEN DELTE HJEMMELEN
+// (133). Navnet bærer modulen fordi `registrerOpptakshjemmel` er
+// M-7s: to eksporter med samme navn er en `SyntaxError`, men den
+// farligere varianten er den som ikke kolliderer og bare gjør noe
+// annet enn kalleren tror (134s lærdom).
+// ---------------------------------------------------------------------
+export const settTelefonikrav = (krav, idem) =>
+  _muter("/v1/telefoni/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerOpptakshjemmelTelefoni = (hjemmel, idem) =>
+  _muter("/v1/telefoni/hjemmel", "POST", hjemmel,
+         idem || nyIdempotensnokkel());
+
+export const registrerEskaleringsregel = (regel, idem) =>
+  _muter("/v1/telefoni/regel", "POST", regel,
+         idem || nyIdempotensnokkel());
+
+export const avviklEskaleringsregel = (regelId, kropp, idem) =>
+  _muter(`/v1/telefoni/regel/${encodeURIComponent(regelId)}/avvikle`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const startSamtale = (samtale, idem) =>
+  _muter("/v1/telefoni/samtale", "POST", samtale,
+         idem || nyIdempotensnokkel());
+
+export const avsluttSamtale = (samtaleId, kropp, idem) =>
+  _muter(`/v1/telefoni/samtale/${encodeURIComponent(samtaleId)}/avslutt`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const startSamtaleopptak = (samtaleId, kropp, idem) =>
+  _muter(`/v1/telefoni/samtale/${encodeURIComponent(samtaleId)}/opptak`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerTranskripsjonslinje = (samtaleId, kropp, idem) =>
+  _muter(`/v1/telefoni/samtale/${encodeURIComponent(samtaleId)}/linje`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const eskalerSamtale = (samtaleId, kropp, idem) =>
+  _muter(`/v1/telefoni/samtale/${encodeURIComponent(samtaleId)}/eskaler`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkEskalering = (eskaleringId, kropp, idem) =>
+  _muter(
+    `/v1/telefoni/eskalering/${encodeURIComponent(eskaleringId)}/lukk`,
+    "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkTelefonifunn = (funnId, kropp, idem) =>
+  _muter(`/v1/telefoni/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

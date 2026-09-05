@@ -1474,7 +1474,51 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm20_sideregister(text,integer)',                                                              'disponit_innhold_eier'),
     ('FUNCTION', 'm20_sveip_innhold(integer)',                                                                  'disponit_innhold_eier'),
     ('FUNCTION', 'm20_utkastet(text,uuid)',                                                                     'disponit_innhold_eier'),
-    ('FUNCTION', 'm20_visningene(text,uuid)',                                                            'disponit_innhold_eier');
+    ('FUNCTION', 'm20_visningene(text,uuid)',                                                            'disponit_innhold_eier'),
+    -- 135 (M-43): telefoniregisterets doerer og sveipen.
+    --
+    -- SAMTALEN, OPPTAKET, LINJEN OG ESKALERINGEN ER APPEND-ONLY.
+    -- Identifikasjonen er frossen: en identifikasjon som kunne flyttes
+    -- i ettertid ville vaert en identifikasjon som passet til linjene,
+    -- ikke omvendt.
+    --
+    -- `m43_hjemlene` STAAR HER selv om den bare leser: den er SECURITY
+    -- DEFINER og loper som modulrollen, og det er nettopp den som har
+    -- SELECT paa den DELTE opptakshjemmelen (133). Eide migrator den,
+    -- ville den lest forbi radvakten.
+    --
+    -- `m43_hjemmel_gyldig` FINNES IKKE, og det er en dom:
+    -- `m7_hjemmel_gyldig` er husets, og den arves. To funksjoner ville
+    -- gitt to svar paa «hadde vi lov».
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN. Parseren stopper ved det
+    -- foerste setningsskillet.
+    --
+    -- Radvaktene (`m43_samtalevakt()`, `m43_frossenvakt()`,
+    -- `m43_regelvakt()`, `m43_eskaleringsvakt()`, `m43_funnvakt()`)
+    -- staar IKKE her: de eies av migrator.
+    ('FUNCTION', 'm43_avslutt_samtale(text,uuid,timestamp with time zone,text)',                                'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_avvikle_regel(text,uuid,date,text)',                                                      'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_bildet(text)',                                                                            'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_eskaler(text,uuid,uuid,uuid,text,text)',                                                  'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_eskaleringene(text,integer)',                                                             'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_evidens(text,uuid,text,text,jsonb)',                                                      'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_funn_er_sveipens(text)',                                                                  'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_hjemlene(text)',                                                                          'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_lukk_eskalering(text,uuid,text,text)',                                                    'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_lukk_funn(text,uuid,text,text)',                                                          'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_regel_gjelder(date,date,date)',                                                           'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_registrer_hjemmel(text,uuid,text,text,text,date,date,text)',                              'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_registrer_linje(text,uuid,uuid,integer,text,timestamp with time zone,text,text,integer,uuid,text)', 'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_registrer_regel(text,uuid,text,text,date,date,text)',                                     'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_reglene(text)',                                                                           'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_samtaleregister(text,integer)',                                                           'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_sett_krav(text,integer,integer,integer,integer,text)',                                    'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_start_opptak(text,uuid,uuid,uuid,timestamp with time zone,text,text[],timestamp with time zone,text)', 'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_start_samtale(text,uuid,text,text,timestamp with time zone,timestamp with time zone,text,text)', 'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_sveip_telefoni(integer)',                                                                 'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_telefonifunn(text,integer)',                                                              'disponit_telefoni_eier'),
+    ('FUNCTION', 'm43_transkripsjonen(text,uuid)',                                                              'disponit_telefoni_eier');
 
 DO $$
 DECLARE
