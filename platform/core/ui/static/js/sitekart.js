@@ -573,6 +573,13 @@ const BASISRUTER = [
   // Modulen inngår ingen avtale og gir ingen økonomiske løfter:
   // den nedtegner hva som ble sagt, og sier først hva den er.
   { nokkel: "telefoni", scope: "security:read", modulflate: 43 },
+  // M-45 (136): bærekraft og ESG. MODULFLATE bak
+  // `security:read` — et tall med sitt kildedokument og sin
+  // faktorversjon er et etterprøvbarhetsspørsmål mot et tilsyn,
+  // ikke et finansielt.
+  // Modulen sender ingen rapport: den sammenstiller et
+  // grunnlag, og innsendingen hører hjemme i M-47.
+  { nokkel: "esg", scope: "security:read", modulflate: 45 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

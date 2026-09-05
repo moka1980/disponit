@@ -2233,6 +2233,87 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import telefoni as telefonimodul
         return telefonimodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-45 BÆREKRAFTS- OG ESG-AGENT (136). DET FINNES INGEN RUTE SOM
+    # SENDER RAPPORTEN.
+    #
+    # `/sammenstill` samler tallene og skriver en ny rad. Det er alt.
+    # Innsendingen til et tilsyn er et menneskes, og den hører hjemme i
+    # M-47 — en rute her ville gjort «sendte vi?» til et spørsmål med
+    # to svar.
+    #
+    # `/maaling` NEKTER på seks ting: ukjent periode, LUKKET periode,
+    # ukjent faktor, faktor fra en ANNEN STANDARDVERSJON enn perioden,
+    # faktor som ikke gjaldt i perioden, og utløpt kilde. ET TALL
+    # REGNET MED FJORÅRETS FAKTOR OG LEST SOM ÅRETS ER FEIL PÅ NØYAKTIG
+    # DEN MÅTEN CSRD SKAL HINDRE.
+    #
+    # `er_estimat` er påkrevd og har ingen default: en glemt kolonne
+    # ville blitt en FALSK PÅSTAND i stedet for en feil.
+    def esg_bilde(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.esgbilde(tjeneste, request)
+
+    def esg_perioder(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.perioder_endepunkt(tjeneste, request)
+
+    def esg_faktorer(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.faktorer_endepunkt(tjeneste, request)
+
+    def esg_funn(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.funn_endepunkt(tjeneste, request)
+
+    def esg_maalinger(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.maalinger_endepunkt(tjeneste, request)
+
+    def esg_paastander(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.paastander_endepunkt(tjeneste, request)
+
+    def esg_krav(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.krav_endepunkt(tjeneste, request)
+
+    def esg_kilde_ny(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.registrer_kilde_endepunkt(tjeneste, request)
+
+    def esg_periode_ny(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.apne_periode_endepunkt(tjeneste, request)
+
+    def esg_periode_lukk(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.lukk_periode_endepunkt(tjeneste, request)
+
+    def esg_faktor_ny(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.registrer_faktor_endepunkt(tjeneste, request)
+
+    def esg_faktor_avvikle(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.avvikle_faktor_endepunkt(tjeneste, request)
+
+    def esg_maaling_ny(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.registrer_maaling_endepunkt(tjeneste, request)
+
+    def esg_paastand_ny(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.registrer_paastand_endepunkt(tjeneste, request)
+
+    def esg_sammenstill(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.sammenstill_endepunkt(tjeneste, request)
+
+    def esg_lukk_funn(request: Request) -> Response:
+        from . import esg as esgmodul
+        return esgmodul.lukk_funn_endepunkt(tjeneste, request)
+
+
 
 
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
@@ -3620,6 +3701,30 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               telefoni_eskalering_lukk, methods=["POST"]),
         Route("/v1/telefoni/funn/{funn_id:uuid}/lukk",
               telefoni_lukk_funn, methods=["POST"]),
+        Route("/v1/esg", esg_bilde, methods=["GET"]),
+        Route("/v1/esg/perioder", esg_perioder, methods=["GET"]),
+        Route("/v1/esg/faktorer", esg_faktorer, methods=["GET"]),
+        Route("/v1/esg/funn", esg_funn, methods=["GET"]),
+        Route("/v1/esg/krav", esg_krav, methods=["POST"]),
+        Route("/v1/esg/kilde", esg_kilde_ny, methods=["POST"]),
+        Route("/v1/esg/periode", esg_periode_ny, methods=["POST"]),
+        Route("/v1/esg/faktor", esg_faktor_ny, methods=["POST"]),
+        Route("/v1/esg/faktor/{faktor_id:uuid}/avvikle",
+              esg_faktor_avvikle, methods=["POST"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/maalinger",
+              esg_maalinger, methods=["GET"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/paastander",
+              esg_paastander, methods=["GET"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/lukk",
+              esg_periode_lukk, methods=["POST"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/maaling",
+              esg_maaling_ny, methods=["POST"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/paastand",
+              esg_paastand_ny, methods=["POST"]),
+        Route("/v1/esg/periode/{periode_id:uuid}/sammenstill",
+              esg_sammenstill, methods=["POST"]),
+        Route("/v1/esg/funn/{funn_id:uuid}/lukk", esg_lukk_funn,
+              methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4971,6 +5076,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/telefoni/eskalering/{eskalering_id:uuid}/lukk"):
         "bestilling:opprett",
     ("POST", "/v1/telefoni/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("GET",  "/v1/esg"):                         "security:read",
+    ("GET",  "/v1/esg/perioder"):                "security:read",
+    ("GET",  "/v1/esg/faktorer"):                "security:read",
+    ("GET",  "/v1/esg/funn"):                    "security:read",
+    ("GET",  "/v1/esg/periode/{periode_id:uuid}/maalinger"):
+        "security:read",
+    ("GET",  "/v1/esg/periode/{periode_id:uuid}/paastander"):
+        "security:read",
+    ("POST", "/v1/esg/krav"):                    "bestilling:opprett",
+    ("POST", "/v1/esg/kilde"):                   "bestilling:opprett",
+    ("POST", "/v1/esg/periode"):                 "bestilling:opprett",
+    ("POST", "/v1/esg/faktor"):                  "bestilling:opprett",
+    ("POST", "/v1/esg/faktor/{faktor_id:uuid}/avvikle"):
+        "bestilling:opprett",
+    ("POST", "/v1/esg/periode/{periode_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/esg/periode/{periode_id:uuid}/maaling"):
+        "bestilling:opprett",
+    ("POST", "/v1/esg/periode/{periode_id:uuid}/paastand"):
+        "bestilling:opprett",
+    ("POST", "/v1/esg/periode/{periode_id:uuid}/sammenstill"):
+        "bestilling:opprett",
+    ("POST", "/v1/esg/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

@@ -98,6 +98,7 @@ disponit-optimalisatorsveip.service disponit-optimalisatorsveip.timer
 disponit-motesveip.service disponit-motesveip.timer
 disponit-innholdssveip.service disponit-innholdssveip.timer
 disponit-telefonisveip.service disponit-telefonisveip.timer
+disponit-esgsveip.service disponit-esgsveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -514,6 +515,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_TELEFONISVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_telefonisveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 136 (M-45): ESG-sveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# En stille ESG-sveip er et gjettet tall som blir stående i en rapport
+# et tilsyn leser.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_ESGSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_ESGSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_esgsveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1484,6 +1496,17 @@ fi
 skriv_cred telefonisveip DISPONIT_TELEFONISVEIP_URL \
     "$DISPONIT_TELEFONISVEIP_URL"
 
+# 136 (M-45): ESG-sveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/esgsveip
+if [ -z "${DISPONIT_ESGSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_ESGSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen esgsveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred esgsveip DISPONIT_ESGSVEIP_URL "$DISPONIT_ESGSVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1735,6 +1758,7 @@ disponit-optimalisatorsveip.timer
 disponit-motesveip.timer
 disponit-innholdssveip.timer
 disponit-telefonisveip.timer
+disponit-esgsveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -2095,6 +2119,10 @@ systemctl stop disponit-innholdssveip.timer \
 # idempotente, og fristene står i `telefonikrav`, ikke i sveipen.
 systemctl stop disponit-telefonisveip.timer \
     disponit-telefonisveip.service 2>/dev/null || true
+# 136 (M-45): ESG-sveipen stoppes i samme vindu. Funnene er
+# idempotente, og fristene står i `esgkrav`, ikke i sveipen.
+systemctl stop disponit-esgsveip.timer \
+    disponit-esgsveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2327,6 +2355,9 @@ systemctl enable --now disponit-motesveip.timer
 systemctl enable --now disponit-innholdssveip.timer
 # 135 (M-43): telefonisveipen, 13:05 — klynge 9s tredje trinn.
 systemctl enable --now disponit-telefonisveip.timer
+# 136 (M-45): ESG-sveipen, 13:20 — klynge 9s FJERDE OG SISTE trinn, og
+# den siste foran sveipestatusen på 13:35.
+systemctl enable --now disponit-esgsveip.timer
 # 115: sveipestatusen, ETTER hele stigen (12:35 fra og med 133, og
 # flyttet helt til 13:35 fordi klynge 9s øvrige slot alt er tildelt).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at

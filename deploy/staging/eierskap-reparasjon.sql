@@ -1518,7 +1518,46 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm43_start_samtale(text,uuid,text,text,timestamp with time zone,timestamp with time zone,text,text)', 'disponit_telefoni_eier'),
     ('FUNCTION', 'm43_sveip_telefoni(integer)',                                                                 'disponit_telefoni_eier'),
     ('FUNCTION', 'm43_telefonifunn(text,integer)',                                                              'disponit_telefoni_eier'),
-    ('FUNCTION', 'm43_transkripsjonen(text,uuid)',                                                              'disponit_telefoni_eier');
+    ('FUNCTION', 'm43_transkripsjonen(text,uuid)',                                                              'disponit_telefoni_eier'),
+    -- 136 (M-45): ESG-registerets doerer og sveipen.
+    --
+    -- MAALINGEN, PAASTANDEN, FAKTOREN OG RAPPORTEN ER APPEND-ONLY.
+    -- Faktorens VERDI er frossen: en korreksjon i ettertid ville
+    -- endret hvert tall som noen gang ble regnet med den, i en
+    -- rapport et tilsyn har lest.
+    --
+    -- `m45_maalingene`, `m45_paastandene` og `m45_bildet` STAAR HER
+    -- selv om de bare leser: de er SECURITY DEFINER og loper som
+    -- modulrollen, og det er nettopp den som har SELECT paa husets
+    -- kilderegister (118). Eide migrator dem, ville de lest forbi
+    -- radvakten.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN.
+    --
+    -- Radvaktene (`m45_periodevakt()`, `m45_frossenvakt()`,
+    -- `m45_faktorvakt()`, `m45_funnvakt()`) staar IKKE her: de eies av
+    -- migrator, som eier tabellene triggerne henger paa.
+    ('FUNCTION', 'm45_apne_periode(text,uuid,text,date,date,text,text,text)',                                   'disponit_esg_eier'),
+    ('FUNCTION', 'm45_avvikle_faktor(text,uuid,date,text)',                                                     'disponit_esg_eier'),
+    ('FUNCTION', 'm45_bildet(text)',                                                                            'disponit_esg_eier'),
+    ('FUNCTION', 'm45_esgfunn(text,integer)',                                                                   'disponit_esg_eier'),
+    ('FUNCTION', 'm45_evidens(text,uuid,text,text,jsonb)',                                                      'disponit_esg_eier'),
+    ('FUNCTION', 'm45_faktorene(text)',                                                                         'disponit_esg_eier'),
+    ('FUNCTION', 'm45_funn_er_sveipens(text)',                                                                  'disponit_esg_eier'),
+    ('FUNCTION', 'm45_kilde_gyldig(date,timestamp with time zone,integer,date)',                                'disponit_esg_eier'),
+    ('FUNCTION', 'm45_lukk_funn(text,uuid,text,text)',                                                          'disponit_esg_eier'),
+    ('FUNCTION', 'm45_lukk_periode(text,uuid,text)',                                                            'disponit_esg_eier'),
+    ('FUNCTION', 'm45_maalingene(text,uuid)',                                                                   'disponit_esg_eier'),
+    ('FUNCTION', 'm45_paastandene(text,uuid)',                                                                  'disponit_esg_eier'),
+    ('FUNCTION', 'm45_perioderegister(text,integer)',                                                           'disponit_esg_eier'),
+    ('FUNCTION', 'm45_rapportene(text,integer)',                                                                'disponit_esg_eier'),
+    ('FUNCTION', 'm45_registrer_faktor(text,uuid,text,text,numeric,text,text,uuid,date,text)',                  'disponit_esg_eier'),
+    ('FUNCTION', 'm45_registrer_kilde(text,uuid,text,text,date,text,text)',                                     'disponit_esg_eier'),
+    ('FUNCTION', 'm45_registrer_maaling(text,uuid,uuid,text,numeric,text,uuid,boolean,text,uuid,uuid,text)',    'disponit_esg_eier'),
+    ('FUNCTION', 'm45_registrer_paastand(text,uuid,uuid,integer,text,uuid,uuid,text)',                          'disponit_esg_eier'),
+    ('FUNCTION', 'm45_sammenstill(text,uuid,uuid,text)',                                                        'disponit_esg_eier'),
+    ('FUNCTION', 'm45_sett_krav(text,integer,integer,integer,text)',                                            'disponit_esg_eier'),
+    ('FUNCTION', 'm45_sveip_esg(integer)',                                                                      'disponit_esg_eier');
 
 DO $$
 DECLARE

@@ -607,7 +607,11 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         # 135 (M-43): telefonisveipens EGEN DSN. En stille
         # sveip her er en eskalering ingen tok, mens den
         # andre parten fikk beskjed om at noen tok over.
-        "DISPONIT_TELEFONISVEIP_URL")})
+        "DISPONIT_TELEFONISVEIP_URL",
+        # 136 (M-45): ESG-sveipens EGEN DSN. En stille sveip
+        # her er et gjettet tall som blir staaende i en
+        # rapport et tilsyn leser.
+        "DISPONIT_ESGSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -1264,7 +1268,11 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         # 135 (M-43): telefonisveipens EGEN DSN. En stille
         # sveip her er en eskalering ingen tok, mens den
         # andre parten fikk beskjed om at noen tok over.
-        "DISPONIT_TELEFONISVEIP_URL")})
+        "DISPONIT_TELEFONISVEIP_URL",
+        # 136 (M-45): ESG-sveipens EGEN DSN. En stille sveip
+        # her er et gjettet tall som blir staaende i en
+        # rapport et tilsyn leser.
+        "DISPONIT_ESGSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):
