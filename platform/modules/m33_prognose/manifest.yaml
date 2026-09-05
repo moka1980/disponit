@@ -1,0 +1,77 @@
+# M-33 PREDIKSJONS- OG SCENARIOAGENT — KLYNGE 8s ANDRE.
+#
+# `m33-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 129
+# tildelt i docs/KLYNGE8-FUNDAMENT.md.
+#
+# M-33 GENERALISERER FORMEN M-15 ETABLERER — horisont, modellsnapshot,
+# intervall, måling mot faktisk utfall — til flere måltyper, og legger
+# til det ene kravet M-15 ikke trenger:
+#
+#   BASELINE. En modell som ikke slår «samme som forrige uke» bærer
+#   AUTORITET DEN IKKE HAR FORTJENT, og det er verre enn ingen modell:
+#   den ser ut som kunnskap. Katalogens egen flyt sier «backtester mot
+#   naive baselines», og `slaar_ikke_naiv_baseline` er et funn ingen
+#   kan klikke bort.
+#
+# KATALOGENS VAKTSETNING: «Prognoser er ikke fakta; ingen
+# personalavgjørelse eller automatisk handling uten separat policy.»
+# Den andre halvdelen er grunnen til at modulen står i fase 4:
+# bemanningsprognoser er nettopp det en prediksjonsmodul blir bedt om
+# først, og nettopp det den ikke skal få avgjøre.
+#
+# GRENSEN MOT M-3 (092), SOM MÅ AVKLARES I MODULENS EGEN RUNDE:
+# en prognose regnet på data M-3 har flagget som mangelfulle skal
+# BÆRE flagget — ikke nektes. Å nekte ville gjort modulen ubrukelig i
+# nettopp den situasjonen den er nyttigst: når datagrunnlaget er tynt
+# er det ekstra viktig å vite hvor usikkert svaret er.
+#
+# TIMERFLYTTINGEN HØRER HIT: M-33 er den første modulen som legger en
+# sveip BAK 11:20, og det er dens PR som flytter
+# `disponit-sveipestatus.timer` til 12:05. Fundamentet tildeler
+# klokkeslettet; det installerer ingen timer.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m33_prognose
+navn: Prediksjons- og scenarioagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter: datakvaliteten prognosen må bære
+# flagget fra, og policymotoren som eier enhver handling.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m03_datakvalitet
+kjerne: platform/modules/m33_prognose
+i18n_prefiks: prognose
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en tidsserie der den naive baselinen er KJENT, slik at
+      «slår modellen den?» er et faktum og ikke en påstand.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at backtesten er sporbar — hvilken baseline, hvilket
+      vindu, hvilken modellversjon. En backtest ingen kan gjenskape
+      er en påstand om at vi har testet.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en modell som slutter å slå baselinen gir et FUNN,
+      ikke en stille degradering.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

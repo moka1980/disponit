@@ -108,15 +108,21 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Å FJERNE ET NAVN HERFRA ER EN DEL AV Å BYGGE MODULEN, ikke et
 #: separat opprydningsarbeid.
-#: TOM. `m53-v1` var den siste, og M-53 landet i migrasjon 127.
-#: Klynge 7 er dermed ferdig: alle fem grensene som ble registrert FØR
-#: koden (§0-regelen) har nå en modul å dekkes av.
+#: KLYNGE 8 — PROGNOSENE. Registrert FØR koden (§0-regelen), slik
+#: klynge 7 ble det, og av samme grunn: grensen skal være skrevet av
+#: noen som ennå ikke vet hvor vanskelig den blir å holde.
 #:
-#: EN TOM LISTE ER IKKE EN DØD LISTE. Neste klynge registrerer sine
-#: grenser før koden på samme måte, og da fylles den igjen — og porten
-#: under er den som krever at navnene forsvinner herfra etter hvert som
-#: modulene bygges.
-UBYGDE_GRENSER: frozenset[str] = frozenset()
+#: Lista var TOM i noen timer 5/9, mellom M-53 og dette fundamentet.
+#: Det var ikke en hviledag — det var beviset på at forrige klynge
+#: faktisk ble ferdig, og porten under er den som krever at navnene
+#: forsvinner herfra etter hvert som modulene bygges.
+#:
+#: Se `docs/KLYNGE8-FUNDAMENT.md`.
+UBYGDE_GRENSER = frozenset({
+    "m15-v1",   # M-15 likviditet, migrasjon 128
+    "m33-v1",   # M-33 prognose, migrasjon 129
+    "m36-v1",   # M-36 optimalisator, migrasjon 130
+})
 
 
 def _grenser_med_dekningsport() -> set[str]:

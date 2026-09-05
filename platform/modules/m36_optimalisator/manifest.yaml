@@ -1,0 +1,100 @@
+# M-36 BEDRIFTSOPTIMALISATOR — KLYNGE 8s SISTE, OG DEN FARLIGSTE
+# MODULEN I HELE KATALOGEN.
+#
+# `m36-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 130
+# tildelt i docs/KLYNGE8-FUNDAMENT.md. BYGGES SIST, og grunnen står
+# under.
+#
+# M-15 og M-33 prognostiserer ETT domene hver. M-36 leser resultatet
+# av ALLE moduler og rangerer tiltak på tvers av dem. Katalogens egen
+# `dep` er «Modul 1–35». Tre ting følger:
+#
+#   1. DEN ER DEN ENESTE MODULEN SOM HAR EN OPPFATNING OM DE ANDRE
+#      MODULENE.
+#
+#   2. «KAN ALDRI UTVIDE EGEN FULLMAKT» ER IKKE EN SELVFØLGE — DET ER
+#      EN ADVARSEL. En optimalisator som finner at den beste
+#      forbedringen er «gi M-36 lov til å gjøre X», er ikke ødelagt.
+#      Den gjør nøyaktig det den ble bedt om. Derfor må
+#      fullmaktsutvidelse være UREPRESENTERBAR, ikke frarådet.
+#
+#   3. «KORRELASJON PRESENTERES IKKE SOM ÅRSAK» ER ET KRAV TIL
+#      DATAMODELLEN, ikke til teksten på skjermen. Hvert tiltak bærer
+#      `grunnlagstype` fra et lukket sett: korrelasjon, eksperiment,
+#      regel. En rangering som blander dem uten å si hvilken som er
+#      hvilken, ER den påstanden vakten forbyr.
+#
+# GRENSESNITTET SOM ER AVKLART FØR KODEN, og som endrer katalogen:
+#
+#   Katalogen sier at M-36 leser en «KPI-katalog» via et «hendelses-
+#   og KPI-lag». DET LAGET FINNES IKKE. M-16 (086,
+#   platform/core/api/lesing.py) teller PLATTFORMAKTIVITET —
+#   beslutninger, frekvens, aktiveringer, oppdrag, unntak, tick — over
+#   et vindu. Det er et driftsdashbord for policymotoren, ikke en
+#   katalog over virksomhetens nøkkeltall. Det finnes heller ikke noe
+#   tverrgående hendelseslag: hver modul har sitt eget funnregister,
+#   og de deler FORM, ikke tabell.
+#
+#   v1 LESER DERFOR DE ÅPNE FUNNENE fra modulregistrene. Det er det
+#   eneste tverrgående, standardiserte signalet som faktisk finnes i
+#   huset i dag — og det er et ærlig et: et åpent funn er noe en modul
+#   har målt og et menneske ikke har lukket.
+#
+#   MODULEN ER DERMED SMALERE ENN KATALOGTEKSTEN, og det skal stå:
+#   EN MODUL SOM LATER SOM DEN LESER NOE DEN IKKE HAR, ER VERRE ENN
+#   EN SOM SIER HVA DEN MANGLER.
+#
+# PORTEFØLJESTOPP. Katalogens vaktsetning krever at den finnes, og en
+# stoppknapp som ikke virker er verre enn ingen — `portefoljestopp_
+# uten_virkning` er derfor en invariant og ikke en funksjonsbeskrivelse.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m36_optimalisator
+navn: Bedriftsoptimalisator
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. Katalogens «modul 1–35» er en ambisjon,
+# ikke en måling: v1 leser de åpne funnene, og de kommer fra
+# modulregistrene gjennom deres egne lesedører. Policymotoren står her
+# fordi den er det som gjør fullmaktsutvidelse umulig.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m16_nokkeltall
+  - m37_unntak
+kjerne: platform/modules/m36_optimalisator
+i18n_prefiks: optimalisator
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et sett der en KJENT korrelasjon IKKE er en årsak, slik
+      at porten kan måle at modulen sier det.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert rangert tiltak kan spores til grunnlagstypen
+      sin. En rangering uten det er en anbefaling uten opphav.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at porteføljestoppen FAKTISK stopper — målt ved at et
+      tiltak ikke lar seg rangere mens stoppen står. En stoppknapp
+      som bare setter et flagg er pynt.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Modulen leser på tvers av alle modulregistre og er den dyreste
+      sveipen i huset før den er skrevet.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

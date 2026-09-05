@@ -5144,5 +5144,11 @@
   "ui.hms.undertittel": "The incident, the measure taken, and the retention basis. The module notifies no authority and closes no incident.",
   "ui.hms.versjon": "Version",
   "ui.hms.vist_av": "Showing {vist} of at most {grense}",
-  "ui.nav.hms": "HSE and incident intake"
+  "ui.nav.hms": "HSE and incident intake",
+  "site.modul.m15.navn": "Liquidity and cost agent",
+  "site.modul.m15.tekst": "The cash path thirteen weeks out, with an interval rather than a single number — and every forecast measured against what actually happened. v1 cancels nothing and pays nothing: a cost measure is a proposal, and carrying it out goes through the module that owns it.",
+  "site.modul.m33.navn": "Prediction and scenario agent",
+  "site.modul.m33.tekst": "Forecasts with measurable uncertainty, backtested against a naive baseline. A model that cannot beat «same as last week» carries authority it has not earned. Forecasts are not facts, and no personnel decision rests on them.",
+  "site.modul.m36.navn": "Business optimiser",
+  "site.modul.m36.tekst": "Ranks improvements across the modules without touching their boundaries. Every proposal carries whether its basis is correlation, experiment or rule — because correlation presented as cause is the error that looks most like insight."
 }
