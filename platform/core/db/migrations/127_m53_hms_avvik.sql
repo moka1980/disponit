@@ -725,6 +725,32 @@ END $$;
 REVOKE ALL ON FUNCTION m53_registrer_regel(TEXT, UUID, TEXT, TEXT,
     TEXT, INT, BOOLEAN, DATE, DATE, TEXT) FROM PUBLIC;
 
+-- MATERIALITETSSJEKKEN, ETT STED.
+--
+-- `m53_meld_avvik` bruker den to ganger: på den vanlige
+-- gjenspillveien, og i `unique_violation`-grenen når to samtidige
+-- kall kappløp om samme id. To kopier av den samme sammenligningen
+-- ville før eller siden gått fra hverandre, og da ville den ene veien
+-- godtatt noe den andre nektet.
+CREATE FUNCTION m53_krev_samme_avvik(
+    p_rad public.hmsavvik, p_avvikstype TEXT, p_melderform TEXT,
+    p_beskrivelse TEXT, p_sted TEXT, p_hendelsesdato DATE)
+RETURNS VOID LANGUAGE plpgsql IMMUTABLE
+SET search_path = pg_catalog AS $$
+BEGIN
+    IF p_rad.avvikstype IS DISTINCT FROM p_avvikstype
+       OR p_rad.melderform IS DISTINCT FROM p_melderform
+       OR p_rad.beskrivelse IS DISTINCT FROM btrim(p_beskrivelse)
+       OR p_rad.sted IS DISTINCT FROM btrim(p_sted)
+       OR p_rad.hendelsesdato IS DISTINCT FROM p_hendelsesdato THEN
+        RAISE EXCEPTION 'm53_meld_avvik: avvik % finnes med annet'
+            ' innhold', p_rad.avvik_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+END $$;
+REVOKE ALL ON FUNCTION m53_krev_samme_avvik(public.hmsavvik, TEXT,
+    TEXT, TEXT, TEXT, DATE) FROM PUBLIC;
+
 -- ---------------------------------------------------------------------
 -- MOTTAKSDØRA — MODULENS TYNGSTE, OG DEN ENESTE SOM KAN LEKKE EN
 -- VARSLER.
@@ -855,17 +881,11 @@ BEGIN
     -- den skal si fra: to ulike hendelser under samme nøkkel betyr at
     -- kalleren gjenbruker nøkler, og den nest siste ville forsvunnet.
     SELECT * INTO v_gml FROM public.hmsavvik
-     WHERE tenant = p_tenant AND avvik_id = p_avvik_id;
+     WHERE tenant = p_tenant AND avvik_id = p_avvik_id FOR UPDATE;
     IF FOUND THEN
-        IF v_gml.avvikstype IS DISTINCT FROM p_avvikstype
-           OR v_gml.melderform IS DISTINCT FROM p_melderform
-           OR v_gml.beskrivelse IS DISTINCT FROM btrim(p_beskrivelse)
-           OR v_gml.sted IS DISTINCT FROM btrim(p_sted)
-           OR v_gml.hendelsesdato IS DISTINCT FROM p_hendelsesdato THEN
-            RAISE EXCEPTION 'm53_meld_avvik: avvik % finnes med annet'
-                ' innhold', p_avvik_id
-                USING ERRCODE = 'invalid_parameter_value';
-        END IF;
+        PERFORM public.m53_krev_samme_avvik(
+            v_gml, p_avvikstype, p_melderform, p_beskrivelse, p_sted,
+            p_hendelsesdato);
         -- STILLE JA. Fristen og hjemmelen kommer fra RADEN, ikke fra
         -- en ny beregning: et gjenspill en uke senere skal ikke gi et
         -- annet svar enn det første kallet fikk.
@@ -879,16 +899,47 @@ BEGIN
         RETURN;
     END IF;
 
-    INSERT INTO public.hmsavvik
-        (tenant, avvik_id, avvikstype, melderform, beskrivelse, sted,
-         hendelsesdato, meldt_dato, meldt_ts, meldt_av, regel_id,
-         regelversjon, oppbevaring_hjemmel, oppbevaring_dogn,
-         oppbevaring_til, helseopplysninger, kravversjon)
-    VALUES (p_tenant, p_avvik_id, p_avvikstype, p_melderform,
-            btrim(p_beskrivelse), btrim(p_sted), p_hendelsesdato,
-            v_dato, v_ts, v_aktor, v_regel.regel_id, v_regel.versjon,
-            v_regel.hjemmel, v_regel.oppbevaring_dogn, v_til,
-            v_regel.helseopplysninger, v_krav.versjon);
+    -- KAPPLØPET `FOR UPDATE` IKKE KAN FANGE (CodeRabbit).
+    --
+    -- En lås på en rad som IKKE FINNES tar ingen lås. To samtidige
+    -- kall med samme Idempotency-Key ser derfor begge `NOT FOUND`,
+    -- én INSERT vinner primærnøkkelen, og den andre ville fått en
+    -- `unique_violation` — altså nøyaktig den klientfeilen
+    -- gjenspillgrenen finnes for å hindre, i det ene tilfellet der
+    -- den er mest sannsynlig: dobbelttrykket.
+    --
+    -- TAPEREN LESER RADEN VINNEREN SKREV og svarer som et gjenspill.
+    -- `ON CONFLICT DO NOTHING` ville ikke duget: da mistet vi den
+    -- materielle sjekken, og to ULIKE hendelser under samme nøkkel
+    -- ville blitt til én i stillhet.
+    BEGIN
+        INSERT INTO public.hmsavvik
+            (tenant, avvik_id, avvikstype, melderform, beskrivelse,
+             sted, hendelsesdato, meldt_dato, meldt_ts, meldt_av,
+             regel_id, regelversjon, oppbevaring_hjemmel,
+             oppbevaring_dogn, oppbevaring_til, helseopplysninger,
+             kravversjon)
+        VALUES (p_tenant, p_avvik_id, p_avvikstype, p_melderform,
+                btrim(p_beskrivelse), btrim(p_sted), p_hendelsesdato,
+                v_dato, v_ts, v_aktor, v_regel.regel_id,
+                v_regel.versjon, v_regel.hjemmel,
+                v_regel.oppbevaring_dogn, v_til,
+                v_regel.helseopplysninger, v_krav.versjon);
+    EXCEPTION WHEN unique_violation THEN
+        SELECT * INTO v_gml FROM public.hmsavvik
+         WHERE tenant = p_tenant AND avvik_id = p_avvik_id FOR UPDATE;
+        PERFORM public.m53_krev_samme_avvik(
+            v_gml, p_avvikstype, p_melderform, p_beskrivelse, p_sted,
+            p_hendelsesdato);
+        RETURN QUERY SELECT
+            v_gml.oppbevaring_til, v_gml.oppbevaring_hjemmel,
+            v_gml.regelversjon, v_gml.helseopplysninger,
+            v_gml.kravversjon,
+            EXISTS (SELECT 1 FROM public.hmsmelder m
+                     WHERE m.tenant = p_tenant
+                       AND m.avvik_id = p_avvik_id);
+        RETURN;
+    END;
 
     -- SAMME SETNING, IKKE SAMME TRANSAKSJON. Melderraden skrives her,
     -- før noen kan lese avviket.
@@ -1057,10 +1108,19 @@ BEGIN
             USING ERRCODE = 'no_data_found';
     END IF;
 
-    -- IDEMPOTENT. En rad som alt er anonymisert svarer stille ja: den
-    -- som kaller på nytt har fått det den ba om.
+    -- IDEMPOTENT — OG SVARET ER `true` (CodeRabbit).
+    --
+    -- Første utgave svarte `false` her, og API-et sender den første
+    -- kolonnen videre som feltet `anonymisert`. Et andre kall mot en
+    -- alt anonymisert rad svarte altså «anonymisert: false» om en rad
+    -- som ER anonymisert — det motsatte av sannheten, til den som
+    -- nettopp ba om det.
+    --
+    -- `false` ville betydd «ny handling utført», og det er et ANNET
+    -- spørsmål enn det kalleren stiller. Kalleren spør om raden er
+    -- anonymisert. Den er det.
     IF v_avvik.anonymisert_ts IS NOT NULL THEN
-        RETURN QUERY SELECT false, false, v_avvik.oppbevaring_til;
+        RETURN QUERY SELECT true, false, v_avvik.oppbevaring_til;
         RETURN;
     END IF;
 

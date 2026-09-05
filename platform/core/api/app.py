@@ -4218,18 +4218,48 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/journal/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
-    # M-53 (127). LESING `okonomi:read`, SKRIVING `bestilling:opprett`.
-    # INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen `/send`,
-    # ingen `/innsending` og ingen `/varsle`, og porten leser denne
-    # tabellen.
-    ("GET",  "/v1/hms"):                         "okonomi:read",
-    ("GET",  "/v1/hms/avvik"):                   "okonomi:read",
-    ("GET",  "/v1/hms/regelverk"):               "okonomi:read",
-    ("GET",  "/v1/hms/funn"):                    "okonomi:read",
+    # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
+    # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser
+    # denne tabellen.
+    #
+    # LESESCOPET ER `security:read` OG IKKE `okonomi:read`, og det er
+    # en RETTELSE av min egen første utgave (CodeRabbit). Jeg skrev av
+    # M-50-raden over uten å se at datasettet er et helt annet:
+    #
+    #   `GET /v1/hms/avvik` returnerer `beskrivelse`,
+    #   `helseopplysninger` og `melder_navn`. 127s eget filhode sier at
+    #   en skademelding inneholder særlige kategorier etter GDPR art. 9
+    #   «ikke som en mulighet — som normaltilfellet», og at et avvik
+    #   kan være et varsel etter arbeidsmiljøloven kap. 2 A.
+    #
+    #   `okonomi:read` er FINANSLESERENS scope (M-13, 101: bank- og
+    #   bilagsregistre). Å legge helseopplysninger om navngitte
+    #   ansatte der ville vært samme feil som M-30-raden under
+    #   beskriver: lesetilgang for alle som skal se noe helt annet.
+    #
+    # `security:read` er compliance/ops-klassen — samme sted M-12
+    # (tilgangskartet), M-34 (avviksbeskrivelser) og M-30
+    # (personvernforespørslene) ligger, og et HMS-ansvarlig
+    # personvernombuds arbeidsflate hører hjemme nettopp der.
+    #
+    # SKRIVEVEIENE BEHOLDER `bestilling:opprett`, og det er MED VILJE:
+    # den som skal MELDE et avvik er en hvilken som helst ansatt, og
+    # skulle meldingen krevd `security:read` ville en anonym melding
+    # måttet gå gjennom den HMS-ansvarlige — altså ikke vært anonym.
+    #
+    # PRISEN STÅR SKREVET, for den er reell: flaten viser REGISTERET og
+    # skjemaet på samme side, og siden må gjerdes av det STRENGESTE
+    # den viser. En egen, lavt gjerdet meldeflate for alle ansatte er
+    # en v2-jobb — ikke noe jeg finner på klokka seks om morgenen for
+    # å slippe å skrive ned at den mangler.
+    ("GET",  "/v1/hms"):                         "security:read",
+    ("GET",  "/v1/hms/avvik"):                   "security:read",
+    ("GET",  "/v1/hms/regelverk"):               "security:read",
+    ("GET",  "/v1/hms/funn"):                    "security:read",
     ("GET",  "/v1/hms/avvik/{avvik_id:uuid}/tiltak"):
-        "okonomi:read",
+        "security:read",
     ("GET",  "/v1/hms/avvik/{avvik_id:uuid}/oppbevaringsgrunnlag"):
-        "okonomi:read",
+        "security:read",
     ("POST", "/v1/hms/krav"):                    "bestilling:opprett",
     ("POST", "/v1/hms/regelverk"):               "bestilling:opprett",
     ("POST", "/v1/hms/avvik"):                   "bestilling:opprett",

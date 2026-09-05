@@ -151,7 +151,7 @@ globalThis.fetch = async (url, opts) => {
   return { ok: true, status: 200, json: async () => oppf };
 };
 
-function ctx(scopes = ["okonomi:read", "bestilling:opprett"]) {
+function ctx(scopes = ["security:read", "bestilling:opprett"]) {
   return { sprak: "nb", scopes, tenant: "acme",
            paaUautorisert: () => {} };
 }
@@ -371,7 +371,7 @@ test("ilokalDato bruker lokal tid, ikke UTC", () => {
 
 test("uten skrivescope finnes ingen skjemaer", async () => {
   const h = nyHoved();
-  await visHms(h, ctx(["okonomi:read"]));
+  await visHms(h, ctx(["security:read"]));
   await vent(() => h.textContent.includes(t("ui.hms.avvik")));
   assert.equal(h.querySelector("#hms-beskrivelse"), null,
                "meldeskjemaet vises uten skrivetilgang");

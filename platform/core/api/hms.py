@@ -44,8 +44,18 @@ FEM NEKT SOM ER VERDT Å KJENNE:
     basen (`m53_funn_er_sveipens`), og lesedøra gir `kan_lukkes` med
     hver rad så flaten slipper å kopiere den.
 
-SCOPENE. LESING `okonomi:read`, SKRIVING `bestilling:opprett` — samme
-presedens som 096/100–125.
+SCOPENE. LESING `security:read`, SKRIVING `bestilling:opprett`.
+
+Lesescopet er IKKE `okonomi:read` som de fire andre i klyngen, og det
+er en dom: `GET /avvik` returnerer helseopplysninger etter GDPR art. 9
+om navngitte ansatte. `okonomi:read` er finansleserens scope;
+`security:read` er compliance/ops-klassen, der M-12, M-30 og M-34 alt
+ligger.
+
+SKRIVING BEHOLDER `bestilling:opprett` med vilje: den som skal MELDE
+et avvik er en hvilken som helst ansatt. Skulle meldingen krevd
+`security:read`, måtte en anonym melding gått gjennom den
+HMS-ansvarlige — altså ikke vært anonym.
 
 SP-2 PÅ REGISTRERINGSDØRENE: id-ene utledes av Idempotency-Key-en.
 """
@@ -293,7 +303,7 @@ def hmsbilde(tjeneste, request):
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 def avvik_endepunkt(tjeneste, request):
@@ -318,7 +328,7 @@ def avvik_endepunkt(tjeneste, request):
                 "avvik": [_avviksrad(r) for r in rader]}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 def grunnlag_endepunkt(tjeneste, request):
@@ -353,7 +363,7 @@ def grunnlag_endepunkt(tjeneste, request):
                 "alt_anonymisert": r[6], "setning": r[7]}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 def regelverk_endepunkt(tjeneste, request):
@@ -367,7 +377,7 @@ def regelverk_endepunkt(tjeneste, request):
                 "regelverk": [_regelrad(r) for r in rader]}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 def tiltak_endepunkt(tjeneste, request):
@@ -385,7 +395,7 @@ def tiltak_endepunkt(tjeneste, request):
             for r in rader]}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 def funn_endepunkt(tjeneste, request):
@@ -403,7 +413,7 @@ def funn_endepunkt(tjeneste, request):
                 "funn": [_funnrad(r) for r in rader]}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
 
-    return _les(tjeneste, request, "okonomi:read", _fn)
+    return _les(tjeneste, request, "security:read", _fn)
 
 
 # ---------------------------------------------------------------------

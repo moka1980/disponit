@@ -1125,3 +1125,89 @@ def test_gjenspill_av_et_tiltak_med_annet_innhold_nektes():
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             rt.execute(kall, (t, aid, tid, "Noe helt annet ble gjort",
                               True, I_DAG, "u-kari"))
+
+
+@pg
+def test_anonymisering_svarer_sant_ogsaa_andre_gang():
+    """SVARET GJELDER TILSTANDEN, IKKE HANDLINGEN (CodeRabbit).
+
+    Første utgave svarte `anonymisert: false` på et andre kall mot en
+    alt anonymisert rad — det motsatte av sannheten, til den som
+    nettopp ba om det. `false` ville betydd «ny handling utført», og
+    det er et ANNET spørsmål enn det kalleren stiller.
+
+    MUTASJONEN SOM DREPER DENNE: sett `false` tilbake i den
+    idempotente grenen.
+    """
+    t = _tenantnavn("idem-anon")
+    with _to() as (rt, _mg):
+        _krav(rt, t)
+        _regel(rt, t)
+        aid, _ = _avvik(rt, t)
+        _sett_kontekst(rt, t)
+        rt.execute("SELECT * FROM m53_anonymiser(%s,%s,%s,%s)",
+                   (t, aid, "SAK-1", "u-kari"))
+        rt.commit()
+        _sett_kontekst(rt, t)
+        rad = rt.execute("SELECT * FROM m53_anonymiser(%s,%s,%s,%s)",
+                         (t, aid, "SAK-1", "u-kari")).fetchone()
+    assert rad[0] is True, (
+        "andre kall svarte at raden IKKE er anonymisert")
+
+
+def test_gjenspillkappløpet_har_en_gren_og_deler_sammenligningen():
+    """`FOR UPDATE` PÅ EN RAD SOM IKKE FINNES TAR INGEN LÅS.
+
+    To samtidige kall med samme Idempotency-Key ser derfor begge
+    `NOT FOUND`, én INSERT vinner primærnøkkelen, og den andre ville
+    fått en `unique_violation` — nøyaktig den klientfeilen
+    gjenspillgrenen finnes for å hindre, i det ene tilfellet der den
+    er mest sannsynlig: dobbelttrykket (CodeRabbit).
+
+    PORTEN ER STRUKTURELL MED VILJE. Et ekte kappløp krever to tråder
+    som blokkerer på hverandre, og en port som VANLIGVIS treffer
+    vinduet er en port som av og til er rød uten grunn — og en flaky
+    port er verre enn ingen, fordi den lærer folk å kjøre om igjen.
+
+    Den måler derfor de to tingene som kan RÅTNE: at grenen finnes, og
+    at begge veier bruker SAMME materialitetssjekk. To kopier ville
+    før eller siden gått fra hverandre, og da ville den ene veien
+    godtatt noe den andre nektet.
+    """
+    sql = MIGRASJON.read_text(encoding="utf-8")
+    doer = re.search(r"CREATE FUNCTION m53_meld_avvik\(.*?\nEND \$\$;",
+                     sql, re.S)
+    assert doer, "mottaksdøra finnes ikke"
+    kropp = doer.group(0)
+    assert "EXCEPTION WHEN unique_violation THEN" in kropp, (
+        "kappløpsgrenen mangler — taperen får en klientfeil")
+    assert kropp.count("m53_krev_samme_avvik(") == 2, (
+        "de to gjenspillveiene deler ikke materialitetssjekken")
+    # …OG SJEKKEN SELV FINNES BARE ÉN GANG.
+    assert sql.count("CREATE FUNCTION m53_krev_samme_avvik(") == 1
+
+
+def test_lesescopet_er_security_read_og_ikke_okonomi():
+    """HELSEOPPLYSNINGER ETTER GDPR ART. 9 BAK FINANSLESERENS SCOPE.
+
+    Jeg skrev av M-50-raden uten å se at datasettet er et helt annet
+    (CodeRabbit). `GET /v1/hms/avvik` returnerer `beskrivelse`,
+    `helseopplysninger` og `melder_navn`; `okonomi:read` er
+    finansleserens scope fra 101.
+
+    SKRIVEVEIENE BEHOLDER `bestilling:opprett`, og porten krever det:
+    skulle meldingen krevd `security:read`, måtte en anonym melding
+    gått gjennom den HMS-ansvarlige — altså ikke vært anonym.
+
+    MUTASJONEN SOM DREPER DENNE: sett `okonomi:read` tilbake på én GET.
+    """
+    import importlib
+    app = importlib.import_module("api.app")
+    hms = {(m, sti): sc for (m, sti), sc in app.RUTESCOPE.items()
+           if sti.startswith("/v1/hms")}
+    assert hms, "M-53s ruter står ikke i RUTESCOPE"
+    for (metode, sti), scope in hms.items():
+        if metode == "GET":
+            assert scope == "security:read", f"{sti}: {scope}"
+        else:
+            assert scope == "bestilling:opprett", f"{sti}: {scope}"
