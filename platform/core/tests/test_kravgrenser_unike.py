@@ -190,3 +190,52 @@ def test_de_ubygde_grensene_er_faktisk_ubygde():
     assert overlevd == [], (
         "disse har fått en dekningsport og skal ut av"
         " UBYGDE_GRENSER: " + ", ".join(overlevd))
+
+
+#: KLYNGE 8s FIRE DELTE DOMMER, som en liste og ikke som en setning i
+#: et dokument. `docs/KLYNGE8-FUNDAMENT.md` sier at alle tre modulene
+#: hviler på dem — og INGENTING MÅLTE DET.
+KLYNGE8 = ("m15-v1", "m33-v1", "m36-v1")
+KLYNGE8_DELTE = (
+    "prognose_uten_horisont",
+    "prognose_uten_modellversjon",
+    "prognose_uten_intervall",
+    "prognose_uten_maaling",
+)
+
+
+def test_klynge8_deler_prognosedommene():
+    """EN DELT DOM SOM BARE STÅR I ET DOKUMENT ER IKKE DELT.
+
+    M-36 hadde i første utgave bare `prognose_uten_maaling` — som om
+    modulen målte uten å prognostisere. Den gjør begge deler:
+    katalogens output er «tiltakskø, SCENARIO, eksperiment, EFFEKT»,
+    og et effektestimat er en prognose uansett hva den kalles.
+
+    AT DEN ENE INVARIANTEN STO DER, VAR SELVE INNRØMMELSEN. En modul
+    som må måle prognosene sine, lager prognoser. Uten denne porten
+    kunne akseptporten blitt grønn på en M-36 som lagret prognoser
+    uten horisont, uten modellversjon og uten intervall — altså i
+    brudd med klyngens egen kontrakt, mens fundamentdokumentet sa at
+    kontrakten gjaldt (CodeRabbit).
+
+    MUTASJONEN SOM DREPER DENNE: ta ett navn ut av én av de tre.
+    """
+    from manifestskjema import KRAVGRENSER
+    mangler = {}
+    for krav_id in KLYNGE8:
+        inv = set(KRAVGRENSER[krav_id]["invarianter"])
+        savnet = [d for d in KLYNGE8_DELTE if d not in inv]
+        if savnet:
+            mangler[krav_id] = savnet
+    assert mangler == {}, (
+        "klynge 8s delte dommer står i fundamentet, men ikke i"
+        f" grensen: {mangler}")
+
+
+def test_klynge8_star_i_ubygde_til_modulene_er_bygget():
+    """De tre er registrert FØR koden, og skal stå her til de landes."""
+    for krav_id in KLYNGE8:
+        assert krav_id in UBYGDE_GRENSER, (
+            f"{krav_id} er ute av UBYGDE_GRENSER — er modulen bygget,"
+            " skal den også ha en port som dekker grensen")

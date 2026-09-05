@@ -49,6 +49,7 @@ avhengigheter:
   - m02_revisjonslogg
   - m13_avstemming
   - m23_fordring
+  - m39_lonnsgrunnlag
   - m41_betaling
 kjerne: platform/modules/m15_likviditet
 i18n_prefiks: likviditet

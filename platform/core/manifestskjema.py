@@ -2048,6 +2048,21 @@ M36_INVARIANTER: tuple[str, ...] = (
     # PORTEFØLJESTOPP. Katalogens vaktsetning krever at den finnes, og
     # en stoppknapp som ikke virker er verre enn ingen.
     "portefoljestopp_uten_virkning",
+    # KLYNGENS TRE DELTE PROGNOSEKRAV GJELDER OGSÅ HER (CodeRabbit).
+    #
+    # Første utgave ga M-36 bare `prognose_uten_maaling`, som om
+    # modulen målte uten å prognostisere. Den gjør begge deler:
+    # katalogens output er «tiltakskø, SCENARIO, eksperiment, EFFEKT»,
+    # og et effektestimat er en prognose uansett hva den kalles.
+    #
+    # AT DEN ENE INVARIANTEN STO DER, VAR SELVE INNRØMMELSEN. En
+    # modul som må måle prognosene sine, lager prognoser — og da
+    # gjelder horisonten, modellsnapshotet og intervallet, ellers kan
+    # akseptporten bli grønn på en M-36 som bryter klyngens egen
+    # kontrakt.
+    "prognose_uten_horisont",
+    "prognose_uten_modellversjon",
+    "prognose_uten_intervall",
     "prognose_uten_maaling",
     "rangering_overskrevet",
     "tenantlekkasje_i_tiltaksregister",
