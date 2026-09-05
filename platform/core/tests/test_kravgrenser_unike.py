@@ -127,7 +127,7 @@ UBYGDE_GRENSER = frozenset({
     # bygge modulen, ikke et separat opprydningsarbeid.
     #
     # Se docs/KLYNGE9-FUNDAMENT.md.
-    "m7-v1",    # M-7 møteoperasjon, migrasjon 133
+    # `m7-v1` gikk ut 5/9, da 133 landet med sin dekningsport.
     "m20-v1",   # M-20 nettside og innhold, migrasjon 134
     "m43-v1",   # M-43 tale og telefoni, migrasjon 135
     "m45-v1",   # M-45 bærekraft og ESG, migrasjon 136

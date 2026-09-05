@@ -5,7 +5,7 @@
 # avvikles, avvikles på en DATO.
 #
 # KLOKKESLETTET ER 10:20, klynge 7s andre plass i stigen 10:05–11:05.
-# `disponit-sveipestatus.timer` (115) står bakerst på 12:20.
+# `disponit-sveipestatus.timer` (115) står bakerst på 13:35.
 #
 # `Persistent=true`: en vert som var nede da tidspunktet passerte skal
 # likevel oppdage at regelverket vi klassifiserer mot er avviklet.

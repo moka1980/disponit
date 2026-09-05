@@ -1719,3 +1719,61 @@ export const registrerEffekt = (rangeringId, kropp, idem) =>
 export const lukkOptimaliseringsfunn = (funnId, kropp, idem) =>
   _muter(`/v1/optimalisator/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-7 MØTEOPERASJONSAGENT (133).
+//
+// DET FINNES INGEN `fattBeslutning`. `registrerBeslutning` KREVER
+// `besluttet_av`: modulen skriver ned beslutningen menneskene tok, den
+// fatter den ikke.
+//
+// `startOpptak` ER DEN ENESTE HANDLINGEN I MODULEN SOM IKKE KAN GJØRES
+// UGJORT. Døra nekter på fire ting FØR raden finnes — manglende
+// hjemmel, utløpt hjemmel, ingen varslet, og varsling som kom etter at
+// opptaket startet. ET NEKT SOM KOMMER ETTER MIKROFONEN ER IKKE ET
+// NEKT.
+//
+// `registrerReferatpunkt` tar IKKE terskelen: døra leser den fra
+// tenantens krav. En kaller som fikk sette sin egen kunne satt den til
+// 1 og fått alt bekreftet.
+// ---------------------------------------------------------------------
+export const settMotekrav = (krav, idem) =>
+  _muter("/v1/mote/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerOpptakshjemmel = (hjemmel, idem) =>
+  _muter("/v1/mote/hjemmel", "POST", hjemmel,
+         idem || nyIdempotensnokkel());
+
+export const avsluttOpptakshjemmel = (hjemmelId, kropp, idem) =>
+  _muter(`/v1/mote/hjemmel/${encodeURIComponent(hjemmelId)}/avslutt`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerMote = (mote, idem) =>
+  _muter("/v1/mote/mote", "POST", mote,
+         idem || nyIdempotensnokkel());
+
+export const startOpptak = (moteId, kropp, idem) =>
+  _muter(`/v1/mote/${encodeURIComponent(moteId)}/opptak`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerReferatpunkt = (moteId, kropp, idem) =>
+  _muter(`/v1/mote/${encodeURIComponent(moteId)}/referatpunkt`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerBeslutning = (moteId, kropp, idem) =>
+  _muter(`/v1/mote/${encodeURIComponent(moteId)}/beslutning`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerMoteaksjon = (moteId, kropp, idem) =>
+  _muter(`/v1/mote/${encodeURIComponent(moteId)}/aksjon`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkMoteaksjon = (aksjonId, kropp, idem) =>
+  _muter(`/v1/mote/aksjon/${encodeURIComponent(aksjonId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkMotefunn = (funnId, kropp, idem) =>
+  _muter(`/v1/mote/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

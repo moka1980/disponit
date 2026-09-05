@@ -1,0 +1,73 @@
+# M-7 (133): møtesveipen. REFERATET ER PRODUKTET.
+#
+# SVEIPEN SKRIVER INGEN REFERATER OG LUKKER INGEN AKSJONER. Den sier
+# fra om at et møte er over uten at noen har skrevet noe, om at en
+# aksjon står over fristen, og om at et punkt maskinen var usikker på
+# verken er rettet eller bekreftet — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en ytring avgitt i husets navn kan ikke tas
+# tilbake, og den som leser den vet ikke at en maskin skrev den. En
+# sveip som skrev referatet selv ville gjort maskinens gjengivelse til
+# fasit uten at noen leste den.
+#
+# M-7s EGEN: MODULEN FATTER INGEN BESLUTNING.
+# `motebeslutning.besluttet_av` er NOT NULL fordi en beslutning uten et
+# navn bak er en beslutning modulen fattet.
+#
+# `opptak_uten_hjemmel` KAN ALDRI REISES HERFRA, og at den ikke kan er
+# beviset: `moteopptak.hjemmel_id` er NOT NULL med fremmednøkkel, og
+# døra nekter før raden finnes. ET NEKT SOM KOMMER ETTER MIKROFONEN ER
+# IKKE ET NEKT.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi et referat skal sendes noe sted.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille møtesveip er
+# et møte ingen skrev referat fra, og en aksjon ingen gjorde.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_motesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m7_sveip_moter`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit møtesveip (møter uten referat, aksjoner over frist, ubekreftede punkter)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_MOTESVEIP_URL:/etc/disponit/motesveip/DISPONIT_MOTESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_motesveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`mote_ferskeste`, `moteaksjon_apne`,
+# `referatpunkt_ubekreftede`, `motefunn_ett_apent`). Går dette over ti
+# minutter, henger noe — og da er avbrudd riktig svar: funnene er
+# idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

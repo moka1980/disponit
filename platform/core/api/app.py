@@ -1997,6 +1997,84 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import optimalisator as optimodul
         return optimodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-7 MØTEOPERASJONSAGENT (133). DET FINNES INGEN RUTE SOM FATTER
+    # EN BESLUTNING.
+    #
+    # `/beslutning` KREVER `besluttet_av`, og kolonnen er NOT NULL i
+    # basen: en beslutning uten et menneske bak er ikke en beslutning
+    # modulen skrev ned — det er en beslutning modulen FATTET.
+    #
+    # `/opptak` ER DEN ENESTE HANDLINGEN I MODULEN SOM IKKE KAN GJØRES
+    # UGJORT, og døra nekter på fire ting FØR raden finnes: manglende
+    # hjemmel, utløpt hjemmel, ingen varslet, og varsling som kom etter
+    # at opptaket startet. ET NEKT SOM KOMMER ETTER MIKROFONEN ER IKKE
+    # ET NEKT.
+    def mote_bilde(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.motebilde(tjeneste, request)
+
+    def mote_moter(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.moter_endepunkt(tjeneste, request)
+
+    def mote_hjemler(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.hjemler_endepunkt(tjeneste, request)
+
+    def mote_aksjoner(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.aksjoner_endepunkt(tjeneste, request)
+
+    def mote_funn(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.funn_endepunkt(tjeneste, request)
+
+    def mote_referat(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.referat_endepunkt(tjeneste, request)
+
+    def mote_krav(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.krav_endepunkt(tjeneste, request)
+
+    def mote_hjemmel_ny(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.registrer_hjemmel_endepunkt(tjeneste, request)
+
+    def mote_hjemmel_avslutt(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.avslutt_hjemmel_endepunkt(tjeneste, request)
+
+    def mote_mote_ny(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.registrer_mote_endepunkt(tjeneste, request)
+
+    def mote_opptak(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.start_opptak_endepunkt(tjeneste, request)
+
+    def mote_punkt(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.registrer_referatpunkt_endepunkt(
+            tjeneste, request)
+
+    def mote_beslutning(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.registrer_beslutning_endepunkt(
+            tjeneste, request)
+
+    def mote_aksjon_ny(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.registrer_aksjon_endepunkt(tjeneste, request)
+
+    def mote_aksjon_lukk(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.lukk_aksjon_endepunkt(tjeneste, request)
+
+    def mote_lukk_funn(request: Request) -> Response:
+        from . import moteoperasjon as motemodul
+        return motemodul.lukk_funn_endepunkt(tjeneste, request)
+
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
     # tiltak å vise til.
@@ -3308,6 +3386,31 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               opti_effekt, methods=["POST"]),
         Route("/v1/optimalisator/funn/{funn_id:uuid}/lukk",
               opti_lukk_funn, methods=["POST"]),
+        # M-7 (133). Faste stier FØR parametriserte.
+        Route("/v1/mote", mote_bilde, methods=["GET"]),
+        Route("/v1/mote/moter", mote_moter, methods=["GET"]),
+        Route("/v1/mote/hjemler", mote_hjemler, methods=["GET"]),
+        Route("/v1/mote/aksjoner", mote_aksjoner, methods=["GET"]),
+        Route("/v1/mote/funn", mote_funn, methods=["GET"]),
+        Route("/v1/mote/krav", mote_krav, methods=["POST"]),
+        Route("/v1/mote/hjemmel", mote_hjemmel_ny, methods=["POST"]),
+        Route("/v1/mote/mote", mote_mote_ny, methods=["POST"]),
+        Route("/v1/mote/hjemmel/{hjemmel_id:uuid}/avslutt",
+              mote_hjemmel_avslutt, methods=["POST"]),
+        Route("/v1/mote/aksjon/{aksjon_id:uuid}/lukk",
+              mote_aksjon_lukk, methods=["POST"]),
+        Route("/v1/mote/funn/{funn_id:uuid}/lukk",
+              mote_lukk_funn, methods=["POST"]),
+        Route("/v1/mote/{mote_id:uuid}/referat", mote_referat,
+              methods=["GET"]),
+        Route("/v1/mote/{mote_id:uuid}/opptak", mote_opptak,
+              methods=["POST"]),
+        Route("/v1/mote/{mote_id:uuid}/referatpunkt", mote_punkt,
+              methods=["POST"]),
+        Route("/v1/mote/{mote_id:uuid}/beslutning", mote_beslutning,
+              methods=["POST"]),
+        Route("/v1/mote/{mote_id:uuid}/aksjon", mote_aksjon_ny,
+              methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4583,6 +4686,37 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/optimalisator/rangering/{rangering_id:uuid}/effekt"):
         "bestilling:opprett",
     ("POST", "/v1/optimalisator/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-7 (133). INGEN RUTE FATTER EN BESLUTNING — `/beslutning`
+    # krever `besluttet_av`, og porten leser denne tabellen.
+    #
+    # LESESCOPET ER `security:read` OG IKKE `okonomi:read`: et referat
+    # er hva navngitte mennesker sa i et møte, og et opptak er en
+    # behandling av personopplysninger med hjemmel. Det er
+    # compliance-leserens bord — samme vurdering som M-53 gjorde for
+    # HMS-avvik.
+    ("GET",  "/v1/mote"):                        "security:read",
+    ("GET",  "/v1/mote/moter"):                  "security:read",
+    ("GET",  "/v1/mote/hjemler"):                "security:read",
+    ("GET",  "/v1/mote/aksjoner"):               "security:read",
+    ("GET",  "/v1/mote/funn"):                   "security:read",
+    ("GET",  "/v1/mote/{mote_id:uuid}/referat"): "security:read",
+    ("POST", "/v1/mote/krav"):                   "bestilling:opprett",
+    ("POST", "/v1/mote/hjemmel"):                "bestilling:opprett",
+    ("POST", "/v1/mote/mote"):                   "bestilling:opprett",
+    ("POST", "/v1/mote/hjemmel/{hjemmel_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/aksjon/{aksjon_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/{mote_id:uuid}/opptak"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/{mote_id:uuid}/referatpunkt"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/{mote_id:uuid}/beslutning"):
+        "bestilling:opprett",
+    ("POST", "/v1/mote/{mote_id:uuid}/aksjon"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

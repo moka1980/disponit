@@ -95,6 +95,7 @@ disponit-hmssveip.service disponit-hmssveip.timer
 disponit-likviditetssveip.service disponit-likviditetssveip.timer
 disponit-prognosesveip.service disponit-prognosesveip.timer
 disponit-optimalisatorsveip.service disponit-optimalisatorsveip.timer
+disponit-motesveip.service disponit-motesveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -478,6 +479,17 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_OPTIMALISATORSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_optimalisatorsveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 133 (M-7): møtesveipen har sin EGEN rolle med nøyaktig én EXECUTE. En
+# stille møtesveip er et møte ingen skrev referat fra, og en aksjon
+# ingen gjorde.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_MOTESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_MOTESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_motesveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1413,6 +1425,17 @@ fi
 skriv_cred optimalisatorsveip DISPONIT_OPTIMALISATORSVEIP_URL \
     "$DISPONIT_OPTIMALISATORSVEIP_URL"
 
+# 133 (M-7): møtesveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/motesveip
+if [ -z "${DISPONIT_MOTESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_MOTESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen motesveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred motesveip DISPONIT_MOTESVEIP_URL "$DISPONIT_MOTESVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1661,6 +1684,7 @@ disponit-hmssveip.timer
 disponit-likviditetssveip.timer
 disponit-prognosesveip.timer
 disponit-optimalisatorsveip.timer
+disponit-motesveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -2009,6 +2033,10 @@ systemctl stop disponit-prognosesveip.timer \
 # idempotente, og målefristen står i `optimaliseringskrav`.
 systemctl stop disponit-optimalisatorsveip.timer \
     disponit-optimalisatorsveip.service 2>/dev/null || true
+# 133 (M-7): møtesveipen stoppes i samme vindu. Funnene er idempotente,
+# og referatfristen står i `motekrav`, ikke i sveipen.
+systemctl stop disponit-motesveip.timer \
+    disponit-motesveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2235,7 +2263,10 @@ systemctl enable --now disponit-likviditetssveip.timer
 systemctl enable --now disponit-prognosesveip.timer
 # 132 (M-36): optimalisatorsveipen, 11:50 — SISTE trinn i stigen.
 systemctl enable --now disponit-optimalisatorsveip.timer
-# 115: sveipestatusen, ETTER hele stigen (11:50 fra og med 132).
+# 133 (M-7): møtesveipen, 12:35 — klynge 9s første trinn.
+systemctl enable --now disponit-motesveip.timer
+# 115: sveipestatusen, ETTER hele stigen (12:35 fra og med 133, og
+# flyttet helt til 13:35 fordi klynge 9s øvrige slot alt er tildelt).
 # Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
 # flåten har kjørt.
 systemctl enable --now disponit-sveipestatus.timer

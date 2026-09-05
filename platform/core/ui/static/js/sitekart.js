@@ -551,6 +551,14 @@ const BASISRUTER = [
   // HMS-funn, ikke hva de gjelder.
   // Modulen iverksetter ingenting og kan ikke utvide egen fullmakt.
   { nokkel: "optimalisator", scope: "okonomi:read", modulflate: 36 },
+  // M-7 (133): møteoperasjon. MODULFLATE bak `security:read` — et
+  // referat er hva navngitte mennesker sa i et møte, og et opptak er
+  // en behandling av personopplysninger med hjemmel. Det er
+  // compliance-leserens bord, ikke finansleserens, samme vurdering som
+  // M-53 gjorde for HMS-avvik.
+  // Modulen fatter ingen beslutning: den skriver ned den menneskene
+  // tok, med et navn på.
+  { nokkel: "mote", scope: "security:read", modulflate: 7 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
