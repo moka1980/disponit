@@ -1431,7 +1431,50 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm7_registrer_referatpunkt(text,uuid,uuid,integer,text,text,text,integer,uuid,text)',          'disponit_mote_eier'),
     ('FUNCTION', 'm7_sett_krav(text,integer,integer,integer,text,text)',                                        'disponit_mote_eier'),
     ('FUNCTION', 'm7_start_opptak(text,uuid,uuid,uuid,timestamp with time zone,text,text[],timestamp with time zone,text)', 'disponit_mote_eier'),
-    ('FUNCTION', 'm7_sveip_moter(integer)',                                                                     'disponit_mote_eier');
+    ('FUNCTION', 'm7_sveip_moter(integer)',                                                                     'disponit_mote_eier'),
+    -- 134 (M-20): innholdsregisterets doerer og sveipen.
+    --
+    -- UTKASTET, PAASTANDEN, VISNINGEN OG PUBLISERINGEN ER APPEND-ONLY.
+    -- Et utkast som kan skrives om kan ikke svare paa hva som sto i
+    -- det da mennesket sa ja, og det er hele spoersmaalet modulen
+    -- finnes for.
+    --
+    -- `m20_kildene`, `m20_utkastet` og `m20_bildet` STAAR HER selv om
+    -- de bare leser: de er SECURITY DEFINER og loper som modulrollen,
+    -- og det er nettopp den som har SELECT paa husets kilderegister
+    -- (`kildedokument`, 118). Eide migrator dem, ville de lest med
+    -- migrators rettigheter -- altsaa forbi radvakten.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN. Parseren stopper ved det
+    -- foerste setningsskillet.
+    --
+    -- SIGNATURENE ER TYPER, IKKE PARAMETERNAVN, og tidsstempeltypen
+    -- staar skrevet slik huset skriver den -- «timestamp with time
+    -- zone». Aliaset `timestamptz` ville matchet ingenting.
+    --
+    -- Radvaktene (`m20_utkastvakt()`, `m20_frossenvakt()`,
+    -- `m20_publiseringsvakt()`, `m20_funnvakt()`) staar IKKE her: de
+    -- eies av migrator, som eier tabellene triggerne henger paa.
+    ('FUNCTION', 'm20_bildet(text)',                                                                            'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_evidens(text,uuid,text,text,jsonb)',                                                      'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_funn_er_sveipens(text)',                                                                  'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_innholdsfunn(text,integer)',                                                              'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_kilde_gyldig(date,timestamp with time zone,integer,date)',                                'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_kildene(text)',                                                                           'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_lukk_funn(text,uuid,text,text)',                                                          'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_merk_klar(text,uuid,text)',                                                               'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_publiser(text,uuid,uuid,uuid,text,text)',                                                 'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_publiseringene(text,integer)',                                                            'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_registrer_kilde(text,uuid,text,text,date,text,text)',                                     'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_registrer_paastand(text,uuid,uuid,integer,text,uuid,text)',                               'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_registrer_utkast(text,uuid,text,jsonb,integer,integer,text)',                             'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_registrer_visning(text,uuid,uuid,text,text)',                                             'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_rull_tilbake(text,uuid,text,text)',                                                       'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_sett_krav(text,integer,integer,integer,text)',                                            'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_sideregister(text,integer)',                                                              'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_sveip_innhold(integer)',                                                                  'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_utkastet(text,uuid)',                                                                     'disponit_innhold_eier'),
+    ('FUNCTION', 'm20_visningene(text,uuid)',                                                            'disponit_innhold_eier');
 
 DO $$
 DECLARE

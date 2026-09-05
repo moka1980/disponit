@@ -1777,3 +1777,68 @@ export const lukkMoteaksjon = (aksjonId, kropp, idem) =>
 export const lukkMotefunn = (funnId, kropp, idem) =>
   _muter(`/v1/mote/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-20 NETTSIDE- OG INNHOLDSAGENT (134).
+//
+// DET FINNES INGEN `publiserAutomatisk`. `publiserUtkast` KREVER
+// `publisert_av`: modulen gjør et utkast klart, den publiserer det
+// ikke.
+//
+// `publiserUtkast` ER DEN ENESTE HANDLINGEN I MODULEN SOM NÅR ET
+// PUBLIKUM. Døra nekter på fem ting FØR raden finnes — utkastet er
+// ikke klart, forhåndsvisningen gjelder et annet utkast, summene
+// spriker, visningen er for gammel, og en påstand hviler på en utløpt
+// kilde. EN ROLLBACK FJERNER SIDEN, MEN IKKE AT NOEN LESTE DEN.
+//
+// `registrerUtkast` tar IKKE summen: døra regner den ut av innholdet.
+// En sum kalleren sendte ville vært en påstand om innholdet, ikke en
+// måling av det — og hele forhåndsvisningsvernet hviler på at den er
+// en måling.
+//
+// `registrerInnholdskilde` SKRIVER I HUSETS KILDEREGISTER (M-46/118),
+// ikke i et eget. To kilderegistre ville gitt to svar på «kan vi
+// belegge dette».
+// ---------------------------------------------------------------------
+export const settInnholdskrav = (krav, idem) =>
+  _muter("/v1/innhold/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerInnholdskilde = (kilde, idem) =>
+  _muter("/v1/innhold/kilde", "POST", kilde,
+         idem || nyIdempotensnokkel());
+
+export const registrerUtkast = (utkast, idem) =>
+  _muter("/v1/innhold/utkast", "POST", utkast,
+         idem || nyIdempotensnokkel());
+
+export const registrerPaastand = (utkastId, kropp, idem) =>
+  _muter(`/v1/innhold/utkast/${encodeURIComponent(utkastId)}/paastand`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerVisning = (utkastId, kropp, idem) =>
+  _muter(`/v1/innhold/utkast/${encodeURIComponent(utkastId)}/visning`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+// NAVNET BÆRER MODULEN, og det er ikke pynt: `merkUtkastKlart`
+// er ALLEREDE M-46s (118), for anbudsutkast. To eksporter med
+// samme navn er en `SyntaxError` ved import — men den farligere
+// varianten er den som IKKE kolliderer og bare gjør noe annet
+// enn kalleren tror.
+export const merkInnholdsutkastKlart = (utkastId, idem) =>
+  _muter(`/v1/innhold/utkast/${encodeURIComponent(utkastId)}/klar`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
+export const publiserUtkast = (utkastId, kropp, idem) =>
+  _muter(`/v1/innhold/utkast/${encodeURIComponent(utkastId)}/publiser`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const rullTilbakePublisering = (publiseringId, kropp, idem) =>
+  _muter(
+    `/v1/innhold/publisering/${encodeURIComponent(publiseringId)}/tilbake`,
+    "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkInnholdsfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/innhold/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());
