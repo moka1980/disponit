@@ -128,7 +128,7 @@ UBYGDE_GRENSER = frozenset({
     #
     # Se docs/KLYNGE9-FUNDAMENT.md.
     # `m7-v1` gikk ut 5/9, da 133 landet med sin dekningsport.
-    "m20-v1",   # M-20 nettside og innhold, migrasjon 134
+    # `m20-v1` gikk ut 5/9, da 134 landet med sin dekningsport.
     "m43-v1",   # M-43 tale og telefoni, migrasjon 135
     "m45-v1",   # M-45 bærekraft og ESG, migrasjon 136
 })

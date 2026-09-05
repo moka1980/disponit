@@ -1,0 +1,80 @@
+# M-20 (134): innholdssveipen. KILDEN ER PRODUKTET.
+#
+# SVEIPEN PUBLISERER INGENTING, RULLER INGENTING TILBAKE OG FORNYER
+# INGEN KILDE. Den sier fra om at en levende side hviler på et dokument
+# som har utløpt, om at et utkast er merket klart uten at noen har sett
+# det, og om at en kilde som bærer en levende påstand snart går ut — og
+# der stopper den.
+#
+# KLYNGENS DELTE DOM: en ytring avgitt i husets navn kan ikke tas
+# tilbake, og den som leser den vet ikke at en maskin skrev den. En
+# sveip som avpubliserte siden selv ville tatt en beslutning om hva
+# huset sier til verden, uten et navn på den.
+#
+# M-20s EGEN: MODULEN PUBLISERER INGENTING SELV.
+# `innholdspublisering.publisert_av` er NOT NULL fordi en publisering
+# uten et navn bak er en publisering modulen gjorde.
+#
+# TRE FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `paastand_uten_kilde`, `publisering_uten_forhaandsvisning` og
+# `publisering_uten_rollbackvei`. Alle tre er utelukket av
+# datamodellen, ikke oppdaget av en sveip. ET NEKT SOM KOMMER ETTER
+# PUBLISERINGEN ER IKKE ET NEKT.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet da påstanden ble
+# skrevet, ved `klar`, og ved publisering. Så gikk det måneder, og
+# databladet gikk ut mens siden sto ute. Ingen dør kunne fanget det,
+# fordi ingen kalte noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi en side skal publiseres noe sted.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille innholdssveip
+# er en udokumentert påstand som blir stående på forsiden.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_innholdssveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m20_sveip_innhold`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit innholdssveip (levende sider med utløpt kilde, klare utkast ingen har sett, kilder som snart går ut)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_INNHOLDSSVEIP_URL:/etc/disponit/innholdssveip/DISPONIT_INNHOLDSSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_innholdssveip
+# Sveipen er ETT funksjonskall som gjør tre setninger per tenant, alle
+# indeksdekket (`innholdspublisering_levende`, `innholdspaastand_kilde`,
+# `innholdsutkast_side`, `kildedokument_gyldige`, `innholdsfunn_apne`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

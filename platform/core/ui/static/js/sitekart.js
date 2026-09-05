@@ -559,6 +559,13 @@ const BASISRUTER = [
   // Modulen fatter ingen beslutning: den skriver ned den menneskene
   // tok, med et navn på.
   { nokkel: "mote", scope: "security:read", modulflate: 7 },
+  // M-20 (134): nettside og innhold. MODULFLATE bak
+  // `security:read` — en produktpåstand med sitt kildedokument
+  // er et etterprøvbarhetsspørsmål, ikke et finansielt. Samme
+  // vurdering som M-53 gjorde for HMS-avvik og M-7 for referater.
+  // Modulen publiserer ingenting selv: den gjør et utkast klart,
+  // og et menneske med et navn tar det ut i verden.
+  { nokkel: "innhold", scope: "security:read", modulflate: 20 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

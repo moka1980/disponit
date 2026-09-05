@@ -2075,6 +2075,81 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import moteoperasjon as motemodul
         return motemodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-20 INNHOLDSAGENT (134). DET FINNES INGEN RUTE SOM PUBLISERER
+    # PÅ EGEN HÅND.
+    #
+    # `/publiser` KREVER `publisert_av`, og kolonnen er NOT NULL i
+    # basen: en publisering uten et menneske bak er ikke en publisering
+    # modulen skrev ned — det er en publisering modulen GJORDE.
+    #
+    # DØRA NEKTER PÅ FEM TING FØR RADEN FINNES: utkastet er ikke klart,
+    # forhåndsvisningen gjelder et annet utkast, summene spriker,
+    # visningen er for gammel, eller en påstand hviler på en utløpt
+    # kilde. EN ROLLBACK FJERNER SIDEN — DEN FJERNER IKKE AT NOEN LESTE
+    # DEN, og derfor må veien tilbake finnes FØR veien fram tas.
+    #
+    # `/kilde` SKRIVER I HUSETS KILDEREGISTER (M-46/118), ikke i et
+    # eget: to kilderegistre ville gitt to svar på «kan vi belegge
+    # dette».
+    def innhold_bilde(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.innholdsbilde(tjeneste, request)
+
+    def innhold_sider(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.sider_endepunkt(tjeneste, request)
+
+    def innhold_kilder(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.kilder_endepunkt(tjeneste, request)
+
+    def innhold_funn(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.funn_endepunkt(tjeneste, request)
+
+    def innhold_utkastet(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.utkast_endepunkt(tjeneste, request)
+
+    def innhold_krav(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.krav_endepunkt(tjeneste, request)
+
+    def innhold_kilde_ny(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.registrer_kilde_endepunkt(tjeneste, request)
+
+    def innhold_utkast_ny(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.registrer_utkast_endepunkt(tjeneste, request)
+
+    def innhold_paastand(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.registrer_paastand_endepunkt(tjeneste,
+                                                          request)
+
+    def innhold_visning(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.registrer_visning_endepunkt(tjeneste,
+                                                         request)
+
+    def innhold_klar(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.merk_klar_endepunkt(tjeneste, request)
+
+    def innhold_publiser(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.publiser_endepunkt(tjeneste, request)
+
+    def innhold_tilbake(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.rull_tilbake_endepunkt(tjeneste, request)
+
+    def innhold_lukk_funn(request: Request) -> Response:
+        from . import innhold as innholdsmodul
+        return innholdsmodul.lukk_funn_endepunkt(tjeneste, request)
+
+
     # M-53 HMS- OG AVVIKSMOTTAK (127). DET FINNES INGEN RUTE SOM
     # VARSLER EN MYNDIGHET, og ingen som lukker et avvik uten et
     # tiltak å vise til.
@@ -3411,6 +3486,27 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/mote/{mote_id:uuid}/aksjon", mote_aksjon_ny,
               methods=["POST"]),
+        Route("/v1/innhold", innhold_bilde, methods=["GET"]),
+        Route("/v1/innhold/sider", innhold_sider, methods=["GET"]),
+        Route("/v1/innhold/kilder", innhold_kilder, methods=["GET"]),
+        Route("/v1/innhold/funn", innhold_funn, methods=["GET"]),
+        Route("/v1/innhold/krav", innhold_krav, methods=["POST"]),
+        Route("/v1/innhold/kilde", innhold_kilde_ny, methods=["POST"]),
+        Route("/v1/innhold/utkast", innhold_utkast_ny, methods=["POST"]),
+        Route("/v1/innhold/utkast/{utkast_id:uuid}", innhold_utkastet,
+              methods=["GET"]),
+        Route("/v1/innhold/utkast/{utkast_id:uuid}/paastand",
+              innhold_paastand, methods=["POST"]),
+        Route("/v1/innhold/utkast/{utkast_id:uuid}/visning",
+              innhold_visning, methods=["POST"]),
+        Route("/v1/innhold/utkast/{utkast_id:uuid}/klar",
+              innhold_klar, methods=["POST"]),
+        Route("/v1/innhold/utkast/{utkast_id:uuid}/publiser",
+              innhold_publiser, methods=["POST"]),
+        Route("/v1/innhold/publisering/{publisering_id:uuid}/tilbake",
+              innhold_tilbake, methods=["POST"]),
+        Route("/v1/innhold/funn/{funn_id:uuid}/lukk",
+              innhold_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -4717,6 +4813,26 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/mote/{mote_id:uuid}/beslutning"):
         "bestilling:opprett",
     ("POST", "/v1/mote/{mote_id:uuid}/aksjon"):
+        "bestilling:opprett",
+    ("GET",  "/v1/innhold"):                     "security:read",
+    ("GET",  "/v1/innhold/sider"):               "security:read",
+    ("GET",  "/v1/innhold/kilder"):              "security:read",
+    ("GET",  "/v1/innhold/funn"):                "security:read",
+    ("GET",  "/v1/innhold/utkast/{utkast_id:uuid}"): "security:read",
+    ("POST", "/v1/innhold/krav"):                "bestilling:opprett",
+    ("POST", "/v1/innhold/kilde"):               "bestilling:opprett",
+    ("POST", "/v1/innhold/utkast"):              "bestilling:opprett",
+    ("POST", "/v1/innhold/utkast/{utkast_id:uuid}/paastand"):
+        "bestilling:opprett",
+    ("POST", "/v1/innhold/utkast/{utkast_id:uuid}/visning"):
+        "bestilling:opprett",
+    ("POST", "/v1/innhold/utkast/{utkast_id:uuid}/klar"):
+        "bestilling:opprett",
+    ("POST", "/v1/innhold/utkast/{utkast_id:uuid}/publiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/innhold/publisering/{publisering_id:uuid}/tilbake"):
+        "bestilling:opprett",
+    ("POST", "/v1/innhold/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser
