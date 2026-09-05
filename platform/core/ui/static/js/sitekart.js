@@ -517,6 +517,12 @@ const BASISRUTER = [
   // en frist som går uten innsending er nettopp skaden. Flaten viser
   // derfor det som HAR gått galt først.
   { nokkel: "myndighet", scope: "okonomi:read", modulflate: 47 },
+  // M-50 (124): postjournal- og innsynsvakten. MODULFLATE bak
+  // `okonomi:read`. Modulen HENTER INGENTING — postjournaler er
+  // offentlige, men ti tusen oppslag sammenstilt i et register er en
+  // PROFIL, og profilen er vår. Flaten viser derfor hvem vi
+  // oppbevarer, og hvor lenge.
+  { nokkel: "journal", scope: "okonomi:read", modulflate: 50 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
