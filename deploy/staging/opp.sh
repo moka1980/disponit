@@ -99,6 +99,7 @@ disponit-motesveip.service disponit-motesveip.timer
 disponit-innholdssveip.service disponit-innholdssveip.timer
 disponit-telefonisveip.service disponit-telefonisveip.timer
 disponit-esgsveip.service disponit-esgsveip.timer
+disponit-hendelsessveip.service disponit-hendelsessveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -526,6 +527,21 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_ESGSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_esgsveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 137 (M-29): hendelsessveipen har sin EGEN rolle med nøyaktig én
+# EXECUTE — og den er flåtens farligste å gi for mye. Fullmaktsmålene
+# ligger allerede i basen (`api_tokener`, `modultoken`, `brukersesjon`,
+# `tenant_pseudonymnokkel`, `brukeridentitet`), og rollen har INGEN
+# rettighet på noen av dem. En stille hendelsessveip er et
+# deteksjonsapparat som ikke detekterer — og det ser nøyaktig ut som en
+# base uten hendelser.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_HENDELSESSVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_HENDELSESSVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_hendelsessveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1507,6 +1523,18 @@ if [ -z "${DISPONIT_ESGSVEIP_URL:-}" ]; then
 fi
 skriv_cred esgsveip DISPONIT_ESGSVEIP_URL "$DISPONIT_ESGSVEIP_URL"
 
+# 137 (M-29): hendelsessveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/hendelsessveip
+if [ -z "${DISPONIT_HENDELSESSVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_HENDELSESSVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen hendelsessveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred hendelsessveip DISPONIT_HENDELSESSVEIP_URL \
+    "$DISPONIT_HENDELSESSVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1759,6 +1787,7 @@ disponit-motesveip.timer
 disponit-innholdssveip.timer
 disponit-telefonisveip.timer
 disponit-esgsveip.timer
+disponit-hendelsessveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -2123,6 +2152,8 @@ systemctl stop disponit-telefonisveip.timer \
 # idempotente, og fristene står i `esgkrav`, ikke i sveipen.
 systemctl stop disponit-esgsveip.timer \
     disponit-esgsveip.service 2>/dev/null || true
+systemctl stop disponit-hendelsessveip.timer \
+    disponit-hendelsessveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2365,6 +2396,7 @@ systemctl enable --now disponit-motesveip.timer
 systemctl enable --now disponit-innholdssveip.timer
 systemctl enable --now disponit-telefonisveip.timer
 systemctl enable --now disponit-esgsveip.timer
+systemctl enable --now disponit-hendelsessveip.timer
 # 115: sveipestatusen, 07:30 — ETTER siste trinn pluss spredning og
 # timeout (06:50 + 4 + 10 = 07:04), og med plass til klynge 10s fire
 # trinn (07:24). Det er den ENESTE ekte ordningen i flåten:

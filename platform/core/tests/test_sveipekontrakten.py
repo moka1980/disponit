@@ -60,6 +60,8 @@ SVEIPENE = (
     ("innholdssveip", "m20_sveip_innhold"),
     ("telefonisveip", "m43_sveip_telefoni"),
     ("esgsveip", "m45_sveip_esg"),
+    # KLYNGE 10 — HANDLINGENE.
+    ("hendelsessveip", "m29_sveip_hendelse"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),

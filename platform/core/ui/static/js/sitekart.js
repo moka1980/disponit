@@ -580,6 +580,14 @@ const BASISRUTER = [
   // Modulen sender ingen rapport: den sammenstiller et
   // grunnlag, og innsendingen hører hjemme i M-47.
   { nokkel: "esg", scope: "security:read", modulflate: 45 },
+  // M-29 (137): sikkerhet og hendelser. MODULFLATE bak
+  // `security:read` — en sikkerhetshendelse navngir aktører og
+  // peker på rader i revisjonsloggen.
+  // Modulen gjør ingen inngrep: den korrelerer, scorer med
+  // forklarbare regler og foreslår en playbook et menneske har
+  // skrevet på forhånd. Isolering og rotasjon skjer der de skjer
+  // i dag.
+  { nokkel: "hendelse", scope: "security:read", modulflate: 29 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

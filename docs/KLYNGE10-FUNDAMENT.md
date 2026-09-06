@@ -120,7 +120,7 @@ fortsetter å skje nøyaktig der de skjer i dag — for øyeblikket ved at
 et menneske gjør det.
 
 Vaktsetningens «ingen fri kommandokjøring» er ikke en policy her. Den
-er en egenskap ved dørene: **ingen dør i 138 tar en kommandostreng.**
+er en egenskap ved dørene: **ingen dør i 137 tar en kommandostreng.**
 
 ### 3. M-32 HAR ÉN SKATTESATS, OG DEN ER TENANTENS EGEN
 

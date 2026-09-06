@@ -1973,3 +1973,60 @@ export const sammenstillEsgrapport = (periodeId, idem) =>
 export const lukkEsgfunn = (funnId, kropp, idem) =>
   _muter(`/v1/esg/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-29 SIKKERHETS- OG HENDELSESAGENT (137).
+//
+// DET FINNES INGEN `isolerKonto` OG INGEN `roterHemmelighet` HER, OG
+// DET KAN IKKE FINNES. Fullmaktsmålene ligger allerede i basen —
+// `api_tokener`, `modultoken`, `brukersesjon`,
+// `tenant_pseudonymnokkel`, `brukeridentitet` — og verken modulrollen
+// eller sveiperollen har så mye som SELECT på noen av dem. En
+// klientfunksjon her ville kalt en rute som ikke finnes, mot en dør
+// som ikke finnes, mot rader modulen ikke når.
+//
+// `registrerPlaybook` TAR EN LISTE MED NAVN, IKKE KOMMANDOER. Settet
+// er lukket i basen, i API-et og her, og det finnes ingen parameter
+// som følger med et navn: `isoler_konto` pluss en fri parameterstreng
+// ER en fri kommando med et pent navn.
+//
+// `korreler` TAR IKKE EN SCORE. Døra regner den av regelens poeng mot
+// dens egen terskel, og alvoret av scoren mot tenantens. En klient som
+// kunne oppgi et av tallene ville gjort «forklarbare regler» til pynt.
+//
+// `hentSignalkandidater` går mot `m29_signalkilden`, som utelater
+// modulens EGET spor i revisjonsloggen. Uten det ville hver evidensrad
+// blitt en ny kandidat, og hendelsen ville vokst av å bli sett på.
+// ---------------------------------------------------------------------
+export const settHendelseskrav = (krav, idem) =>
+  _muter("/v1/hendelse/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const registrerSikkerhetsregel = (regel, idem) =>
+  _muter("/v1/hendelse/regel", "POST", regel,
+         idem || nyIdempotensnokkel());
+
+export const avviklSikkerhetsregel = (regelId, kropp, idem) =>
+  _muter(`/v1/hendelse/regel/${encodeURIComponent(regelId)}/avvikle`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const registrerPlaybook = (playbook, idem) =>
+  _muter("/v1/hendelse/playbook", "POST", playbook,
+         idem || nyIdempotensnokkel());
+
+export const korrelerHendelse = (kropp, idem) =>
+  _muter("/v1/hendelse/korreler", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const foreslaaInngrep = (hendelseId, kropp, idem) =>
+  _muter(`/v1/hendelse/${encodeURIComponent(hendelseId)}/forslag`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkSikkerhetshendelse = (hendelseId, kropp, idem) =>
+  _muter(`/v1/hendelse/${encodeURIComponent(hendelseId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkHendelsesfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/hendelse/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());
