@@ -4634,3 +4634,178 @@ KRAVGRENSER["m45-v1"] = {
     "krav_ja": ("ddl_begge_kjoringer_gronne",),
     "punktbinding": {},
 }
+
+# ---------------------------------------------------------------------------
+# KLYNGE 10 — HANDLINGENE. Registrert 6/9, FØR koden (§0-regelen).
+#
+# DEN DELTE DOMMEN: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK.
+#
+# Klynge 9s ytring kunne ikke tas tilbake fordi noen hadde LEST den.
+# Denne klyngens feilform trenger ingen leser: pakken er hentet, kontoen
+# er stengt, skatten er innberettet, kontrakten er signert. Databasen
+# kan rulles tilbake til sekundet før — og bilen kjører fortsatt.
+#
+# ALLE FIRE VAKTSETNINGENE HOLDER TILBAKE NØYAKTIG DEN FULLMAKTEN
+# MODULEN SER UT TIL Å TRENGE. Det er ikke fire tilfeldig like
+# formuleringer; det er den samme setningen fire ganger.
+#
+# Se docs/KLYNGE10-FUNDAMENT.md.
+# ---------------------------------------------------------------------------
+
+M29_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen GJØR INGEN INNGREP. Den korrelerer, scorer med
+    # forklarbare regler, og stopper der. Isolering av konto, token
+    # eller workload og rotasjon av hemmeligheter fortsetter å skje
+    # nøyaktig der de skjer i dag.
+    #
+    # DETTE ER KLYNGENS FARLIGSTE TILBAKEHOLDELSE, og den er den eneste
+    # der fullmaktsMÅLENE alt ligger i basen: `api_tokener.secret_mac`,
+    # `modultoken`, `tenant_pseudonymnokkel`, `brukersesjon`. En modul
+    # med UPDATE på dem kunne stengt huset ute av seg selv, raskere enn
+    # noe menneske rakk å lese logglinjen.
+    "modulen_isolerte_konto",
+    "modulen_roterte_hemmelighet",
+    # VAKTSETNINGENS KJERNE, ORD FOR ORD: «kill-switch, tofaktor for
+    # utvidet inngrep og forhåndsdefinerte playbooks; INGEN FRI
+    # KOMMANDOKJØRING».
+    #
+    # De to under kan ALDRI reises, og det er beviset: v1 har ingen
+    # inngrepsvei, og ingen dør i 137 tar en kommandostreng.
+    "inngrep_uten_playbook",
+    "fri_kommando_kjort",
+    # En hendelse uten score er en hendelse ingen kan prioritere, og en
+    # score uten regel er en påstand. «Forklarbare regler» er
+    # vaktsetningens eget ord.
+    "hendelse_uten_score",
+    "score_uten_regel",
+    # M-2 er husets ENESTE applikasjonslogg, OG DEN ER M-29s VIKTIGSTE
+    # SIGNALKILDE. Det gjør modulen til den eneste i huset som leser
+    # noe den også skriver i.
+    #
+    # INVARIANTEN ER IKKE «SKRIV IKKE». Hver modul i huset skriver
+    # evidens til `revisjonslogg` — `m43_evidens` er formen — og en
+    # grense som forbød det ville forbudt husets eget spor.
+    #
+    # Faren er smalere og verre: at modulen leser SITT EGET spor som
+    # et signal, korrelerer på det, og scorer sin egen forrige
+    # handling. Da vokser hendelsen av å bli sett på.
+    "leste_sitt_eget_spor_som_signal",
+    "hendelse_overskrevet",
+    "tenantlekkasje_i_hendelsesregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m29-v1"] = {
+    "invarianter": M29_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M32_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen INNBERETTER INGENTING og stanser ingen
+    # transaksjon selv. Den svarer på «hvilken jurisdiksjon, hvilken
+    # sats, hvilken regelversjon» — og et ubesvart spørsmål er et FUNN.
+    "modulen_innberettet_skatt",
+    # VAKTSETNINGENS KJERNE: «landlansering er deaktivert uten komplett
+    # og testet landpakke; usikker jurisdiksjon stopper transaksjonen».
+    #
+    # DET ER IKKE EN SJEKK — DET ER EN TILSTAND I REGISTERET. Et land
+    # uten komplett pakke har ingen rad, og uten rad finnes ingen sats.
+    "sats_uten_komplett_landpakke",
+    "transaksjon_uten_jurisdiksjon",
+    # Akseptansekravet ord for ord: «regelversjon lagres per
+    # transaksjon». Klynge 7s dom («en foreldet regel ser nøyaktig ut
+    # som en riktig regel») anvendt på skatteregelen.
+    "sats_uten_regelversjon",
+    "regelversjon_endret_etter_bruk",
+    # `mvasats` (M-14, 106) er TENANTENS EGEN og røres ikke. Landpakken
+    # er global og tenantløs — M-31s plattformregisterform, som M-4s
+    # `retensjonslager`: dommene felles i git, ikke gjennom en dør.
+    "landpakke_endret_gjennom_dor",
+    "tenantlekkasje_i_skatteregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m32-v1"] = {
+    "invarianter": M32_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M28_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN: modulen BESTILLER INGEN TRANSPORT. Den planlegger mot
+    # registrerte kolli og validerte adresser, og `transportforslag` er
+    # et forslag med begrunnelse — ikke en booking.
+    "modulen_bestilte_transport",
+    "modulen_ombooket",
+    # AKSEPTANSEKRAVET ORD FOR ORD: «samme kolli bestilles aldri to
+    # ganger». Kan ALDRI reises i v1 — datamodellen gir én frigivelse
+    # per kolli, og funnet står i settet fordi det NAVNGIR skaden.
+    "kolli_bestilt_to_ganger",
+    # «Adresse og tjeneste valideres før booking.» Adressen finnes
+    # (M-19, `adressesubjekt`/`adresseversjon`); tjenesten gjør ikke.
+    "forslag_uten_validert_adresse",
+    # VAKTSETNINGENS KJERNE: «farlig gods, toll og persondata følger
+    # land- og transportørregler; ingen ulovlig ruteoptimalisering».
+    #
+    # FARECLASSEN OPPGIS AV ET MENNESKE. En modul som utledet den av en
+    # produktbeskrivelse ville PÅSTÅTT noe om farlig gods.
+    "fareklasse_utledet_av_maskin",
+    "farlig_gods_uten_landregel",
+    "forslag_overskrevet",
+    "tenantlekkasje_i_transportregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m28-v1"] = {
+    "invarianter": M28_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}
+
+M40_INVARIANTER: tuple[str, ...] = (
+    # V1-DOMMEN, OG DEN ER VAKTSETNINGENS EGEN: «ingen automatiske
+    # beslutninger med rettsvirkning for enkeltpersoner (ansettelse,
+    # oppsigelse, lønn); ingen individprofilering eller
+    # produktivitetsscore».
+    #
+    # De to under kan ALDRI reises: v1 har ingen beslutningsdør og
+    # ingen score per person.
+    "beslutning_med_rettsvirkning",
+    "individprofil_bygget",
+    # K-ANONYMITETEN ER EN INVARIANT I BASEN, IKKE EN SJEKK I EN DØR.
+    # Anonymitet er ikke en egenskap ved én rad, men ved SETTET: fire
+    # svar fra en gruppe på fire er anonyme hver for seg og fullt
+    # identifiserende til sammen.
+    #
+    # `puls_identifiserte_en_person` kan aldri reises fordi svaret ikke
+    # bærer `taker_id` i det hele tatt.
+    "puls_identifiserte_en_person",
+    "aggregat_under_minste_gruppe",
+    # Og terskelen lagres SAMMEN MED målingen, ikke leses fra en
+    # konstant ved lesetidspunktet. En terskel som kan endres i
+    # ettertid er ingen terskel.
+    "gruppeterskel_endret_etter_maaling",
+    # Akseptansekravet ord for ord: «kontrakter kan alltid spores til
+    # malversjon og kildefelt». M-5s `malversjon`/`malfelt` finnes, og
+    # M-40 arver dem framfor å finne opp en femte utkastform.
+    "kontrakt_uten_malversjon",
+    "juridisk_klausul_endret",
+    # `lonnstaker` (M-39) er husets ENESTE ansattregister. M-40 arver
+    # det; to registre over de samme menneskene gir to svar på «jobber
+    # hun her», og det er ett for mange.
+    "modulen_bygget_eget_ansattregister",
+    "tenantlekkasje_i_medarbeiderregister",
+    "ui_axe_alvorlige_brudd",
+)
+KRAVGRENSER["m40-v1"] = {
+    "invarianter": M40_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("ddl_begge_kjoringer_gronne",),
+    "punktbinding": {},
+}

@@ -1,0 +1,79 @@
+# M-29 SIKKERHETS- OG HENDELSESAGENT — KLYNGE 10s FØRSTE.
+#
+# `m29-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 137
+# tildelt i docs/KLYNGE10-FUNDAMENT.md. BYGGES FØRST i klyngen.
+#
+# KLYNGENS DELTE DOM: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK.
+#
+# M-29 BYGGES FØRST FORDI DEN ER DEN ENESTE DER FULLMAKTSMÅLENE
+# ALLEREDE LIGGER I BASEN. De tre andre må vente på data som ikke
+# finnes; M-29 kunne skrevet i `api_tokener` i morgen. Verifisert mot
+# basen (332 tabeller, migrert til 136): `api_tokener.secret_mac`,
+# `modultoken`, `tenant_pseudonymnokkel`, `brukersesjon` og
+# `brukeridentitet` er nøyaktig de radene en «roter secrets og isoler
+# konto, token eller workload»-modul ville skrevet i.
+#
+# INNGANGSDATAENE FINNES IKKE. Ingen SIEM, ingen IdP-kobling, ingen
+# EDR, ingen sårbarhetsskanner, intet aktivaregister — og ingen av dem
+# kan finnes uten en utgående integrasjon huset ikke har.
+# `revisjonshendelse` (M-2) er den ENESTE applikasjonsloggen som
+# finnes.
+#
+# V1-DOMMEN: MODULEN GJØR INGEN INNGREP. Den korrelerer, scorer med
+# forklarbare regler, og gjør et inngrep uten playbook til et FUNN.
+# Isolering og rotasjon fortsetter å skje nøyaktig der de skjer i dag.
+#
+# OG «INGEN FRI KOMMANDOKJØRING» ER IKKE EN POLICY HER — DET ER EN
+# EGENSKAP VED DØRENE: ingen dør i 137 tar en kommandostreng.
+#
+# EN MODUL SOM BÅDE LESER REVISJONSLOGGEN OG KAN HANDLE PÅ DEN, er en
+# modul som kan handle på sin egen forrige handling. Derfor er
+# `modulen_skrev_i_revisjonsloggen` en invariant og ikke en huskeregel.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m29_hendelse
+navn: Sikkerhets- og hendelsesagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. IKKE «SIEM, EDR, IdP og aktivaregister»
+# — de finnes ikke, og en avhengighet til noe som ikke finnes er en
+# løgn manifestet ikke skal bære.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m29_hendelse
+i18n_prefiks: hendelse
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en hendelse som KORRELERER over to kilder, slik at
+      porten kan måle at scoren følger regelen og ikke rekkefølgen
+      hendelsene kom i.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at modulen kan LESE revisjonsloggen og bevislig ikke
+      skrive i den. Kravet er snudd her, og det er meningen.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et forsøk på å isolere en konto gir et funn og ikke
+      en isolering. Rekkefølgen er hele poenget.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

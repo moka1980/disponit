@@ -167,6 +167,21 @@ export const MODULSTATUS = {
   20: "bygges",     // m20_innhold: under_utvikling, ikke_i_drift
   43: "bygges",     // m43_telefoni: under_utvikling, ikke_i_drift
   45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
+  // KLYNGE 10 — HANDLINGENE. Registrert med grensene, før koden.
+  //
+  // EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN ANGRES IKKE AV EN
+  // ROLLBACK. Klynge 9s ytring kunne ikke tas tilbake fordi noen hadde
+  // LEST den; denne klyngens feilform trenger ingen leser. Pakken er
+  // hentet, kontoen er stengt, skatten er innberettet, kontrakten er
+  // signert — og databasen kan rulles tilbake til sekundet før.
+  //
+  // Alle fire vaktsetningene holder tilbake nøyaktig den fullmakten
+  // modulen ser ut til å trenge. Ordet er `bygges` fordi manifestet
+  // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
+  29: "bygges",     // m29_hendelse: under_utvikling, ikke_i_drift
+  32: "bygges",     // m32_skatt: under_utvikling, ikke_i_drift
+  28: "bygges",     // m28_transport: under_utvikling, ikke_i_drift
+  40: "bygges",     // m40_medarbeider: under_utvikling, ikke_i_drift
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
@@ -550,6 +565,37 @@ const MODULER = [
     navn_nokkel: "site.modul.m45.navn",
     fase_nokkel: "site.fase.global",
     tekst_nokkel: "site.modul.m45.tekst",
+  },
+  {
+    // M-29 står i «Plattform og sikkerhet», fase 3 — samme fase som
+    // M-31, som er nabomodulen i det området.
+    id: 29,
+    navn_nokkel: "site.modul.m29.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m29.tekst",
+  },
+  {
+    // M-32 er «Juridisk og compliance», fase 4 — katalogens egen
+    // «Global skala», og navnet på modulen sier det selv.
+    id: 32,
+    navn_nokkel: "site.modul.m32.navn",
+    fase_nokkel: "site.fase.global",
+    tekst_nokkel: "site.modul.m32.tekst",
+  },
+  {
+    // M-28 er «Innkjøp og logistikk», fase 3 — samme som M-52
+    // (tollkode), som er nabomodulen der.
+    id: 28,
+    navn_nokkel: "site.modul.m28.navn",
+    fase_nokkel: "site.fase.autopiloter",
+    tekst_nokkel: "site.modul.m28.tekst",
+  },
+  {
+    // M-40 er «Samarbeid og HR», fase 2 — samme som M-53 (HMS).
+    id: 40,
+    navn_nokkel: "site.modul.m40.navn",
+    fase_nokkel: "site.fase.operasjoner",
+    tekst_nokkel: "site.modul.m40.tekst",
   },
   {
     // M-31 hører til fase 3 i katalogen (plattform_og_sikkerhet,

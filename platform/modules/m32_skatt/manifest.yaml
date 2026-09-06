@@ -1,0 +1,78 @@
+# M-32 GLOBAL LOKALISERINGS- OG SKATTEAGENT — KLYNGE 10s ANDRE.
+#
+# `m32-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 138
+# tildelt i docs/KLYNGE10-FUNDAMENT.md.
+#
+# KLYNGENS DELTE DOM: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK.
+#
+# SKATTESATSEN FINNES — MEN DEN ER TENANTENS EGEN. `mvasats` (M-14,
+# 106) har kolonnene `tenant, sats_kode, promille, gyldig_fra,
+# gyldig_til`. Et fundament som stoppet ved navnet ville tildelt den
+# til M-32 og kalt landpakken bygget. `tenant`-kolonnen sier noe
+# annet: dette er satsen KUNDEN har registrert for seg selv, i sitt
+# eget land — ikke en landpakke, men én bedrifts oppfatning av sin
+# egen mva. Tredje gang samme felle i to klynger: riktig navn, feil
+# spørsmål.
+#
+# LANDREGISTERET ER GLOBALT OG TENANTLØST — M-31s
+# plattformregisterform, som M-4s `retensjonslager`: dommene felles i
+# git, ikke gjennom en dør. `mvasats` blir stående og røres ikke.
+#
+# V1-DOMMEN: MODULEN INNBERETTER INGENTING. Den svarer på «hvilken
+# jurisdiksjon, hvilken sats, hvilken regelversjon» — og et ubesvart
+# spørsmål er et FUNN.
+#
+# «LANDLANSERING ER DEAKTIVERT UTEN KOMPLETT LANDPAKKE» ER IKKE EN
+# SJEKK — DET ER EN TILSTAND I REGISTERET. Et land uten komplett pakke
+# har ingen rad, og en transaksjon mot et land uten rad får ingen
+# sats. Den stopper, som vaktsetningen sier den skal.
+#
+# OG REGELVERSJONEN ER IKKE PYNT. Akseptansekravet sier «regelversjon
+# lagres per transaksjon». Det er klynge 7s dom — en foreldet regel
+# ser nøyaktig ut som en riktig regel — anvendt på skatteregelen selv.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m32_skatt
+navn: Global lokaliserings- og skatteagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. IKKE «skatteregelmotor og godkjent
+# leverandør» — de finnes ikke.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m37_unntak
+kjerne: platform/modules/m32_skatt
+i18n_prefiks: skatt
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: to landpakker der den ene er KOMPLETT og den andre ikke,
+      slik at porten kan måle at den ufullstendige ikke gir en sats.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver beregning kan spores til regelversjonen som
+      gjaldt da den ble gjort — ikke til den nyeste.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at en transaksjon med usikker jurisdiksjon gir et funn
+      og ingen sats.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.
