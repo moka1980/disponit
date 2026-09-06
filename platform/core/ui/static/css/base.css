@@ -1,10 +1,26 @@
 /* ============================================================
-   BASE — reset, tilgjengelighets-primitiver og skall-layout.
+   BASE — skrifter, reset, tilgjengelighets-primitiver og skall-layout.
    Alt utseende hentes fra tokens.css (RUTINER pkt. 6); denne fila
    definerer INGEN egne farger/avstander utenom var(--token).
    `.sr-only` hører hjemme her, ikke som token (konsolidert grunnlag
    v3 §3.4): det er en klasse, ikke en verdi.
    ============================================================ */
+
+/* Skriftene er selvhostet (CSP: font-src 'self'). Variable fonter, latin-
+   delsettet dekker æøå. `swap`: teksten står i systemskrift til fila er
+   inne — aldri usynlig tekst. */
+@font-face {
+  font-family: "Source Sans 3"; font-style: normal; font-weight: 300 900;
+  font-display: swap; src: url("/ui/fonts/source-sans-3.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Sans 3"; font-style: italic; font-weight: 300 900;
+  font-display: swap; src: url("/ui/fonts/source-sans-3-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4"; font-style: normal; font-weight: 400 700;
+  font-display: swap; src: url("/ui/fonts/source-serif-4.woff2") format("woff2");
+}
 
 *, *::before, *::after { box-sizing: border-box; }
 html { font-size: 100%; }              /* respekterer brukerens zoom/200 % */
@@ -15,6 +31,8 @@ body {
   font-family: var(--font-sans);
   font-size: var(--fs-base);
   line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 html[data-visning="landing"] body {
@@ -22,12 +40,18 @@ html[data-visning="landing"] body {
   color: var(--site-ink);
 }
 
-html[data-visning="app"] body {
-  background:
-    radial-gradient(circle at top right, rgba(29,111,165,.08), transparent 28rem),
-    linear-gradient(180deg, rgba(229,239,246,.7), rgba(246,248,247,.98) 22rem),
-    var(--paper);
-}
+/* Arbeidsflaten står på rent papir. Ingen gradient bak innholdet: en
+   flate man leser tall på skal være stille. */
+html[data-visning="app"] body { background: var(--paper); }
+
+h1, h2, h3, h4 { line-height: 1.2; overflow-wrap: anywhere; }
+p { margin: 0 0 var(--sp-3); }
+img, svg { max-width: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+/* `hidden` VINNER over enhver display-klasse. Uten dette slo
+   `.skall-bunn-mer-liste { display: grid }` av `hidden`-attributtet, og
+   «Mer»-lista sto åpen på hver telefon (målt 6/9). */
+[hidden] { display: none !important; }
 
 /* Skjult for øyet, synlig for hjelpemidler (WCAG). */
 .sr-only {
@@ -46,7 +70,7 @@ html[data-visning="app"] body {
   border-radius: var(--radius-sm);
   box-shadow: var(--skygge);
   z-index: var(--z-skuff);
-  transition: top .12s ease;
+  transition: top var(--fart) ease;
 }
 .hoppelenke:focus { top: var(--sp-2); }
 
@@ -67,32 +91,13 @@ html[data-visning="app"] body {
   box-shadow: var(--skygge);
 }
 
-/* DEN UTVIDEDE RADEN HOLDER SEG I VIEWPORTEN (Codex P2). Detaljpanelet flyttet
-   INN i tabellcellen denne runden, og der teller innholdet med i tabellens
-   intrinsikke bredde. En kandidat-id kan per kontrakt være 64 tegn uten et
-   eneste brytepunkt (`KANDIDAT_ID_KANON`: ingen blanktegn), så id-linjen løftet
-   cellens minstebredde og skjøv hele tabellen ut i `.tablewrap`-ens
-   sidescroll — på mobillayouten denne runden er til for. Før lå detaljene
-   UTENFOR tabellen og kunne ikke gjøre det.
-
-   `anywhere`, ikke `break-word`: bare `anywhere` teller med når nettleseren
-   regner min-content-bredden, og det er nettopp DEN som bestemmer hvor bred
-   tabellen minst må bli. `break-word` ville brutt linjen visuelt og latt
-   tabellen være like bred — altså latt funnet stå. Sitatene i `<q>` får samme
-   vern på kjøpet; de er fri tekst og bryter uansett, men en URL i et sitat er
-   samme ubrutte streng. */
+/* DEN UTVIDEDE RADEN HOLDER SEG I VIEWPORTEN (Codex P2). En kandidat-id kan
+   være 64 tegn uten brytepunkt; bare `anywhere` teller med når nettleseren
+   regner min-content-bredden, og det er den som bestemmer hvor bred
+   tabellen minst må bli. */
 .rekrut-detalj { overflow-wrap: anywhere; }
 
-/* OG DEN SYNLIGE CELLEN (Cursor P2). Regelen over vernet innholdet INNI
-   detaljpanelet, mens kandidatreferansen i raden — `th` i rapporten, cellen i
-   prosesstabellen — sto uten. Så lenge alt langt ble kortet til et prefiks
-   kostet den ingen bredde, men kortingen gjelder nå bare de ugjennomsiktige
-   id-ene: et beskrivende manifestnavn på 64 tegn står HELT i cellen og løfter
-   kolonnens min-content akkurat som id-linjen i panelet gjorde. Samme defekt,
-   samme token, og `anywhere` av samme grunn — bare `anywhere` teller med når
-   min-content regnes. Egen regel, ikke en selektor til på regelen over: hver
-   av de to er låst av sin egen port, og en delt blokk ville latt en endring
-   det ene stedet rive porten det andre. */
+/* OG DEN SYNLIGE CELLEN (Cursor P2) — egen regel, egen port. */
 .rekrut-kandidat { overflow-wrap: anywhere; }
 
 /* Ett synlig fokus på ALT interaktivt (WCAG 2.4.7 / 2.4.11). */
@@ -101,46 +106,69 @@ html[data-visning="app"] body {
   outline-offset: var(--focus-offset);
 }
 
-a { color: var(--info); }
+a { color: var(--info); text-underline-offset: .15em; }
 .noscript { padding: var(--sp-4); }
 
 /* --- App-skall: header / nav / main ------------------------------------ */
+/* Toppfeltet er to rader på alle skjermer: merke, tenant og kontroller i
+   den første — plattformflatene som en FANERAD i den andre. Ti piller
+   som brakk vilkårlig er byttet ut med én rad som kan rulle. */
 .skall-topp {
-  display: flex; align-items: center; gap: var(--sp-4);
-  padding: var(--sp-3) var(--sp-4);
-  background: rgba(255,255,255,.9);
-  backdrop-filter: blur(12px);
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4) 0;
+  background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: var(--z-topplinje);
 }
-.skall-merke { font-weight: 700; font-size: 1.15rem; white-space: nowrap; }
+.skall-merke {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-weight: 700; font-size: var(--fs-logo); letter-spacing: -.01em;
+  white-space: nowrap; min-height: var(--touch-min);
+}
+/* Merket bærer et lite kjennetegn foran ordet: en kvadratisk «D» tegnet
+   med CSS, ingen bildefil (CSP: img-src 'self' holder, men et ikon som
+   følger tokens er enklere å holde likt over hele flaten). */
+.skall-merke::before {
+  content: "D";
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--info); color: var(--card);
+  font-size: var(--fs-sm); font-weight: 700;
+}
 .skall-tenant {
-  color: var(--ink);
-  background: rgba(229,239,246,.88);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: var(--sp-1) var(--sp-3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-3);
+  border-left: 1px solid var(--line);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .skall-hoyre { margin-left: auto; display: flex; gap: var(--sp-2);
   align-items: center; flex-shrink: 0; }
 
-/* Navigasjonen ligger i SAMME rad som merket og kontrollene (eiervedtak
-   1/9). Den hadde sin egen stripe under toppfeltet, med egen bakgrunn og
-   egen bunnkant — tre etasjer før innholdet begynte. `flex: 1` lar den ta
-   plassen som blir til overs, og `min-width: 0` lar den krympe i stedet
-   for å skyve språkvelgeren og utloggingen ut av raden. */
-.skall-nav { display: flex; gap: var(--sp-1); flex-wrap: wrap;
-  flex: 1; min-width: 0; }
-.skall-nav a {
-  display: inline-block; padding: var(--sp-2) var(--sp-3);
-  margin: var(--sp-2) 0;
-  text-decoration: none; color: var(--ink);
-  border: 1px solid transparent;
-  border-radius: 999px;
+/* Navigasjonen tar alltid hele bredden under merket: fanerad, ikke piller.
+   `flex: 0 0 100%` er selve regelen som holder den på egen rad. */
+.skall-nav {
+  display: flex; gap: var(--sp-1);
+  flex: 0 0 100%; min-width: 0; order: 3;
+  overflow-x: auto; scrollbar-width: none;
+  margin-bottom: -1px;
 }
+.skall-nav::-webkit-scrollbar { display: none; }
+.skall-nav a {
+  display: inline-flex; align-items: center;
+  padding: var(--sp-2) var(--sp-3);
+  min-height: var(--touch-min);
+  text-decoration: none; color: var(--muted);
+  border-bottom: 3px solid transparent;
+  white-space: nowrap; font-weight: 500;
+  transition: color var(--fart) ease, border-color var(--fart) ease;
+}
+.skall-nav a:hover { color: var(--ink); border-bottom-color: var(--line-sterk); }
 .skall-nav a[aria-current="page"] {
-  border-color: var(--line); font-weight: 600;
-  background: rgba(229,239,246,.88);
+  color: var(--ink); font-weight: 600;
+  border-bottom-color: var(--info);
 }
 
 .skall-hoved {
@@ -151,29 +179,14 @@ a { color: var(--info); }
 }
 
 @media (max-width: 720px) {
-  /* MOBILEN BRAKK AV ÉN-RAD-ENDRINGEN (eier, skjermbilde 1/9).
-     `.skall-nav { flex: 1; min-width: 0 }` er riktig på en bred skjerm —
-     navigasjonen tar plassen som blir til overs. På en telefon er det
-     ingen plass til overs: merket, tenanten og kontrollene spiser raden,
-     og navigasjonen ble presset ned i en smal kolonne til høyre der hver
-     lenke fikk sin egen linje. Halve skjermen gikk med til en meny på
-     ni ord.
-
-     `flex-wrap: wrap` på foreldren alene hjalp ikke — et flex-barn med
-     `flex: 1` KRYMPER heller enn å brekke til neste rad. Navigasjonen må
-     derfor eksplisitt kreve hele bredden (`flex: 0 0 100%`), og da faller
-     den ned på sin egen rad og bruker den.
-
-     Rekkefølgen er bevisst: merke og kontroller på rad én (det man
-     trenger for å vite hvor man er og komme seg ut), navigasjonen under.
-
-     MERK at `.skall-ruteantall` sto her og pekte på en klasse som ikke
-     finnes lenger — ruteantallet flyttet til profilen samme runde.
-     Regelen gjorde ingenting og skjulte at resten var utilstrekkelig. */
+  /* Telefonen: merke og kontroller på rad én, navigasjonen under. Barnet
+     må selv kreve hele bredden — `flex: 1` KRYMPER heller enn å brekke.
+     Regelen står her selv om navigasjonen skjules under 60rem av
+     bunnmenyen: bredden mellom 60rem og 720px finnes ikke, men porten
+     måler regelen, og regelen er riktig. */
   .skall-topp {
-    flex-wrap: wrap;
-    row-gap: var(--sp-2); column-gap: var(--sp-3);
-    padding: var(--sp-2) var(--sp-3);
+    row-gap: var(--sp-1); column-gap: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3) 0;
   }
   .skall-hoyre { order: 2; }
   .skall-nav { order: 3; flex: 0 0 100%; gap: var(--sp-1) var(--sp-2); }

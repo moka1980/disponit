@@ -7,6 +7,7 @@ import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.
 import { AppShell, sikreLiveRegion, lokaliserSkiplenke } from "./komponenter.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
+import { seksjonsfaner } from "./seksjonsfaner.js";
 import { visInnlogging } from "./innlogging.js";
 import { visOversikt } from "./flater/oversikt.js";
 import { visPolicy } from "./flater/policy.js";
@@ -222,11 +223,18 @@ let varseltallNr = 0;
 // skall — nøyaktig den bindingen `riveNedRuter` finnes for.
 let varseltallStopp = null;
 
+// Seksjonsfanene lytter på skallets `hoved` (seksjonsfaner.js) og rives
+// ned sammen med ruteren, av samme grunn: en lytter som overlever skallet
+// sitt jobber for et tre ingen ser.
+let seksjonsStopp = null;
+
 function riveNedRuter() {
   if (aktivRuter) aktivRuter.stopp();
   aktivRuter = null;
   if (varseltallStopp) varseltallStopp();
   varseltallStopp = null;
+  if (seksjonsStopp) seksjonsStopp();
+  seksjonsStopp = null;
 }
 
 // Alle veier tilbake til innlogging går herfra, så ruteren aldri blir stående
@@ -293,6 +301,9 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "app");
   sikreLiveRegion();
+  // En lang flate blir faner — for alle flatene, uten at noen av dem vet
+  // om det (seksjonsfaner.js).
+  seksjonsStopp = seksjonsfaner(skall.hoved);
 
   // VARSELTELLEREN I SKALLET (Codex P2). Skallet har alltid hatt plassen, men
   // ingen fylte den: `visApp` sendte aldri `varsler`, så statusfeltet sa «ikke

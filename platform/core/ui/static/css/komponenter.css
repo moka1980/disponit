@@ -1,75 +1,137 @@
 /* ============================================================
    KOMPONENTER — det varige, token-drevne settet (v1 §3 + v2 §7).
-   Vokser gjennom PR-011s sjekkpunkter. Ingen farge/avstand utenom
-   var(--token).
+   Omlagt 6/9 (ny design/layout, mobil først). Ingen farge/avstand
+   utenom var(--token). Klassevokabularet er UENDRET: 68 flater deler
+   denne fila, og en klasse som forsvinner her rendres umerket der.
+
+   Innhold, i rekkefølge:
+     1  Knapper, kort, tilstander
+     2  Merker, tagger, bannere
+     3  Tabeller
+     4  Skjema
+     5  Dialog og overlegg
+     6  Dashbord, lister, filter
+     7  Policyadministrasjon og editor
+     8  Faner
+     9  Nøkkeltall (M-16), trafikklys og rekruttering (M-57)
+    10  Arbeidsflatens skall: topp · verktøy · venstre · hoved · høyre · bunn
+    11  Seksjonsfaner (en lang flate blir faner)
+    12  Bunnmeny (mobil), kontekstpanel, andre runde, telefonens kanter
+    13  Offentlig flate
+    14  Oppstartsvakten
    ============================================================ */
 
-/* Knapper */
+/* ---------------------------------------------------------------------
+   1  Knapper, kort, tilstander
+   --------------------------------------------------------------------- */
 .knapp {
-  font: inherit; cursor: pointer;
+  font: inherit; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--touch-min);
   padding: var(--sp-2) var(--sp-4);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  border: 1px solid var(--line-sterk); border-radius: var(--radius-sm);
   background: var(--card); color: var(--ink);
+  text-decoration: none; line-height: 1.2;
+  transition: background var(--fart) ease, border-color var(--fart) ease,
+    color var(--fart) ease;
 }
+.knapp:hover { background: var(--flate); border-color: var(--muted); }
 .knapp.primar { background: var(--info); color: var(--card);
   border-color: var(--info); }
-.knapp.fare { background: var(--danger); color: var(--card);
+.knapp.primar:hover { background: var(--info-hover); border-color: var(--info-hover); }
+.knapp.fare { background: var(--card); color: var(--danger);
   border-color: var(--danger); }
+.knapp.fare:hover { background: var(--danger-bg); }
 .knapp:disabled { opacity: .55; cursor: not-allowed; }
+.knapp:disabled:hover { background: var(--card); border-color: var(--line-sterk); }
+.knapp.primar:disabled:hover { background: var(--info); border-color: var(--info); }
+/* Små knapper står i rader og tabeller; de er fortsatt 44 px høye på
+   berøring, men tar mindre plass i bredden. */
+.knapp.liten { padding: var(--sp-1) var(--sp-3); font-size: var(--fs-sm);
+  min-height: 2.25rem; }
+@media (pointer: coarse) { .knapp.liten { min-height: var(--touch-min); } }
+.lenkeknapp {
+  background: none; border: 0; color: var(--info); cursor: pointer;
+  font: inherit; font-weight: 600; padding: 0; text-decoration: underline;
+  text-underline-offset: .15em; min-height: var(--touch-min);
+  display: inline-flex; align-items: center;
+}
+.sort-knapp {
+  font: inherit; font-weight: 600; color: var(--muted);
+  background: none; border: 0; cursor: pointer; padding: 0;
+}
+.knapperad { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 
-/* Kort / seksjoner */
+/* Kort / seksjoner: hvit flate på papiret, tynn kant, ingen tung skygge. */
 .kort {
   background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--sp-4);
-  box-shadow: var(--skygge);
+  border-radius: var(--radius); padding: var(--sp-5);
 }
+.kort > h2:first-child, .kort > h3:first-child { margin-top: 0; }
 
 /* Skjermtilstander (SideStatus): laster / tom / feil / uautorisert */
 .tilstand {
   padding: var(--sp-8) var(--sp-4); text-align: center; color: var(--muted);
+  background: var(--card); border: 1px dashed var(--line-sterk);
+  border-radius: var(--radius);
 }
-.tilstand.feil { color: var(--danger); }
-.tilstand h2 { color: var(--ink); margin: 0 0 var(--sp-2); }
+.tilstand.feil { color: var(--danger); border-color: var(--danger); border-style: solid; }
+.tilstand h2 { color: var(--ink); margin: 0 0 var(--sp-2); font-size: var(--fs-h2); }
+.tilstand p { max-width: 40rem; margin: 0 auto var(--sp-3); }
+.tilstand .knapp { margin-top: var(--sp-2); }
 
 /* Lasteskjelett — respekterer reduced-motion via tokens.css */
+.laster { display: grid; gap: var(--sp-3); padding: var(--sp-2) 0; }
 .skjelett {
   height: 1rem; border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--line), var(--paper), var(--line));
+  background: linear-gradient(90deg, var(--flate), var(--card), var(--flate));
   background-size: 200% 100%;
   animation: skjelett-glid 1.2s ease-in-out infinite;
 }
+.skjelett:nth-child(2) { width: 85%; }
+.skjelett:nth-child(3) { width: 60%; }
 @keyframes skjelett-glid {
   0% { background-position: 200% 0; } 100% { background-position: -200% 0; }
 }
 
-.mono { font-family: var(--font-mono); }
+.mono { font-family: var(--font-mono); font-size: .92em; }
 .muted { color: var(--muted); }
+.sensitiv { font-style: italic; }
+.brytord { overflow-wrap: anywhere; }
 
+/* ---------------------------------------------------------------------
+   2  Merker, tagger, bannere
+   --------------------------------------------------------------------- */
 /* BeslutningBadge — farge + glyf + tekst (aldri farge alene) */
 .merke {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-3); border-radius: var(--radius-sm);
-  font-weight: 600; border: 1px solid transparent;
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  padding: 0 var(--sp-2); min-height: 1.6rem; border-radius: var(--radius-sm);
+  font-weight: 600; font-size: var(--fs-sm); border: 1px solid transparent;
+  white-space: nowrap;
 }
 .merke-glyf { font-weight: 700; }
 .merke.tillat { background: var(--auto-bg); color: var(--auto);
-  border-color: var(--auto); }
+  border-color: var(--auto-bg); }
 .merke.stopp  { background: var(--danger-bg); color: var(--danger);
-  border-color: var(--danger); }
+  border-color: var(--danger-bg); }
 .merke.unntak { background: var(--guard-bg); color: var(--guard);
-  border-color: var(--guard); }
+  border-color: var(--guard-bg); }
+.merke.ukjent { background: var(--flate); color: var(--muted); }
 
 /* KategoriTag */
 .tag {
-  display: inline-block; padding: var(--sp-1) var(--sp-2);
+  display: inline-block; padding: 0 var(--sp-2); line-height: 1.6rem;
   border-radius: var(--radius-sm); background: var(--info-bg);
-  color: var(--info);
+  color: var(--info); font-size: var(--fs-sm); font-weight: 600;
 }
 
 /* BegrunnelseKjede / KodeForklaring */
 .kjede { margin: 0; padding-left: var(--sp-6); display: grid;
   gap: var(--sp-2); }
 .kode-raa { color: var(--muted); }
+.kodeforklaring { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2);
+  align-items: baseline; }
 
 /* StatusTidslinje */
 .tidslinje { list-style: none; margin: 0; padding: 0; display: grid;
@@ -80,160 +142,160 @@
 
 /* VarselBanner */
 .banner {
-  padding: var(--sp-3) var(--sp-4); border-radius: var(--radius);
-  border: 1px solid var(--line); background: var(--info-bg);
-  color: var(--info); margin-bottom: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-sm);
+  border: 1px solid var(--info); border-left-width: 4px;
+  background: var(--info-bg); color: var(--ink); margin-bottom: var(--sp-4);
 }
-.banner.guard { background: var(--guard-bg); color: var(--guard); }
-.banner.fare  { background: var(--danger-bg); color: var(--danger); }
+.banner.guard { background: var(--guard-bg); border-color: var(--guard); }
+.banner.fare  { background: var(--danger-bg); border-color: var(--danger); }
+.banner.info  { background: var(--info-bg); border-color: var(--info); }
+.advarsel { color: var(--guard); font-weight: 600; }
+.feil { color: var(--danger); }
 
-/* DataTabell */
-.tablewrap { overflow-x: auto; }
-
-/* SIDESCROLLEN VIRKET ALDRI (eier, 1/9: «modulene ser ikke bra ut når man
-   klikker dem»). `.tablewrap` har hatt `overflow-x: auto` hele tiden, men
-   en tabell med `width: 100%` blir per definisjon ALDRI bredere enn
-   containeren — så scrollen hadde ingenting å scrolle, og nettleseren
-   løste plassmangelen på den eneste måten den da har igjen: den klemte
-   kolonnene ned mot min-content. Med ti kolonner og et reaper-navn som
-   `makulerer_artefakter_for_prosess` ble resultatet ett tegn per linje.
-   Feilen så ut som en stylingfeil og var en breddefeil.
-
-   `width: max-content` lar tabellen bli så bred som innholdet krever, og
+/* ---------------------------------------------------------------------
+   3  Tabeller
+   --------------------------------------------------------------------- */
+.tablewrap, .tabellrull { overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--card); }
+/* `width: max-content` lar tabellen bli så bred som innholdet krever, og
    `min-width: 100%` holder den utfylt når det er smalere enn containeren.
-   Da får `overflow-x` noe å gjøre. Regelen står på `.tablewrap > table`
-   og ikke på `table`, fordi den bare gir mening der en scroller finnes —
-   en tabell uten wrapper skal fortsatt oppføre seg som før. */
-.tablewrap > table { width: max-content; min-width: 100%; }
-
-/* …men `max-content` alene ville latt en fritekstkolonne dra tabellen
-   vilkårlig bred: `dom_begrunnelse` i retensjonsregisteret er en hel
-   setning, og uten tak blir den én linje på 400 tegn. Prosaceller får
-   derfor et lesbart mål og bryter normalt. 44ch er innenfor 45–75-tegns
-   spennet for lesbar linjelengde, i underkant fordi dette er en celle
-   ved siden av andre kolonner, ikke brødtekst i en spalte. */
+   Da får `overflow-x` noe å gjøre (eiers funn 1/9). */
+.tablewrap > table, .tabellrull > table { width: max-content; min-width: 100%; }
+/* Prosaceller får et lesbart mål og bryter normalt. */
 .celle-tekst { max-width: 44ch; white-space: normal; }
-
-/* PENGEKOLONNER (M-13, 101). To egenskaper, og begge er nødvendige for at
-   en beløpskolonne skal kunne SKUMMES: høyrejustering setter enerne under
-   hverandre, og `tabular-nums` gir hvert siffer samme bredde slik at også
-   tierne og hundrerne står i linje. Uten den andre danser kolonnen på en
-   proporsjonal font selv om den er høyrejustert, og en avstemmingsflate
-   der tallene ikke står under hverandre er en flate ingen leser tall i.
-   `white-space: nowrap` fordi et beløp aldri skal brytes over to linjer —
-   «1 234,» på én linje og «56» på neste er et annet tall. */
+/* PENGEKOLONNER (M-13, 101): høyrejustert, tabulære sifre, aldri brutt. */
 .celle-tall {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-
-/* IDENTIFIKATORER SKAL BRYTE, IKKE SKYVE. `beredskap.bekrefter.lever`,
-   `makulerer_artefakter_for_prosess`, `bid_c612864ad46e…` — alle er én
-   ubrutt streng uten et eneste naturlig brytepunkt, og en tabellcelle er
-   «aldri smalere enn innholdet». Da blir sidescrollen like bred som den
-   lengste identifikatoren i hele tabellen, uansett hvor lite annet det
-   er å vise.
-   `anywhere`, ikke `break-word`: BARE `anywhere` teller med når
-   nettleseren regner min-content-bredden, og det er nettopp DEN som
-   bestemmer hvor bred tabellen minst må bli. `break-word` ville brutt
-   linjen visuelt og latt tabellen være like bred — altså latt feilen
-   stå. Samme token og samme begrunnelse som `.rekrut-kandidat` i
-   base.css; egen klasse fordi de to er låst av hver sin port. */
-.celle-id { overflow-wrap: anywhere; max-width: 22ch; }
-/* …og på et INLINE-element gjør `max-width` ingenting. Retensjonsflaten
-   setter klassen på `<code>`, som er inline — der virket bare
-   `overflow-wrap`, mens breddetaket stille falt bort. Nøyaktig samme
-   felle som `celle-tekst` på et `<span>` sist runde, og den ser like
-   riktig ut i diffen begge ganger. `inline-block` gir elementet en
-   boks å begrense, og `vertical-align: top` holder den på linje med
-   resten av cellen. */
+/* IDENTIFIKATORER SKAL BRYTE, IKKE SKYVE. Bare `anywhere` teller med når
+   nettleseren regner min-content-bredden. */
+.celle-id { overflow-wrap: anywhere; max-width: 22ch; font-family: var(--font-mono);
+  font-size: .92em; }
 code.celle-id { display: inline-block; vertical-align: top; }
-
-/* SKJEMAENE HADDE INGEN LAYOUT I DET HELE TATT. `.kv-skjema` ble brukt av
-   tre flater (avtalefrist, dokumentmal, kontinuitet) og hadde ikke én
-   eneste regel i noe stilark — så etiketter, felt og hjelpetekster
-   stablet seg i dokumentrekkefølge over hele bredden, med et skjema som
-   ble like høyt som antallet felt. Eier: «feltene og knappene bør stå
-   ved siden av hverandre».
-
-   `auto-fit` + `minmax` framfor et fast kolonneantall: skjemaet legger
-   seg selv i én, to eller tre spalter etter hvor mye plass det har, og
-   trenger ingen mediaspørring. 18rem er valgt så et datofelt og et
-   tekstfelt begge er komfortable — smalere, og etikettene begynner å
-   brytes.
-
-   OPT-IN, IKKE PÅTVUNGET. Regelen står på en EGEN klasse ved siden av
-   `.kv-skjema`, som tre flater deler. De to andre (dokumentmal,
-   kontinuitet) legger etikett og felt som LØSE SØSKEN, og et rutenett på
-   den felles klassen ville spredt dem i hver sin celle — altså gjort dem
-   verre, ikke bedre. De kan ta i bruk `.felt`-strukturen når noen faktisk
-   ser på dem; til da er de urørt.
-   ------------------------------------------------------------------- */
-.kv-skjema-rutenett {
-  display: grid;
-  /* `min(18rem, 100%)` og ikke bare `18rem`: en `minmax`-nedre grense er
-     et GULV sporet ikke kan krympe under, så på en skjerm smalere enn
-     288px + padding ville rutenettet flytt utover viewporten i stedet
-     for å falle til én spalte. Nøyaktig den klassen feil eier nettopp
-     rapporterte i topplinjen, og skillens «Horizontal Scroll»-regel er
-     kategorisk: innholdet skal få plass. */
-  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
-  gap: var(--sp-3) var(--sp-4);
-  align-items: start;
-}
-/* Etikett, felt og hjelpetekst hører sammen og skal ALDRI havne i hver
-   sin rutenettcelle — da mister etiketten den visuelle koblingen til
-   feltet sitt, uansett hva `for`-attributtet sier. Feltgruppen er derfor
-   sitt eget rutenett. */
-.kv-skjema-rutenett .felt { display: grid; gap: var(--sp-1); min-width: 0; }
-.kv-skjema-rutenett .felt > .muted { font-size: .88rem; }
-/* Knapperaden får hele bredden og står sist — en knapp midt i en
-   feltkolonne leses som «send inn dette feltet». */
-.kv-skjema-rutenett .skjema-bunn {
-  grid-column: 1 / -1;
-  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
-}
-/* Radhandlingene (Åpne | Rediger | Slett) sto skulder ved skulder uten
-   mellomrom — eier: «det står tett i hverandre». Luften ligger på cellen,
-   ikke på knappene, så en rad med én handling er upåvirket. */
+/* Radhandlingene (Åpne | Rediger | Slett) med luft mellom. */
 .handling-celle { white-space: nowrap; }
-.handling-celle .knapp + .knapp { margin-left: 0.75rem; }
-table { width: 100%; border-collapse: collapse; }
-caption { text-align: left; }
+.handling-celle .knapp + .knapp { margin-left: var(--sp-2); }
+.radhandlinger { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.tabell, .datatabell { width: 100%; }
+caption { text-align: left; font-weight: 600; color: var(--ink);
+  padding: var(--sp-2) var(--sp-3); caption-side: top; }
 th, td {
   text-align: left; padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--line); vertical-align: top;
 }
+thead th { color: var(--muted); font-weight: 600; white-space: nowrap;
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em;
+  background: var(--paper); }
 th { color: var(--muted); font-weight: 600; white-space: nowrap; }
-.sort-knapp {
-  font: inherit; font-weight: 600; color: var(--muted);
-  background: none; border: 0; cursor: pointer; padding: 0;
-}
+tbody tr:last-child > td, tbody tr:last-child > th { border-bottom: 0; }
+tbody tr:hover > td, tbody tr:hover > th { background: var(--paper); }
 th[aria-sort="ascending"] .sort-knapp::after { content: " ▲"; }
 th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
-.lenkeknapp {
-  background: none; border: 0; color: var(--info); cursor: pointer;
-  font: inherit; padding: 0; text-decoration: underline;
-}
+.tall { font-variant-numeric: tabular-nums; }
+.utfort-null { color: var(--muted); }
 
 /* CursorNavigasjon */
-.cursornav { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); }
+.cursornav { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); flex-wrap: wrap; }
 
-/* Språkvelger */
+/* Språkvelger (skallet) */
 .sprakvelger {
-  font: inherit; padding: var(--sp-1) var(--sp-2);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--card); color: var(--ink);
+  font: inherit; padding: 0 var(--sp-2); min-height: 2.25rem;
+  border: 1px solid var(--line-sterk); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink); cursor: pointer;
 }
 
 /* Nøkkel/verdi-liste (detaljpanel) */
-.kv { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr;
+.kv, .kv-liste { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr;
   gap: var(--sp-2) var(--sp-4); margin: 0; }
-.kv dt { color: var(--muted); font-weight: 600; }
-.kv dd { margin: 0; }
+.kv dt, .kv-liste dt { color: var(--muted); font-weight: 600; }
+.kv dd, .kv-liste dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 30rem) {
+  .kv, .kv-liste { grid-template-columns: 1fr; gap: 0 0; }
+  .kv dd, .kv-liste dd { margin-bottom: var(--sp-2); }
+}
 
-/* Overlegg + Dialog (Detaljpanel / Bekreftelse) */
+/* ---------------------------------------------------------------------
+   4  Skjema
+   --------------------------------------------------------------------- */
+/* Felt-kontrollene: én form overalt. */
+.felt-inp, .skjema input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.skjema select, .skjema textarea,
+.kv-skjema input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.kv-skjema select, .kv-skjema textarea,
+.skjemaboks input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.skjemaboks select, .skjemaboks textarea,
+.editor-seksjon input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.editor-seksjon select, .editor-seksjon textarea {
+  padding: var(--sp-2) var(--sp-3); min-height: var(--touch-min);
+  border: 1px solid var(--line-sterk);
+  border-radius: var(--radius-sm); background: var(--card); color: var(--ink);
+  max-width: 100%; width: 100%;
+}
+textarea { min-height: 6rem; resize: vertical; }
+.felt-inp:disabled, .skjema :disabled { background: var(--flate); color: var(--muted); }
+input[type="checkbox"], input[type="radio"] { width: 1.15rem; height: 1.15rem;
+  accent-color: var(--info); margin: 0; }
+input[type="range"] { accent-color: var(--info); }
+.felt-inp { max-width: 32rem; }
+
+/* SKJEMAENE HADDE INGEN LAYOUT. `.kv-skjema-rutenett` er OPT-IN: `.kv-skjema`
+   deles av flater som legger etikett og felt som løse søsken. */
+.kv-skjema-rutenett {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: var(--sp-3) var(--sp-4);
+  align-items: start;
+}
+.kv-skjema-rutenett .felt { display: grid; gap: var(--sp-1); min-width: 0; }
+.kv-skjema-rutenett .felt > .muted { font-size: var(--fs-sm); }
+.kv-skjema-rutenett .skjema-bunn {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center;
+}
+/* Skjemaboksen (116 flater): et skjema er en handling, og den står på sin
+   egen, litt dypere flate med overskrift og knapperad nederst. */
+.skjemaboks, .skjema {
+  display: grid; gap: var(--sp-3);
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: var(--sp-4);
+  margin: var(--sp-3) 0 0;
+}
+.skjemaboks > h3, .skjema > h3, .skjemaboks > h2, .skjema > h2 { margin: 0; }
+.skjema-bunn { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.skjemarad { display: grid; gap: var(--sp-3) var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); }
+.skjemafelt, .felt { display: flex; flex-direction: column; gap: var(--sp-1);
+  margin: 0; min-width: 0; }
+.felt-navn, .feltnavn, .skjemafelt > label, .felt > label, .skjemaboks label,
+.skjema label { font-size: var(--fs-sm); color: var(--ink); font-weight: 600; }
+.felt-hint, .hjelpetekst {
+  color: var(--muted);
+  display: block;
+  font-size: var(--fs-sm); font-weight: 400;
+  margin-top: var(--sp-1);
+}
+.skjemafeil { color: var(--danger); font-weight: 600; }
+.felt-inline, .felt-vannrett, .radiorad, .felt-avkrysning, .avkrysning, .felt-bryter {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-height: var(--touch-min);
+}
+.felt-avkrysning label, .avkrysning label, .radiorad label { font-weight: 400; }
+/* Tidsvindu: dager og klokkeslett side om side. */
+.editor-tidsvindu { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.editor-felt-gruppe { margin-top: var(--sp-3); }
+.eksempelliste, .stegliste { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-1); }
+
+/* ---------------------------------------------------------------------
+   5  Dialog og overlegg
+   --------------------------------------------------------------------- */
 .overlegg {
   position: fixed; inset: 0; z-index: var(--z-overlegg);
   background: var(--teppe);
@@ -244,7 +306,7 @@ th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
   box-shadow: var(--skygge-skuff); display: flex; flex-direction: column;
   max-height: 100%;
 }
-.dialog.skuff { width: min(30rem, 100%); height: 100%; }
+.dialog.skuff { width: min(32rem, 100%); height: 100%; }
 .dialog.bekreft {
   margin: auto; width: min(28rem, 92%); height: auto;
   border-radius: var(--radius); box-shadow: var(--skygge);
@@ -255,24 +317,44 @@ th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
   gap: var(--sp-4); padding: var(--sp-4);
   border-bottom: 1px solid var(--line);
 }
-.dialog-tittel { margin: 0; font-size: 1.1rem; }
+.dialog-tittel { margin: 0; font-size: var(--fs-h2); }
 .dialog-lukk {
-  background: none; border: 1px solid var(--line);
-  border-radius: var(--radius-sm); cursor: pointer; padding: var(--sp-1) var(--sp-2);
-  color: var(--ink);
+  background: none; border: 1px solid var(--line-sterk);
+  border-radius: var(--radius-sm); cursor: pointer;
+  min-width: var(--touch-min); min-height: var(--touch-min);
+  padding: 0 var(--sp-2); color: var(--ink);
 }
 .dialog-kropp { padding: var(--sp-4); overflow-y: auto; display: grid;
   gap: var(--sp-4); }
 .dialog-bunn { display: flex; gap: var(--sp-2); justify-content: flex-end;
-  padding: var(--sp-4); border-top: 1px solid var(--line); }
+  flex-wrap: wrap; padding: var(--sp-4); border-top: 1px solid var(--line); }
+@media (max-width: 40rem) {
+  .dialog.skuff { width: 100%; }
+  .dialog-bunn .knapp { flex: 1 1 auto; }
+}
+
+/* ---------------------------------------------------------------------
+   6  Dashbord, lister, filter, overskrifter
+   --------------------------------------------------------------------- */
+h1 { font-size: var(--fs-h1); font-weight: 700; letter-spacing: -.01em;
+  margin: 0 0 var(--sp-1); }
+h2 { font-size: var(--fs-h2); font-weight: 700; margin: var(--sp-4) 0 var(--sp-2); }
+h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2); }
+.sub { color: var(--muted); margin: 0 0 var(--sp-5); max-width: 60ch; }
+.legend { margin-top: var(--sp-4); }
 
 /* Oversikt-kort */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: var(--sp-4); margin-bottom: var(--sp-6); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+  gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .stat { background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--sp-4); box-shadow: var(--skygge); }
-.stat b { display: block; font-size: 1.8rem; }
-.stat span { color: var(--muted); }
+  border-radius: var(--radius); padding: var(--sp-4);
+  display: grid; gap: var(--sp-1); border-top: 3px solid var(--line-sterk); }
+.stat b { display: block; font-size: 2rem; line-height: 1.1;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.stat span { color: var(--muted); font-size: var(--fs-sm); }
+.stat.tillat { border-top-color: var(--auto); }
+.stat.stopp { border-top-color: var(--danger); }
+.stat.unntak { border-top-color: var(--guard); }
 .stat.tillat b { color: var(--auto); }
 .stat.stopp b { color: var(--danger); }
 .stat.unntak b { color: var(--guard); }
@@ -280,111 +362,59 @@ th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
 /* Policy-visning */
 .policy-sec { margin-bottom: var(--sp-6); }
 .rule { padding: var(--sp-3); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); margin-bottom: var(--sp-2); }
+  border-radius: var(--radius-sm); margin-bottom: var(--sp-2); background: var(--card); }
 
-/* Filterbar (beslutninger) */
+/* Filterbar (beslutninger): segmentert, valgt er fylt. */
 .filterbar { display: flex; gap: var(--sp-2); flex-wrap: wrap;
   margin-bottom: var(--sp-4); }
 .filterbar button[aria-pressed="true"] {
-  background: var(--info); color: var(--card); border-color: var(--info);
+  background: var(--ink); color: var(--card); border-color: var(--ink);
 }
 
-h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
-.sub { color: var(--muted); margin: 0 0 var(--sp-6); }
-.legend { margin-top: var(--sp-4); }
-
 /* Lister (policy, roller) */
-.liste, .grenser { margin: 0; padding-left: var(--sp-6); display: grid;
+.liste, .grenser { margin: 0; padding-left: var(--sp-5); display: grid;
   gap: var(--sp-1); }
 
 /* Innloggingsflate */
 .innlogging { max-width: 28rem; }
-.innlogging-form { margin-top: var(--sp-6); }
+.innlogging-form { margin-top: var(--sp-4); }
+.innlogging-form .knapp { width: 100%; }
 
-/* Offentlig webflate + nye adminflater */
-.site-shell { display: grid; gap: var(--sp-6); }
-.site-hero {
-  display: grid; gap: var(--sp-4); grid-template-columns: 1.35fr .85fr;
-  align-items: stretch;
-}
-.site-hero-copy, .site-hero-card {
-  background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--sp-6); box-shadow: var(--skygge);
-}
-.site-hero-text { font-size: 1.05rem; max-width: 42rem; }
-.site-eyebrow {
-  color: var(--info); text-transform: uppercase; letter-spacing: .08em;
-  font-size: .82rem; font-weight: 700; margin: 0 0 var(--sp-2);
-}
-.site-grid { display: grid; gap: var(--sp-4); }
-.site-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.site-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.site-card-grid {
-  display: grid; gap: var(--sp-4);
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-}
-.site-module-card, .site-login-card {
-  border: 1px solid var(--line); border-radius: var(--radius);
-  padding: var(--sp-4); background: var(--card);
-}
-.site-mini-card {
-  display: grid; gap: var(--sp-2);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: var(--sp-4); background: rgba(246,248,247,.82);
-}
-.site-module-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--sp-3); margin-bottom: var(--sp-2);
-}
-.site-badge {
-  display: inline-flex; align-items: center;
-  padding: var(--sp-1) var(--sp-3);
-  border-radius: 999px; font-weight: 600;
-  border: 1px solid var(--line);
-}
-.site-badge.ok {
-  background: var(--auto-bg); color: var(--auto); border-color: var(--auto);
-}
-.site-badge.info {
-  background: var(--info-bg); color: var(--info); border-color: var(--info);
-}
-.site-badge.plan {
-  background: var(--paper); color: var(--muted);
-}
-.site-inline-badges { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.site-kpi-row {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-3); margin-top: var(--sp-4);
-}
-.site-kpi {
-  padding: var(--sp-3); background: var(--paper);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-}
-.site-kpi strong { display: block; font-size: 1.5rem; color: var(--ink); }
-.site-kpi span { color: var(--muted); }
-.site-section { display: grid; gap: var(--sp-4); }
-.site-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: var(--sp-4); flex-wrap: wrap;
-}
-.site-inline-note { color: var(--muted); }
-.site-list { margin: 0; padding-left: var(--sp-6); display: grid; gap: var(--sp-2); }
-.site-list-ordered { list-style: decimal; }
-.site-mini-card p { margin: 0; color: var(--muted); }
-.site-mini-card strong { font-size: 1rem; }
+/* Dashbordet: KPI-kortene øverst, de to listene side om side. */
+.dash-kpi { margin-top: var(--sp-2); }
+.dash-grid { display: grid; gap: var(--sp-4); margin-top: var(--sp-4);
+  grid-template-columns: 1fr; }
+@media (min-width: 900px) { .dash-grid { grid-template-columns: 1fr 1fr; } }
+.dash-blokk { border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--sp-4) var(--sp-5); background: var(--card); }
+.dash-blokk h2 { margin: 0 0 var(--sp-3); font-size: var(--fs-h2); }
+.dash-liste { list-style: none; margin: 0 0 var(--sp-3); padding: 0; }
+.dash-rad { padding: var(--sp-2) 0; border-bottom: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); align-items: center; }
+.dash-rad:last-child { border-bottom: 0; }
+.dash-handling { font-family: var(--font-mono); font-size: .92em; }
+.dash-kropp { min-height: 3rem; }
 
-@media (max-width: 960px) {
-  .site-hero, .site-grid-3 { grid-template-columns: 1fr; }
-  .site-grid-2, .site-kpi-row { grid-template-columns: 1fr; }
-}
+/* Varselinnboksen. Ulest markeres med BÅDE en kantstripe og fet tekst. */
+.varselliste { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.varselrad { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-3) var(--sp-4); margin: 0; background: var(--card); }
+.varsel-ulest { border-left: 4px solid var(--info); background: var(--info-bg); }
+.varsel-ulest .varseltekst { font-weight: 600; }
+.varseltekst { margin: 0 0 var(--sp-1); }
+.varselknapper { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
+.varselvalg { border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--sp-3) var(--sp-4); margin: 0 0 var(--sp-4); background: var(--card); }
+.varselvalg-rad { display: flex; gap: var(--sp-2); align-items: center;
+  margin: var(--sp-1) 0; min-height: var(--touch-min); }
 
-/* PR-013: policyadministrasjon — risikobadge + diff/fire-øyne-lister.
-   Kun tokens (samme doktrine som resten): UTVIDER = fare, INNSNEVRER = info,
-   NØYTRAL = dempet. */
+/* ---------------------------------------------------------------------
+   7  Policyadministrasjon og editor
+   --------------------------------------------------------------------- */
 .risiko {
-  display: inline-block; padding: var(--sp-1) var(--sp-3);
+  display: inline-block; padding: 0 var(--sp-2); line-height: 1.6rem;
   border-radius: var(--radius-sm); border: 1px solid var(--line);
-  font-size: 0.85em; margin-left: var(--sp-2);
+  font-size: var(--fs-xs); font-weight: 600; margin-left: var(--sp-2);
   background: var(--card); color: var(--ink);
 }
 .risiko[data-risiko="UTVIDER"] { background: var(--danger); color: var(--card);
@@ -392,43 +422,54 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .risiko[data-risiko="INNSNEVRER"] { background: var(--info); color: var(--card);
   border-color: var(--info); }
 .risiko[data-risiko="NØYTRAL"] { color: var(--muted); }
-.diff-liste, .feltdiff, .godkjennere {
+.diff-liste, .feltdiff, .godkjennere, .diffliste {
   list-style: none; margin: 0 0 var(--sp-4); padding: 0;
 }
-.diff-liste .diff-rad, .feltdiff li, .godkjennere li {
+.diff-liste .diff-rad, .feltdiff li, .godkjennere li, .diffliste li {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
   padding: var(--sp-2) 0; border-bottom: 1px solid var(--line);
 }
-.diff-liste code, .feltdiff code { font-family: var(--font-mono); }
+.diff-liste code, .feltdiff code { font-family: var(--font-mono); font-size: .92em; }
 .pa-handling { margin-top: var(--sp-4); }
+.fireoyne, .aktive-policyer, .aktiv-policy-rad { display: grid; gap: var(--sp-2); }
+.behandling { display: grid; gap: var(--sp-3); }
+.behandling-knapper { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 
-/* PR-014: veiledet policy-editor. Kun tokens. */
-.editor-seksjon { margin: var(--sp-4) 0; padding: var(--sp-4);
+/* PR-014: veiledet policy-editor. */
+.editor-seksjon { margin: var(--sp-4) 0; padding: var(--sp-4) var(--sp-5);
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--card); }
-.editor-seksjon h3 { margin: 0 0 var(--sp-2); }
-.felt { display: flex; flex-direction: column; gap: var(--sp-1);
-  margin: var(--sp-2) 0; }
-.felt-navn { font-size: 0.9em; color: var(--muted); }
-.felt-inp { padding: var(--sp-2); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); background: var(--paper); color: var(--ink);
-  max-width: 32rem; }
-.felt-inp:disabled { background: var(--card); color: var(--muted); }
+.editor-seksjon h3 { margin: 0 0 var(--sp-3); }
 .editor-liste { display: flex; flex-direction: column; gap: var(--sp-2); }
 .editor-rad { display: flex; flex-wrap: wrap; gap: var(--sp-3);
   align-items: flex-end; }
 .editor-kort { border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: var(--sp-3); margin: var(--sp-2) 0; }
+  padding: var(--sp-3) var(--sp-4); margin: var(--sp-2) 0; background: var(--paper); }
 .editor-kort h4 { margin: 0 0 var(--sp-2); }
-.editor-knapper { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); }
+.editor-knapper { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-4); }
 .editor-feil, .pa-valfeil { border: 1px solid var(--danger);
   border-radius: var(--radius-sm); padding: var(--sp-3); margin: var(--sp-3) 0;
-  color: var(--danger); }
-/* Kvittering for en utført handling (valider / åpne runde / attester).
-   Fargen alene bærer ikke betydningen (WCAG 1.4.1) — teksten sier utfallet,
-   og de tre parene er alle >= 4.5:1 mot sin egen bakgrunn. */
-.pa-kvittering { border: 1px solid; border-radius: var(--radius-sm);
-  padding: var(--sp-3); margin: 0 0 var(--sp-4); }
+  color: var(--danger); background: var(--danger-bg); }
+.editor-hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin: var(--sp-1) 0 0;
+}
+/* En lagret grense ingen kontroll kan vise. */
+.editor-reparasjon {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+}
+.editor-reparasjon p { margin: 0; }
+/* Kvittering for en utført handling. Teksten sier utfallet; fargen er
+   redundant (WCAG 1.4.1). */
+.pa-kvittering { border: 1px solid; border-left-width: 4px;
+  border-radius: var(--radius-sm); padding: var(--sp-3) var(--sp-4);
+  margin: 0 0 var(--sp-4); }
 .pa-kvittering p { margin: 0; }
 .pa-kvittering-ok { border-color: var(--auto); background: var(--auto-bg);
   color: var(--auto); }
@@ -436,24 +477,15 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   color: var(--guard); }
 .pa-kvittering-feil { border-color: var(--danger); background: var(--danger-bg);
   color: var(--danger); }
-/* Diffen gruppert: lukkbare områder, ett kort per element. Ingenting skjules
-   — `details` gjør bare at 200 rader kan vurderes uten å leses i ett jafs. */
+/* Diffen gruppert: lukkbare områder, ett kort per element. */
 .diff-sammendrag { margin: 0 0 var(--sp-3); color: var(--muted); }
+.diff-grupper { display: grid; gap: var(--sp-2); }
 .diff-gruppe { border: 1px solid var(--line); border-radius: var(--radius-sm);
-  margin: 0 0 var(--sp-2); }
+  margin: 0 0 var(--sp-2); background: var(--card); }
 .diff-gruppe > summary, .diff-element > summary { cursor: pointer;
   padding: var(--sp-2) var(--sp-3); display: flex; flex-wrap: wrap;
-  gap: var(--sp-2); align-items: center; }
-/* `summary` er `display: list-item` som standard, og NETTOPP den standarden
-   gir nettleserens egen ▶/▼-markør — den er en `::marker`, og en `::marker`
-   finnes bare på listeelementer. Flex-oppsettet slo den dermed av: de lukkede
-   områdene så ut som statiske overskrifter, og en godkjenner som ikke ser at
-   noe kan foldes ut, folder ikke ut. Da har grupperingen skjult diffen i
-   praksis, selv om den er der (Codex P2).
-   Markøren tegnes derfor eksplisitt, som en ren form uten tekstinnhold:
-   `content: ""` med kantlinjer, ikke et «▶»-tegn. Et tegn ville blitt lest
-   opp av skjermlesere oppå den utvidet/sammenslått-tilstanden `details`
-   allerede melder selv. */
+  gap: var(--sp-2); align-items: center; min-height: var(--touch-min); }
+/* Markøren tegnes som form (ikke tegn) — `details` melder tilstanden selv. */
 .diff-gruppe > summary, .diff-element > summary {
   list-style: none; }
 .diff-gruppe > summary::-webkit-details-marker,
@@ -462,7 +494,7 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   content: ""; flex: none; width: 0; height: 0; border-style: solid;
   border-width: 0.35em 0 0.35em 0.55em;
   border-color: transparent transparent transparent currentColor;
-  transition: transform 120ms ease; }
+  transition: transform var(--fart) ease; }
 .diff-gruppe[open] > summary::before, .diff-element[open] > summary::before {
   transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
@@ -474,145 +506,703 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
 .diff-elementer { list-style: none; margin: 0; padding: 0 var(--sp-3) var(--sp-2); }
 .diff-elementrad { margin: var(--sp-1) 0; }
 .diff-element { border-left: 2px solid var(--line); }
-.diff-navn { font-family: var(--font-mono); }
+.diff-navn { font-family: var(--font-mono); font-size: .92em; }
 .diff-merke { border: 1px solid var(--line); border-radius: var(--radius-pill);
-  padding: 0 var(--sp-2); font-size: 0.85em; color: var(--muted); }
-/* Varselinnboksen. Ulest markeres med BÅDE en kantstripe og fet tekst — farge
-   alene bærer ikke betydning (WCAG 1.4.1), og en stripe er ikke lesbar for
-   den som ikke ser den. */
-.varselliste { list-style: none; margin: 0; padding: 0; }
-.varselrad { border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: var(--sp-3); margin: 0 0 var(--sp-2); }
-.varsel-ulest { border-left: 4px solid var(--info); background: var(--info-bg); }
-.varsel-ulest .varseltekst { font-weight: 600; }
-.varseltekst { margin: 0 0 var(--sp-1); }
-.varselknapper { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
-.varselvalg { border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: var(--sp-3); margin: 0 0 var(--sp-4); }
-.varselvalg-rad { display: flex; gap: var(--sp-2); align-items: center;
-  margin: var(--sp-1) 0; }
-/* Dashbordet (§2.3 Sentrum): KPI-kortene øverst, de to listene side om side
-   der det er plass. Wide content ruller i egen boks — aldri hele siden. */
-.dash-grid { display: grid; gap: var(--sp-4); margin-top: var(--sp-6);
-  grid-template-columns: 1fr; }
-@media (min-width: 900px) { .dash-grid { grid-template-columns: 1fr 1fr; } }
-.dash-blokk { border: 1px solid var(--line); border-radius: var(--radius);
-  padding: var(--sp-4); background: var(--card); }
-.dash-blokk h2 { margin: 0 0 var(--sp-3); font-size: 1.1rem; }
-.dash-liste { list-style: none; margin: 0 0 var(--sp-3); padding: 0; }
-.dash-rad { padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
-.dash-rad:last-child { border-bottom: 0; }
-.dash-handling { font-family: var(--font-mono); }
-/* Handlingsvelgeren i editoren: én handling om gangen. Valgt markeres med
-   aria-pressed + kantfarge — og fet tekst, ikke farge alene (1.4.1). */
+  padding: 0 var(--sp-2); font-size: var(--fs-xs); color: var(--muted); }
+.bekreft-diff, .historikk-diff { display: grid; gap: var(--sp-2); }
+.historikk-diffvelger { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+/* Handlingsvelgeren i editoren: én handling om gangen. */
 .handling-velger { display: flex; flex-wrap: wrap; gap: var(--sp-2);
   margin: 0 0 var(--sp-2); }
 .handling-velger-knapp[aria-pressed="true"] { border-color: var(--info);
   background: var(--info-bg); font-weight: 600; }
-.knapp.liten { padding: var(--sp-1) var(--sp-2); font-size: 0.85em; }
 .mal-liste { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 .mal-kort { display: flex; flex-direction: column; gap: var(--sp-1);
-  text-align: left; padding: var(--sp-4); min-width: 14rem;
+  text-align: left; padding: var(--sp-4); min-width: 14rem; flex: 1 1 14rem;
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--card); color: var(--ink); cursor: pointer; }
 .mal-kort:hover { border-color: var(--info); }
+.maldokument { white-space: pre-wrap; overflow-wrap: anywhere; }
+.vilkaar-liste, .overstyring-liste, .valuta-rad, .adjudikatorliste,
+.domeneliste, .planliste, .planhistorikk { display: grid; gap: var(--sp-2);
+  margin: 0; padding: 0; list-style: none; }
+.vilkaar-rad { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center;
+  padding: var(--sp-2) 0; border-bottom: 1px solid var(--line); }
+.vilkaar-laast { color: var(--muted); }
+.vilkaar-felt { flex: 1 1 12rem; }
+.vilkaar-legg-til, .overstyring-legg-til, .valuta-legg-til { margin-top: var(--sp-2); }
+.vilkaar-reparer { color: var(--danger); }
+.domeneutfall, .bestillingsutfall, .utfall, .rapportresultat { margin-top: var(--sp-3); }
+.rapport-aerlighet { color: var(--muted); font-size: var(--fs-sm); }
+.txtverdi { font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
+.wcag-del { margin-top: var(--sp-4); }
+.policy-angre { margin-top: var(--sp-2); }
+.editor-simuler { margin-top: var(--sp-4); }
+.editor-simuler-skjema { display: flex; flex-direction: column;
+  gap: var(--sp-2); max-width: 40rem; }
+.editor-simuler-skjema textarea { font-family: var(--font-mono);
+  padding: var(--sp-2); border: 1px solid var(--line-sterk);
+  border-radius: var(--radius-sm); background: var(--card);
+  color: var(--ink); }
+.editor-simuler-sider { display: flex; flex-wrap: wrap; gap: var(--sp-4);
+  margin-top: var(--sp-4); }
+.editor-simuler-side { flex: 1 1 16rem; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: var(--sp-3);
+  background: var(--card); }
+.editor-simuler-beslutning { font-weight: 600; }
+.editor-simuler-avvik { color: var(--danger); font-weight: 600; }
+.editor-simuler-resultat, .editor-simuler-utfall { margin-top: var(--sp-3); }
 
-/* Språkvalg på den publike forsiden. Ligger øverst til høyre, over heltet:
-   en besøkende som ikke leser norsk skal se at engelsk finnes uten å lete.
-   Begge valgene er synlige knapper — en `select` ville skjult at det andre
-   språket i det hele tatt fantes bak et klikk. */
-.site-sprak {
+/* ---------------------------------------------------------------------
+   8  Faner (WAI-ARIA tabs): trinn i stedet for én lang rulle
+   --------------------------------------------------------------------- */
+.faner-liste {
+  border-bottom: 1px solid var(--line);
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--sp-1);
-  margin-bottom: var(--sp-3);
+  margin-bottom: var(--sp-4);
 }
-
-.site-sprak-knapp {
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+.fane {
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  min-height: var(--touch-min);
-  padding: var(--sp-1) var(--sp-2);
-}
-
-.site-sprak-knapp:hover { border-color: var(--info); }
-
-/* Det valgte språket er ikke en knapp å trykke på — det er en tilstand.
-   Markeringen er både flate, kant OG vekt, så den ikke hviler på farge alene. */
-.site-sprak-knapp.valgt {
-  background: var(--card);
-  border-color: var(--info);
-  color: var(--ink);
-  cursor: default;
   font-weight: 600;
+  padding: var(--sp-2) var(--sp-3);
+  min-height: var(--touch-min);
+  white-space: nowrap;
+  transition: color var(--fart) ease, border-color var(--fart) ease;
 }
-
-/* Modulkatalogen: elleve områder med sine moduler. Tett liste uten kulepunkt-
-   innrykk, så 45 navn kan leses i tre kolonner uten å bli en mur. */
-.site-list-tett {
-  font-size: 0.95em;
-  gap: 0;
+.fane:hover { color: var(--ink); border-bottom-color: var(--line-sterk); }
+/* Valgt trinn markeres med farge OG en tydelig understrek (WCAG 1.4.1). */
+.fane.valgt {
+  border-bottom-color: var(--info);
+  color: var(--ink);
 }
-
-.site-list-tett li { padding: 0.15rem 0; }
-
-/* Tidsvindu: dager og klokkeslett side om side, så grensen leses som én
-   setning i stedet for fire felt. */
-.editor-tidsvindu {
+.faner-panel:focus-visible {
+  outline: var(--focus);
+  outline-offset: var(--focus-offset);
+}
+.faner-styring {
+  border-top: 1px solid var(--line);
   display: flex;
-  flex-wrap: wrap;
   gap: var(--sp-2);
+  justify-content: space-between;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
 }
 
-.editor-felt-gruppe { margin-top: var(--sp-3); }
+/* ---------------------------------------------------------------------
+   9  Nøkkeltall (M-16), trafikklys og rekruttering (M-57)
+   --------------------------------------------------------------------- */
+/* 20rem er et ØNSKE om kortbredde: `min(20rem,100%)` lar sporet aldri bli
+   bredere enn plassen (WCAG 1.4.10 ved 320 px). */
+.kpi-kort-liste{display:grid;gap:var(--sp-4);
+  grid-template-columns:repeat(auto-fit,minmax(min(20rem,100%),1fr))}
+.kpi-kort{border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-4) var(--sp-5);background:var(--card);min-width:0}
+.kpi-kort > h2:first-child,.kpi-kort > h3:first-child{margin-top:0}
+/* En tom boks er ingen boks: detaljpanelet og kvitteringen står i treet
+   før de har innhold, og skal ikke tegne en tom ramme. */
+.kpi-kort:empty,.skjemaboks:empty{display:none}
+/* …og en boks der hvert barn er skjult eller tomt (detaljpanelet før en
+   rad er åpnet: én `div[hidden]` og et tomt avsnitt) er også ingen boks —
+   ellers står en tom ramme på 46 px mellom fanene og skjemaet. */
+.skjemaboks:not(:has(> :not([hidden]):not(:empty))){display:none}
+.kpi-kort > h2{font-size:var(--fs-h2);margin-bottom:var(--sp-3)}
+.kpi-tabell{width:100%;border-collapse:collapse}
+.kpi-tabell caption{text-align:left;font-weight:600;
+  margin-bottom:var(--sp-2);padding:0}
+.kpi-tabell td,.kpi-tabell th{padding:var(--sp-1) var(--sp-2);
+  text-align:left;overflow-wrap:anywhere}
+.kpi-tabell thead th{background:none;text-transform:none;letter-spacing:0;
+  font-size:var(--fs-sm)}
+.kpi-tabell tbody th{font-weight:400;color:var(--ink)}
+.kpi-tabell tfoot th,.kpi-tabell tfoot td{border-top:1px solid
+  var(--line);font-weight:600}
+/* Søylen er presentasjon (aria-hidden): 8rem er full bredde, ikke minste. */
+.kpi-soyle{width:100%;max-width:8rem;height:var(--sp-3);
+  background:var(--info-bg);
+  border-radius:var(--radius-sm);overflow:hidden}
+.kpi-soyle-fyll{height:100%;background:var(--info)}
+.kpi-tilstand{border:1px solid var(--line);border-radius:var(--radius);
+  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-4);
+  background:var(--card)}
+.kpi-tilstand b{font-size:var(--fs-ingress);margin-right:var(--sp-1)}
+.kpi-kontroll{display:flex;gap:var(--sp-2);align-items:center;
+  margin-bottom:var(--sp-2);flex-wrap:wrap}
+.kpi-intervall-feil{color:var(--danger)}
 
-/* En lagret grense ingen kontroll kan vise. Den skal SES — den stopper
-   lagringen — men den er en tilstand på ett felt, ikke en feilmelding for hele
-   skjemaet: samme varselfarge som `.editor-feil`, dempet flate, og eiers valg
-   liggende rett under teksten. */
-.editor-reparasjon {
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  padding: var(--sp-3);
+/* M-57 trafikklys: kategorien STÅR som tekst; fargen er redundant. */
+.trafikklys{display:inline-flex;align-items:center;gap:var(--sp-2);
+  font-weight:600}
+.trafikklys-prikk{flex:none;width:.6em;height:.6em;
+  border-radius:var(--radius-pill);background:currentColor}
+.trafikklys-anbefalt{color:var(--auto)}
+.trafikklys-vurderes{color:var(--guard)}
+.trafikklys-innstilt_avslag{color:var(--danger)}
+
+/* Rangeringssjiktene: fargen er REDUNDANT koding (WCAG 1.4.1). */
+tr.rekrut-sjikt-topp > th, tr.rekrut-sjikt-topp > td {
+  background: color-mix(in srgb, var(--auto) 16%, var(--card)); }
+tr.rekrut-sjikt-topp > :first-child {
+  box-shadow: inset 4px 0 0 var(--auto); }
+tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
+  background: color-mix(in srgb, var(--auto) 7%, var(--card)); }
+tr.rekrut-sjikt-neste > :first-child {
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--auto) 40%, var(--card)); }
+.rekrut-dokvisning { width: 100%; height: 65vh; border: 1px solid
+  var(--line); border-radius: var(--radius-sm); background: var(--card); }
+.rekrut-dokvisning-tekst { overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; margin: 0; padding: var(--sp-3);
+  color: var(--ink); font-size: var(--fs-sm); }
+.rekrut-dokvisning-pdf { width: 100%; height: 100%; border: 0; }
+.rekrut-innstilling { margin-top: var(--sp-4); }
+.rekrut-innstillingsvalg { display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: center; }
+.rekrut-innstillingsvalg input[type="number"] { width: 5rem; }
+.rekrut-innstillingsutfall { margin-top: var(--sp-2); }
+.rekrut-plass { color: var(--muted); font-variant-numeric: tabular-nums;
+  margin-right: var(--sp-2); font-weight: 600; }
+th.rekrut-kandidat { white-space: normal; }
+.rekrut-detaljrad > td { border-bottom: 1px solid var(--line); }
+.rekrut-detaljrad + tr > th,
+.rekrut-detaljrad + tr > td { border-top: 0; }
+.rekrut-rapportvekter { border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-3);
+  display: grid; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.rekrut-rapportvekter legend { color: var(--muted); font-size: var(--fs-sm);
+  padding: 0 var(--sp-1); }
+.rekrut-rapportvekter .rekrut-vekt { display: flex; align-items: center;
+  gap: var(--sp-3); min-height: var(--touch-min); }
+.rekrut-rapportvekter .rekrut-vekt label { width: 7rem; }
+.rekrut-rapportvekter .rekrut-vekt input[type=range] { flex-grow: 1;
+  min-height: var(--touch-min); accent-color: var(--info); }
+.rekrut-vekter, .rekrut-vekter-kilde { display: grid; gap: var(--sp-2); }
+.rekrut-vekt { display: flex; align-items: center; gap: var(--sp-3);
+  min-height: var(--touch-min); }
+@media (max-width: 720px) {
+  .faner-liste { position: sticky; top: 0; background: var(--paper);
+    z-index: var(--z-innhold); }
+  .fane { min-height: var(--touch-min); }
 }
+.rekrut-kortliste { list-style: none; margin: var(--sp-3) 0; padding: 0;
+  display: grid; gap: var(--sp-2); }
+.rekrut-kort { background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-3) var(--sp-4);
+  display: grid; gap: var(--sp-2); }
+.rekrut-kort--klar { border-color: var(--info); }
+.rekrut-kort-hode { display: flex; align-items: center; gap: var(--sp-3);
+  min-height: var(--touch-min); }
+.rekrut-kort-titler { display: grid; gap: var(--sp-1); flex-grow: 1; }
+.rekrut-kort-titler time { color: var(--muted); font-size: var(--fs-sm); }
+.rekrut-pille { padding: 0 var(--sp-3); line-height: 1.75rem;
+  border-radius: var(--radius-pill); font-size: var(--fs-sm); font-weight: 600;
+  background: var(--flate); color: var(--muted); white-space: nowrap; }
+.rekrut-pille--venter { background: var(--info-bg); color: var(--info); }
+.rekrut-pille--klar { background: var(--auto-bg); color: var(--auto); }
+.rekrut-pille--feilet { background: var(--danger-bg); color: var(--danger); }
+.rekrut-kort-handlinger { display: flex; gap: var(--sp-2); }
+.rekrut-kort-handlinger .knapp { flex-grow: 1; }
+.rekrut-kort-handlinger .knapp.fare { flex-grow: 0; }
+.rekrut-rapporthode { display: flex; align-items: flex-start;
+  justify-content: space-between; gap: var(--sp-3); }
+.rekrut-rapporthode h3 { margin: 0; min-width: 0;
+  overflow-wrap: anywhere; }
+.rekrut-vekterfold { margin: var(--sp-3) 0; }
+.rekrut-vekterfold > summary { cursor: pointer; min-height: var(--touch-min);
+  display: flex; align-items: center; font-weight: 600; }
+.rekrut-vekterfold[open] > summary { margin-bottom: var(--sp-2); }
+.rekrut-vekterfold .rekrut-rapportvekter { margin-top: 0; }
+.rekrut-detalj .rekrut-fordeling { color: var(--muted); font-size: var(--fs-sm);
+  margin: var(--sp-2) 0 var(--sp-1); }
+.rekrut-prosesshandling { display: flex; justify-content: flex-end;
+  margin: var(--sp-2) 0; }
+.rekrut-kandidatkort { display: grid; gap: var(--sp-3); }
+.rekrut-kandidatkort-felter { display: grid; gap: var(--sp-2); }
+.rekrut-kandidatnavn { font-weight: 600; }
+.rekrut-tabell { font-size: var(--fs-sm); }
+.rekrut-liste, .rekrut-lister { display: grid; gap: var(--sp-3); }
+.rekrut-listeutfall, .rekrut-utfall, .rekrut-tidsvalg-utfall, .rekrut-velgerfeil,
+.rekrut-kunngjoring { margin-top: var(--sp-2); }
+.rekrut-velgerfeil { color: var(--danger); }
+.rekrut-merknad { color: var(--muted); font-size: var(--fs-sm); }
+.rekrut-prosessvelger, .rekrut-tidsvalg, .rekrut-bestill, .rekrut-bestill-bunt,
+.rekrut-blinding, .rekrut-evaluering { margin-top: var(--sp-3); }
+.rekrut-evaluering-status { font-weight: 600; }
+.eval-oppdater, .eval-last-flere { margin-top: var(--sp-2); }
 
-.editor-reparasjon p { margin: 0; }
-
-.felt-vannrett {
-  align-items: center;
-  display: flex;
-  flex-direction: row;
-  gap: var(--sp-2);
-}
-
-/* Hvem er innlogget. Står i topplinja fordi svaret må være synlig UTEN å
-   navigere: fire øyne krever to forskjellige prinsipaler, og med to konti i
-   samme nettleser er «hvem er jeg nå» et sikkerhetsspørsmål, ikke pynt. */
+/* ---------------------------------------------------------------------
+   10  Arbeidsflatens skall
+   Topp (merke · faner · kontroller) · verktøy (søk + menybryter) ·
+   venstre (modulmeny) · hoved · høyre (kontekst) · status · bunn (mobil).
+   --------------------------------------------------------------------- */
+/* Hvem er innlogget: e-posten i toppen, id-en i profilen. */
 .skall-bruker {
   display: flex;
   flex-direction: column;
   line-height: 1.2;
   margin-left: auto;
   text-align: right;
-  /* Etiketten er BRUKERENS data, ikke vår: en fullt gyldig OIDC-e-post kan
-     være svært lang, og `bruker_id` er uansett én ubrytelig token. Som
-     flex-element har den `min-width: auto`, altså «aldri smalere enn
-     innholdet» — så den lange linja dyttet topplinja bredere enn viewporten
-     og skjøv språkvelger og «Logg ut» ut i horisontal overflyt (Codex P2).
-     `min-width: 0` lar elementet krympe; `max-width` holder det fra å spise
-     hele linja på brede skjermer. */
+  font-size: var(--fs-sm);
+  text-decoration: none;
+  /* Etiketten er BRUKERENS data: `min-width: 0` lar den krympe, `max-width`
+     holder den fra å spise hele linja på brede skjermer. */
   min-width: 0;
-  max-width: 22ch;
+  max-width: 30ch;
+}
+.skall-bruker-navn,
+.skall-bruker-id,
+.skall-bruker-roller { overflow-wrap: anywhere; }
+.skall-bruker-navn { color: var(--ink); font-weight: 600; }
+.skall-bruker-id,
+.skall-bruker-roller { color: var(--muted); font-size: var(--fs-xs); }
+a.skall-bruker:hover .skall-bruker-navn { text-decoration: underline; }
+
+/* Skallet er ett rutenett med to kolonner: sidemenyens bredde og resten.
+   Verktøyraden (søk + menybryter) legger seg i kolonnene under toppen, og
+   kroppen spenner over begge — dens egen første kolonne har samme bredde,
+   så søket står rett over modulmenyen det søker i. */
+.skall {
+  display: grid;
+  grid-template-columns: var(--skall-side-b) minmax(0, 1fr);
+  column-gap: var(--sp-6);
+  align-content: start;
+  min-height: 100vh;
+  padding: 0 var(--sp-6);
+}
+.skall > .skall-topp { grid-column: 1 / -1;
+  margin: 0 calc(-1 * var(--sp-6)); padding-left: var(--sp-6); padding-right: var(--sp-6); }
+.skall > .skall-sok { grid-column: 1; align-self: center;
+  margin: var(--sp-3) 0; max-width: none; }
+.skall > .skall-menybryter { grid-column: 2; justify-self: start; align-self: center;
+  margin: var(--sp-3) 0; }
+.skall > .skall-status { grid-column: 1 / -1; }
+.skall > .skall-bunn { grid-column: 1 / -1; }
+/* Skjult meny: søket beholder sin bredde, bryteren står ved siden av. */
+.skall:has(> .skall-kropp[data-meny="skjult"]) {
+  grid-template-columns: var(--skall-side-b) minmax(0, 1fr);
 }
 
-/* Offentlig nettsted 2026: separate toppnivåer, ikke én lang produktside. */
+.skall-sok { margin: var(--sp-2) 0; max-width: 22rem; position: relative; }
+.skall-sok .felt-inp { max-width: none; padding-left: 2.25rem; min-height: 2.5rem;
+  background: var(--card); }
+/* Et søkeikon tegnet med CSS foran feltet: ring + strek. */
+.skall-sok::before {
+  content: ""; position: absolute; left: .8rem; top: 50%;
+  width: .7rem; height: .7rem; margin-top: -.5rem;
+  border: 2px solid var(--muted); border-radius: 50%; pointer-events: none;
+}
+.skall-sok::after {
+  content: ""; position: absolute; left: 1.45rem; top: 50%; margin-top: .2rem;
+  width: .45rem; height: 2px; background: var(--muted);
+  transform: rotate(45deg); pointer-events: none;
+}
+
+/* SONENE HAR NAVN, DE TELLES IKKE (Codex P1). */
+.skall-kropp {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--sp-6);
+  grid-template-columns: var(--skall-side-b) minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "venstre hoved kontekst";
+  align-items: start;
+}
+.skall-kropp[data-meny="skjult"] {
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
+  grid-template-areas: "hoved kontekst";
+}
+.skall-kropp > .skall-venstre { grid-area: venstre; }
+.skall-kropp > .skall-hoved { grid-area: hoved; }
+.skall-kropp > .skall-kontekst { grid-area: kontekst; }
+
+/* Under bruddpunktet stables sonene i DOM-rekkefølge (fokus følger DOM). */
+@media (max-width: 60rem) {
+  .skall-kropp {
+    grid-template-columns: 1fr;
+    grid-template-areas: "venstre" "hoved" "kontekst";
+    gap: var(--sp-4);
+  }
+  .skall-kropp[data-meny="skjult"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "hoved" "kontekst";
+  }
+  .skall-modulliste { max-height: 40vh; overflow-y: auto; }
+}
+
+.skall-venstre, .skall-kontekst {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+}
+.skall-venstre { position: sticky; top: calc(var(--skall-topp-h) + var(--touch-min) + var(--sp-3));
+  max-height: calc(100vh - var(--skall-topp-h) - var(--touch-min) - var(--sp-6));
+  overflow-y: auto; }
+
+.skall-modulgruppe + .skall-modulgruppe { margin-top: var(--sp-4); }
+.skall-modulgruppe-navn {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  margin: 0 0 var(--sp-1);
+  text-transform: uppercase;
+}
+.skall-modulgruppe-liste { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+
+/* Modulvalget er en LENKE når modulen har en arbeidsflate, og en knapp når
+   den bare bytter kontekstpanelet — begge ser like ut. */
+.skall-modul {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex; align-items: center;
+  font: inherit;
+  min-height: 2.5rem;
+  padding: var(--sp-1) var(--sp-3);
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
+  transition: background var(--fart) ease;
+}
+.skall-modul:hover { background: var(--flate); }
+/* Den valgte modulen: flate, kant OG vekt. */
+.skall-modul[aria-current] {
+  background: var(--info-bg);
+  color: var(--info);
+  box-shadow: inset 3px 0 0 var(--info);
+  font-weight: 600;
+}
+
+.skall-kontekst-tittel { font-size: var(--fs-h2); margin: 0 0 var(--sp-2); }
+.skall-kontekst-liste { display: grid; gap: var(--sp-1) var(--sp-2);
+  grid-template-columns: auto 1fr; margin: 0; }
+.skall-kontekst-liste dt { color: var(--muted); }
+.skall-kontekst-liste dd { margin: 0; }
+
+/* Statuslinja: rolig, men alltid til stede. */
+.skall-status {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  margin-top: var(--sp-8);
+  padding: var(--sp-3) 0 var(--sp-4);
+}
+
+/* Områdefanene i modulmenyen: på bred skjerm et lite rutenett av valg
+   (to i bredden), så alle elleve områdene synes uten å rulle. */
+.skall-venstre .faner-liste {
+  margin-bottom: var(--sp-3);
+  gap: var(--sp-1);
+  border-bottom: 0;
+  display: grid; grid-template-columns: 1fr 1fr;
+}
+.skall-venstre .fane {
+  font-size: var(--fs-xs); font-weight: 600;
+  padding: var(--sp-1) var(--sp-2);
+  min-height: 2.25rem;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  margin: 0; white-space: normal; text-align: left; line-height: 1.15;
+  color: var(--muted); background: var(--card);
+}
+.skall-venstre .fane:hover { color: var(--ink); border-color: var(--line-sterk); }
+.skall-venstre .fane.valgt { background: var(--ink); color: var(--card);
+  border-color: var(--ink); }
+.skall-venstre .faner-panel { padding: 0; }
+
+/* Under et søk brytes fanene, og hver treffrad bærer området sitt. */
+.skall-modul-omrade {
+  color: var(--muted);
+  display: block;
+  font-size: var(--fs-xs);
+  padding: 0 var(--sp-3) var(--sp-1);
+}
+
+/* ---------------------------------------------------------------------
+   11  Seksjonsfaner — en lang flate blir faner (eiers krav 6/9:
+       «unngå lange lister, bruk fanemeny»). Bygges av seksjonsfaner.js
+       av flatens egne `section.kpi-kort > h2`; flaten selv er urørt.
+   --------------------------------------------------------------------- */
+.seksjonsfaner {
+  position: sticky; top: 0; z-index: var(--z-innhold);
+  background: var(--paper);
+  margin: 0 0 var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+.seksjonsfaner-liste {
+  display: flex; gap: var(--sp-1);
+  overflow-x: auto; scrollbar-width: none;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+  margin-bottom: -1px;
+}
+.seksjonsfaner-liste::-webkit-scrollbar { display: none; }
+.seksjonsfane {
+  flex: 0 0 auto; scroll-snap-align: start;
+  background: none; border: 0; border-bottom: 3px solid transparent;
+  color: var(--muted); cursor: pointer; font: inherit; font-weight: 600;
+  padding: var(--sp-2) var(--sp-3); min-height: var(--touch-min);
+  white-space: nowrap;
+  transition: color var(--fart) ease, border-color var(--fart) ease;
+}
+.seksjonsfane:hover { color: var(--ink); border-bottom-color: var(--line-sterk); }
+.seksjonsfane[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--info); }
+/* Én seksjon om gangen: den valgte får hele bredden. */
+.kpi-kort-liste[data-faner="ja"] { grid-template-columns: minmax(0, 1fr); }
+
+/* --- Bunnmeny (mobil) --------------------------------------------------
+   EIERS VEDTAK 4/9: «hovedmenyene skal være helt nederst på mobil».
+   Menyen finnes bare under bruddpunktet. På en bred skjerm er sidemenyen
+   riktig form, og to primære navigasjoner samtidig ville vært to svar på
+   samme spørsmål. */
+.skall-bunn { display: none; }
+
+@media (max-width: 60rem) {
+  .skall { display: block; padding: 0 var(--sp-3); min-height: auto; }
+  .skall > .skall-topp { margin: 0 calc(-1 * var(--sp-3)); position: static;
+    row-gap: 0; padding-bottom: var(--sp-2); }
+  /* Tenanten får sin egen, lille linje under merket i stedet for å bli
+     klemt til én bokstav mellom merket og kontrollene. */
+  .skall-topp .skall-tenant { order: 4; flex: 0 0 100%; border: 0; padding: 0;
+    font-size: var(--fs-xs); margin-top: calc(-1 * var(--sp-1)); }
+  .skall > .skall-kropp { margin-top: var(--sp-4); }
+  .skall-bunn {
+    display: block;
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: var(--z-bunnmeny);
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -1px 0 var(--line);
+    /* TELEFONENS EGEN KANT: gestusstripa på iPhone, navigasjonslinja på
+       Android. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .skall-bunn-liste {
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .skall-bunn-liste > li { flex: 1 1 0; min-width: 0; }
+  .skall-bunn-valg {
+    /* 44px ER IKKE PYNT: høyden er satt på selve målet. */
+    min-height: 44px;
+    height: var(--bunnmeny-h);
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--sp-1);
+    background: none;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+    position: relative;
+  }
+  .skall-bunn-valg .ikon { width: 22px; height: 22px; }
+  /* IKON *OG* TEKST. */
+  .skall-bunn-tekst {
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  /* HVOR ER JEG: farge, vekt og en strek (WCAG 1.4.1). */
+  .skall-bunn-valg[aria-current="page"] {
+    color: var(--info);
+    box-shadow: inset 0 3px 0 0 var(--info);
+  }
+  .skall-bunn-valg[aria-expanded="true"] { color: var(--info); }
+  .skall-bunn-mer-liste {
+    display: grid;
+    border-bottom: 1px solid var(--line);
+    max-height: 50vh;
+    overflow-y: auto;
+    background: var(--card);
+  }
+  .skall-bunn-mer-valg {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding: var(--sp-2) var(--sp-4);
+    color: var(--ink);
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .skall-bunn-mer-valg + .skall-bunn-mer-valg {
+    border-top: 1px solid var(--line);
+  }
+  /* PLASSEN MÅ RESERVERES: en fast meny som legger seg OVER innholdet
+     spiser den siste raden på hver eneste side. */
+  .skall { padding-bottom: calc(var(--bunnmeny-h)
+    + env(safe-area-inset-bottom, 0px)); }
+  /* Toppnavigasjonens faner er duplikater av bunnmenyen på telefon. */
+  .skall-topp .skall-nav { display: none; }
+  /* Menybryteren i toppen er duplikat av bunnmenyens «Modulmeny». */
+  .skall > .skall-menybryter { display: none; }
+  /* Søket hører til modulmenyen: det vises bare når menyen er åpen, som
+     arkets øverste rad. */
+  .skall > .skall-sok { display: none; }
+  .skall:has(> .skall-kropp[data-meny="apen"]) > .skall-sok {
+    display: block; position: fixed; top: 0; left: 0; right: 0;
+    z-index: var(--z-menyark); margin: 0; max-width: none;
+    height: var(--skall-verktoy-h); padding: var(--sp-2) var(--sp-3);
+    background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .skall:has(> .skall-kropp[data-meny="apen"]) > .skall-sok::before { left: 1.55rem; }
+  .skall:has(> .skall-kropp[data-meny="apen"]) > .skall-sok::after { left: 2.2rem; }
+  /* MODULMENYEN ER ET ARK PÅ TELEFONEN: den dekker innholdet fra søket
+     ned til bunnmenyen, ruller for seg selv, og lukkes fra bunnmenyen
+     eller ved at man velger en modul. Innholdet bak ligger i ro. */
+  .skall-kropp[data-meny="apen"] > .skall-venstre {
+    position: fixed; left: 0; right: 0;
+    top: var(--skall-verktoy-h);
+    bottom: calc(var(--bunnmeny-h) + env(safe-area-inset-bottom, 0px));
+    z-index: var(--z-menyark);
+    overflow-y: auto; max-height: none;
+    border: 0; border-radius: 0;
+    padding: var(--sp-3) var(--sp-3) var(--sp-6);
+  }
+  html:has(.skall-kropp[data-meny="apen"]) { overflow: hidden; }
+}
+
+/* --- Kontekstpanelet tar bare plass når det HAR noe ---------------------
+   Panelet fjernes ikke fra dokumentet (det er et fokusmål); det er PLASSEN
+   som frigis. */
+.skall-kropp[data-kontekst="tom"] {
+  grid-template-columns: var(--skall-side-b) minmax(0, 1fr);
+  grid-template-areas: "venstre hoved";
+}
+.skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "hoved";
+}
+.skall-kropp[data-kontekst="tom"] > .skall-kontekst { display: none; }
+
+@media (max-width: 60rem) {
+  .skall-kropp[data-kontekst="tom"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "venstre" "hoved";
+  }
+  .skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
+    grid-template-columns: 1fr;
+    grid-template-areas: "hoved";
+  }
+}
+
+/* --- Andre runde på skallet (eiers skjermbilder 4/9) --------------------
+   1. Faneraden ruller på smal skjerm, den brekker ikke.
+   2. Midten er ikke klemt av forsidens tekstbredde.
+   3. Kontekstpanelet — se `data-kontekst` over. */
+.skall-kropp > .skall-hoved {
+  max-width: none;
+  padding: 0;
+  min-width: 0;
+  /* `margin: 0 auto` fra forsiden gjør et rutenettbarn fit-content i
+     stedet for stretch — da vant fanestripens max-content over sporet,
+     og hele flaten fløt ut til høyre (målt 6/9). */
+  margin: 0;
+  width: 100%;
+}
+
+@media (max-width: 60rem) {
+  /* 1: raden ruller, den brekker ikke. */
+  .skall-venstre .faner-liste {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: var(--sp-1);
+  }
+  .skall-venstre .faner-liste::-webkit-scrollbar { display: none; }
+  .skall-venstre .fane {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    /* 44px også her: fanene er det første man treffer i menyen. */
+    min-height: 44px;
+    border-radius: var(--radius-pill);
+    padding: var(--sp-1) var(--sp-4);
+  }
+  .skall-modulliste { max-height: none; }
+  .skall-modul { min-height: 44px; display: flex; align-items: center; }
+  .skall-venstre { position: static; max-height: none; }
+  .skall-status { margin-top: var(--sp-6); }
+}
+
+/* --- Telefonens egne kanter (eiers skjermbilde 4/9, forsiden) -----------
+   `viewport-fit=cover` gjør at siden strekker seg under innhakk og hjørner;
+   hver kant som ligger inntil skjermkanten reserverer selv plassen.
+   `max()` og ikke `+`: uten innhakk skal den vanlige paddingen stå urørt. */
+.site-topp {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.site-topp-rad, .site-sok-rad, .site-footer {
+  padding-left: max(var(--sp-6), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--sp-6), env(safe-area-inset-right, 0px));
+}
+.skall-topp {
+  padding-top: max(var(--sp-2), env(safe-area-inset-top, 0px));
+  padding-left: max(var(--sp-6), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--sp-6), env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 860px) {
+  .site-topp-rad, .site-sok-rad, .site-footer {
+    padding-left: max(var(--sp-4), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--sp-4), env(safe-area-inset-right, 0px));
+  }
+  .site-topp .site-sprak { flex-wrap: wrap; margin-bottom: 0; }
+  .site-sprak-knapp { min-height: 44px; }
+}
+
+@media (max-width: 60rem) {
+  .skall-topp {
+    padding-left: max(var(--sp-3), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--sp-3), env(safe-area-inset-right, 0px));
+  }
+  .skall-bunn {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  /* Telefonen: e-posten går til profilen (den er ett trykk unna under
+     «Mer» → Plattform); raden holder merke, tenant, språk og utlogging. */
+  .skall-bruker { display: none; }
+}
+
+/* ---------------------------------------------------------------------
+   13  Offentlig flate — lys, redaksjonell, én primær handling
+   --------------------------------------------------------------------- */
+.site-shell { display: grid; gap: var(--sp-10); }
+html[data-visning="landing"] .skall-hoved {
+  max-width: var(--site-maks);
+  padding: var(--sp-8) var(--sp-6) var(--sp-12);
+}
+/* Serif på de store overskriftene: menneskelig, ikke maskinelt. */
+.site-home-copy h1, .site-sideintro h1, .site-driftstatus h2, .site-bunn-cta h2,
+.site-section-head h2, .site-prinsipper h2, .site-tilbud h2, .site-sporsmal h2,
+.site-shell > .site-section > h2 {
+  font-family: var(--font-serif); font-weight: 600; letter-spacing: -.005em;
+}
+
+/* Toppen */
 .site-topp {
   background: var(--card);
   border-bottom: 1px solid var(--line);
@@ -639,16 +1229,18 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   font-size: var(--fs-logo);
   gap: var(--sp-2);
   text-decoration: none;
+  min-height: var(--touch-min);
 }
 .site-logo > span {
   align-items: center;
-  background: var(--ink);
+  background: var(--info);
   border-radius: var(--radius-sm);
   color: var(--card);
   display: inline-flex;
-  height: 2rem;
+  height: 1.9rem;
   justify-content: center;
-  width: 2rem;
+  width: 1.9rem;
+  font-weight: 700; font-size: var(--fs-sm);
 }
 .site-hovednav { margin-left: auto; }
 .site-hovednav ul {
@@ -660,29 +1252,31 @@ h1 { font-size: 1.5rem; margin: 0 0 var(--sp-2); }
   padding: 0;
 }
 .site-hovednav a {
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   color: var(--ink);
-  display: inline-flex;
+  display: inline-flex; align-items: center;
   min-height: var(--touch-min);
   padding: var(--sp-2) var(--sp-3);
-  text-decoration: none;
+  text-decoration: none; font-weight: 500;
+  transition: background var(--fart) ease;
 }
-.site-hovednav a:hover { background: var(--paper); }
+.site-hovednav a:hover { background: var(--flate); }
 .site-hovednav a[aria-current="page"] {
-  background: var(--ink);
-  color: var(--card);
+  background: var(--info-bg);
+  color: var(--info);
   font-weight: 600;
 }
+/* «Logg inn» er den ene primære handlingen i toppen. */
+.site-hovednav li:last-child a {
+  background: var(--info); color: var(--card); font-weight: 600;
+  margin-left: var(--sp-2);
+}
+.site-hovednav li:last-child a:hover { background: var(--info-hover); }
+.site-hovednav li:last-child a[aria-current="page"] { background: var(--info-hover); }
 .site-topp .site-sprak { margin: 0; }
 .site-sok-rad { min-height: var(--site-sok-rad-h); padding-bottom: var(--sp-3); }
 
-/* Hopp-til-innhold (WCAG 2.4.1) skal lande på innholdet, ikke bak toppen.
-   `.site-topp` er klebrig og dekker viewportens øverste kant, så et ublokkert
-   hopp scrollet #hovedinnhold helt opp — UNDER toppen — og både overskriften
-   og den fokuserte regionens øvre kant var skjult til brukeren scrollet
-   tilbake (Codex P2). `scroll-margin-top` gjelder når fokus flyttes til målet,
-   `scroll-padding-top` når nettleseren hopper til ankeret; begge veier inn i
-   #hovedinnhold finnes, så begge får offset. */
+/* Hopp-til-innhold skal lande på innholdet, ikke bak den klebrige toppen. */
 html[data-visning="landing"] { scroll-padding-top: var(--site-topp-rad-h); }
 html[data-visning="landing"] #hovedinnhold { scroll-margin-top: var(--site-topp-rad-h); }
 html[data-visning="landing"][data-offentlig-side="tjenester"] {
@@ -697,66 +1291,90 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
   justify-content: flex-end;
 }
 .site-sok input, .site-sok button {
-  background: var(--paper);
-  border: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--line-sterk);
   color: var(--ink);
   font: inherit;
   min-height: var(--touch-min);
 }
 .site-sok input {
-  border-radius: var(--radius-pill);
-  max-width: 18rem;
+  border-radius: var(--radius-sm);
+  max-width: 22rem;
   padding: var(--sp-2) var(--sp-4);
   width: 100%;
 }
 .site-sok button {
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-weight: 600;
   padding: var(--sp-2) var(--sp-4);
 }
-html[data-visning="landing"] .skall-hoved {
-  max-width: var(--site-maks);
-  padding: var(--sp-8) var(--sp-6);
+.site-sok button:hover { background: var(--flate); }
+
+/* Språkvalg: to synlige knapper; valgt er en tilstand, ikke en knapp. */
+.site-sprak {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0;
+  margin-bottom: var(--sp-3);
+  border: 1px solid var(--line-sterk); border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.site-sprak-knapp {
+  background: var(--card);
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit; font-weight: 600; font-size: var(--fs-sm);
+  min-height: 2.25rem;
+  padding: var(--sp-1) var(--sp-3);
+}
+.site-sprak-knapp + .site-sprak-knapp { border-left: 1px solid var(--line-sterk); }
+.site-sprak-knapp:hover { background: var(--flate); color: var(--ink); }
+.site-sprak-knapp.valgt {
+  background: var(--ink);
+  color: var(--card);
+  cursor: default;
+}
+.site-sprak-status { position: absolute; width: 1px; height: 1px; overflow: hidden; }
+.site-sprak-status:not(:empty) { position: static; width: auto; height: auto;
+  color: var(--danger); padding: 0 var(--sp-2); align-self: center; }
+
+/* Sidetopp for undersidene */
+.site-sideintro {
+  border-bottom: 1px solid var(--line);
+  padding: var(--sp-4) 0 var(--sp-8);
 }
 .site-sideintro h1 {
   font-size: var(--fs-display);
   letter-spacing: var(--ls-display);
   line-height: var(--lh-display);
   max-width: var(--maks-display);
+  margin: var(--sp-2) 0 var(--sp-4);
+}
+.site-sideintro .site-hero-text { max-width: var(--maks-ingress); }
+.site-hero-text { font-size: var(--fs-ingress); color: var(--site-muted); margin: 0; }
+.site-eyebrow {
+  color: var(--info); text-transform: uppercase; letter-spacing: .08em;
+  font-size: var(--fs-xs); font-weight: 700; margin: 0 0 var(--sp-2);
 }
 
-/* Operativ forside: én samlet introduksjon etterfulgt av en lys
-   kontrolljournal. Ingen klassisk todelt SaaS-hero eller mørk layoutflate. */
+/* Forsiden: tekst til venstre, beviset (én handling gjennom Disponit) som
+   et hvitt kort til høyre. */
 .site-home-hero {
-  border-bottom: 1px solid var(--site-line);
   display: grid;
   gap: var(--sp-8);
   grid-template-columns: 1fr;
-  padding-top: var(--sp-8);
+  padding-top: var(--sp-4);
+  align-items: center;
 }
-.site-home-copy {
-  display: grid;
-  grid-template-columns: minmax(9rem, .28fr) minmax(0, 1fr);
-  padding: var(--sp-4) 0 0;
-}
-.site-home-copy .site-eyebrow {
-  border-top: 4px solid var(--site-action);
-  color: var(--site-action);
-  grid-row: 1 / span 3;
-  margin: .55rem var(--sp-8) 0 0;
-  padding-top: var(--sp-3);
-}
-/* Forsidens h1 ER display-trinnet og skal styres av det, ikke ved siden av
-   det: egen clamp(), egen line-height og eget tekstmål her betyr at
-   justeringer i tokens.css treffer hver offentlig sidetittel UNNTATT den
-   viktigste (Codex P2). Bare margin-bottom er lokal — den er avstand til
-   ingressen, ikke typografi. */
+.site-home-copy { display: grid; }
+.site-home-copy .site-eyebrow { margin-bottom: var(--sp-3); }
 .site-home-copy h1 {
   font-size: var(--fs-display);
   letter-spacing: var(--ls-display);
   line-height: var(--lh-display);
-  margin-bottom: var(--sp-4);
+  margin: 0 0 var(--sp-4);
   max-width: var(--maks-display);
 }
 .site-home-ingress {
@@ -774,17 +1392,11 @@ html[data-visning="landing"] .skall-hoved {
 }
 .site-home-handlinger .knapp,
 .site-tekstlenke { min-height: var(--touch-min); }
-/* .knapp er en <a> uten egen display; som flex-element blir den blokk, og på
-   en blokk gjør verken justify-content eller min-height noe med selve
-   teksten. Under 560px står knappen i full bredde med `justify-content:
-   center` — som ble ignorert, så etiketten lå venstrejustert mens
-   .site-tekstlenke under den var sentrert (Codex P2). Å gjøre knappen til
-   flex-container gir sentreringen OG berøringsmålets høyde effekt, akkurat
-   som for tekstlenka. */
 .site-home-handlinger .knapp {
   align-items: center;
   display: inline-flex;
   justify-content: center;
+  padding-left: var(--sp-5); padding-right: var(--sp-5);
 }
 .site-home-handlinger .primar {
   background: var(--site-action);
@@ -802,114 +1414,158 @@ html[data-visning="landing"] .skall-hoved {
   padding: var(--sp-2) 0;
   text-underline-offset: var(--sp-1);
 }
+.site-tekstlenke:hover { color: var(--info); }
 .site-kontrollbevis {
   background: var(--site-surface);
-  border: 1px solid var(--site-ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   color: var(--site-ink);
   display: grid;
-  gap: var(--sp-3) var(--sp-8);
-  grid-template-columns: minmax(12rem, .28fr) minmax(0, 1fr);
-  padding: var(--sp-6);
+  gap: var(--sp-1);
+  padding: var(--sp-6) var(--sp-6) var(--sp-4);
+  box-shadow: var(--skygge);
 }
 .site-kontrollbevis-label {
-  color: var(--site-signal);
-  font-family: var(--font-mono);
+  color: var(--info);
+  font-size: var(--fs-xs); font-weight: 700;
+  letter-spacing: .08em;
   margin: 0;
   text-transform: uppercase;
 }
 .site-kontrollbevis h2 {
-  font-size: var(--fs-ingress);
-  margin: 0;
+  font-size: var(--fs-tittel); font-family: var(--font-serif); font-weight: 600;
+  margin: 0 0 var(--sp-3);
   max-width: var(--maks-tittel);
 }
+/* Fire steg som en loddrett kjede: tall i ring, linje mellom. */
 .site-kontrollflyt {
-  border-top: 1px solid var(--site-ink);
-  grid-column: 1 / -1;
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
 }
 .site-kontrollflyt li {
-  border-bottom: 1px solid var(--site-line);
   display: grid;
-  gap: var(--sp-6);
-  grid-template-columns: 4rem minmax(12rem, .65fr) minmax(0, 1fr);
-  padding: var(--sp-4) 0;
+  gap: 0 var(--sp-4);
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  padding: 0 0 var(--sp-4);
+  position: relative;
 }
-.site-kontrollflyt-nr { color: var(--site-signal); font-family: var(--font-mono); }
-.site-kontrollflyt strong { display: block; font-size: var(--fs-ingress); }
+.site-kontrollflyt li:not(:last-child)::before {
+  content: ""; position: absolute; left: calc(1.125rem - 1px); top: 2.25rem; bottom: 0;
+  border-left: 2px solid var(--line);
+}
+.site-kontrollflyt-nr {
+  grid-row: 1 / span 2;
+  width: 2.25rem; height: 2.25rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--info-bg); color: var(--info);
+  font-weight: 700; font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  position: relative;
+}
+.site-kontrollflyt li:last-child .site-kontrollflyt-nr {
+  background: var(--auto-bg); color: var(--auto); }
+.site-kontrollflyt strong { display: block; font-size: var(--fs-lg); line-height: 2.25rem; }
 .site-kontrollflyt p { color: var(--site-muted); margin: 0; }
+/* Driftstatus: en rolig, tydelig linje — ikke en fargeflate. */
 .site-driftstatus {
   align-items: start;
-  background: var(--site-signal-bg);
-  border-left: 6px solid var(--site-signal);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--site-signal);
+  border-radius: var(--radius);
   display: grid;
-  gap: var(--sp-6);
-  grid-template-columns: minmax(8rem, .35fr) minmax(0, 1.65fr);
-  padding: var(--sp-6);
+  gap: var(--sp-4) var(--sp-8);
+  grid-template-columns: minmax(8rem, .3fr) minmax(0, 1.7fr);
+  padding: var(--sp-5) var(--sp-6);
 }
 .site-driftstatus-merke {
   color: var(--site-signal);
-  font-weight: 700;
+  font-weight: 700; font-size: var(--fs-sm);
+  text-transform: uppercase; letter-spacing: .06em;
   margin: 0;
 }
 .site-driftstatus h2 { font-size: var(--fs-tittel); margin: 0 0 var(--sp-2); }
-/* --muted er stemt mot papirflatene (--paper/--card); på signalpanelets
-   --site-signal-bg gir den bare ~4,1:1 og bryter WCAG 1.4.3 for vanlig
-   brødtekst. Den offentlige flaten har sin egen dempede farge nettopp for
-   dette — --site-muted gir ~5,1:1 mot samme bakgrunn (Codex P2). */
 .site-driftstatus div p { color: var(--site-muted); margin: 0; max-width: var(--maks-ingress); }
+.site-section { display: grid; gap: var(--sp-5); padding: 0; }
+.site-section-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-4); flex-wrap: wrap;
+}
+.site-section-head h2, .site-section > h2 { font-size: var(--fs-tittel); margin: 0; max-width: var(--maks-tittel); }
+.site-inline-note { color: var(--muted); }
 .site-prinsipp-grid {
-  border-bottom: 1px solid var(--line);
-  border-top: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-4);
 }
-.site-prinsipp { padding: var(--sp-6) var(--sp-6) var(--sp-6) 0; }
-.site-prinsipp + .site-prinsipp { border-left: 1px solid var(--line); padding-left: var(--sp-6); }
-.site-prinsipp > span { color: var(--site-signal); font-family: var(--font-mono); }
-.site-prinsipp h3 { margin: var(--sp-6) 0 var(--sp-2); }
+.site-prinsipp { padding: var(--sp-5) var(--sp-6); background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+.site-prinsipp > span { color: var(--info); font-weight: 700; font-variant-numeric: tabular-nums; }
+.site-prinsipp h3 { margin: var(--sp-3) 0 var(--sp-2); font-size: var(--fs-lg); }
 .site-prinsipp p { color: var(--muted); margin: 0; }
 .site-cta { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-6); }
 .site-cta .knapp, .site-bunn-cta .knapp { min-height: var(--touch-min); text-decoration: none; }
-.site-section { padding: var(--sp-8) 0; }
-.site-tilbud { border-top: 1px solid var(--line); }
-/* Samme dempede farge som forsidens øvrige brødtekst på --site-paper
-   (--site-muted, ikke --muted): landingsflaten har sin egen stemte skala. */
-.site-tilbud-ingress { color: var(--site-muted); margin: 0; max-width: var(--maks-ingress); }
+.site-tilbud { display: grid; gap: var(--sp-5); }
+.site-tilbud-ingress { color: var(--site-muted); margin: 0; max-width: var(--maks-ingress);
+  font-size: var(--fs-lg); }
 .site-feature {
-  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--sp-2);
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--sp-5) var(--sp-5);
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.site-feature h2, .site-feature h3 { margin: 0; font-size: var(--fs-lg); }
+.site-feature p { color: var(--muted); margin-bottom: 0; }
+.site-feature-nr { color: var(--info); font-weight: 700; font-variant-numeric: tabular-nums;
+  padding-top: .15rem; }
+.site-feature > .site-eyebrow { grid-column: 1 / -1; }
+/* Nummererte tilbud: tallet i egen kolonne, teksten ved siden av. */
+.site-feature:has(> .site-feature-nr) { grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); }
+.site-module-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-3); margin-bottom: var(--sp-2);
+}
+.site-badge {
+  display: inline-flex; align-items: center;
+  padding: 0 var(--sp-2); line-height: 1.6rem;
+  border-radius: var(--radius-sm); font-weight: 600; font-size: var(--fs-xs);
+  border: 1px solid var(--line); white-space: nowrap;
+}
+.site-badge.ok {
+  background: var(--auto-bg); color: var(--auto); border-color: var(--auto-bg);
+}
+.site-badge.info {
+  background: var(--info-bg); color: var(--info); border-color: var(--info-bg);
+}
+.site-badge.plan {
+  background: var(--flate); color: var(--muted); border-color: var(--flate);
+}
+.site-inline-badges { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.site-steg { display: grid; gap: var(--sp-3); list-style: none; margin: 0; padding: 0; }
+.site-steg li {
   display: grid;
   gap: var(--sp-4);
-  padding: var(--sp-6) 0;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  padding: var(--sp-5); background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--radius);
 }
-.site-feature h2, .site-feature h3 { margin: 0; }
-.site-feature p { color: var(--muted); margin-bottom: 0; }
-.site-feature-nr { color: var(--info); font-family: var(--font-mono); }
-.site-sideintro {
-  border-bottom: 1px solid var(--line);
-  padding: var(--sp-8) 0;
-}
-.site-sideintro .site-hero-text { max-width: var(--maks-ingress); }
-.site-steg { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; }
-.site-steg li {
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: var(--sp-6);
-  grid-template-columns: 3rem minmax(0, 1fr);
-  padding: var(--sp-6) 0;
-}
-.site-steg li > span { color: var(--info); font-family: var(--font-mono); }
-.site-steg h3, .site-steg p { margin-top: 0; }
-.site-sporsmal dl { margin: 0; }
+.site-steg li > span { width: 2.25rem; height: 2.25rem; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--info-bg); color: var(--info); font-weight: 700; }
+.site-steg h3 { margin: .3rem 0 var(--sp-1); font-size: var(--fs-lg); }
+.site-steg p { margin: 0; color: var(--muted); }
+.site-sporsmal dl { margin: 0; display: grid; gap: var(--sp-3); }
 .site-sporsmal dl > div {
-  border-top: 1px solid var(--line);
   display: grid;
-  gap: var(--sp-6);
-  grid-template-columns: minmax(12rem, .7fr) minmax(0, 1.3fr);
-  padding: var(--sp-6) 0;
+  gap: var(--sp-2) var(--sp-8);
+  grid-template-columns: minmax(12rem, .8fr) minmax(0, 1.2fr);
+  padding: var(--sp-5); background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--radius);
 }
-.site-sporsmal dt { font-weight: 700; }
+.site-sporsmal dt { font-weight: 700; font-size: var(--fs-lg); }
 .site-sporsmal dd { color: var(--muted); margin: 0; }
 .site-bunn-cta {
   align-items: center;
@@ -920,766 +1576,150 @@ html[data-visning="landing"] .skall-hoved {
   justify-content: space-between;
   padding: var(--sp-8);
 }
-.site-bunn-cta h2 { margin: 0; }
+.site-bunn-cta h2 { margin: 0; font-size: var(--fs-tittel); max-width: var(--maks-tittel); }
 .site-footer {
   align-items: center;
   border-top: 1px solid var(--line);
   display: flex;
   gap: var(--sp-4);
-  margin-top: var(--sp-8);
-  min-height: 6rem;
+  min-height: 5rem;
 }
-.site-footer p { color: var(--muted); margin-right: auto; }
+.site-footer p { color: var(--muted); margin: 0 auto 0 0; }
 .site-tom { color: var(--muted); padding: var(--sp-8) 0; }
 
+/* Katalog og kortnett (tjenester, innlogging) */
+.site-grid { display: grid; gap: var(--sp-4); }
+.site-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.site-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.site-card-grid {
+  display: grid; gap: var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.site-hero {
+  display: grid; gap: var(--sp-4); grid-template-columns: 1.35fr .85fr;
+  align-items: stretch;
+}
+.site-hero-copy, .site-hero-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--sp-6);
+}
+.site-module-card, .site-login-card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--sp-6); background: var(--card);
+  display: grid; gap: var(--sp-2); align-content: start;
+}
+.site-login-card h2 { margin: 0; font-size: var(--fs-tittel); font-family: var(--font-serif); }
+.site-login-card p { color: var(--muted); margin: 0 0 var(--sp-2); }
+.site-login-card .innlogging-form { margin-top: var(--sp-2); }
+.site-mini-card {
+  display: grid; gap: var(--sp-2); align-content: start;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--sp-4) var(--sp-5); background: var(--card);
+}
+.site-mini-card p { margin: 0; color: var(--muted); }
+.site-mini-card strong { font-size: var(--fs-lg); }
+.site-kpi-row {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3); margin-top: var(--sp-4);
+}
+.site-kpi {
+  padding: var(--sp-3); background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.site-kpi strong { display: block; font-size: 1.5rem; color: var(--ink); }
+.site-kpi span { color: var(--muted); }
+.site-list { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-2); }
+.site-list-ordered { list-style: decimal; }
+/* Modulkatalogen: tett liste uten kulepunkt-innrykk. */
+.site-list-tett {
+  font-size: var(--fs-sm);
+  gap: 0; padding-left: 0; list-style: none;
+}
+.site-list-tett li { padding: var(--sp-1) 0; border-top: 1px solid var(--line); }
+.site-list-tett li:first-child { border-top: 0; }
+/* Katalogseksjonen står på papiret, ikke i et kort i et kort. */
+.kort.site-section { background: none; border: 0; padding: 0; }
+
+@media (min-width: 861px) {
+  .site-home-hero { grid-template-columns: minmax(0, 1.05fr) minmax(20rem, .95fr); }
+}
+@media (max-width: 960px) {
+  .site-hero, .site-grid-3 { grid-template-columns: 1fr; }
+  .site-grid-2, .site-kpi-row { grid-template-columns: 1fr; }
+  .site-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 860px) {
-  /* Toppen slutter å klebe her, og da skal offsetet bort med den: ellers
-     stopper hoppet en skjermhøyde for tidlig og etterlater et tomt felt.
-     Tjeneste-siden må navngis eksplisitt: dens to-rads-offset står på en
-     selektor med ett attributt mer, og media-blokker gir ikke spesifisitet.
-     Uten linjene under vant tjeneste-regelen også her, og hoppet landet en
-     hel søkerad for lavt på nettopp den siden reset-en gjelder for (Codex P2). */
+  /* Toppen slutter å klebe; da skal offsetet bort med den. */
   .site-topp { position: static; }
   html[data-visning="landing"],
   html[data-visning="landing"][data-offentlig-side="tjenester"] { scroll-padding-top: 0; }
   html[data-visning="landing"] #hovedinnhold,
   html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold { scroll-margin-top: 0; }
-  .site-topp-rad { align-items: flex-start; flex-wrap: wrap; padding-top: var(--sp-3); }
-  .site-hovednav { order: 3; width: 100%; }
-  .site-hovednav ul { flex-wrap: wrap; width: auto; }
+  .site-topp-rad { gap: var(--sp-3); min-height: 3.5rem; }
   .site-topp .site-sprak { margin-left: auto; }
   .site-sok { justify-content: stretch; }
   .site-sok input { max-width: none; }
-  .site-home-copy { grid-template-columns: 1fr; padding: var(--sp-4) 0 0; }
-  .site-home-copy .site-eyebrow {
-    border-left: 4px solid var(--site-action);
-    border-top: 0;
-    grid-row: auto;
-    margin: 0 0 var(--sp-4);
-    padding: 0 0 0 var(--sp-3);
+  /* HOVEDMENYEN NEDERST PÅ TELEFON (eiers krav 6/9): fem mål, hver minst
+     44 px, alltid på samme sted. Toppen holder bare merket og språket. */
+  .site-hovednav {
+    position: fixed; inset: auto 0 0 0; z-index: var(--z-bunnmeny);
+    background: var(--card); border-top: 1px solid var(--line);
+    margin: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  .site-kontrollbevis { padding: var(--sp-6); }
-  .site-kontrollflyt li { grid-template-columns: 3rem minmax(0, 1fr); gap: var(--sp-3); }
-  .site-kontrollflyt li p { grid-column: 2; }
-  .site-driftstatus { gap: var(--sp-3); grid-template-columns: 1fr; }
+  .site-hovednav ul { gap: 0; }
+  .site-hovednav li { flex: 1 1 0; min-width: 0; }
+  .site-hovednav a, .site-hovednav li:last-child a {
+    width: 100%; justify-content: center; text-align: center;
+    min-height: 44px; height: var(--bunnmeny-h);
+    padding: var(--sp-1); margin: 0;
+    border-radius: 0; background: none; color: var(--muted);
+    font-size: var(--fs-xs); font-weight: 600; line-height: 1.15;
+  }
+  .site-hovednav a[aria-current="page"], .site-hovednav li:last-child a[aria-current="page"] {
+    background: none; color: var(--info); box-shadow: inset 0 3px 0 0 var(--info);
+  }
+  .site-hovednav li:last-child a { color: var(--info); }
+  html[data-visning="landing"] body {
+    padding-bottom: calc(var(--bunnmeny-h) + env(safe-area-inset-bottom, 0px));
+  }
+  html[data-visning="landing"] .skall-hoved { padding: var(--sp-5) var(--sp-4) var(--sp-8); }
+  .site-shell { gap: var(--sp-8); }
+  .site-home-hero { gap: var(--sp-6); padding-top: 0; }
+  .site-kontrollbevis { padding: var(--sp-5) var(--sp-4) var(--sp-3); }
+  .site-driftstatus { gap: var(--sp-2); grid-template-columns: 1fr; padding: var(--sp-4) var(--sp-5); }
   .site-prinsipp-grid { grid-template-columns: 1fr; }
-  .site-prinsipp { padding: var(--sp-6) 0; }
-  .site-prinsipp + .site-prinsipp {
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding-left: 0;
-  }
   .site-sporsmal dl > div { grid-template-columns: 1fr; gap: var(--sp-2); }
-  .site-bunn-cta, .site-footer { align-items: flex-start; flex-direction: column; }
-  .site-footer { padding-bottom: var(--sp-6); padding-top: var(--sp-6); }
+  .site-bunn-cta { align-items: flex-start; flex-direction: column; padding: var(--sp-6); }
+  .site-footer { align-items: flex-start; flex-direction: column; gap: var(--sp-2);
+    padding-bottom: var(--sp-6); padding-top: var(--sp-6); }
+  .site-footer p { margin: 0; }
 }
 
 @media (max-width: 560px) {
   .site-topp-rad, .site-sok-rad, .site-footer { padding-left: var(--sp-3); padding-right: var(--sp-3); }
-  html[data-visning="landing"] .skall-hoved { padding: var(--sp-6) var(--sp-3); }
-  .site-home-hero { gap: var(--sp-6); padding-top: var(--sp-3); }
-  .site-home-copy { padding: var(--sp-4) 0 0; }
+  html[data-visning="landing"] .skall-hoved { padding: var(--sp-4) var(--sp-3) var(--sp-8); }
   .site-home-copy h1, .site-sideintro h1 { font-size: var(--fs-display-smal); }
-  .site-home-handlinger { align-items: stretch; flex-direction: column; }
+  .site-home-ingress, .site-hero-text { font-size: var(--fs-lg); }
+  .site-home-handlinger { align-items: stretch; flex-direction: column; gap: var(--sp-2); }
   .site-home-handlinger .knapp, .site-tekstlenke { justify-content: center; width: 100%; }
-  .site-kontrollbevis {
-    gap: var(--sp-2);
-    grid-template-columns: 1fr;
-    margin-left: calc(-1 * var(--sp-3));
-    margin-right: calc(-1 * var(--sp-3));
-    padding: var(--sp-4) var(--sp-3);
-  }
-  .site-kontrollflyt { grid-column: 1; }
+  .site-grid-3 { grid-template-columns: 1fr; }
+  .site-feature, .site-prinsipp, .site-steg li, .site-sporsmal dl > div,
+  .site-mini-card, .site-login-card { padding: var(--sp-4); }
+  .site-kontrollflyt strong { font-size: var(--fs-base); }
+  .site-section-head h2, .site-driftstatus h2, .site-bunn-cta h2,
+  .site-kontrollbevis h2 { font-size: 1.35rem; }
+  .site-bunn-cta .knapp { width: 100%; }
 }
 
-/* Navnelinja er e-posten når den finnes, ellers `bruker_id` — begge deler er
-   «hvem er jeg», og linja skal se lik ut uansett hvilken av dem som fylte
-   den. Står e-posten der, følger id-en under: det er den som faktisk
-   identifiserer prinsipalen i fire-øyne-kontrollen.
-
-   `overflow-wrap: anywhere` fordi disse strengene ikke har ordmellomrom å
-   brekke på: uten den ville `break-word` gitt etter først når det alt var
-   for sent. Å kutte med ellipse er feil her — «hvem er jeg» skal kunne
-   LESES, ikke gjettes; derfor brytes den over flere linjer i stedet. */
-.skall-bruker-navn,
-.skall-bruker-id,
-.skall-bruker-roller { overflow-wrap: anywhere; }
-.skall-bruker-navn { color: var(--ink); font-weight: 600; }
-.skall-bruker-id,
-.skall-bruker-roller { color: var(--muted); font-size: 0.85em; }
-
-/* Hjelpetekst under et felt: reglene feltet håndhever, sagt før man skriver. */
-.felt-hint {
-  color: var(--muted);
-  display: block;
-  font-size: 0.85em;
-  margin-top: var(--sp-1);
-}
-
-/* Samme rolle som hjelpeteksten, men for en hel rad — f.eks. hvilke
-   handlinger som holder en rolle i live. */
-.editor-hint {
-  color: var(--muted);
-  font-size: 0.85em;
-  margin: var(--sp-1) 0 0;
-}
-
-/* --- Portalskall, §2.3: topp · venstre · sentrum · høyre · bunn ---------- */
-
-/* SONENE HAR NAVN, DE TELLES IKKE (Codex P1). Rutenettet sto på ren
-   autoplassering: hvert barn falt i neste ledige kolonne. Da bryteren skjulte
-   modulmenyen, forsvant første barn ut av flyten — og resten rykket én kolonne
-   til venstre. `main` havnet i sidebarkolonnen på 12–16rem, kontekstpanelet i
-   midten, og høyre kolonne sto tom. Handlingen som skulle GI plass til arbeidet
-   klemte det altså sammen til en tredjedel.
-   Med navngitte områder ligger sonen fast uansett hvilke barn som finnes, og
-   den skjulte menyen har sitt eget oppsett der plassen faktisk tilfaller
-   `main`. */
-.skall-kropp {
-  display: grid;
-  gap: var(--sp-4);
-  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr) minmax(14rem, 20rem);
-  grid-template-areas: "venstre hoved kontekst";
-  align-items: start;
-}
-
-.skall-kropp[data-meny="skjult"] {
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
-  grid-template-areas: "hoved kontekst";
-}
-
-/* Bare som soner i skallkroppen: `.skall-hoved` brukes også av forsiden og
-   innloggingen, som ikke ligger i dette rutenettet. */
-.skall-kropp > .skall-venstre { grid-area: venstre; }
-.skall-kropp > .skall-hoved { grid-area: hoved; }
-.skall-kropp > .skall-kontekst { grid-area: kontekst; }
-
-/* Under bruddpunktet stables sonene i DOM-rekkefølge: venstre · hoved ·
-   kontekst. Rekkefølgen ble tidligere snudd visuelt med `order`, slik at
-   hovedinnholdet kom først på liten skjerm — men `order` flytter bare pikslene.
-   Tastatur og skjermleser følger DOM-en, så etter bryteren i toppen ble
-   brukeren ført NEDENFOR det synlige hovedinnholdet, gjennom alle 45
-   modulknappene, og først da opp igjen. Hoppelenka i `index.html` løser den
-   samme mobilsituasjonen uten å skille syn fra fokus, og modullista får i
-   stedet en høydegrense her så hovedinnholdet er innen rekkevidde. */
-@media (max-width: 60rem) {
-  .skall-kropp {
-    grid-template-columns: 1fr;
-    grid-template-areas: "venstre" "hoved" "kontekst";
-  }
-  .skall-kropp[data-meny="skjult"] {
-    grid-template-columns: 1fr;
-    grid-template-areas: "hoved" "kontekst";
-  }
-  .skall-modulliste { max-height: 40vh; overflow-y: auto; }
-}
-
-.skall-venstre, .skall-kontekst {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: var(--sp-3);
-}
-
-.skall-modulgruppe + .skall-modulgruppe { margin-top: var(--sp-4); }
-
-.skall-modulgruppe-navn {
-  color: var(--muted);
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-  margin: 0 0 var(--sp-1);
-  text-transform: uppercase;
-}
-
-.skall-modulgruppe-liste { list-style: none; margin: 0; padding: 0; }
-
-/* Modulvalget er en LENKE når modulen har en arbeidsflate å navigere til, og
-   en knapp når den bare bytter kontekstpanelet (Codex P2). De to ser like ut
-   — det er samme rad i samme meny — så regelen gjelder begge elementformene.
-   Tekstbasert, som §2.1 krever. Understrekingen er av av samme grunn som i
-   toppnavigasjonen: en meny der hver rad er strøket under blir en vegg. */
-.skall-modul {
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--ink);
-  cursor: pointer;
-  display: block;
-  font: inherit;
-  padding: var(--sp-1) var(--sp-2);
-  text-align: left;
-  text-decoration: none;
-  width: 100%;
-}
-
-.skall-modul:hover { background: var(--paper); }
-
-/* Den valgte modulen skal SES, ikke bare ligge i panelet. Markeringen bæres av
-   to kanaler — vekt og en kant — i tillegg til flaten, så den ikke er avhengig
-   av at forskjellen på to bakgrunner er synlig.
-   Attributtet uten verdi: raden er «her er du» både når den er navigert til
-   (`page`, modul med arbeidsflate) og når den er valgt i panelet (`true`) —
-   samme opplysning til brukeren, altså samme utseende. */
-.skall-modul[aria-current] {
-  background: var(--paper);
-  border-left: 3px solid var(--ink);
-  font-weight: 600;
-  padding-left: calc(var(--sp-2) - 3px);
-}
-
-.skall-kontekst-tittel { font-size: 1.05rem; margin: 0 0 var(--sp-2); }
-.skall-kontekst-liste { display: grid; gap: var(--sp-1) var(--sp-2);
-  grid-template-columns: auto 1fr; margin: 0; }
-.skall-kontekst-liste dt { color: var(--muted); }
-.skall-kontekst-liste dd { margin: 0; }
-
-.skall-sok { margin: var(--sp-2) 0; max-width: 22rem; }
-
-/* Statuslinja: rolig, men alltid til stede. */
-.skall-status {
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-  font-size: 0.9rem;
-  margin-top: var(--sp-6);
-  padding-top: var(--sp-3);
-}
-
-/* --- Faner: trinn i stedet for én lang rulle (§2.1) ---------------------- */
-.faner-liste {
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  margin-bottom: var(--sp-4);
-}
-
-.fane {
-  background: none;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  padding: var(--sp-2) var(--sp-3);
-}
-
-.fane:hover { color: var(--ink); }
-
-/* Valgt trinn markeres med farge OG en tydelig understrek — farge alene er
-   ikke informasjon (WCAG 1.4.1). */
-.fane.valgt {
-  border-bottom-color: var(--info);
-  color: var(--ink);
-}
-
-/* Panelet er fokuserbart; da må fokusmarkeringen være synlig på det også. */
-.faner-panel:focus-visible {
-  outline: var(--focus);
-  outline-offset: var(--focus-offset);
-}
-
-.faner-styring {
-  border-top: 1px solid var(--line);
-  display: flex;
-  gap: var(--sp-2);
-  justify-content: space-between;
-  margin-top: var(--sp-4);
-  padding-top: var(--sp-3);
-}
-
-/* M-16 nøkkeltall: tabellen er tilgangsformen; søylen er visuell støtte
-   VED SIDEN AV tallet (aria-hidden), én farge fra tokens — kategorien
-   bæres av tekstkolonnen, aldri av farge. */
-/* 20rem er et ØNSKE om kortbredde, ikke et krav: `min(20rem,100%)` lar
-   sporet aldri bli bredere enn plassen det står i. Ved 320 CSS-piksler —
-   som er 400 % zoom på en vanlig skjerm, ikke en sjelden telefon — har
-   `.skall-hoved` under 20rem igjen etter sin egen padding, og et
-   ubetinget minimum sprengte containeren og ga horisontal SIDErulling i
-   stedet for omflyt (WCAG 1.4.10). Taket ligger i uttrykket og ikke i en
-   egen smalskjermregel, fordi et bruddpunkt er en ny påstand om hvor
-   grensen går — og den påstanden ville vært feil igjen ved neste endring
-   av padding eller sonebredde. */
-.kpi-kort-liste{display:grid;gap:var(--sp-4);
-  grid-template-columns:repeat(auto-fit,minmax(min(20rem,100%),1fr))}
-.kpi-kort{border:1px solid var(--line);border-radius:var(--radius);
-  padding:var(--sp-4);background:var(--card)}
-.kpi-tabell{width:100%;border-collapse:collapse}
-.kpi-tabell caption{text-align:left;font-weight:600;
-  margin-bottom:var(--sp-2)}
-/* Radnavnet kan være en RÅ maskinkode: en verdi uten oversatt nøkkel skal
-   fortsatt vises (port 1), og «utforelsesdata_ikke_tilgjengelig» er ett
-   ord uten et eneste sted å brekke. Uten dette setter det ene ordet
-   tabellens minstebredde, og kortet flyter over samme hvor smalt sporet
-   får lov til å bli. */
-.kpi-tabell td,.kpi-tabell th{padding:var(--sp-1) var(--sp-2);
-  text-align:left;overflow-wrap:anywhere}
-/* Radnavnet er en <th scope="row"> av hensyn til skjermleseren, ikke
-   for å framheve kategorien: nettleserens standard fete th ville gjort
-   hver rad like tung som totalraden under, og dermed visket ut den ene
-   uthevingen tabellen faktisk mener. Semantikken endres, vekten ikke. */
-.kpi-tabell tbody th{font-weight:400}
-.kpi-tabell tfoot th,.kpi-tabell tfoot td{border-top:1px solid
-  var(--line);font-weight:600}
-/* Søylen er presentasjon (aria-hidden) og gir derfor etter først: 8rem er
-   dens fulle bredde, ikke dens minste. En fast bredde her ville bundet
-   tallkolonnene til 8rem uansett hvor smal skjermen er — og det er
-   TEKSTEN som bærer opplysningen. Alle søylene i én tabell får samme
-   bredde, så sammenlikningen mellom radene holder på hver skjermbredde. */
-.kpi-soyle{width:100%;max-width:8rem;height:var(--sp-3);
-  background:var(--info-bg);
-  border-radius:var(--radius-sm);overflow:hidden}
-.kpi-soyle-fyll{height:100%;background:var(--info)}
-.kpi-tilstand{border:1px solid var(--line);border-radius:var(--radius);
-  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-4);
-  background:var(--card)}
-.kpi-tilstand b{font-size:var(--fs-ingress);margin-right:var(--sp-1)}
-.kpi-kontroll{display:flex;gap:var(--sp-2);align-items:center;
-  margin-bottom:var(--sp-2);flex-wrap:wrap}
-/* PR-C: feilen ved intervallkontrollene. EGEN klasse, ikke
-   `.tilstand.feil`: den klassen er den GENERELLE feiltilstandens
-   kjennemerke (SideStatus/Feiltilstand), og en 400 ved kontrollene er
-   nettopp ikke den — et delt kjennemerke ville gjort de to umulige å
-   skille, i tester som i lesning. Fargen er varselstokenet; teksten
-   bærer opplysningen (role="alert" i markupen). */
-.kpi-intervall-feil{color:var(--danger)}
-
-/* M-57 trafikklys (klarsignalet §8). Kategorien STÅR som tekst i cellen —
-   markupen er `<span class="trafikklys trafikklys-{status}">` med en
-   aria-hidden prikk foran ordet — og fargen legges oppå. Uten disse
-   reglene var «tekst + farge» bare tekst: hver kategori rendret likt, og
-   prikken var en tom span uten flate. Fargen er dermed en REDUNDANT
-   koding, aldri opplysningen selv (WCAG 1.4.1) — en monokrom skjerm og en
-   skjermleser får nøyaktig samme dom som en fargeskjerm. */
-.trafikklys{display:inline-flex;align-items:center;gap:var(--sp-2);
-  font-weight:600}
-/* Prikken arver tekstfargen, så det holder med én regel per status — og
-   en status uten egen regel blir ufarget (--ink), aldri usynlig. */
-.trafikklys-prikk{flex:none;width:.6em;height:.6em;
-  border-radius:var(--radius-pill);background:currentColor}
-.trafikklys-anbefalt{color:var(--auto)}
-.trafikklys-vurderes{color:var(--guard)}
-.trafikklys-innstilt_avslag{color:var(--danger)}
-
-/* Rangeringssjiktene (eiers funn 30/8, justert samme kveld: --auto-bg
-   alene var knapt synlig på mobil, og de to sjiktene kunne ikke
-   skilles). Fargen er REDUNDANT koding — radens plass og poengtallet
-   bærer rangeringen (trafikklys-doktrinen, WCAG 1.4.1). Begge sjiktene
-   blandes av AKSENTEN (--auto), ikke av den blasse bakgrunnstokenen:
-   topp 5 får tydelig grønt bånd + full venstrekant, 6–10 halv styrke og
-   dempet kant — forskjellen skal kunne ses i dagslys. Kanten står på
-   radens første celle; funn-raden bærer samme sjiktklasse, så hver
-   kandidat tegner ETT sammenhengende bånd. */
-tr.rekrut-sjikt-topp > th, tr.rekrut-sjikt-topp > td {
-  background: color-mix(in srgb, var(--auto) 16%, var(--card)); }
-tr.rekrut-sjikt-topp > :first-child {
-  box-shadow: inset 4px 0 0 var(--auto); }
-tr.rekrut-sjikt-neste > th, tr.rekrut-sjikt-neste > td {
-  background: color-mix(in srgb, var(--auto) 7%, var(--card)); }
-tr.rekrut-sjikt-neste > :first-child {
-  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--auto) 40%, var(--card)); }
-/* Dokumentvisningen i kandidatkortet (eiers funn 31/8): sandboxet
-   ramme på kortgrunnen (tokenporten eier fargene; et dokument med egen
-   bakgrunn tegner uansett sin egen). */
-.rekrut-dokvisning { width: 100%; height: 65vh; border: 1px solid
-  var(--line); border-radius: var(--radius-sm); background: var(--card); }
-/* Ren tekst vises som tekstnode i panelet (aldri markup) — samme ramme-
-   utseende, men med egen scroll og brytning for lange linjer. */
-.rekrut-dokvisning-tekst { overflow: auto; white-space: pre-wrap;
-  overflow-wrap: anywhere; margin: 0; padding: var(--sp-3);
-  color: var(--ink); font-size: 0.9rem; }
-
-/* Innstillingen (#149): tallfelt + to knapper under rangeringen. */
-.rekrut-innstilling { margin-top: var(--sp-4); }
-.rekrut-innstillingsvalg { display: flex; flex-wrap: wrap; gap: var(--sp-2);
-  align-items: center; }
-.rekrut-innstillingsvalg input[type="number"] { width: 5rem; }
-
-/* Plassnummeret (eiers bestilling 30/8): rangeringen sies med tall, ikke
-   bare som rekkefølge — dempet, tabulære sifre, fast luke til navnet. */
-.rekrut-plass { color: var(--muted); font-variant-numeric: tabular-nums;
-  margin-right: var(--sp-2); font-weight: 600; }
-
-/* --- Rekruttering: mobilflate (sak 251 + mobil-redesignet 29/8) ------------- */
-/* Radoverskriften i rapporten skal kunne brytes: den globale
-   `th { white-space: nowrap }` slo `overflow-wrap: anywhere` (sak 251, P2) —
-   et beskrivende kandidatnavn på 64 tegn tvang hele tabellen ut i
-   sidescroll på nettopp mobillayouten bruddet finnes for. */
-th.rekrut-kandidat { white-space: normal; }
-
-/* Funnene ligger i sin egen fullbredderad, aldri i en smal kolonne:
-   detaljcellen spenner alle kolonnene, og innholdet leser som tekstblokk. */
-.rekrut-detaljrad > td { border-bottom: 1px solid var(--line); }
-.rekrut-detaljrad + tr > th,
-.rekrut-detaljrad + tr > td { border-top: 0; }
-
-/* Vekter i evalueringsrapporten — samme form som prosess-dypdykkets. */
-.rekrut-rapportvekter { border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--sp-3);
-  display: grid; gap: var(--sp-2); margin: var(--sp-3) 0; }
-.rekrut-rapportvekter legend { color: var(--muted); font-size: .88rem;
-  padding: 0 var(--sp-1); }
-.rekrut-rapportvekter .rekrut-vekt { display: flex; align-items: center;
-  gap: var(--sp-3); min-height: var(--touch-min); }
-.rekrut-rapportvekter .rekrut-vekt label { width: 7rem; }
-.rekrut-rapportvekter .rekrut-vekt input[type=range] { flex-grow: 1;
-  min-height: var(--touch-min); accent-color: var(--info); }
-
-/* Fanene bærer flaten på mobil: panelene får luft, og fanelinja tåler
-   smale skjermer uten å knekke ut av viewporten. */
-@media (max-width: 720px) {
-  .faner-liste { position: sticky; top: 0; background: var(--paper);
-    z-index: var(--z-innhold); }
-  .fane { min-height: var(--touch-min); }
-}
-
-/* Evalueringslisten som KORTLISTE (mobil-redesignet 29/8, godkjent
-   mockup): kortet er enheten — hode med oppdrag/tidspunkt og statuspille,
-   handlingsrad under. Pillen har ALLTID tekst (port 30: farge alene er
-   ikke informasjon), og hver art har sin fargeregel her — en ny art uten
-   regel arver grunnpillen og synes, den forsvinner ikke. */
-.rekrut-kortliste { list-style: none; margin: var(--sp-3) 0; padding: 0;
-  display: grid; gap: var(--sp-2); }
-.rekrut-kort { background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: var(--sp-3);
-  display: grid; gap: var(--sp-2); }
-.rekrut-kort--klar { border-color: var(--info); }
-.rekrut-kort-hode { display: flex; align-items: center; gap: var(--sp-3);
-  min-height: var(--touch-min); }
-.rekrut-kort-titler { display: grid; gap: var(--sp-1); flex-grow: 1; }
-.rekrut-kort-titler time { color: var(--muted); font-size: .88rem; }
-.rekrut-pille { padding: var(--sp-1) var(--sp-3);
-  border-radius: var(--radius-pill); font-size: .88rem; font-weight: 600;
-  background: var(--paper); color: var(--muted); white-space: nowrap; }
-.rekrut-pille--venter { background: var(--info-bg); color: var(--info); }
-.rekrut-pille--klar { background: var(--auto-bg); color: var(--auto); }
-.rekrut-pille--feilet { background: var(--danger-bg); color: var(--danger); }
-/* kansellert, slettet og utilgjengelig: grunnpillens dempede grå. */
-.rekrut-kort-handlinger { display: flex; gap: var(--sp-2); }
-.rekrut-kort-handlinger .knapp { flex-grow: 1; }
-.rekrut-kort-handlinger .knapp.fare { flex-grow: 0; }
-
-/* Rapporthodet: overskrift + Slett på samme rad (eiers bestilling 29/8 —
-   handlingen står der dommen felles, ikke bare i listen). */
-.rekrut-rapporthode { display: flex; align-items: flex-start;
-  justify-content: space-between; gap: var(--sp-3); }
-/* min-width:0 + ombrekking: et langt profilnavn uten mellomrom skal
-   krympe og brytes, aldri skyve Slett ut av viewporten (CodeRabbit). */
-.rekrut-rapporthode h3 { margin: 0; min-width: 0;
-  overflow-wrap: anywhere; }
-
-
-/* Rapportvektene bak en lukket detalj (eiers mobilfunn 30/8). */
-.rekrut-vekterfold { margin: var(--sp-3) 0; }
-.rekrut-vekterfold > summary { cursor: pointer; min-height: var(--touch-min);
-  display: flex; align-items: center; font-weight: 600; }
-.rekrut-vekterfold[open] > summary { margin-bottom: var(--sp-2); }
-.rekrut-vekterfold .rekrut-rapportvekter { margin-top: 0; }
-
-/* Poengfordelingen som første linje i funn-detaljen (eiers funn 30/8). */
-.rekrut-detalj .rekrut-fordeling { color: var(--muted); font-size: .88rem;
-  margin: var(--sp-2) 0 var(--sp-1); }
-
-/* Dypdykkets slette-handling (eiers funn 30/8 ×3). */
-.rekrut-prosesshandling { display: flex; justify-content: flex-end;
-  margin: var(--sp-2) 0; }
-
-/* Simuleringen (PR-013 v2): skjema + side-om-side-dom. */
-.editor-simuler-skjema { display: flex; flex-direction: column;
-  gap: var(--sp-2); max-width: 40rem; }
-.editor-simuler-skjema textarea { font-family: ui-monospace, monospace;
-  padding: var(--sp-2); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); background: var(--card);
-  color: var(--ink); }
-.editor-simuler-sider { display: flex; flex-wrap: wrap; gap: var(--sp-4);
-  margin-top: var(--sp-4); }
-.editor-simuler-side { flex: 1 1 16rem; border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: var(--sp-3);
-  background: var(--card); }
-.editor-simuler-beslutning { font-weight: 600; }
-.editor-simuler-avvik { color: var(--danger); font-weight: 600; }
-
-/* --- Bunnmeny (mobil) --------------------------------------------------
-   EIERS VEDTAK 4/9: «hovedmenyene skal være helt nederst på mobil».
-
-   Toppnavigasjonen var ikke en mobilmeny. Ti piller som brakk til sin egen
-   rad, og under dem søkefeltet, menybryteren og en modulmeny på trettisju
-   rader — alt FØR innholdet. Halve telefonskjermen gikk med til navigasjon
-   før første opplysning.
-
-   Menyen finnes bare under bruddpunktet. På en bred skjerm er sidemenyen
-   riktig form (den tåler dybde og viser mer om gangen), og to primære
-   navigasjoner samtidig ville vært to svar på samme spørsmål. */
-.skall-bunn { display: none; }
-
-@media (max-width: 60rem) {
-  .skall-bunn {
-    display: block;
-    position: fixed;
-    inset: auto 0 0 0;
-    z-index: var(--z-bunnmeny);
-    background: var(--card);
-    border-top: 1px solid var(--line);
-    /* TELEFONENS EGEN KANT. Under `inset: 0` ligger gestusstripa på
-       iPhone og navigasjonslinja på Android. Uten dette havner det
-       nederste av menyen under dem — synlig, men ikke trykkbar. */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-
-  .skall-bunn-liste {
-    display: flex;
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .skall-bunn-liste > li { flex: 1 1 0; min-width: 0; }
-
-  .skall-bunn-valg {
-    /* 44px ER IKKE PYNT. Under det bommer tommelen, og en meny du bommer
-       på er verre enn en du må åpne. Høyden er satt på selve målet, ikke
-       på foreldren: det er lenka man treffer. */
-    min-height: 44px;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    padding: var(--sp-2) var(--sp-1);
-    background: none;
-    border: 0;
-    color: var(--muted);
-    cursor: pointer;
-    font: inherit;
-    text-decoration: none;
-  }
-
-  /* IKON *OG* TEKST. Et ikon alene er en gjetning — hva det betyr er noe
-     man lærer, ikke noe man ser. Teksten er liten, men den står der. */
-  .skall-bunn-tekst {
-    font-size: 0.7rem;
-    line-height: 1.1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-
-  /* HVOR ER JEG. Farge alene er ikke informasjon (WCAG 1.4.1), så den
-     valgte oppføringen bærer også vekt og en strek over seg. */
-  .skall-bunn-valg[aria-current="page"] {
-    color: var(--ink);
-    font-weight: 600;
-    box-shadow: inset 0 3px 0 0 var(--info);
-  }
-  .skall-bunn-valg[aria-expanded="true"] { color: var(--ink); }
-
-  .skall-bunn-mer-liste {
-    display: grid;
-    border-bottom: 1px solid var(--line);
-    max-height: 50vh;
-    overflow-y: auto;
-  }
-  .skall-bunn-mer-valg {
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    padding: var(--sp-2) var(--sp-4);
-    color: var(--ink);
-    text-decoration: none;
-  }
-  .skall-bunn-mer-valg + .skall-bunn-mer-valg {
-    border-top: 1px solid var(--line);
-  }
-
-  /* PLASSEN MÅ RESERVERES. En fast meny som legger seg OVER innholdet
-     spiser den siste raden på hver eneste side — og den siste raden er
-     ofte knappen. */
-  .skall { padding-bottom: calc(var(--bunnmeny-h)
-    + env(safe-area-inset-bottom, 0px)); }
-
-  /* Toppnavigasjonens piller er nå duplikater av bunnmenyen. To veier til
-     samme sted i samme skjermbilde er ikke to muligheter — det er en meny
-     som ser dobbelt så stor ut som den er. */
-  .skall-topp .skall-nav { display: none; }
-}
-
-/* Områdefanene i modulmenyen: samme mønster som husets øvrige faner, men
-   smalere — de står i en sidemeny, ikke over en skjemaside. */
-.skall-venstre .faner-liste {
-  margin-bottom: var(--sp-3);
-  gap: 0;
-}
-.skall-venstre .fane {
-  font-size: 0.85rem;
-  padding: var(--sp-1) var(--sp-2);
-}
-
-/* Under et søk brytes fanene, og hver treffrad bærer området sitt i stedet
-   — for da er det ikke fanen som grupperer, det er søket. */
-.skall-modul-omrade {
-  color: var(--muted);
-  display: block;
-  font-size: 0.75rem;
-  padding: 0 var(--sp-2) var(--sp-1);
-}
-
-/* --- Kontekstpanelet tar bare plass når det HAR noe ---------------------
-   EIERS SKJERMBILDER 4/9: panelet sto med «Velg en modul i menyen for å se
-   detaljer» på hver eneste flate og reserverte inntil tjue rem — en
-   femtedel av bredden — permanent. På en modulflate ble det aldri fylt,
-   fordi modulflatene ikke bruker det: kolonnen var opptatt av en setning
-   som ba deg gjøre noe du ikke skulle.
-
-   Panelet fjernes ikke fra dokumentet. Det er et fokusmål (`tabindex=-1`)
-   som `visKontekst` sender fokus til, og et mål som ikke finnes kan man
-   ikke sendes til. Det er PLASSEN som frigis. */
-.skall-kropp[data-kontekst="tom"] {
-  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
-  grid-template-areas: "venstre hoved";
-}
-.skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "hoved";
-}
-.skall-kropp[data-kontekst="tom"] > .skall-kontekst { display: none; }
-
-@media (max-width: 60rem) {
-  .skall-kropp[data-kontekst="tom"] {
-    grid-template-columns: 1fr;
-    grid-template-areas: "venstre" "hoved";
-  }
-  .skall-kropp[data-kontekst="tom"][data-meny="skjult"] {
-    grid-template-columns: 1fr;
-    grid-template-areas: "hoved";
-  }
-}
-
-/* --- Andre runde på skallet (eiers skjermbilder 4/9) --------------------
-
-   TRE FEIL, MÅLT PÅ EIERS EGEN SKJERM.
-
-   1. FANERADEN SPISTE MOBILSKJERMEN. Elleve områdefaner med `flex-wrap:
-      wrap` ble fire rader — omtrent 40 % av en telefonskjerm, FØR første
-      modul. Fanene løste én lang liste og laget en ny.
-
-      På smal skjerm ruller raden vannrett i stedet. Det er den ene
-      formen som ikke vokser nedover: en fanerad er en RAD, og når den
-      brekker er den ikke lenger en rad — den er et rutenett man må lese.
-
-   2. MIDTEN VAR FOR SMAL. `.skall-hoved` bærer `max-width: 1100px` fra
-      forsiden, der den er riktig: en tekstspalte skal ikke bli uendelig
-      bred. Inne i skallet er den feil — der er kolonnen ALT avgrenset av
-      rutenettet, og taket kom på toppen av en sidemeny på 16rem. Kortene
-      (`minmax(20rem, 1fr)`) fikk da plass til to, og «ikke definert»
-      brakk over tre linjer i en tabell med fire kolonner.
-
-   3. KONTEKSTPANELET tok igjen plass når det var fylt, men flatene
-      bruker det ikke — det er menyens detaljvisning. Se `data-kontekst`. */
-
-/* 2: taket gjelder forsiden, ikke arbeidsflaten. */
-.skall-kropp > .skall-hoved {
-  max-width: none;
-  padding: 0;
-  min-width: 0;
-}
-
-@media (max-width: 60rem) {
-  /* 1: raden ruller, den brekker ikke. */
-  .skall-venstre .faner-liste {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    /* Rullingen skal føles som en rad, ikke som en tabell man mistet. */
-    scroll-snap-type: x proximity;
-    -webkit-overflow-scrolling: touch;
-  }
-  .skall-venstre .fane {
-    flex: 0 0 auto;
-    scroll-snap-align: start;
-    /* 44px også her: fanene er det første man treffer i menyen. */
-    min-height: 44px;
-  }
-  /* Modullista får hele høyden den trenger når menyen først er åpnet —
-     på en telefon ER menyen skjermbildet, ikke en kolonne ved siden av.
-     Taket på 40vh hørte til den gamle formen, der menyen alltid sto
-     åpen foran innholdet. */
-  .skall-modulliste { max-height: none; }
-  .skall-modul { min-height: 44px; display: flex; align-items: center; }
-}
-
-/* --- Telefonens egne kanter (eiers skjermbilde 4/9, forsiden) -----------
-
-   STATUSLINJA LÅ OPPÅ HEADEREN. Klokka, wifi og batteriet sto over
-   «Disponit» og over språkvelgeren, og «English» var klippet av høyre
-   kant.
-
-   Årsaken var `viewport-fit=cover` i viewport-metaen: uten den er hele
-   `env(safe-area-inset-*)`-familien null, MED den strekker siden seg
-   under telefonens hjørner og innhakk — og da må hver kant som ligger
-   inntil skjermkanten selv reservere plassen.
-
-   DET ER OGSÅ GRUNNEN TIL AT BUNNMENYENS `safe-area-inset-bottom` IKKE
-   GJORDE NOE. Regelen sto der fra første runde, porten målte at den sto
-   der, og den evaluerte til null hver gang. En regel som ser ut som et
-   gjerde og ikke er det er verre enn ingen regel — porten måler nå
-   metaen OG regelen.
-
-   `max()` og ikke `+`: på en skjerm uten innhakk er innrykket null, og
-   da skal den vanlige paddingen stå urørt. */
-.site-topp {
-  padding-top: env(safe-area-inset-top, 0px);
-}
-.site-topp-rad, .site-sok-rad, .site-footer {
-  padding-left: max(var(--sp-6), env(safe-area-inset-left, 0px));
-  padding-right: max(var(--sp-6), env(safe-area-inset-right, 0px));
-}
-.skall-topp {
-  padding-top: max(var(--sp-3), env(safe-area-inset-top, 0px));
-  padding-left: max(var(--sp-4), env(safe-area-inset-left, 0px));
-  padding-right: max(var(--sp-4), env(safe-area-inset-right, 0px));
-}
-
-@media (max-width: 860px) {
-  .site-topp-rad, .site-sok-rad, .site-footer {
-    padding-left: max(var(--sp-3), env(safe-area-inset-left, 0px));
-    padding-right: max(var(--sp-3), env(safe-area-inset-right, 0px));
-  }
-  /* SPRÅKVELGEREN BLE KLIPPET. `margin-left: auto` skjøv den mot en
-     kant som nå ligger under telefonens hjørne, og «English» falt
-     utenfor. Den får bryte til egen linje i stedet — to knapper er
-     ikke verdt en avkuttet etikett. */
-  .site-topp .site-sprak { flex-wrap: wrap; margin-bottom: 0; }
-  .site-sprak-knapp { min-height: 44px; }
-}
-
-@media (max-width: 60rem) {
-  .skall-topp {
-    padding-left: max(var(--sp-3), env(safe-area-inset-left, 0px));
-    padding-right: max(var(--sp-3), env(safe-area-inset-right, 0px));
-  }
-  .skall-bunn {
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
-  }
-}
-
-/* --- Oppstartsvakten ----------------------------------------------------
-   Beskjeden som vises når INGENTING annet lastet.
-
-   FØRSTE UTKAST HARDKODET FARGENE HER, med begrunnelsen «boksen må stå på
-   egne bein om `tokens.css` er like utilgjengelig som modulene var».
-   Porten `test_ingen_hardkodet_farge_eller_avstand_i_ui_css` avviste det,
-   og den har rett: argumentet var for sterkt. Faller stilarket bort, står
-   det igjen to avsnitt og en knapp — og nettleserens egen tegning av dem
-   er fullt lesbar. Det er INNHOLDET som må overleve, ikke utseendet.
-   Tokenkilden er fortsatt den eneste (RUTINER pkt. 6). */
+/* ---------------------------------------------------------------------
+   14  Oppstartsvakten — beskjeden som vises når INGENTING annet lastet.
+   --------------------------------------------------------------------- */
 .oppstartsfeil {
   margin: var(--sp-6) auto;
   max-width: 34rem;
-  padding: var(--sp-4);
+  padding: var(--sp-5);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--card);

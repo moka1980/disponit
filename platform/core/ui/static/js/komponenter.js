@@ -533,7 +533,16 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     const kn = flate
       ? el("a", { class: "skall-modul", href: `#/${flate}`, text: navn })
       : el("button", { type: "button", class: "skall-modul", text: navn });
-    if (!flate) kn.addEventListener("click", () => visKontekst(n));
+    // PÅ EN TELEFON ER MENYEN ET ARK OVER INNHOLDET (omlegging 6/9). Et
+    // valg skal også lukke arket — ellers står brukeren igjen i menyen med
+    // flaten (eller kontekstpanelet, CodeRabbit) hun ba om liggende bak.
+    // `smal` leses én gang ved bygging (se under); på bred skjerm er
+    // menyen en kolonne ved siden av og skal stå.
+    if (!flate) kn.addEventListener("click", () => {
+      if (smal) settMeny(false);
+      visKontekst(n);
+    });
+    else kn.addEventListener("click", () => { if (smal) settMeny(false); });
     modulknapper.set(n, kn);
     return el("li", {}, kn);
   }
@@ -675,7 +684,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
 
   tegnModuler("");
 
-  const skjul = el("button", { type: "button", class: "knapp liten",
+  const skjul = el("button", { type: "button",
+    class: "knapp liten skall-menybryter",
     text: t("ui.shell.skjul_meny") });
   skjul.setAttribute("aria-expanded", "true");
   skjul.setAttribute("aria-controls", "modulmeny");
