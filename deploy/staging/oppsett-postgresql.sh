@@ -593,6 +593,9 @@ HENDELSESSVEIP_DSN=("DISPONIT_HENDELSESSVEIP_URL=$DB"
 # 138 (M-32): skattesveipens DSN.
 SKATTESVEIP_DSN=("DISPONIT_SKATTESVEIP_URL=$DB"
                  "DISPONIT_TEST_SKATTESVEIP_DSN=${DB}_test")
+# 139 (M-28): transportsveipens DSN.
+TRANSPORTSVEIP_DSN=("DISPONIT_TRANSPORTSVEIP_URL=$DB"
+                    "DISPONIT_TEST_TRANSPORTSVEIP_DSN=${DB}_test")
 # 132 (M-36): optimalisatorsveipens DSN.
 OPTIMALISATORSVEIP_DSN=("DISPONIT_OPTIMALISATORSVEIP_URL=$DB"
                         "DISPONIT_TEST_OPTIMALISATORSVEIP_DSN=${DB}_test")
@@ -647,6 +650,7 @@ sikre_rolle_dsn "$TELEFONISVEIP" "${TELEFONISVEIP_DSN[@]}"
 sikre_rolle_dsn "$ESGSVEIP" "${ESGSVEIP_DSN[@]}"
 sikre_rolle_dsn "$HENDELSESSVEIP" "${HENDELSESSVEIP_DSN[@]}"
 sikre_rolle_dsn "$SKATTESVEIP" "${SKATTESVEIP_DSN[@]}"
+sikre_rolle_dsn "$TRANSPORTSVEIP" "${TRANSPORTSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

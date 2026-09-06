@@ -1,0 +1,85 @@
+# M-28 (139): transportsveipen. PLANEN ER PRODUKTET.
+#
+# SVEIPEN BESTILLER INGEN TRANSPORT OG OMBOOKER INGENTING. Den sier
+# fra om at en plan har stått åpen lenger enn tenantens frist, om at et
+# målt kolli aldri fikk en plan, om at et tungt kolli har en plan ingen
+# har sett på, og om at det finnes planer til et land som ikke lenger
+# har en landpakke — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en handling med virkning i den virkelige verden
+# angres ikke av en rollback. BILEN KJØRER UANSETT HVA BASEN SIER — en
+# booking som ble rullet tilbake er fortsatt en bil på veien, en pakke
+# i en terminal og en faktura fra en transportør.
+#
+# LANDREGISTERET ER M-32s (138), OG DET RØRES IKKE HERFRA. `landpakke`
+# er global og tenantløs, og `disponit_transportsveip` har INGEN
+# rettighet på den — ikke engang SELECT. Landreglene er landets: kunne
+# en nattjobb endret dem, ville «huset har lest reglene» vært en
+# påstand om oss selv.
+#
+# FIRE FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `kolli_bestilt_to_ganger` (partiell unik indeks, og ingenting
+# bestilles), `fareklasse_utledet_av_maskin` (`fareklasse_oppgitt_av`
+# NOT NULL), `farlig_gods_uten_landregel` (`landpakke_regelversjon`
+# NOT NULL med fremmednøkkel til 138) og
+# `forslag_uten_validert_adresse` (døra krever en godkjent
+# adressekontroll). Alle fire er utelukket av datamodellen, ikke
+# oppdaget av en sveip.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet ikke da planen ble
+# laget — adressen var godkjent og landpakken gjaldt. Så gikk det døgn,
+# og ingen gjorde noe med planen. Ingen dør kunne fanget det, fordi
+# ingen kalte noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal bestilles over nettet.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille transportsveip
+# er et farlig kolli som står i en terminal uten at noen vet det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_transportsveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m28_sveip_transport`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit transportsveip (aapne planer over frist, maalte kolli uten plan, tunge kolli ingen har sett paa)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_TRANSPORTSVEIP_URL:/etc/disponit/transportsveip/DISPONIT_TRANSPORTSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_transportsveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`transportforslag_apne`, `kolli_farlige`,
+# `transportfunn_ett_apent`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

@@ -63,6 +63,7 @@ SVEIPENE = (
     # KLYNGE 10 — HANDLINGENE.
     ("hendelsessveip", "m29_sveip_hendelse"),
     ("skattesveip", "m32_sveip_skatt"),
+    ("transportsveip", "m28_sveip_transport"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),
