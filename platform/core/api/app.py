@@ -2437,6 +2437,58 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import skatt as skattmodul
         return skattmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-28 (139). INGEN RUTE BESTILLER TRANSPORT — det finnes ingen
+    # `/bestill`, ingen `/ombook` og ingen `/etikett`, og porten leser
+    # denne tabellen.
+    #
+    # BILEN KJØRER UANSETT HVA BASEN SIER: en booking som ble rullet
+    # tilbake er fortsatt en bil på veien, en pakke i en terminal og en
+    # faktura fra en transportør.
+    #
+    # FAREKLASSEN OPPGIS AV ET MENNESKE. `/kolli` krever
+    # `fareklasse_oppgitt_av` og tar IKKE imot en produktbeskrivelse,
+    # en varekode eller en HS-kode — den kan derfor ikke regne klassen
+    # ut av dem. HS-koden er M-52s.
+    #
+    # OG MOTTAKERLANDET LESES FRA ADRESSEVERSJONEN, som må ha en
+    # `adressekontroll` med `utfall = 'godkjent'` og et land med
+    # landpakke (M-32, 138).
+    def transport_bilde(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.transportbilde(tjeneste, request)
+
+    def transport_kolli(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.kolli_endepunkt(tjeneste, request)
+
+    def transport_forslag(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.forslag_endepunkt(tjeneste, request)
+
+    def transport_funn(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.funn_endepunkt(tjeneste, request)
+
+    def transport_krav(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.krav_endepunkt(tjeneste, request)
+
+    def transport_kolli_ny(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.registrer_kolli_endepunkt(tjeneste, request)
+
+    def transport_foresla(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.foresla_endepunkt(tjeneste, request)
+
+    def transport_forkast(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.forkast_endepunkt(tjeneste, request)
+
+    def transport_lukk_funn(request: Request) -> Response:
+        from . import transport as transportmodul
+        return transportmodul.lukk_funn_endepunkt(tjeneste, request)
+
 
 
 
@@ -3887,6 +3939,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/skatt/land/{landkode:str}/{regelversjon:int}",
               skatt_satser, methods=["GET"]),
+        # M-28 (139). Faste stier FØR parametriserte.
+        Route("/v1/transport", transport_bilde, methods=["GET"]),
+        Route("/v1/transport/kolli", transport_kolli, methods=["GET"]),
+        Route("/v1/transport/forslag", transport_forslag,
+              methods=["GET"]),
+        Route("/v1/transport/funn", transport_funn, methods=["GET"]),
+        Route("/v1/transport/krav", transport_krav, methods=["POST"]),
+        Route("/v1/transport/kolli/ny", transport_kolli_ny,
+              methods=["POST"]),
+        Route("/v1/transport/forslag/ny", transport_foresla,
+              methods=["POST"]),
+        Route("/v1/transport/forslag/{forslag_id:uuid}/forkast",
+              transport_forkast, methods=["POST"]),
+        Route("/v1/transport/funn/{funn_id:uuid}/lukk",
+              transport_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -5299,6 +5366,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/skatt/krav"):                  "bestilling:opprett",
     ("POST", "/v1/skatt/beregn"):                "bestilling:opprett",
     ("POST", "/v1/skatt/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-28 (139). Lesescopet er `okonomi:read` — det samme M-24 og
+    # M-27 bruker: et kolli og en plan hører til i vareflyten, ikke i
+    # sikkerhetsbildet.
+    ("GET",  "/v1/transport"):                   "okonomi:read",
+    ("GET",  "/v1/transport/kolli"):             "okonomi:read",
+    ("GET",  "/v1/transport/forslag"):           "okonomi:read",
+    ("GET",  "/v1/transport/funn"):              "okonomi:read",
+    ("POST", "/v1/transport/krav"):              "bestilling:opprett",
+    ("POST", "/v1/transport/kolli/ny"):          "bestilling:opprett",
+    ("POST", "/v1/transport/forslag/ny"):        "bestilling:opprett",
+    ("POST", "/v1/transport/forslag/{forslag_id:uuid}/forkast"):
+        "bestilling:opprett",
+    ("POST", "/v1/transport/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

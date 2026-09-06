@@ -132,7 +132,7 @@ UBYGDE_GRENSER = frozenset({
     # Se docs/KLYNGE10-FUNDAMENT.md.
     # `m29-v1` gikk ut 6/9, da 137 landet med sin dekningsport.
     # `m32-v1` gikk ut 6/9, da 138 landet med sin dekningsport.
-    "m28-v1",
+    # `m28-v1` gikk ut 6/9, da 139 landet med sin dekningsport.
     "m40-v1",
     # KLYNGE 9 — YTRINGENE. Registrert 5/9, før koden.
     #

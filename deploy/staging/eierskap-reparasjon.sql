@@ -1623,7 +1623,34 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm32_sett_krav(text,text,bigint,integer,text)',                                          'disponit_skatt_eier'),
     ('FUNCTION', 'm32_skattefunn(text,integer)',                                                          'disponit_skatt_eier'),
     ('FUNCTION', 'm32_sveip_skatt(integer)',                                                              'disponit_skatt_eier'),
-    ('FUNCTION', 'm32_vurderingene(text,integer)',                                                        'disponit_skatt_eier');
+    ('FUNCTION', 'm32_vurderingene(text,integer)',                                                        'disponit_skatt_eier'),
+    -- 139 (M-28): transportregisterets doerer og sveipen.
+    --
+    -- `m28_foresla` er den farligste aa faa feil: den leser BAADE
+    -- `adresseversjon` og `adressekontroll` gjennom KOLONNEGRANTER, og
+    -- `landpakke` (138) gjennom en SELECT-grant. Bare modulrollen har
+    -- dem. Eide migrator doera, ville den lest hele adressen — og den
+    -- ser dessuten forbi FORCE RLS paa alt annet.
+    --
+    -- `m28_er_farlig` er modulens indre og gis ingen EXECUTE. Den
+    -- staar likevel her: en funksjon uten eier i designet blir
+    -- ALTER-et til migrator av reparasjonen, og da ville lesedoerene
+    -- kalt den som feil rolle.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN.
+    ('FUNCTION', 'm28_bildet(text)',                                                                      'disponit_transport_eier'),
+    ('FUNCTION', 'm28_er_farlig(text)',                                                                   'disponit_transport_eier'),
+    ('FUNCTION', 'm28_evidens(text,uuid,text,text,jsonb)',                                                'disponit_transport_eier'),
+    ('FUNCTION', 'm28_foresla(text,uuid,uuid,integer,uuid,text,text)',                                    'disponit_transport_eier'),
+    ('FUNCTION', 'm28_forkast(text,uuid,text,text)',                                                      'disponit_transport_eier'),
+    ('FUNCTION', 'm28_forslagene(text,integer)',                                                          'disponit_transport_eier'),
+    ('FUNCTION', 'm28_funn_er_sveipens(text)',                                                            'disponit_transport_eier'),
+    ('FUNCTION', 'm28_kolliene(text,integer)',                                                            'disponit_transport_eier'),
+    ('FUNCTION', 'm28_lukk_funn(text,uuid,text,text)',                                                    'disponit_transport_eier'),
+    ('FUNCTION', 'm28_registrer_kolli(text,uuid,text,bigint,integer,integer,integer,text,text,integer,text)','disponit_transport_eier'),
+    ('FUNCTION', 'm28_sett_krav(text,text,bigint,bigint,integer,text)',                                   'disponit_transport_eier'),
+    ('FUNCTION', 'm28_sveip_transport(integer)',                                                          'disponit_transport_eier'),
+    ('FUNCTION', 'm28_transportfunn(text,integer)',                                                       'disponit_transport_eier');
 
 DO $$
 DECLARE

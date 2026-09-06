@@ -2062,3 +2062,42 @@ export const beregnSkatt = (kropp, idem) =>
 export const lukkSkattefunn = (funnId, kropp, idem) =>
   _muter(`/v1/skatt/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-28 LOGISTIKK- OG TRANSPORTAGENT (139).
+//
+// DET FINNES INGEN `bestillTransport` OG INGEN `ombook` HER, OG DET
+// KAN IKKE FINNES. Bilen kjører uansett hva basen sier: en booking som
+// ble rullet tilbake er fortsatt en bil på veien, en pakke i en
+// terminal og en faktura fra en transportør.
+//
+// `registrerKolli` KREVER `fareklasse_oppgitt_av`. Den tar ikke imot en
+// produktbeskrivelse, en varekode eller en HS-kode, og kan derfor ikke
+// regne fareklassen ut av dem. En gal påstand om farlig gods er en
+// brann i en lastebil, ikke en feil i en rapport.
+//
+// `foreslaaTransport` TAR EN ADRESSEVERSJON, IKKE ET LAND.
+// Mottakerlandet leses derfra, adressen må ha en godkjent kontroll, og
+// landet må ha en landpakke (M-32, 138). Alle tre kommer tilbake i
+// svaret, fordi kalleren ikke oppga noen av dem.
+// ---------------------------------------------------------------------
+export const settTransportkrav = (krav, idem) =>
+  _muter("/v1/transport/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const registrerKolli = (kolli, idem) =>
+  _muter("/v1/transport/kolli/ny", "POST", kolli,
+         idem || nyIdempotensnokkel());
+
+export const foreslaaTransport = (kropp, idem) =>
+  _muter("/v1/transport/forslag/ny", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const forkastTransportforslag = (forslagId, kropp, idem) =>
+  _muter(
+    `/v1/transport/forslag/${encodeURIComponent(forslagId)}/forkast`,
+    "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkTransportfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/transport/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

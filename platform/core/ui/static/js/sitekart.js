@@ -594,6 +594,12 @@ const BASISRUTER = [
   // Modulen innberetter ingenting: den svarer på hvilken regel som
   // gjaldt, og landreglene felles i en migrasjon.
   { nokkel: "skatt", scope: "okonomi:read", modulflate: 32 },
+  // M-28 (139): logistikk og transport. MODULFLATE bak `okonomi:read`
+  // — et kolli og en plan hører til i vareflyten, ikke i
+  // sikkerhetsbildet.
+  // Modulen bestiller ingen transport: den planlegger mot kolli et
+  // menneske har målt, og fareklassen oppgis alltid av en person.
+  { nokkel: "transport", scope: "okonomi:read", modulflate: 28 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som
