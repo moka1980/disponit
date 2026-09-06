@@ -4679,10 +4679,18 @@ M29_INVARIANTER: tuple[str, ...] = (
     # vaktsetningens eget ord.
     "hendelse_uten_score",
     "score_uten_regel",
-    # M-2 er husets ENESTE applikasjonslogg. En modul som både leser
-    # revisjonsloggen og kan handle på den, er en modul som kan handle
-    # på sin egen forrige handling.
-    "modulen_skrev_i_revisjonsloggen",
+    # M-2 er husets ENESTE applikasjonslogg, OG DEN ER M-29s VIKTIGSTE
+    # SIGNALKILDE. Det gjør modulen til den eneste i huset som leser
+    # noe den også skriver i.
+    #
+    # INVARIANTEN ER IKKE «SKRIV IKKE». Hver modul i huset skriver
+    # evidens til `revisjonslogg` — `m43_evidens` er formen — og en
+    # grense som forbød det ville forbudt husets eget spor.
+    #
+    # Faren er smalere og verre: at modulen leser SITT EGET spor som
+    # et signal, korrelerer på det, og scorer sin egen forrige
+    # handling. Da vokser hendelsen av å bli sett på.
+    "leste_sitt_eget_spor_som_signal",
     "hendelse_overskrevet",
     "tenantlekkasje_i_hendelsesregister",
     "ui_axe_alvorlige_brudd",

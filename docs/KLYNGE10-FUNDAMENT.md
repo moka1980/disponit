@@ -99,10 +99,19 @@ isoler konto, token eller workload»-modul ville skrevet i.**
 
 En modul som fikk `UPDATE` på `api_tokener` ville kunne stenge huset
 ute av seg selv, og den ville gjort det raskere enn noe menneske rakk
-å lese logglinjen. `revisjonshendelse` (M-2) er den ENESTE
-applikasjonsloggen som finnes — og en modul som både leser
-revisjonsloggen og kan handle på den, er en modul som kan handle på sin
-egen forrige handling.
+å lese logglinjen.
+
+**Og `revisjonslogg` (M-2) er både den eneste applikasjonsloggen som
+finnes OG M-29s viktigste signalkilde.** Det gjør M-29 til den eneste
+modulen i huset som leser noe den også skriver i.
+
+Invarianten er derfor ikke «skriv ikke». Hver modul i huset skriver
+evidens dit — `m43_evidens` er formen — og en grense som forbød det
+ville forbudt husets eget spor. Faren er smalere og verre: at modulen
+leser SITT EGET spor som et signal, korrelerer på det, og scorer sin
+egen forrige handling. **Da vokser hendelsen av å bli sett på.**
+`leste_sitt_eget_spor_som_signal` er invarianten, og lesedøren
+filtrerer på `kilde`.
 
 **Avklaringen: M-29 v1 får LESERETT og ingen skriverett utenfor sine
 egne funnrader.** Den korrelerer, scorer med forklarbare regler, og
