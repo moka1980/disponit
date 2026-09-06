@@ -2,73 +2,87 @@
    DESIGN TOKENS — eneste kilde til utseende i hele plattformen.
    Endre her = endres overalt. Komponenter definerer ALDRI egne
    farger, fonter eller avstander. (docs/RUTINER.md pkt. 6)
-   WCAG: alle tekst/bakgrunn-par her skal holde >= 4.5:1.
+   WCAG: alle tekst/bakgrunn-par her holder >= 4.5:1 (målt 6/9:
+   ink/paper 14,2 · muted/paper 5,4 · info/card 8,3 · auto/auto-bg 5,6 ·
+   guard/guard-bg 5,7 · danger/danger-bg 6,0 · muted/info-bg 5,1).
+
+   IDENTITETEN (omlegging 6/9): Disponit er kontroll før handling for
+   norske virksomheter. Flaten er lys og varm-nøytral (papir, ikke grå
+   skjerm), én blå handlingsfarge, grønn/rav/rød KUN som semantikk.
+   Ingen mørke layoutflater, ingen gradienter, ingen glød.
    ============================================================ */
 :root {
   /* Flater og tekst */
-  --paper:#F6F8F7; --card:#FFFFFF; --ink:#14232B; --muted:#5A6E77;
-  --line:#D5DEDD;
-  /* Semantikk: automatisert/ok og policy/stopp */
-  --auto:#0F7A5C; --auto-bg:#E8F3EE;
-  --guard:#A05A00; --guard-bg:#FBF2E3;
-  --danger:#9A2B2B; --danger-bg:#F8E9E9;
-  --info:#1D6FA5;  --info-bg:#E5EFF6;
-  /* Typografi */
-  --font-sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
-  --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",monospace;
-  --fs-base:1rem; --lh-base:1.55;
-  /* Display-trinnene den offentlige flaten bruker: hero- og sidetitler,
-     ingressen under dem, signalkortets overskrift og logolinja. Disse lå som
-     tall i komponenten (Codex P2) — da ville en global justering av typografi
-     latt nettopp de største overskriftene bli stående igjen. `-smal` er
-     trinnet under 560px, `ls`/`lh` hører til display-trinnet og ikke til
-     brødteksten, og `maks-*` er tekstmålet (linjelengden) for hvert trinn. */
-  --fs-display:clamp(2.35rem, 5vw, 3.8rem); --fs-display-smal:2.35rem;
-  --ls-display:-.035em; --lh-display:1.06;
-  --fs-ingress:1.2rem; --fs-tittel:1.8rem; --fs-logo:1.15rem;
-  --maks-display:17ch; --maks-tittel:20ch; --maks-ingress:48rem;
+  --paper:#F3F4F1; --card:#FFFFFF; --ink:#1B2430; --muted:#5A6570;
+  --line:#D6DAD6; --line-sterk:#AEB5B0;
+  /* En hvilende flate ett hakk dypere enn papiret: rader ved hover,
+     valgte faner, tomme felt. */
+  --flate:#E9ECE7;
+  /* Semantikk: automatisert/ok, policy/stopp, feil og handling */
+  --auto:#1B6A44; --auto-bg:#E2F1E8;
+  --guard:#8A5200; --guard-bg:#FBF0DC;
+  --danger:#9F2A2A; --danger-bg:#F9E6E6;
+  --info:#1E4E8C; --info-bg:#E6EEF8; --info-hover:#163C6E;
+  /* Typografi. Skriftene ligger i static/fonts (CSP font-src 'self');
+     @font-face står i base.css. Serifen brukes bare til de store
+     overskriftene på den offentlige flaten. */
+  --font-sans:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --font-mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Menlo,monospace;
+  --fs-base:1rem; --lh-base:1.5;
+  --fs-xs:.8125rem; --fs-sm:.9rem; --fs-lg:1.125rem;
+  --fs-h1:1.5rem; --fs-h2:1.125rem; --fs-h3:1rem;
+  /* Display-trinnene den offentlige flaten bruker. */
+  --fs-display:clamp(2.1rem, 4.4vw, 3.3rem); --fs-display-smal:2.1rem;
+  --ls-display:-.012em; --lh-display:1.08;
+  --fs-ingress:1.2rem; --fs-tittel:1.6rem; --fs-logo:1.125rem;
+  --maks-display:18ch; --maks-tittel:22ch; --maks-ingress:40rem;
   /* Avstander og form */
-  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem;
-  --sp-6:1.5rem; --sp-8:2rem;
-  --radius:8px; --radius-sm:4px;
-  --radius-lg:24px; --radius-pill:999px;
+  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-5:1.25rem;
+  --sp-6:1.5rem; --sp-8:2rem; --sp-10:2.5rem; --sp-12:3rem;
+  --radius:10px; --radius-sm:6px;
+  --radius-lg:16px; --radius-pill:999px;
   --touch-min:2.75rem;
-  /* Offentlig Disponit-identitet: kjølig kontrollflate, uten mørke
-     layoutbakgrunner og tydelig adskilt fra Aqelyns varme papirprofil. */
-  --site-paper:#EEF3F3; --site-surface:#FFFFFF; --site-ink:#132629;
-  --site-muted:#526568; --site-line:#AEBFC0; --site-signal:#006F68;
-  --site-signal-bg:#D8EEEB; --site-action:#B94718;
-  --site-action-hover:#8F3210;
+  /* Offentlig flate: samme system som arbeidsflaten. Navnene beholdes
+     fordi komponentene bruker dem; verdiene peker inn i palettens tokens
+     slik at de to flatene aldri kan drive fra hverandre. */
+  --site-paper:var(--paper); --site-surface:var(--card); --site-ink:var(--ink);
+  --site-muted:var(--muted); --site-line:var(--line-sterk);
+  --site-signal:var(--auto); --site-signal-bg:var(--auto-bg);
+  --site-action:var(--info); --site-action-hover:var(--info-hover);
   /* Fokus (WCAG 2.4.7) — brukes på ALT interaktivt */
   --focus:3px solid var(--info); --focus-offset:2px;
-  /* UI-lag (M-1): skygge, lagdeling og breakpoint hører hjemme HER, aldri
-     inline i en komponent (RUTINER pkt. 6). Lagt til i UI-leveransen —
-     tokenkilden er fortsatt den ENESTE. */
-  --skygge:0 1px 2px rgba(20,35,43,.08), 0 2px 8px rgba(20,35,43,.10);
-  --skygge-skuff:-6px 0 28px rgba(20,35,43,.20);
-  --teppe:rgba(20,35,43,.45);
+  /* Skygge, teppe og lagdeling */
+  --skygge:0 1px 2px rgba(27,36,48,.06), 0 4px 14px rgba(27,36,48,.06);
+  --skygge-skuff:-6px 0 28px rgba(27,36,48,.20);
+  --teppe:rgba(27,36,48,.45);
 
-  --z-innhold:0; --z-topplinje:10; --z-overlegg:30; --z-skuff:40;
+  --z-innhold:0; --z-topplinje:10;
+  /* Modulmenyen som ark på telefon: over innholdet og toppen, under
+     bunnmenyen som skal kunne lukke den. */
+  --z-menyark:15;
   /* Bunnmenyen ligger over innholdet, men UNDER skuffen og overlegget: en
      dialog som åpnes skal dekke navigasjonen, ikke ligge bak den. */
   --z-bunnmeny:20;
+  --z-overlegg:30; --z-skuff:40;
   /* Bunnmenyens høyde bor HER fordi to uavhengige regler må dele nøyaktig
      samme tall — menyens egen `min-height`, og den plassen innholdet må
      reservere nederst så siste rad ikke havner under menyen. */
   --bunnmeny-h:3.75rem;
   --bp-smal:720px;
   --innhold-maks:1100px;
-  --site-maks:1240px;
+  --site-maks:1200px;
+  /* Arbeidsflatens sidemeny og toppfelt. */
+  --skall-side-b:16rem;
+  --skall-topp-h:3.5rem;
+  --skall-verktoy-h:3.25rem;
   /* Den klebrige toppen på den offentlige flaten: navigasjonsraden og
-     søkeraden. Høyden bor HER fordi to uavhengige regler må dele nøyaktig
-     samme tall — radenes egen `min-height`, og scroll-offset for hopp-til-
-     innhold. Uten offset landet #hovedinnhold under den klebrige toppen, så
-     overskriften tastaturbrukeren nettopp hoppet til var skjult (Codex P2).
-     Summen står som `calc`, ikke som et tredje tall, slik at den ikke kan
-     drive fra radene den beskriver. */
-  --site-topp-rad-h:4.75rem;
+     søkeraden. Summen står som `calc` så den ikke kan drive fra radene. */
+  --site-topp-rad-h:4rem;
   --site-sok-rad-h:3.5rem;
   --site-topp-h:calc(var(--site-topp-rad-h) + var(--site-sok-rad-h));
+  /* Overganger: korte, ett tempo, aldri pynt. */
+  --fart:140ms;
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
