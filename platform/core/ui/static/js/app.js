@@ -63,6 +63,7 @@ import { visTelefoni } from "./flater/telefoni.js";
 import { visHendelse } from "./flater/hendelse.js";
 import { visSkatt } from "./flater/skatt.js";
 import { visTransport } from "./flater/transport.js";
+import { visMedarbeider } from "./flater/medarbeider.js";
 import { visEsg } from "./flater/esg.js";
 import { visBetaling } from "./flater/betaling.js";
 import { visKampanje } from "./flater/kampanje.js";
@@ -169,6 +170,7 @@ const FLATER = {
   hendelse: visHendelse,
   skatt: visSkatt,
   transport: visTransport,
+  medarbeider: visMedarbeider,
   esg: visEsg,
 };
 

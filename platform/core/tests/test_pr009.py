@@ -621,7 +621,10 @@ def test_p1_credentials_materialiseres_mot_en_fersk_rot(tmp_path):
         "DISPONIT_SKATTESVEIP_URL",
         # 139 (M-28): transportsveipens EGEN DSN. En stille sveip her
         # er et farlig kolli som staar i en terminal uten at noen vet.
-        "DISPONIT_TRANSPORTSVEIP_URL")})
+        "DISPONIT_TRANSPORTSVEIP_URL",
+        # 140 (M-40): medarbeidersveipens EGEN DSN. En stille sveip her
+        # er en maaling ingen faar lese og en ansatt ingen tok imot.
+        "DISPONIT_MEDARBEIDERSVEIP_URL")})
     import subprocess
     res = subprocess.run(["bash", "-c", "set -eu\n" + blokk],
                          capture_output=True, text=True, env=env)
@@ -1292,7 +1295,10 @@ def test_selvrevers_gjenoppretter_credentialene_fra_for_vinduet(tmp_path):
         "DISPONIT_SKATTESVEIP_URL",
         # 139 (M-28): transportsveipens EGEN DSN. En stille sveip her
         # er et farlig kolli som staar i en terminal uten at noen vet.
-        "DISPONIT_TRANSPORTSVEIP_URL")})
+        "DISPONIT_TRANSPORTSVEIP_URL",
+        # 140 (M-40): medarbeidersveipens EGEN DSN. En stille sveip her
+        # er en maaling ingen faar lese og en ansatt ingen tok imot.
+        "DISPONIT_MEDARBEIDERSVEIP_URL")})
     import subprocess
 
     def kjor(fragment: str, ekstra: dict[str, str] | None = None):

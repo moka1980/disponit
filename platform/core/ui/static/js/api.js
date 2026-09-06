@@ -2101,3 +2101,66 @@ export const forkastTransportforslag = (forslagId, kropp, idem) =>
 export const lukkTransportfunn = (funnId, kropp, idem) =>
   _muter(`/v1/transport/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-40 HR- OG MEDARBEIDERAGENT (140). KLYNGE 10s FJERDE OG SISTE.
+//
+// DET FINNES INGEN `ansett`, INGEN `siOpp`, INGEN `vurder` OG INGEN
+// `score` HER, OG DET KAN IKKE FINNES. M-28 sa det om en bil på veien;
+// her er det tyngre — en oppsigelse som ble rullet tilbake er fortsatt
+// en samtale som fant sted, en beskjed som ble lest og et menneske som
+// brukte kvelden på den.
+//
+// `startLop` OG `utstedKontrakt` TAR EN `taker_id`, IKKE ET NAVN.
+// Ansattregisteret er M-39s (113), og «jobber hun her» besvares ett
+// sted i huset. Modulen slår opp, den svarer ikke selv.
+//
+// `utstedKontrakt` TAR FELTNØKLER, ALDRI VERDIER. Akseptansekravet ber
+// om at kontrakter kan spores til malversjon OG kildefelt — hvilke
+// felter som ble fylt, ikke hva som sto i dem. En kontraktverdi er
+// persondata, og v1 har ingen grunn til å eie den.
+//
+// `avgiPuls` HAR INGEN PERSONNØKKEL I SIGNATUREN, og det er ikke fordi
+// den er valgfri: `pulssvar` har ingen slik kolonne. En funksjon som
+// tok imot en id og kastet den, ville vært et løfte. Denne kan ikke
+// bryte et løfte den ikke er i stand til å gi.
+//
+// AGGREGATET LESES MED `hentJson` PÅ MÅLINGENS EGEN STI, og et tomt
+// svar er et gyldig svar: det betyr «ingen gruppe er stor nok».
+// ---------------------------------------------------------------------
+export const settMedarbeiderkrav = (krav, idem) =>
+  _muter("/v1/medarbeider/krav", "POST", krav,
+         idem || nyIdempotensnokkel());
+
+export const startLop = (kropp, idem) =>
+  _muter("/v1/medarbeider/lop/ny", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const utfoerSteg = (lopId, kropp, idem) =>
+  _muter(`/v1/medarbeider/lop/${encodeURIComponent(lopId)}/steg`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const avsluttLop = (lopId, kropp, idem) =>
+  _muter(`/v1/medarbeider/lop/${encodeURIComponent(lopId)}/avslutt`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const utstedKontrakt = (kropp, idem) =>
+  _muter("/v1/medarbeider/kontrakt/ny", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const apneMaaling = (kropp, idem) =>
+  _muter("/v1/medarbeider/maaling/ny", "POST", kropp,
+         idem || nyIdempotensnokkel());
+
+export const avgiPuls = (maalingId, kropp, idem) =>
+  _muter(`/v1/medarbeider/maaling/${encodeURIComponent(maalingId)}/puls`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkMaaling = (maalingId, kropp, idem) =>
+  _muter(`/v1/medarbeider/maaling/${encodeURIComponent(maalingId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkMedarbeiderfunn = (funnId, kropp, idem) =>
+  _muter(`/v1/medarbeider/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

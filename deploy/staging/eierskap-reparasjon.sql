@@ -1650,7 +1650,46 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm28_registrer_kolli(text,uuid,text,bigint,integer,integer,integer,text,text,integer,text)','disponit_transport_eier'),
     ('FUNCTION', 'm28_sett_krav(text,text,bigint,bigint,integer,text)',                                   'disponit_transport_eier'),
     ('FUNCTION', 'm28_sveip_transport(integer)',                                                          'disponit_transport_eier'),
-    ('FUNCTION', 'm28_transportfunn(text,integer)',                                                       'disponit_transport_eier');
+    ('FUNCTION', 'm28_transportfunn(text,integer)',                                                       'disponit_transport_eier'),
+    -- 140 (M-40): medarbeiderregisterets doerer og sveipen. FLAATENS SISTE.
+    --
+    -- `m40_utsted_kontrakt` er den farligste aa faa feil: den leser
+    -- BAADE `lonnstaker` (113) og `malversjon`/`malfelt` (094) gjennom
+    -- KOLONNEGRANTER som bare modulrollen har. Eide migrator doera,
+    -- ville den lest ansattes NAVN — som kolonnegranten med vilje
+    -- holder utenfor — og den ser dessuten forbi FORCE RLS paa alt
+    -- annet.
+    --
+    -- `m40_pulsbildet` er den nest farligste, og av motsatt grunn: den
+    -- er det ENESTE stedet pulssvarene leses paa vegne av et menneske,
+    -- og den nekter under malingens terskel. Kjorte den som migrator,
+    -- ville FORCE RLS vaert forbigatt og terskelen det eneste igjen.
+    --
+    -- `m40_funn_er_sveipens` og `m40_gjeldende_krav` er modulens indre
+    -- og gis ingen EXECUTE. De staar likevel her: en funksjon uten
+    -- eier i designet blir ALTER-et til migrator av reparasjonen, og
+    -- da ville doerene kalt dem som feil rolle.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN.
+    ('FUNCTION', 'm40_apne_maaling(text,uuid,text,integer,text)',                                         'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_avgi_puls(text,uuid,uuid,text,integer)',                                            'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_avslutt_lop(text,uuid,text,text)',                                                  'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_bildet(text)',                                                                      'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_evidens(text,uuid,text,text,jsonb)',                                                'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_funn_er_sveipens(text)',                                                            'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_gjeldende_krav(text)',                                                              'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_kontraktene(text,integer)',                                                         'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_lopene(text,integer)',                                                              'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_lukk_funn(text,uuid,text,text)',                                                    'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_lukk_maaling(text,uuid,text)',                                                      'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_maalingene(text,integer)',                                                          'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_medarbeiderfunn(text,integer)',                                                     'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_pulsbildet(text,uuid)',                                                             'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_sett_krav(text,integer,integer,text)',                                              'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_start_lop(text,uuid,uuid,integer,text)',                                            'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_sveip_medarbeider(integer)',                                                        'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_utfor_steg(text,uuid,integer,text,text)',                                           'disponit_medarbeider_eier'),
+    ('FUNCTION', 'm40_utsted_kontrakt(text,uuid,uuid,uuid,text[],text)',                                  'disponit_medarbeider_eier');
 
 DO $$
 DECLARE

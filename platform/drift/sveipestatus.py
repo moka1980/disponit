@@ -95,6 +95,7 @@ FLAATEN: dict[str, int] = {
     "hendelsessveip": 30,
     "skattesveip": 30,
     "transportsveip": 30,
+    "medarbeidersveip": 30,
     # Intervalljobber — vinduet er satt etter DERES kadens, ikke etter
     # døgnet. En jobb som skal gå hvert kvarter og ikke har gått på tre
     # timer, er død nok til at noen skal se på den.

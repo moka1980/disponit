@@ -2489,6 +2489,77 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import transport as transportmodul
         return transportmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-40 HR- OG MEDARBEIDERAGENT (140). KLYNGE 10s FJERDE OG SISTE.
+    #
+    # DET FINNES INGEN RUTE SOM AVGJØR NOE OM ET MENNESKE. Ingen
+    # `/ansett`, ingen `/si-opp`, ingen `/vurder`, ingen `/score` — og
+    # de er utelatt fordi modulen ikke skal ta en beslutning et
+    # menneske må leve med.
+    #
+    # `/maaling/{id}/puls` er den ene skriveruta i hele API-et som
+    # ikke sender aktøren videre OG ikke skriver et spor. Et bevisspor
+    # per pulssvar ville hatt tidspunkt, gruppe og aktør i samme rad —
+    # og det er nøyaktig den koblingen `pulssvar` ikke har.
+    def medarbeider_bilde(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.medarbeiderbilde(tjeneste, request)
+
+    def medarbeider_lop(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.lop_endepunkt(tjeneste, request)
+
+    def medarbeider_kontrakt(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.kontrakt_endepunkt(tjeneste, request)
+
+    def medarbeider_maaling(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.maaling_endepunkt(tjeneste, request)
+
+    def medarbeider_puls(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.pulsbilde_endepunkt(tjeneste, request)
+
+    def medarbeider_funn(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.funn_endepunkt(tjeneste, request)
+
+    def medarbeider_krav(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.krav_endepunkt(tjeneste, request)
+
+    def medarbeider_lop_ny(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.start_lop_endepunkt(tjeneste, request)
+
+    def medarbeider_steg(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.steg_endepunkt(tjeneste, request)
+
+    def medarbeider_avslutt(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.avslutt_lop_endepunkt(tjeneste, request)
+
+    def medarbeider_kontrakt_ny(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.utsted_kontrakt_endepunkt(tjeneste, request)
+
+    def medarbeider_maaling_ny(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.apne_maaling_endepunkt(tjeneste, request)
+
+    def medarbeider_avgi_puls(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.avgi_puls_endepunkt(tjeneste, request)
+
+    def medarbeider_lukk_maaling(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.lukk_maaling_endepunkt(tjeneste, request)
+
+    def medarbeider_lukk_funn(request: Request) -> Response:
+        from . import medarbeider as medarbeidermodul
+        return medarbeidermodul.lukk_funn_endepunkt(tjeneste, request)
+
 
 
 
@@ -3954,6 +4025,33 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               transport_forkast, methods=["POST"]),
         Route("/v1/transport/funn/{funn_id:uuid}/lukk",
               transport_lukk_funn, methods=["POST"]),
+        # M-40 (140). Faste stier FØR parametriserte.
+        Route("/v1/medarbeider", medarbeider_bilde, methods=["GET"]),
+        Route("/v1/medarbeider/lop", medarbeider_lop, methods=["GET"]),
+        Route("/v1/medarbeider/kontrakt", medarbeider_kontrakt,
+              methods=["GET"]),
+        Route("/v1/medarbeider/maaling", medarbeider_maaling,
+              methods=["GET"]),
+        Route("/v1/medarbeider/funn", medarbeider_funn, methods=["GET"]),
+        Route("/v1/medarbeider/krav", medarbeider_krav, methods=["POST"]),
+        Route("/v1/medarbeider/lop/ny", medarbeider_lop_ny,
+              methods=["POST"]),
+        Route("/v1/medarbeider/kontrakt/ny", medarbeider_kontrakt_ny,
+              methods=["POST"]),
+        Route("/v1/medarbeider/maaling/ny", medarbeider_maaling_ny,
+              methods=["POST"]),
+        Route("/v1/medarbeider/lop/{lop_id:uuid}/steg",
+              medarbeider_steg, methods=["POST"]),
+        Route("/v1/medarbeider/lop/{lop_id:uuid}/avslutt",
+              medarbeider_avslutt, methods=["POST"]),
+        Route("/v1/medarbeider/maaling/{maaling_id:uuid}/puls",
+              medarbeider_puls, methods=["GET"]),
+        Route("/v1/medarbeider/maaling/{maaling_id:uuid}/puls",
+              medarbeider_avgi_puls, methods=["POST"]),
+        Route("/v1/medarbeider/maaling/{maaling_id:uuid}/lukk",
+              medarbeider_lukk_maaling, methods=["POST"]),
+        Route("/v1/medarbeider/funn/{funn_id:uuid}/lukk",
+              medarbeider_lukk_funn, methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -5380,6 +5478,30 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/transport/forslag/{forslag_id:uuid}/forkast"):
         "bestilling:opprett",
     ("POST", "/v1/transport/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-40 (140). INGEN RUTE AVGJØR NOE OM ET MENNESKE — det finnes
+    # ingen `/ansett`, ingen `/si-opp` og ingen `/vurder`, og porten
+    # leser denne tabellen for å måle det.
+    ("GET",  "/v1/medarbeider"):                 "okonomi:read",
+    ("GET",  "/v1/medarbeider/lop"):             "okonomi:read",
+    ("GET",  "/v1/medarbeider/kontrakt"):        "okonomi:read",
+    ("GET",  "/v1/medarbeider/maaling"):         "okonomi:read",
+    ("GET",  "/v1/medarbeider/funn"):            "okonomi:read",
+    ("GET",  "/v1/medarbeider/maaling/{maaling_id:uuid}/puls"):
+        "okonomi:read",
+    ("POST", "/v1/medarbeider/krav"):            "bestilling:opprett",
+    ("POST", "/v1/medarbeider/lop/ny"):          "bestilling:opprett",
+    ("POST", "/v1/medarbeider/kontrakt/ny"):     "bestilling:opprett",
+    ("POST", "/v1/medarbeider/maaling/ny"):      "bestilling:opprett",
+    ("POST", "/v1/medarbeider/lop/{lop_id:uuid}/steg"):
+        "bestilling:opprett",
+    ("POST", "/v1/medarbeider/lop/{lop_id:uuid}/avslutt"):
+        "bestilling:opprett",
+    ("POST", "/v1/medarbeider/maaling/{maaling_id:uuid}/puls"):
+        "bestilling:opprett",
+    ("POST", "/v1/medarbeider/maaling/{maaling_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/medarbeider/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

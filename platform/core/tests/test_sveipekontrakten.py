@@ -64,6 +64,7 @@ SVEIPENE = (
     ("hendelsessveip", "m29_sveip_hendelse"),
     ("skattesveip", "m32_sveip_skatt"),
     ("transportsveip", "m28_sveip_transport"),
+    ("medarbeidersveip", "m40_sveip_medarbeider"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),
