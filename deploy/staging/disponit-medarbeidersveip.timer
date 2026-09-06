@@ -1,0 +1,56 @@
+# M-40 (140): medarbeidersveipen går ÉN GANG I DØGNET.
+#
+# FLÅTENS SISTE TIMER. Klynge 10 lukker katalogen, og dette er trinn
+# 57 av 57.
+#
+# En førsteuke ingen har fulgt opp blir ikke fulgt opp av at maskinen
+# ser oftere etter. Sjeldnere ville latt en aktiv ansatt stå uten løp i
+# en uke — og modulen kan ikke starte det selv, så det å SI FRA er hele
+# det den kan.
+#
+# Statussveipen (115) leser flåtens tilstand ETTER at flåten har
+# kjørt — den eneste ekte ordningen i flåten.
+#
+# `RandomizedDelaySec=4min` OG IKKE 30 (131/132s lærdom, strammet i
+# #402).
+#
+# Spredningen etablerer INGEN rekkefølge mellom timere — den finnes for
+# å hindre at de fyrer samtidig. REGNESTYKKET SOM MÅ GÅ OPP er
+# START + SPREDNING + `TimeoutStartSec` for HVER overvåket sveip, målt
+# mot statussveipens TIDLIGSTE start.
+#
+# Her: 07:10 + 4 + 10 = 07:24, og statussveipen starter tidligst 07:30.
+#
+# DET ER STIGENS SISTE TRINN, OG MARGINEN ER SEKS MINUTTER.
+# `test_stigen_har_plass_til_klynge_ti` regnet ut i #402 at klynge 10s
+# fire trinn strekker stigen hit, og statussveipen ble satt til 07:30
+# DA — ikke nå. Med denne timeren blir porten stille av seg selv, og
+# det er riktig: da er det ikke lenger klynge 10 som trenger plass, det
+# er klynge 11.
+#
+# EN KLYNGE 11 MÅ FLYTTE STATUSSVEIPEN FØR DEN BYGGER, og det skal den
+# få vite her framfor å oppdage det når den fjerde modulen faller.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 39 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+
+[Unit]
+Description=Disponit medarbeidersveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:10:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -600,6 +600,13 @@ const BASISRUTER = [
   // Modulen bestiller ingen transport: den planlegger mot kolli et
   // menneske har målt, og fareklassen oppgis alltid av en person.
   { nokkel: "transport", scope: "okonomi:read", modulflate: 28 },
+  // M-40 (140): HR og medarbeider. MODULFLATE bak `okonomi:read` —
+  // samme scope som M-39s lønnsgrunnlag, fordi det er det samme
+  // registeret over de samme menneskene.
+  // Modulen avgjør ingenting om noen: ingen beslutning med
+  // rettsvirkning, ingen individprofil, ingen produktivitetsscore.
+  // Pulssvarene bærer ingen personnøkkel i det hele tatt.
+  { nokkel: "medarbeider", scope: "okonomi:read", modulflate: 40 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

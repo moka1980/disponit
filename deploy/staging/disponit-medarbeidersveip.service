@@ -1,0 +1,95 @@
+# M-40 (140): medarbeidersveipen. FLÅTENS SISTE.
+#
+# SVEIPEN AVGJØR INGENTING OG VARSLER INGEN. Den sier fra om at en
+# førsteuke har stått åpen over fristen, om at en aktiv ansatt aldri
+# fikk et løp, om at en måling ble samlet inn uten at en eneste gruppe
+# ble stor nok til å kunne leses, og om at en kontrakt hviler på en mal
+# noen siden har trukket tilbake — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en handling med virkning i den virkelige verden
+# angres ikke av en rollback. M-28 sa det om en bil på veien. HER ER
+# DET TYNGRE — en oppsigelse som ble rullet tilbake er fortsatt en
+# samtale som fant sted, en beskjed som ble lest og et menneske som
+# brukte kvelden på den.
+#
+# SVEIPEN LESER ALDRI EN PULSVERDI. Den teller grupper og sammenligner
+# med målingens terskel; den ser aldri hva noen svarte. En sveip som
+# var unntatt fra terskelen ville vært hullet i den, og en port leser
+# sveipens SQL og krever at `s.verdi` ikke er nevnt.
+#
+# ANSATTREGISTERET ER M-39s (113), OG DET RØRES IKKE HERFRA.
+# `disponit_medarbeidersveip` har INGEN rettighet på `lonnstaker` —
+# ikke engang SELECT. Modulrollens egen grant er dessuten en
+# KOLONNEGRANT UTEN `navn`: huset vet AT hun er ansatt, ikke hva hun
+# heter.
+#
+# SEKS FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `beslutning_med_rettsvirkning` (det finnes ingen beslutningsdør),
+# `individprofil_bygget` (ingen kolonne bærer et tall om et menneske),
+# `puls_identifiserte_en_person` (`pulssvar` har ingen personnøkkel —
+# ikke nullbar, ikke pseudonymisert, den finnes ikke),
+# `gruppeterskel_endret` (ingen har UPDATE på kolonnen),
+# `kontrakt_uten_malversjon` (NOT NULL) og `krav_mangler` (løkka går
+# over tenanter som HAR et krav). Alle seks er utelukket av
+# datamodellen, ikke oppdaget av en sveip.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet ikke da løpet ble
+# startet, og ikke da målingen ble åpnet. Så gikk det døgn, og ingen
+# gjorde noe; eller for få svarte. Ingen dør kunne fanget det, fordi
+# ingen kalte noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal sendes ut i verden.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille
+# medarbeidersveip er en måling ingen får lese og en ansatt ingen tok
+# imot, uten at noen vet det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_medarbeidersveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m40_sveip_medarbeider`. INGEN
+# tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit medarbeidersveip (aapne foersteuker over frist, ansatte uten loep, maalinger ingen faar lese)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_MEDARBEIDERSVEIP_URL:/etc/disponit/medarbeidersveip/DISPONIT_MEDARBEIDERSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_medarbeidersveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`ansattlop_apne`, `lonnstaker_aktive`,
+# `pulssvar_pr_gruppe`, `medarbeiderkontrakt_pr_mal`,
+# `medarbeiderfunn_ett_apent`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

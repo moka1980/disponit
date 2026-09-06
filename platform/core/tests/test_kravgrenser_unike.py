@@ -133,7 +133,8 @@ UBYGDE_GRENSER = frozenset({
     # `m29-v1` gikk ut 6/9, da 137 landet med sin dekningsport.
     # `m32-v1` gikk ut 6/9, da 138 landet med sin dekningsport.
     # `m28-v1` gikk ut 6/9, da 139 landet med sin dekningsport.
-    "m40-v1",
+    # `m40-v1` gikk ut 6/9, da 140 landet med sin dekningsport — og
+    # DERMED ER LISTA TOM FOR KLYNGE 10. Katalogen er 57 av 57.
     # KLYNGE 9 — YTRINGENE. Registrert 5/9, før koden.
     #
     # Lista sto TOM i noen minutter mellom 132 og dette fundamentet.
