@@ -1,0 +1,101 @@
+# M-40 HR- OG MEDARBEIDERAGENT — KLYNGE 10s SISTE.
+#
+# `m40-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 140
+# tildelt i docs/KLYNGE10-FUNDAMENT.md. BYGGES SIST — den rører
+# mennesker.
+#
+# KLYNGENS DELTE DOM: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK.
+#
+# OG M-40 ER DEN ENESTE AV DE FIRE DER DEN SKADELIDTE ER EN
+# PRIVATPERSON SOM IKKE ER KUNDE. M-28 skader en forsendelse, M-29
+# skader driften, M-32 skader et regnskap. M-40 skader en ansatt hos
+# kunden — en som aldri har sett produktet, aldri samtykket til noe, og
+# ikke kan klage til noen. AI Act-grensen i vaktsetningen er derfor
+# ikke en compliance-linje som er lagt til; den er hele grunnen til at
+# modulen ser slik ut.
+#
+# ANSATTREGISTERET FINNES, OG DET ER M-39s. `lonnstaker` har `tenant,
+# taker_id, ekstern_ref, navn, aktiv` — husets eneste register over
+# mennesker som jobber i bedriften. M-40 ARVER DET og bygger ikke et
+# nytt: to registre over de samme menneskene gir to svar på «jobber hun
+# her», og det er ett for mange. Samme argument som ga M-7 og M-43 én
+# delt opptakshjemmel.
+#
+# `onboardinglop` (M-18) ER IKKE MEDARBEIDERONBOARDING. Kolonnen heter
+# `kunde_ref`. M-18 er kundens innføring i produktet; M-40s er den
+# ansattes første uke. Fjerde gang samme felle i to klynger, og igjen
+# avverget av å lese kolonnene og ikke navnet.
+#
+# MALENE FINNES, OG DE ER LÅST. `malfamilie`/`malversjon`/`malfelt`/
+# `malkomponent` (M-5) er nøyaktig det vaktsetningens «juridiske
+# klausuler er låste» og akseptansekravets «kontrakter kan alltid
+# spores til malversjon og kildefelt» ber om. M-40 arver, som M-20
+# arvet M-1s utkastform.
+#
+# HRIS-DATA OG PULSSVAR FINNES IKKE. Pulsen er klyngens egentlige
+# vanskelighet, og den eneste som IKKE kan løses ved å holde tilbake en
+# fullmakt: modulen må faktisk lagre svarene, og de må faktisk være
+# uidentifiserbare.
+#
+# K-ANONYMITETEN ER EN INVARIANT I BASEN, IKKE EN SJEKK I EN DØR.
+# Anonymitet er en egenskap ved SETTET, ikke ved raden: fire svar fra
+# en gruppe på fire er anonyme hver for seg og fullt identifiserende
+# til sammen. Svaret bærer derfor ingen `taker_id` i det hele tatt, og
+# terskelen lagres SAMMEN MED målingen — en terskel som kan endres i
+# ettertid er ingen terskel.
+#
+# V1-DOMMEN: MODULEN AVGJØR INGENTING OM ET MENNESKE. Ingen
+# beslutningsdør, ingen score per person, ingen individprofil.
+#
+# M-30: `docs/M53-M30-GRENSESNITTET.md` avklarte det allerede — M-30
+# SLETTER IKKE, den er et register over forespørsler. M-40 registrerer
+# hvert lager i M-4s `retensjonslager` (093), som M-53 gjorde.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m40_medarbeider
+navn: HR- og medarbeideragent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. IKKE «HRIS-connector og e-signering» —
+# de finnes ikke.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m05_dokumentmal
+  - m37_unntak
+  - m39_lonnsgrunnlag
+kjerne: platform/modules/m40_medarbeider
+i18n_prefiks: medarbeider
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: en gruppe som KRYMPER under terskelen mellom to
+      målinger, slik at porten kan måle at gårsdagens aggregat blir
+      stille i dag. Anonymitet er en egenskap ved settet.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hver kontrakt kan spores til malversjon og kildefelt
+      — og at INGEN pulsrad kan spores til et menneske.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et forsøk på en beslutning med rettsvirkning gir et
+      funn og ingen beslutning.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

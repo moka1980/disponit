@@ -84,6 +84,10 @@ jobs:
       DISPONIT_TEST_INNHOLDSSVEIP_DSN: postgresql://disponit_innholdssveip:inn@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_TELEFONISVEIP_DSN: postgresql://disponit_telefonisveip:tlf@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_ESGSVEIP_DSN: postgresql://disponit_esgsveip:esg@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_HENDELSESSVEIP_DSN: postgresql://disponit_hendelsessveip:hnd@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_SKATTESVEIP_DSN: postgresql://disponit_skattesveip:skt@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_TRANSPORTSVEIP_DSN: postgresql://disponit_transportsveip:trp@127.0.0.1:5432/disponit_test
+      DISPONIT_TEST_MEDARBEIDERSVEIP_DSN: postgresql://disponit_medarbeidersveip:mba@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_PLAN_DSN: postgresql://disponit_plan_arbeider:pla@127.0.0.1:5432/disponit_test
       DISPONIT_TEST_VERIFIKATOR_DSN: postgresql://disponit_ci_verifikator:ver@127.0.0.1:5432/disponit_test
     steps:
@@ -186,6 +190,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_innholdssveip LOGIN PASSWORD 'inn'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_telefonisveip LOGIN PASSWORD 'tlf'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_esgsveip LOGIN PASSWORD 'esg'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_hendelsessveip LOGIN PASSWORD 'hnd'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_skattesveip LOGIN PASSWORD 'skt'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_transportsveip LOGIN PASSWORD 'trp'"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_medarbeidersveip LOGIN PASSWORD 'mba'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_faktura_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prosjekt_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_prisbok_eier NOLOGIN"
@@ -212,6 +220,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_innhold_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_telefoni_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_esg_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_hendelse_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_skatt_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_transport_eier NOLOGIN"
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_medarbeider_eier NOLOGIN"
           # 049/#117: CI-attestens EGEN innlogging — SET til modul_eier,
           # aldri medlem av modules_admin: attestant og akseptør skal
           # være to identiteter (fire-øyne på akseptens forutsetning).
@@ -295,6 +307,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_innhold_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_telefoni_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_esg_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_hendelse_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_skatt_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_transport_eier TO disponit_migrator WITH INHERIT FALSE"
+          psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_medarbeider_eier TO disponit_migrator WITH INHERIT FALSE"
           createdb -h 127.0.0.1 -U postgres -O disponit_migrator disponit_test
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "ALTER SCHEMA public OWNER TO disponit_migrator"
           psql -h 127.0.0.1 -U postgres -d disponit_test -qtAc "GRANT USAGE, CREATE ON SCHEMA public TO disponit_authenticator"

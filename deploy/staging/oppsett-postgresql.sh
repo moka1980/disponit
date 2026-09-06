@@ -224,6 +224,33 @@ TELEFONIEIER=disponit_telefoni_eier         # M-43 eier samtaleregisteret
 TELEFONISVEIP=disponit_telefonisveip        # M-43s eskaleringssveip
 ESGEIER=disponit_esg_eier                   # M-45 eier ESG-registeret
 ESGSVEIP=disponit_esgsveip                  # M-45s kilde- og faktorsveip
+# KLYNGE 10 (137-140): handlingene. Se docs/KLYNGE10-FUNDAMENT.md.
+#
+# DEN DELTE DOMMEN: en handling med virkning i den virkelige verden
+# angres ikke av en rollback. Klynge 9s ytring kunne ikke tas tilbake
+# fordi noen hadde LEST den; denne klyngens feilform trenger ingen
+# leser. Pakken er hentet, kontoen er stengt, skatten er innberettet.
+#
+# M-29s eierrolle er den farligste i huset AA GI FOR MYE: maalene for
+# «isoler konto og roter secrets» ligger ALLEREDE i basen
+# (`api_tokener`, `modultoken`, `tenant_pseudonymnokkel`). v1 faar
+# lesrett og ingen skriverett utenfor sine egne funnrader.
+HENDELSEEIER=disponit_hendelse_eier         # M-29 eier hendelsesregisteret
+HENDELSESSVEIP=disponit_hendelsessveip      # M-29s korrelasjons- og scoresveip
+SKATTEIER=disponit_skatt_eier               # M-32 eier landregisteret
+SKATTESVEIP=disponit_skattesveip            # M-32s landpakke- og regelversjonssveip
+TRANSPORTEIER=disponit_transport_eier       # M-28 eier transportforslagene
+TRANSPORTSVEIP=disponit_transportsveip      # M-28s kolli- og adressesveip
+MEDARBEIDEREIER=disponit_medarbeider_eier   # M-40 eier medarbeiderregisteret
+MEDARBEIDERSVEIP=disponit_medarbeidersveip  # M-40s puls- og malversjonssveip
+#
+# DSN-ENE STAAR IKKE HER, OG DET ER MED VILJE. Rollen opprettes av
+# fundamentet; DSN-en skrives av MODULENS PR, sammen med `opp.sh`s
+# preflight-sjekk for den samme DSN-en.
+# `test_hver_sveip_dsn_oppsettet_skriver_blir_ogsa_krevd` felte dette
+# fundamentet paa nettopp den forskjellen 6/9: en DSN oppsettet skriver
+# uten at noen krever den er en rolle uten jobb, og porten maaler begge
+# retninger nettopp for at ingen av dem skal kunne staa alene.
 for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$DOMENER" "$VARSLER" "$PLANARB" "$VERIFIKATOR" "$DRIFTSTATUS" \
          "$SELVTEST" "$KVALITETSMAALER" "$LAGERMAALER" "$KUNNSKAPSSVEIP" \
@@ -237,7 +264,9 @@ for r in "$BRUKER" "$MIGRATOR" "$TOKENADMIN" "$ARBEIDER" "$EGRESS" \
          "$MERKEVARESVEIP" "$EHFSVEIP" "$TOLLKODESVEIP" \
          "$MYNDIGHETSSVEIP" "$POSTJOURNALSVEIP" "$HMSSVEIP" \
          "$LIKVIDITETSSVEIP" "$PROGNOSESVEIP" "$OPTIMALISATORSVEIP" \
-         "$MOTESVEIP" "$INNHOLDSSVEIP" "$TELEFONISVEIP" "$ESGSVEIP"; do
+         "$MOTESVEIP" "$INNHOLDSSVEIP" "$TELEFONISVEIP" "$ESGSVEIP" \
+         "$HENDELSESSVEIP" "$SKATTESVEIP" "$TRANSPORTSVEIP" \
+         "$MEDARBEIDERSVEIP"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -c \
     "CREATE ROLE $r LOGIN PASSWORD '$(openssl rand -hex 24)'"
@@ -254,7 +283,9 @@ for r in "$AUTH" "$M37" "$POLICYEIER" "$MODULEIER" "$MODULESADMIN" \
          "$MERKEVAREIER" "$EHFEIER" "$TOLLKODEEIER" \
          "$MYNDIGHETEIER" "$POSTJOURNALEIER" "$HMSEIER" \
          "$LIKVIDITETEIER" "$PROGNOSEEIER" "$OPTIMALISATOREIER" \
-         "$MOTEEIER" "$INNHOLDEIER" "$TELEFONIEIER" "$ESGEIER"; do
+         "$MOTEEIER" "$INNHOLDEIER" "$TELEFONIEIER" "$ESGEIER" \
+         "$HENDELSEEIER" "$SKATTEIER" "$TRANSPORTEIER" \
+         "$MEDARBEIDEREIER"; do
   sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$r'" \
     | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $r NOLOGIN"
 done
@@ -374,6 +405,10 @@ sudo -u postgres psql -qc "GRANT $MOTEEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $INNHOLDEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $TELEFONIEIER TO $MIGRATOR WITH INHERIT FALSE"
 sudo -u postgres psql -qc "GRANT $ESGEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $HENDELSEEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $SKATTEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $TRANSPORTEIER TO $MIGRATOR WITH INHERIT FALSE"
+sudo -u postgres psql -qc "GRANT $MEDARBEIDEREIER TO $MIGRATOR WITH INHERIT FALSE"
 
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" \
   | grep -q 1 || sudo -u postgres createdb -O $MIGRATOR $DB

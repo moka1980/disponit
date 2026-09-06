@@ -50,9 +50,34 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // fordi den brukte en ekte, ubygd modul som stedfortreder for
   // «ukjent». Hver klynge ville flyttet den på nytt.
   assert.equal(modulStatus(99), "planlagt");
-  // …OG EN EKTE MODUL SOM ENNÅ IKKE ER REGISTRERT. M-28 hører til
-  // klynge 10 og flyttes DA, med det fundamentet — ikke før.
-  assert.equal(modulStatus(28), "planlagt");
+  // HER STO `modulStatus(28)` TIL 6/9, som «en ekte modul som ennå
+  // ikke er registrert». Den stedfortrederen finnes ikke lenger:
+  // klynge 10-fundamentet registrerte M-28, M-29, M-32 og M-40, og
+  // med dem er KATALOGEN KOMPLETT — alle 57 modulene har manifest.
+  //
+  // Testen kan derfor ikke lenger låne en ekte modul for å påstå noe
+  // om «ukjent». Det er ikke et tap: 99 er og blir det ærlige
+  // eksempelet, og fullstendigheten måles av porten under framfor å
+  // hvile på at én modul tilfeldigvis manglet.
+});
+
+test("katalogen er komplett: 57 moduler, ingen hull", () => {
+  // KLYNGE 10 LUKKET KATALOGEN 6/9. Spesifikasjonen fryser den på 57
+  // («Katalogen fryses på 57»), og fra og med klynge 10 har hvert
+  // eneste nummer et manifest og en rad i MODULOVERSIKT.
+  //
+  // PORTEN MÅLER HULLET, IKKE ANTALLET. En katalog kan telle 57 og
+  // likevel mangle M-32 hvis noen la til en M-58 — og det er nettopp
+  // den feilen et frossent tall skjuler.
+  const ider = MODULOVERSIKT.map((m) => m.id).sort((a, b) => a - b);
+  const ventet = Array.from({ length: 57 }, (_, i) => i + 1);
+  assert.deepEqual(ider, ventet,
+    "katalogen har hull eller numre utenfor 1-57");
+  // OG HVER AV DEM HAR EN STATUS. En modul i oversikten uten status
+  // ville falt tilbake til «planlagt» og sett riktig ut.
+  const utenStatus = ider.filter((id) => !(id in MODULSTATUS));
+  assert.deepEqual(utenStatus, [],
+    "moduler i katalogen uten rad i MODULSTATUS");
 });
 
 test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => {

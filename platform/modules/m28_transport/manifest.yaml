@@ -1,0 +1,86 @@
+# M-28 LOGISTIKK- OG TRANSPORTAGENT — KLYNGE 10s TREDJE.
+#
+# `m28-v1` står i KRAVGRENSER fra samme commit, migrasjonsnummer 139
+# tildelt i docs/KLYNGE10-FUNDAMENT.md.
+#
+# KLYNGENS DELTE DOM: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK. Ingen modul viser det tydeligere enn
+# denne: bilen kjører videre uansett hva basen sier.
+#
+# TRE AV SEKS INNGANGSDATA FINNES IKKE. Målt mot basen (332 tabeller,
+# migrert til 136):
+#   * ORDRE — nei. `bestillingsplan` er plattformens EGEN
+#     abonnementsplan; `bestillingspunkt` (M-27) er en terskel.
+#   * KOLLI — nei. Ingen tabell bærer dimensjon, vekt eller fareklasse.
+#   * TRANSPORTPRISER — nei. Ingen prisliste, ingen transportør.
+#   * LAGERLOKASJON — delvis: `lagerbevegelse` (M-27, 109) har
+#     `vare_id` og `endring`, men ingen lokasjon. Huset teller
+#     beholdning; det vet ikke hvor den står.
+#   * ADRESSE — JA. `adressesubjekt`/`adresseversjon`/`adressekontroll`
+#     (M-19), med versjonshistorikk.
+#   * SLA — JA. `leveranseavtale.sla_type` + `leveranse` (M-24).
+#
+# KONSEKVENSEN, SOM FOR M-15 OG M-45: kolliet registreres av et
+# MENNESKE, med mål, vekt og fareklasse. Og det gjør modulen ærligere,
+# ikke fattigere — vaktsetningen sier «farlig gods, toll og persondata
+# følger land- og transportørregler», og en modul som utledet
+# fareklassen av en produktbeskrivelse ville PÅSTÅTT noe om farlig
+# gods.
+#
+# V1-DOMMEN: MODULEN BESTILLER INGEN TRANSPORT OG OMBOOKER INGENTING.
+# `transportforslag` er et forslag med begrunnelse.
+#
+# «SAMME KOLLI BESTILLES ALDRI TO GANGER» er akseptansekravet ord for
+# ord, og i v1 kan det aldri brytes: datamodellen gir én frigivelse per
+# kolli. At funnet står i settet og er umulig ER beviset.
+#
+# ARVER M-32s LANDREGISTER. «Farlig gods og toll følger LANDregler» er
+# nøyaktig det registeret M-32 bygger i 138. En M-28 bygget først ville
+# laget sitt eget landbegrep, og huset ville hatt to.
+#
+# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+id: m28_transport
+navn: Logistikk- og transportagent
+versjon: 0.1.0
+status: under_utvikling
+driftstilstand: ikke_i_drift
+# REELLE, MÅLTE avhengigheter. IKKE «WMS, transportører og
+# carrier-connectors» — de finnes ikke.
+avhengigheter:
+  - m01_policy
+  - m02_revisjonslogg
+  - m19_adresse
+  - m32_skatt
+kjerne: platform/modules/m28_transport
+i18n_prefiks: transport
+
+staging_sjekkliste:
+  tester_gronne_pa_staging:
+    status: nei
+    notat: >-
+      KREVER: modulen bygget, og suitekjøring på staging med modulens
+      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+  syntetisk_datasett_likt_lokalt:
+    status: nei
+    notat: >-
+      KREVER: et kolli med fareklasse og en adresse i et land uten
+      komplett landpakke, slik at porten kan måle at forslaget
+      stopper.
+  revisjonslogg_korrekt:
+    status: nei
+    notat: >-
+      KREVER: at hvert forslag kan spores til adresseversjonen og
+      kolliet det hviler på — og til MENNESKET som oppga fareklassen.
+  feilinjisering_til_unntakskø:
+    status: nei
+    notat: >-
+      KREVER: at et forsøk på å frigi samme kolli to ganger gir et
+      funn og ikke to frigivelser.
+  ytelse_bestatt:
+    status: nei
+    notat: >-
+      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+  rollback_testet:
+    status: nei
+    notat: >-
+      KREVER: en release å rulle tilbake. Modulen har ingen.

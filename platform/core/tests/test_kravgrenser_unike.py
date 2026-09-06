@@ -119,6 +119,21 @@ def test_ingen_invariantliste_defineres_to_ganger():
 #:
 #: Se `docs/KLYNGE8-FUNDAMENT.md`.
 UBYGDE_GRENSER = frozenset({
+    # KLYNGE 10 — HANDLINGENE. Registrert 6/9, før koden.
+    #
+    # Lista sto TOM i noen timer 5-6/9, mellom 136 og dette
+    # fundamentet. Det var ikke en hviledag — det var beviset på at
+    # klynge 9 faktisk ble ferdig.
+    #
+    # DEN DELTE DOMMEN: en handling med virkning i den virkelige
+    # verden angres ikke av en rollback. Alle fire holder tilbake
+    # nøyaktig den fullmakten modulen ser ut til å trenge.
+    #
+    # Se docs/KLYNGE10-FUNDAMENT.md.
+    "m29-v1",
+    "m32-v1",
+    "m28-v1",
+    "m40-v1",
     # KLYNGE 9 — YTRINGENE. Registrert 5/9, før koden.
     #
     # Lista sto TOM i noen minutter mellom 132 og dette fundamentet.
@@ -333,6 +348,164 @@ def test_klynge8_star_i_ubygde_til_modulene_er_bygget():
     """
     dekket = _grenser_med_dekningsport()
     for krav_id in KLYNGE8:
+        if krav_id in UBYGDE_GRENSER:
+            assert krav_id not in dekket, (
+                f"{krav_id} har en dekningsport, men står fortsatt"
+                " som ubygd")
+        else:
+            assert krav_id in dekket, (
+                f"{krav_id} er ute av UBYGDE_GRENSER uten en port som"
+                " dekker grensen")
+
+
+# ---------------------------------------------------------------------------
+# KLYNGE 10 — HANDLINGENE (M-29, M-32, M-28, M-40).
+#
+# DEN DELTE DOMMEN: EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN
+# ANGRES IKKE AV EN ROLLBACK.
+#
+# Se docs/KLYNGE10-FUNDAMENT.md.
+# ---------------------------------------------------------------------------
+
+KLYNGE10 = ("m29-v1", "m32-v1", "m28-v1", "m40-v1")
+
+#: DEN TILBAKEHOLDTE FULLMAKTEN, PER MODUL.
+#:
+#: Alle fire vaktsetningene holder tilbake nøyaktig den fullmakten
+#: modulen ser ut til å trenge — M-28 skal bestille transport, M-29
+#: skal isolere kontoer, M-32 skal innberette skatt, M-40 skal avgjøre
+#: noe om et menneske. Ingen av dem gjør det i v1.
+#:
+#: Navnene står her og ikke bare i dokumentet, fordi en dom som bare
+#: står i et dokument kan landes rundt.
+KLYNGE10_TILBAKEHOLDT = {
+    "m29-v1": ("modulen_isolerte_konto", "modulen_roterte_hemmelighet"),
+    "m32-v1": ("modulen_innberettet_skatt",),
+    "m28-v1": ("modulen_bestilte_transport", "modulen_ombooket"),
+    "m40-v1": ("beslutning_med_rettsvirkning", "individprofil_bygget"),
+}
+
+#: FUNNENE SOM STÅR I SETTET OG ALDRI KAN REISES.
+#:
+#: Formen er klynge 9s, og den har nå gjentatt seg i åtte moduler: et
+#: sett som ikke navnga dem ville ikke sagt noe, og et sett som navnga
+#: dem og kunne fylles ville sagt at vernet er en sveip.
+KLYNGE10_UMULIGE = {
+    "m29-v1": ("inngrep_uten_playbook", "fri_kommando_kjort"),
+    "m32-v1": ("transaksjon_uten_jurisdiksjon",),
+    "m28-v1": ("kolli_bestilt_to_ganger",),
+    "m40-v1": ("puls_identifiserte_en_person",),
+}
+
+#: ARVEFORHOLDENE, MÅLT MOT MANIFESTET OG IKKE MOT DOKUMENTET.
+#:
+#: `lonnstaker` (M-39) er husets eneste ansattregister, og `mvasats`
+#: (M-14) er tenantens egen — ikke en landpakke. M-28 arver M-32s
+#: landregister fordi «farlig gods og toll følger LANDregler» er
+#: nøyaktig det registeret M-32 bygger.
+KLYNGE10_ARV = {
+    "m28_transport": "m32_skatt",
+    "m40_medarbeider": "m39_lonnsgrunnlag",
+}
+
+
+def test_klynge10_holder_tilbake_en_fullmakt_hver():
+    """KLYNGENS DELTE DOM, MÅLT I GRENSENE.
+
+    Det er ikke fire tilfeldig like vaktsetninger. Det er den samme
+    setningen fire ganger: modulen er bygget for å handle, og v1
+    handler ikke.
+
+    En grense som mistet sin `modulen_*`-invariant ville sluppet en
+    akseptport grønn på en modul som FAKTISK bestilte transporten,
+    stengte kontoen eller innberettet skatten — mens
+    fundamentdokumentet fortsatt sa at den ikke gjorde det.
+
+    MUTASJONEN SOM DREPER DENNE: ta `modulen_isolerte_konto` ut av
+    `m29-v1`.
+    """
+    from manifestskjema import KRAVGRENSER
+    mangler = {}
+    for krav_id, holdt in KLYNGE10_TILBAKEHOLDT.items():
+        inv = set(KRAVGRENSER[krav_id]["invarianter"])
+        savnet = [d for d in holdt if d not in inv]
+        if savnet:
+            mangler[krav_id] = savnet
+    assert mangler == {}, (
+        "klynge 10 holder tilbake fullmakten i fundamentet, men ikke"
+        f" i grensen: {mangler}")
+
+
+def test_klynge10_navngir_funnene_den_aldri_kan_reise():
+    """AT DE STÅR DER OG ER UMULIGE ER BEVISET.
+
+    `fri_kommando_kjort` kan aldri reises fordi ingen dør tar en
+    kommandostreng. `puls_identifiserte_en_person` kan aldri reises
+    fordi svaret ikke bærer noen personnøkkel. `kolli_bestilt_to_ganger`
+    kan aldri reises fordi datamodellen gir én frigivelse per kolli.
+
+    Et sett som ikke navnga dem ville ikke sagt noe. Et sett som
+    navnga dem og kunne fylles ville sagt at vernet er en sveip.
+
+    MUTASJONEN SOM DREPER DENNE: ta `fri_kommando_kjort` ut av
+    `m29-v1`.
+    """
+    from manifestskjema import KRAVGRENSER
+    mangler = {}
+    for krav_id, umulige in KLYNGE10_UMULIGE.items():
+        inv = set(KRAVGRENSER[krav_id]["invarianter"])
+        savnet = [d for d in umulige if d not in inv]
+        if savnet:
+            mangler[krav_id] = savnet
+    assert mangler == {}, (
+        f"de umulige funnene mangler i grensen: {mangler}")
+
+
+def test_klynge10_arver_framfor_aa_bygge_et_register_til():
+    """ET ARVEFORHOLD SOM BARE STÅR I ET DOKUMENT ER IKKE ARVET.
+
+    `lonnstaker` (M-39) er husets ENESTE register over mennesker som
+    jobber i bedriften. Et fundament som leste katalogen og ikke basen
+    ville bygget et ANDRE — og to registre over de samme menneskene
+    gir to svar på «jobber hun her».
+
+    Det er nøyaktig argumentet som ga M-7 og M-43 én delt
+    opptakshjemmel, og porten er den samme: står arven bare i prosaen,
+    kan modulen landes med sitt eget register uten at noe faller.
+
+    MUTASJONEN SOM DREPER DENNE: ta `m39_lonnsgrunnlag` ut av M-40s
+    `avhengigheter`.
+    """
+    import yaml
+    mangler = {}
+    for modul, arvet in KLYNGE10_ARV.items():
+        sti = (SKJEMA.parents[1] / "modules" / modul
+               / "manifest.yaml")
+        assert sti.exists(), f"{modul} har intet manifest"
+        d = yaml.safe_load(sti.read_text(encoding="utf-8"))
+        if arvet not in (d.get("avhengigheter") or []):
+            mangler[modul] = arvet
+    assert mangler == {}, (
+        "arveforholdet står i fundamentet, men ikke i manifestets"
+        f" avhengigheter: {mangler}")
+    # OG M-40 SKAL BÆRE INVARIANTEN SOM SIER DET, ikke bare pekeren:
+    # en avhengighet forteller hva modulen LESER, invarianten hva den
+    # ikke får LAGE.
+    from manifestskjema import KRAVGRENSER
+    assert ("modulen_bygget_eget_ansattregister"
+            in KRAVGRENSER["m40-v1"]["invarianter"]), (
+        "M-40 peker på M-39, men grensen forbyr ikke et eget register")
+
+
+def test_klynge10_star_i_ubygde_til_modulene_er_bygget():
+    """De fire er registrert FØR koden, og står her til de landes.
+
+    EN GRENSE SOM ER UTE AV LISTA MÅ HA EN PORT SOM DEKKER DEN — det
+    er hele bytteforholdet, og det er den samme porten som tømte lista
+    for klynge 8 og klynge 9.
+    """
+    dekket = _grenser_med_dekningsport()
+    for krav_id in KLYNGE10:
         if krav_id in UBYGDE_GRENSER:
             assert krav_id not in dekket, (
                 f"{krav_id} har en dekningsport, men står fortsatt"
