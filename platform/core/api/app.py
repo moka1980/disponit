@@ -2392,6 +2392,51 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import hendelse as hendelsemodul
         return hendelsemodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-32 (138). INGEN RUTE INNBERETTER NOE — det finnes ingen
+    # `/innsending`, ingen `/send` og ingen `/rapporter`, og porten
+    # leser denne tabellen.
+    #
+    # OG INGEN RUTE SKRIVER I LANDREGISTERET. `landpakke` og `landsats`
+    # er globale og tenantløse, og `disponit_skatt_eier` har SELECT og
+    # ingenting annet. DOMMENE FELLES I GIT, IKKE GJENNOM EN DØR.
+    #
+    # KALLEREN OPPGIR ALDRI JURISDIKSJONEN. `/beregn` tar en
+    # ADRESSEVERSJON; landet leses derfra, og adressen er versjonert.
+    # En jurisdiksjon regnet ut fra dagens adresse for fjorårets
+    # transaksjon er feil på nøyaktig den måten klynge 7s dom advarer
+    # mot.
+    def skatt_bilde(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.skattebilde(tjeneste, request)
+
+    def skatt_vurderinger(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.vurderinger_endepunkt(tjeneste, request)
+
+    def skatt_land(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.land_endepunkt(tjeneste, request)
+
+    def skatt_satser(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.satser_endepunkt(tjeneste, request)
+
+    def skatt_funn(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.funn_endepunkt(tjeneste, request)
+
+    def skatt_krav(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.krav_endepunkt(tjeneste, request)
+
+    def skatt_beregn(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.beregn_endepunkt(tjeneste, request)
+
+    def skatt_lukk_funn(request: Request) -> Response:
+        from . import skatt as skattmodul
+        return skattmodul.lukk_funn_endepunkt(tjeneste, request)
+
 
 
 
@@ -3830,6 +3875,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               hendelse_forslag, methods=["POST"]),
         Route("/v1/hendelse/{hendelse_id:uuid}/lukk", hendelse_lukk,
               methods=["POST"]),
+        # M-32 (138). Faste stier FØR parametriserte.
+        Route("/v1/skatt", skatt_bilde, methods=["GET"]),
+        Route("/v1/skatt/vurderinger", skatt_vurderinger,
+              methods=["GET"]),
+        Route("/v1/skatt/land", skatt_land, methods=["GET"]),
+        Route("/v1/skatt/funn", skatt_funn, methods=["GET"]),
+        Route("/v1/skatt/krav", skatt_krav, methods=["POST"]),
+        Route("/v1/skatt/beregn", skatt_beregn, methods=["POST"]),
+        Route("/v1/skatt/funn/{funn_id:uuid}/lukk", skatt_lukk_funn,
+              methods=["POST"]),
+        Route("/v1/skatt/land/{landkode:str}/{regelversjon:int}",
+              skatt_satser, methods=["GET"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -5228,6 +5285,20 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/hendelse/{hendelse_id:uuid}/lukk"):
         "bestilling:opprett",
     ("POST", "/v1/hendelse/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-32 (138). Lesescopet er `okonomi:read` — det samme M-13 og
+    # M-14 bruker: en skattevurdering er et beløp og en sats på en
+    # transaksjon, og den hører til i regnskapet framfor i
+    # sikkerhetsbildet.
+    ("GET",  "/v1/skatt"):                       "okonomi:read",
+    ("GET",  "/v1/skatt/vurderinger"):           "okonomi:read",
+    ("GET",  "/v1/skatt/land"):                  "okonomi:read",
+    ("GET",  "/v1/skatt/funn"):                  "okonomi:read",
+    ("GET",  "/v1/skatt/land/{landkode:str}/{regelversjon:int}"):
+        "okonomi:read",
+    ("POST", "/v1/skatt/krav"):                  "bestilling:opprett",
+    ("POST", "/v1/skatt/beregn"):                "bestilling:opprett",
+    ("POST", "/v1/skatt/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser

@@ -1,0 +1,51 @@
+# M-32 (138): skattesveipen går ÉN GANG I DØGNET.
+#
+# En landpakke som utløper, utløper ikke saktere av at maskinen ser
+# oftere etter. Sjeldnere ville latt en stor vurdering stå
+# ukontrollert en uke — og modulen kan ikke rette en beregning selv,
+# så det å SI FRA er hele det den kan.
+#
+# Statussveipen (115) leser flåtens tilstand ETTER at flåten har
+# kjørt — den eneste ekte ordningen i flåten.
+#
+# `RandomizedDelaySec=4min` OG IKKE 30 (131/132s lærdom, strammet i
+# #402).
+#
+# Spredningen etablerer INGEN rekkefølge mellom timere — den finnes for
+# å hindre at de fyrer samtidig. REGNESTYKKET SOM MÅ GÅ OPP er
+# START + SPREDNING + `TimeoutStartSec` for HVER overvåket sveip, målt
+# mot statussveipens TIDLIGSTE start.
+#
+# Her: 07:00 + 4 + 10 = 07:09, og statussveipen
+# starter tidligst 07:30.
+#
+# KLOKKESLETTET ER TILDELT PÅ FORHÅND, IKKE FUNNET.
+# `test_stigen_har_plass_til_klynge_ti` regnet ut i #402 at klynge 10s
+# fire trinn strekker stigen til 07:10 + 4 + 10 = 07:24, og
+# statussveipen ble satt til 07:30 DA — ikke nå. Det er forskjellen på
+# en grense som er valgt og en som blir oppdaget av den som bygger den
+# fjerde modulen.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 37 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+
+[Unit]
+Description=Disponit skattesveip-timer
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,80 @@
+# M-32 (138): skattesveipen. REGELVERSJONEN ER PRODUKTET.
+#
+# SVEIPEN INNBERETTER INGENTING OG RETTER INGEN BEREGNING. Den sier fra
+# om at en stor vurdering har stått ukontrollert lenger enn tenantens
+# frist, om at en landpakke utløper snart, om at en pakke mangler
+# satser, og om at en tenant handler med et land huset ikke har en
+# pakke for — og der stopper den.
+#
+# KLYNGENS DELTE DOM: en handling med virkning i den virkelige verden
+# angres ikke av en rollback. En innberettet mva-oppgave er hos
+# skattemyndigheten; en rollback gjør den ikke usendt, bare uforklarlig.
+#
+# LANDREGISTERET RØRES IKKE HERFRA. `landpakke` og `landsats` er
+# globale og tenantløse, og `disponit_skattesveip` har INGEN rettighet
+# på dem — ikke engang SELECT. En skattesats er en REGEL, ikke data:
+# kunne en nattjobb endret den, ville regelen ikke lenger vært landets.
+#
+# FIRE FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `transaksjon_uten_jurisdiksjon` og `sats_uten_regelversjon` (begge
+# NOT NULL), `sats_uten_komplett_landpakke` (fremmednøkkel fra
+# `landsats` til `landpakke`) og `landpakke_endret_gjennom_dor`
+# (rettigheten finnes ikke). Alle fire er utelukket av datamodellen,
+# ikke oppdaget av en sveip.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet da beregningen ble
+# gjort: uten pakke, ingen sats. Så utløp pakken, eller ingen så på den
+# store vurderingen. Ingen dør kunne fanget det, fordi ingen kalte
+# noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal innberettes over nettet.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille skattesveip er
+# en landpakke som utløp uten at noen fikk vite det.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_skattesveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m32_sveip_skatt`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit skattesveip (store ukontrollerte vurderinger, landpakker som utloeper, pakker uten satser)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_SKATTESVEIP_URL:/etc/disponit/skattesveip/DISPONIT_SKATTESVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_skattesveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`jurisdiksjonsvurdering_pr_dato`, `skattefunn_ett_apent`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

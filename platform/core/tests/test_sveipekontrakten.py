@@ -62,6 +62,7 @@ SVEIPENE = (
     ("esgsveip", "m45_sveip_esg"),
     # KLYNGE 10 — HANDLINGENE.
     ("hendelsessveip", "m29_sveip_hendelse"),
+    ("skattesveip", "m32_sveip_skatt"),
     ("compliancesveip", "m34_sveip_etterprovinger"),
     ("fordringssveip", "m23_sveip_fordringer"),
     ("henvendelsessveip", "m17_sveip_henvendelser"),
@@ -303,8 +304,17 @@ SPREDNING_MIN = 4
 #: Statussveipens klokkeslett. Den skal lese flåtens tilstand ETTER at
 #: flåten har kjørt, og det er den ENESTE ekte ordningen i flåten.
 STATUS = "07:30"
-#: Klynge 10 er fire moduler (M-28, M-29, M-32, M-40).
-KLYNGE10 = 4
+#: Klynge 10s fire sveip, NAVNGITT og ikke bare talt.
+#:
+#: Et tall alene («fire til») blir feil i det øyeblikket den første av
+#: dem lander: porten under ville da regnet plass til fire NYE oppå de
+#: som alt sto der, og krevd at statussveipen ble flyttet uten grunn.
+#: Det skjedde 6/9, da M-29 og M-32 landet.
+#:
+#: Med navnene teller porten hvor mange som GJENSTÅR, og den blir
+#: stille av seg selv når den fjerde er på plass.
+KLYNGE10_SVEIP = ("hendelsessveip", "skattesveip", "transportsveip",
+                  "medarbeidersveip")
 
 _KATALOG = ROT / "deploy" / "staging"
 
@@ -393,16 +403,30 @@ def test_ingen_sveip_kan_holde_paa_naar_statussveipen_starter():
 def test_stigen_har_plass_til_klynge_ti():
     """EN STIGE SOM ER FULL ER EN STIGE INGEN KAN UTVIDE.
 
-    Klynge 10 er fire moduler til. Med trinn på 5 minutter trenger de
-    20 minutter, og de må få plass FØR statussveipen — ellers må den
-    flyttes, og det skal den som bygger M-28 vite på forhånd.
+    Klynge 10 er fire moduler. Med trinn på 5 minutter trenger de 20
+    minutter til sammen, og de må få plass FØR statussveipen — ellers
+    må den flyttes, og det skal den som bygger neste modul vite på
+    forhånd.
+
+    PORTEN TELLER HVOR MANGE SOM GJENSTÅR, ikke hvor mange klyngen har.
+    Et fast tall ville krevd plass til fire NYE trinn oppå de som alt
+    sto der, i det øyeblikket den første landet — og bedt om at
+    statussveipen ble flyttet uten grunn.
+
+    NÅR DEN FJERDE ER PÅ PLASS BLIR PORTEN STILLE AV SEG SELV, og det
+    er riktig: da er det ikke lenger klynge 10 som trenger plass, det
+    er klynge 11 — og den har sitt eget fundament.
     """
+    plassert = {navn for navn, _sql in SVEIPENE
+                if navn in KLYNGE10_SVEIP
+                and (_KATALOG / f"disponit-{navn}.timer").exists()}
+    gjenstaar = len(KLYNGE10_SVEIP) - len(plassert)
     siste = max(_minutt(_timerklokke(f"disponit-{navn}.timer")[0])
                 for navn, _sql in SVEIPENE
                 if (_KATALOG / f"disponit-{navn}.timer").exists())
-    # Fire nye trinn, pluss spredning og timeout på det siste.
-    trengs = siste + KLYNGE10 * TRINN_MIN + SPREDNING_MIN + 10
+    # De som gjenstår, pluss spredning og timeout på det siste.
+    trengs = siste + gjenstaar * TRINN_MIN + SPREDNING_MIN + 10
     assert trengs <= _minutt(STATUS), (
-        f"klynge 10 ville strekke stigen til {trengs // 60}:"
-        f"{trengs % 60:02d}, mens statussveipen starter {STATUS} —"
-        " den maa flyttes i samme PR")
+        f"{gjenstaar} gjenstaaende trinn ville strekke stigen til"
+        f" {trengs // 60}:{trengs % 60:02d}, mens statussveipen starter"
+        f" {STATUS} — den maa flyttes i samme PR")

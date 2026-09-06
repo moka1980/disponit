@@ -1593,7 +1593,37 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm29_sett_krav(text,integer,integer,integer,integer,text)',                      'disponit_hendelse_eier'),
     ('FUNCTION', 'm29_signalkilden(text,timestamp with time zone)',                                       'disponit_hendelse_eier'),
     ('FUNCTION', 'm29_sveip_hendelse(integer)',                                                           'disponit_hendelse_eier'),
-    ('FUNCTION', 'm29_tidslinjen(text,uuid)',                                                             'disponit_hendelse_eier');
+    ('FUNCTION', 'm29_tidslinjen(text,uuid)',                                                             'disponit_hendelse_eier'),
+    -- 138 (M-32): skatteregisterets doerer og sveipen.
+    --
+    -- `m32_landene` og `m32_satsene` STAAR HER selv om de bare leser:
+    -- de er SECURITY DEFINER og loper som modulrollen, og det er
+    -- nettopp den som har SELECT paa det GLOBALE landregisteret. Eide
+    -- migrator dem, ville de lopt som en rolle som ser forbi FORCE RLS
+    -- paa alt annet.
+    --
+    -- `m32_beregn` er den farligste aa faa feil: den leser
+    -- `adresseversjon` gjennom en KOLONNEGRANT, og bare modulrollen
+    -- har den. Eide migrator doera, ville den lest hele adressen.
+    --
+    -- `m32_avrund` og `m32_pakke_gjelder` er modulens indre og gis
+    -- ingen EXECUTE. De staar likevel her: en funksjon uten eier i
+    -- designet blir ALTER-et til migrator av reparasjonen.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN.
+    ('FUNCTION', 'm32_avrund(bigint,integer,text)',                                                       'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_beregn(text,uuid,text,integer,uuid,text,bigint,date,text)',                         'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_bildet(text)',                                                                      'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_evidens(text,uuid,text,text,jsonb)',                                                'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_funn_er_sveipens(text)',                                                            'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_landene(date)',                                                                     'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_lukk_funn(text,uuid,text,text)',                                                    'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_pakke_gjelder(date,date,date)',                                                     'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_satsene(text,integer)',                                                             'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_sett_krav(text,text,bigint,integer,text)',                                          'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_skattefunn(text,integer)',                                                          'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_sveip_skatt(integer)',                                                              'disponit_skatt_eier'),
+    ('FUNCTION', 'm32_vurderingene(text,integer)',                                                        'disponit_skatt_eier');
 
 DO $$
 DECLARE

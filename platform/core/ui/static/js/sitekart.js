@@ -588,6 +588,12 @@ const BASISRUTER = [
   // skrevet på forhånd. Isolering og rotasjon skjer der de skjer
   // i dag.
   { nokkel: "hendelse", scope: "security:read", modulflate: 29 },
+  // M-32 (138): skatt og lokalisering. MODULFLATE bak `okonomi:read`
+  // — en skattevurdering er et beløp og en sats på en transaksjon, og
+  // den hører til i regnskapet framfor i sikkerhetsbildet.
+  // Modulen innberetter ingenting: den svarer på hvilken regel som
+  // gjaldt, og landreglene felles i en migrasjon.
+  { nokkel: "skatt", scope: "okonomi:read", modulflate: 32 },
 ];
 
 // ADRESSER SOM EN GANG VIRKET, SKAL FORTSETTE Å VIRKE (Codex P2). En rute som

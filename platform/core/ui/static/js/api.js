@@ -2030,3 +2030,35 @@ export const lukkSikkerhetshendelse = (hendelseId, kropp, idem) =>
 export const lukkHendelsesfunn = (funnId, kropp, idem) =>
   _muter(`/v1/hendelse/funn/${encodeURIComponent(funnId)}/lukk`,
          "POST", kropp, idem || nyIdempotensnokkel());
+
+
+// ---------------------------------------------------------------------
+// M-32 GLOBAL LOKALISERINGS- OG SKATTEAGENT (138).
+//
+// DET FINNES INGEN `innberett` OG INGEN `sendSkattemelding` HER, OG
+// DET KAN IKKE FINNES. En innberettet mva-oppgave er hos
+// skattemyndigheten, og en rollback gjør den ikke usendt — den gjør
+// bare at vi ikke lenger vet hva vi sendte.
+//
+// OG INGEN `settLandsats`. `landpakke` og `landsats` er globale og
+// tenantløse, og modulrollen har SELECT og ingenting annet. En
+// klientfunksjon her ville kalt en rute som ikke finnes, mot en dør
+// som ikke finnes, mot rader modulen ikke kan skrive.
+//
+// `beregnSkatt` TAR EN ADRESSEVERSJON, IKKE ET LAND. Jurisdiksjonen
+// leses derfra, og adressen er versjonert: en jurisdiksjon regnet ut
+// fra dagens adresse for fjorårets transaksjon er feil på nøyaktig den
+// måten klynge 7s dom advarer mot.
+//
+// …OG EN SATSKODE, ALDRI EN PROMILLE. En promilleparameter ville gjort
+// landregisteret til pynt.
+// ---------------------------------------------------------------------
+export const settSkattekrav = (krav, idem) =>
+  _muter("/v1/skatt/krav", "POST", krav, idem || nyIdempotensnokkel());
+
+export const beregnSkatt = (kropp, idem) =>
+  _muter("/v1/skatt/beregn", "POST", kropp, idem || nyIdempotensnokkel());
+
+export const lukkSkattefunn = (funnId, kropp, idem) =>
+  _muter(`/v1/skatt/funn/${encodeURIComponent(funnId)}/lukk`,
+         "POST", kropp, idem || nyIdempotensnokkel());

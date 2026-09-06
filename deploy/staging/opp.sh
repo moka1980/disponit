@@ -100,6 +100,7 @@ disponit-innholdssveip.service disponit-innholdssveip.timer
 disponit-telefonisveip.service disponit-telefonisveip.timer
 disponit-esgsveip.service disponit-esgsveip.timer
 disponit-hendelsessveip.service disponit-hendelsessveip.timer
+disponit-skattesveip.service disponit-skattesveip.timer
 disponit-sveipestatus.service disponit-sveipestatus.timer"
 # Deploy-portene kjøres OGSÅ her, som preflight — FØR noe stoppes (18/8:
 # porten som bare kjørte etter migrasjonene fant rødt da gamle release
@@ -542,6 +543,19 @@ if ! ( set -a; . "$MILJOFIL"; set +a; \
   echo "AVBRUTT: DISPONIT_HENDELSESSVEIP_URL mangler i $MILJOFIL."
   echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
   echo "rollen disponit_hendelsessveip og skriver DSN-en til miljøfila."
+  exit 1
+fi
+
+# 138 (M-32): skattesveipen har sin EGEN rolle med nøyaktig én EXECUTE.
+# Landregisteret er GLOBALT og tenantløst, og rollen har INGEN
+# rettighet på det — ikke engang SELECT. En skattesats er en regel,
+# ikke data. En stille skattesveip er en landpakke som utløp uten at
+# noen fikk vite det.
+if ! ( set -a; . "$MILJOFIL"; set +a; \
+       [ -n "${DISPONIT_SKATTESVEIP_URL:-}" ] ); then
+  echo "AVBRUTT: DISPONIT_SKATTESVEIP_URL mangler i $MILJOFIL."
+  echo "Kjør deploy/staging/oppsett-postgresql.sh først — den oppretter"
+  echo "rollen disponit_skattesveip og skriver DSN-en til miljøfila."
   exit 1
 fi
 
@@ -1535,6 +1549,18 @@ fi
 skriv_cred hendelsessveip DISPONIT_HENDELSESSVEIP_URL \
     "$DISPONIT_HENDELSESSVEIP_URL"
 
+# 138 (M-32): skattesveipens egen katalog og egen DSN.
+install -d -m 700 /etc/disponit/skattesveip
+if [ -z "${DISPONIT_SKATTESVEIP_URL:-}" ]; then
+  echo "AVBRUTT: DISPONIT_SKATTESVEIP_URL forsvant fra ${MILJOFIL:-/etc/disponit/staging.env}"
+  echo "etter forhåndssjekken. Enten ble den fjernet, eller så ble fila"
+  echo "redigert mens utrullingen kjørte. Ingen skattesveip-credential"
+  echo "skrives på et tomt DSN."
+  exit 1
+fi
+skriv_cred skattesveip DISPONIT_SKATTESVEIP_URL \
+    "$DISPONIT_SKATTESVEIP_URL"
+
 # 123 (M-47): myndighetssveipens egen katalog og egen DSN.
 install -d -m 700 /etc/disponit/myndighetssveip
 if [ -z "${DISPONIT_MYNDIGHETSSVEIP_URL:-}" ]; then
@@ -1788,6 +1814,7 @@ disponit-innholdssveip.timer
 disponit-telefonisveip.timer
 disponit-esgsveip.timer
 disponit-hendelsessveip.timer
+disponit-skattesveip.timer
 disponit-sveipestatus.timer"
 
 # Codex P2 (runde 2): vilkåret var `is-enabled`, og det måler UNIT-FILA,
@@ -2154,6 +2181,8 @@ systemctl stop disponit-esgsveip.timer \
     disponit-esgsveip.service 2>/dev/null || true
 systemctl stop disponit-hendelsessveip.timer \
     disponit-hendelsessveip.service 2>/dev/null || true
+systemctl stop disponit-skattesveip.timer \
+    disponit-skattesveip.service 2>/dev/null || true
 # 118 (M-46): anbudssveipen stoppes i samme vindu — funnene er
 # idempotente, så neste døgn tar kjøringen igjen. Ingen frist går tapt:
 # fristen står på anbudsraden, ikke i sveipen.
@@ -2397,6 +2426,7 @@ systemctl enable --now disponit-innholdssveip.timer
 systemctl enable --now disponit-telefonisveip.timer
 systemctl enable --now disponit-esgsveip.timer
 systemctl enable --now disponit-hendelsessveip.timer
+systemctl enable --now disponit-skattesveip.timer
 # 115: sveipestatusen, 07:30 — ETTER siste trinn pluss spredning og
 # timeout (06:50 + 4 + 10 = 07:04), og med plass til klynge 10s fire
 # trinn (07:24). Det er den ENESTE ekte ordningen i flåten:
