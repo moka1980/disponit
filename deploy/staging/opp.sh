@@ -2344,24 +2344,31 @@ systemctl enable --now disponit-myndighetssveip.timer
 systemctl enable --now disponit-postjournalsveip.timer
 systemctl enable --now disponit-hmssveip.timer
 systemctl enable --now disponit-likviditetssveip.timer
-# 130 (M-33): prognosesveipen, 11:35 — den FØRSTE bak 11:20, og
-# grunnen til at sveipestatusen under flyttet til 12:05.
+# 130 (M-33), 132 (M-36), 133 (M-7), 134 (M-20), 135 (M-43) og
+# 136 (M-45) — de seks nyeste sveipene.
+#
+# STIGEN OVERLAPPET SEG SELV (rettet 5/9). Trinnet var 15 minutter
+# mens `RandomizedDelaySec` var 30: en sveip på 04:05 kunne starte
+# 04:35, og den på 04:20 kunne starte 04:50 — og hver enkelt timerfil
+# sa i sin egen prosa at nettopp det ikke skulle skje.
+#
+# Nå er trinnet 5 og spredningen 4, altså MINDRE ENN TRINNET, og to
+# planlagte tider kan ikke lenger overlappe. Stigen ble kortere av det
+# samme grepet: 04:00–06:50 mot 04:05–13:20 før.
+#
+# REKKEFØLGEN I DENNE LISTA BETYR INGENTING — `enable` starter en
+# timer, ikke en sveip. Målt mot basen leser heller ingen av de 35
+# sveipene en annen moduls funnregister.
 systemctl enable --now disponit-prognosesveip.timer
-# 132 (M-36): optimalisatorsveipen, 11:50 — SISTE trinn i stigen.
 systemctl enable --now disponit-optimalisatorsveip.timer
-# 133 (M-7): møtesveipen, 12:35 — klynge 9s første trinn.
 systemctl enable --now disponit-motesveip.timer
-# 134 (M-20): innholdssveipen, 12:50 — klynge 9s andre trinn.
 systemctl enable --now disponit-innholdssveip.timer
-# 135 (M-43): telefonisveipen, 13:05 — klynge 9s tredje trinn.
 systemctl enable --now disponit-telefonisveip.timer
-# 136 (M-45): ESG-sveipen, 13:20 — klynge 9s FJERDE OG SISTE trinn, og
-# den siste foran sveipestatusen på 13:35.
 systemctl enable --now disponit-esgsveip.timer
-# 115: sveipestatusen, ETTER hele stigen (12:35 fra og med 133, og
-# flyttet helt til 13:35 fordi klynge 9s øvrige slot alt er tildelt).
-# Rekkefølgen er poenget: observatøren leser flåtens tilstand etter at
-# flåten har kjørt.
+# 115: sveipestatusen, 07:30 — ETTER siste trinn pluss spredning og
+# timeout (06:50 + 4 + 10 = 07:04), og med plass til klynge 10s fire
+# trinn (07:24). Det er den ENESTE ekte ordningen i flåten:
+# observatøren leser flåtens tilstand etter at flåten har kjørt.
 systemctl enable --now disponit-sveipestatus.timer
 
 # Klarhetsløkka bor i `vent_paa_ready` (lib-opp.sh, #182) — samme kropp

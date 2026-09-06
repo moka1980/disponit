@@ -1262,7 +1262,7 @@ def test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter():
             f" {status_start // 60}:{status_start % 60:02d} —"
             " statusen ville lest forrige døgns tilstandsfil")
     egen, egen_sp = _tid("disponit-optimalisatorsveip.timer")
-    assert (egen, egen_sp) == (11 * 60 + 50, 10)
+    assert (egen, egen_sp) == (6 * 60 + 30, 4)
 
 
 def test_sveipens_dsn_star_i_ci():

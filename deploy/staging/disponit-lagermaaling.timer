@@ -13,6 +13,11 @@
 # `Persistent=true`: en vert som var nede da tidspunktet passerte, måler
 # ved oppstart. Det er riktig her — målingen gjelder NÅ, ikke da, og et
 # ferskt bilde rett etter oppstart er nettopp det driften vil se.
+#
+# `AccuracySec=1us`: systemds standard er ETT MINUTT, og den er en
+# LISENS TIL Å SLÅ SAMMEN — systemd forskyver timere innenfor
+# vinduet for å vekke maskinen færre ganger. Denne jobben deler
+# natt med 35 sveip, og uten linjen kan de havne i samme sekund.
 
 [Unit]
 Description=Disponit retensjonsmålingstimer (M-4)
@@ -20,6 +25,7 @@ Description=Disponit retensjonsmålingstimer (M-4)
 [Timer]
 OnCalendar=*-*-* 03:17:00 UTC
 RandomizedDelaySec=15min
+AccuracySec=1us
 Persistent=true
 
 [Install]

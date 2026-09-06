@@ -918,7 +918,7 @@ def test_timeren_staar_i_klyngestigen():
     """09:05 — stigen er fordelt i klyngefundamentet."""
     sti_t = ROT / "deploy" / "staging" / "disponit-sanksjonssveip.timer"
     timer = sti_t.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 09:05:00 UTC" in timer
+    assert "OnCalendar=*-*-* 05:40:00 UTC" in timer
     assert "Persistent=true" in timer
     sti = ROT / "deploy" / "staging" / "disponit-sanksjonssveip.service"
     tjeneste = sti.read_text(encoding="utf-8")

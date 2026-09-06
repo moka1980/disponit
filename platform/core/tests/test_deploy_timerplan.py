@@ -187,11 +187,80 @@ def test_stigen_er_dokumentert_i_fundamentet():
     """
     fundament = (ROT / "docs" / "KLYNGE5-FUNDAMENT.md").read_text(
         encoding="utf-8")
-    for sveip, tid in (("betalingssveip", "07:35"),
-                       ("adressesveip", "07:50"),
-                       ("lonnssveip", "08:05"),
-                       ("kampanjesveip", "08:20")):
-        assert tid in fundament, (sveip, tid)
+    for sveip, tid in (("betalingssveip", "05:10"),
+                       ("adressesveip", "05:15"),
+                       ("lonnssveip", "05:20"),
+                       ("kampanjesveip", "05:25")):
+        # RADEN, IKKE DOKUMENTET. Første utkast sjekket bare at
+        # klokkeslettet fantes ET STED i fundamentet — og da ville
+        # porten vært grønn av en helt urelatert setning som tilfeldig
+        # nevnte samme tall. CodeRabbit fant det 6/9.
+        rad = [l for l in fundament.splitlines()
+               if l.startswith("|") and f"`disponit_{sveip}`" in l]
+        assert len(rad) == 1, (sveip, len(rad))
+        assert tid in rad[0], (sveip, tid, rad[0])
         fil = (TIMERKATALOG / f"disponit-{sveip}.timer").read_text(
             encoding="utf-8")
         assert f"OnCalendar=*-*-* {tid}:00 UTC" in fil, (sveip, tid)
+
+
+def test_hver_kalendertimer_har_presisjon_nok_til_aa_bli_spredt():
+    """SPREDNINGEN KAN OPPHEVES AV DEN SOM SKAL HÅNDHEVE DEN.
+
+    systemds `AccuracySec` er ETT MINUTT som standard, og den er ikke
+    en presisjonsgrense — den er en LISENS TIL Å SLÅ SAMMEN. systemd
+    forskyver timere innenfor vinduet for å vekke maskinen færre
+    ganger, og med 35 kalendertimere betyr det at flere av dem kan fyre
+    i samme sekund.
+
+    Da ville `RandomizedDelaySec` vært meningsløs: stigen hviler på at
+    planlagte tider ligger fra hverandre, og spredningen på fire
+    minutter blir borte hvis systemd samler resultatet tilbake til
+    minuttet.
+
+    CodeRabbit fant det 5/9, samme natt som spredningen ble strammet
+    fra 30 til 4 — altså i samme runde der jeg trodde jeg hadde løst
+    overlappen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `AccuracySec` fra én timer.
+    """
+    mangler = []
+    for navn, tekst in _timere().items():
+        if not _KALENDER.search(tekst):
+            continue
+        m = re.search(r"^AccuracySec=(.+)$", tekst, re.M)
+        if not m:
+            mangler.append(f"{navn}: mangler AccuracySec")
+        elif m.group(1).strip() not in ("1us", "1ms"):
+            mangler.append(f"{navn}: AccuracySec={m.group(1).strip()}")
+    assert mangler == [], (
+        "kalendertimere som systemd kan slå sammen:\n"
+        + "\n".join(mangler))
+
+
+def test_oppstartsbygen_er_dokumentert_og_ikke_bare_akseptert():
+    """`Persistent=true` PÅ 35 TIMERE ER EN BYGE VED OPPSTART.
+
+    En vert som har vært nede over natten kjører ALLE de tapte
+    sveipene når den kommer opp. `RandomizedDelaySec` gjelder også for
+    innhentingen, så bygen er spredt over fire minutter — men det er
+    fortsatt 35 sveip på fire minutter, mot ett trinn hvert femte
+    minutt i normal drift.
+
+    DET ER AKSEPTERT, OG GRUNNEN SKAL STÅ SKREVET. Hver sveip er ÉN
+    tilkobling som gjør ETT funksjonskall, og hver har sin egen
+    advisory-lås som hindrer at den overlapper SEG SELV. En byge gir et
+    tregere oppstartsminutt, aldri et galt funn — og alternativet,
+    å droppe `Persistent`, ville latt en nattlig måling forsvinne
+    stille hver gang verten startet på nytt i feil vindu.
+
+    Porten krever at avveiningen står i `disponit-sveipestatus.timer`,
+    ikke at den er løst. Et akseptert vilkår som ingen har skrevet ned
+    er et vilkår ingen kan revurdere.
+    """
+    tekst = (TIMERKATALOG / "disponit-sveipestatus.timer").read_text(
+        encoding="utf-8")
+    assert "OPPSTARTSBYGEN" in tekst, (
+        "avveiningen rundt Persistent staar ikke skrevet noe sted")
+    for ord_ in ("advisory", "Persistent"):
+        assert ord_ in tekst, ord_

@@ -1,4 +1,9 @@
 # Daglig backup (PR-009 v1 §5), 03:15 UTC + jitter.
+#
+# `AccuracySec=1us`: systemds standard er ETT MINUTT, og den er en
+# LISENS TIL Å SLÅ SAMMEN — systemd forskyver timere innenfor
+# vinduet for å vekke maskinen færre ganger. Denne jobben deler
+# natt med 35 sveip, og uten linjen kan de havne i samme sekund.
 
 [Unit]
 Description=Disponit backup-timer
@@ -6,6 +11,7 @@ Description=Disponit backup-timer
 [Timer]
 OnCalendar=*-*-* 03:15:00 UTC
 RandomizedDelaySec=600
+AccuracySec=1us
 Persistent=true
 
 [Install]

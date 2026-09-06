@@ -6,48 +6,54 @@
 # mellom to kjøringer, og da hadde en uke stått umålt uten at noen
 # visste det.
 #
-# KLOKKESLETTET ER 11:35 — BAK hele klynge 7, som fundamentet tildelte.
-# M-33 leser `timeregistrering` (M-39, 07:20) og `kvalitetsfunn` (M-3),
-# og en dom felt før dagens timelister er lest ville vært en dom på
-# gårsdagens grunnlag.
-#
-# DENNE TIMEREN ER GRUNNEN TIL AT `disponit-sveipestatus.timer` FLYTTET
-# fra 11:20 til 12:05 i samme PR: statussveipen skal lese flåtens
-# tilstand ETTER at flåten har kjørt, og M-33 er den første som legger
-# seg bak 11:20. `test_timeren_gaar_etter_hele_stigen` gjør det til en
-# måling og ikke en huskeregel.
-#
-# `RandomizedDelaySec=15min` OG IKKE 30 (CodeRabbit, etter #394).
-#
-# Spredningen etablerer INGEN rekkefølge mellom timere — den er laget
-# for å hindre at de fyrer samtidig. Med 30 minutters spredning kunne
-# denne sveipen starte 12:05 og kjøre til 12:15 (`TimeoutStartSec`),
-# mens `disponit-sveipestatus.timer` kunne starte 12:05 med null
-# spredning. Statussveipen leser tilstandsfila vår, og ville sett
-# forrige døgns fil: EN FALSK «UTEBLITT».
-#
-# 11:35 + 15 min spredning + 10 min kjøring = 12:00, altså ferdig før
-# statussveipens tidligste start. (Statussveipen sto på 12:05 da dette
-# ble skrevet; M-36 flyttet den til 12:20 i 132, og regnestykket her
-# holder like godt.) Regnestykket står her fordi det er
-# det som gjør flyttingen til 12:05 tilstrekkelig — og fordi den neste
-# som legger en sveip i stigen må gjøre det samme regnestykket.
-#
-# DEN SAMME OVERLAPPEN FINNES I RESTEN AV FLÅTEN: stigens trinn er 15
-# minutter fra hverandre mens hver sveip har inntil 30 minutters
-# spredning. Det er en egen sak, meldt sammen med parallelliseringen.
-# Denne timeren rydder sin egen del.
-#
 # `Persistent=true`: en vert som var nede da tidspunktet passerte skal
 # likevel oppdage at en uke står umålt. Uten den ville nedetid blitt
 # til stillhet om nettopp det modulen finnes for.
+#
+# ---------------------------------------------------------------------
+# HISTORIKK — ALLE KLOKKESLETTENE UNDER ER UTGÅTT.
+#
+# Da denne timeren ble skrevet (130) sto den på 11:35 med 15 minutters
+# spredning, og regnestykket var 11:35 + 15 + 10 = 12:00 mot en
+# statussveip på 12:05. M-36 flyttet statussveipen til 12:20 i 132, og
+# `RandomizedDelaySec` ble satt ned fra 30 til 10 etter et
+# CodeRabbit-funn i #394 — med 30 minutters spredning kunne sveipen
+# kjøre forbi statussveipen og gi EN FALSK «UTEBLITT».
+#
+# TRINNET ER 5 MINUTTER OG SPREDNINGEN 4 (5/9).
+#
+# FØR VAR TRINNET 15 OG SPREDNINGEN 30. En sveip på 04:05 kunne altså
+# starte 04:35, og den på 04:20 kunne starte 04:50 — STIGEN OVERLAPPET
+# SEG SELV. Nå er spredningen MINDRE enn trinnet, så to planlagte
+# tider ikke kan overlappe.
+#
+# Stigen ble kortere av det samme grepet: 35 sveip à 5 minutter er
+# 04:00–06:50 mot 04:05–13:20 før. `disponit-sveipestatus.timer` (115)
+# står bakerst på 07:30.
+#
+# KLOKKESLETTET ER 06:25.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit prognosesveip-timer
 
 [Timer]
-OnCalendar=*-*-* 11:35:00 UTC
-RandomizedDelaySec=15min
+OnCalendar=*-*-* 06:25:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
 Persistent=true
 
 [Install]

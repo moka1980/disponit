@@ -7,22 +7,54 @@
 # passere mellom to kjøringer, og da hadde en prognose stått umålt
 # uten at noen visste det.
 #
-# KLOKKESLETTET ER 08:35 — det ledige hullet, som ble tomt da
-# sveipestatus flyttet for M-48. M-15 hører hjemme sammen med
-# avstemmings- og betalingssveipene tidlig på morgenen, ikke etter
-# klynge 7: den leser de samme bankpostene, og en kontantbane regnet
-# før dagens øvrige sveip er en bane regnet på gårsdagens tall uansett.
+# LIKVIDITETEN HVILER PÅ AVSTEMMINGEN OG BETALINGENE — men det er
+# en egenskap ved DATAENE, ikke ved timerne: begge skrives av
+# kjøretiden gjennom døgnet, ikke av en sveip som må gå først.
 #
 # `Persistent=true`: en vert som var nede da tidspunktet passerte skal
 # likevel oppdage at en prognose står umålt. Uten den ville nedetid
 # blitt til stillhet om nettopp det modulen finnes for.
+#
+# TRINNET ER 5 MINUTTER OG SPREDNINGEN 4 (5/9).
+#
+# FØR VAR TRINNET 15 OG SPREDNINGEN 30. En sveip på 04:05 kunne altså
+# starte 04:35, og den på 04:20 kunne starte 04:50 — STIGEN OVERLAPPET
+# SEG SELV, hver eneste natt. Doktrinen i denne fila sa at to
+# fulltenant-skann ikke skal treffe samme sekund, og spredningen
+# gjorde nettopp det mulig.
+#
+# NÅ ER SPREDNINGEN MINDRE ENN TRINNET. To sveip i stigen kan ikke
+# lenger overlappe ved planlagt tid: 04:00 + 4 < 04:05.
+#
+# Og stigen ble kortere av det samme grepet: 35 sveip à 5 minutter er
+# 04:00–06:50 mot 04:05–13:20 før. `disponit-sveipestatus.timer` (115)
+# står bakerst på 07:30, og den er den ENESTE ekte ordningen i
+# flåten — målt mot basen leser ingen av sveipene en annen moduls
+# funnregister.
+#
+# KLOKKESLETTET ER 05:30, TRINN 19 AV 35.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit likviditetssveip-timer
 
 [Timer]
-OnCalendar=*-*-* 08:35:00 UTC
-RandomizedDelaySec=30min
+OnCalendar=*-*-* 05:30:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
 Persistent=true
 
 [Install]

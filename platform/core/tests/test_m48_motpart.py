@@ -1131,7 +1131,7 @@ def test_timeren_staar_etter_de_andre_sveipene():
     """08:50 — stigen er fordelt i klyngefundamentet."""
     timer = (ROT / "deploy" / "staging"
              / "disponit-motpartssveip.timer").read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 08:50:00 UTC" in timer
+    assert "OnCalendar=*-*-* 05:35:00 UTC" in timer
     assert "Persistent=true" in timer
     sti = ROT / "deploy" / "staging" / "disponit-motpartssveip.service"
     tjeneste = sti.read_text(encoding="utf-8")

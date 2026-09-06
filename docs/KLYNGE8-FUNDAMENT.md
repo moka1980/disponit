@@ -397,6 +397,11 @@ M-36 sist, av grunnen over.
 | M-33 | `disponit_prognose_eier` | `disponit_prognosesveip` | 11:35 |
 | M-36 | `disponit_optimalisator_eier` | `disponit_optimalisatorsveip` | 11:50 |
 
+> **KLOKKESLETTENE I TABELLEN OVER ER HISTORISKE.** Stigen ble strammet 5/9:
+> trinnet var 15 minutter mens spredningen var 30, så stigen overlappet
+> seg selv. Nå er trinnet 5 og spredningen 4. Gjeldende tider står i
+> `deploy/staging/*.timer` og måles av `test_spredningen_er_mindre_enn_trinnet`.
+
 **08:35 var det ledige hullet** — det ble tomt da sveipestatus flyttet
 for M-48, og klynge 7 lot det stå fordi de fem skulle leses samlet.
 M-15 tar det: den er økonomiklyngens, og hører hjemme sammen med

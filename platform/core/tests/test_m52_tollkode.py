@@ -898,7 +898,7 @@ def test_timeren_staar_utenfor_de_andres_vindu():
     # gir opp før den ser `encoding=` når kallet brytes over linjer.
     kat = ROT / "deploy" / "staging"
     enhet = (kat / "disponit-tollkodesveip.timer").read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 10:20:00 UTC" in enhet
+    assert "OnCalendar=*-*-* 06:05:00 UTC" in enhet
     assert "Persistent=true" in enhet
     sti = kat / "disponit-tollkodesveip.service"
     tjeneste = sti.read_text(encoding="utf-8")

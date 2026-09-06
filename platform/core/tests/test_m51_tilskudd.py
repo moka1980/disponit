@@ -973,7 +973,7 @@ def test_timeren_staar_i_klyngestigen():
     sti_t = (ROT / "deploy" / "staging"
              / "disponit-tilskuddssveip.timer")
     timer = sti_t.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 09:35:00 UTC" in timer
+    assert "OnCalendar=*-*-* 05:50:00 UTC" in timer
     assert "Persistent=true" in timer
     sti_s = (ROT / "deploy" / "staging"
              / "disponit-tilskuddssveip.service")
