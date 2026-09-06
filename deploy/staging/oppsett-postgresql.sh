@@ -585,6 +585,11 @@ TELEFONISVEIP_DSN=("DISPONIT_TELEFONISVEIP_URL=$DB"
 # 136 (M-45): ESG-sveipens DSN.
 ESGSVEIP_DSN=("DISPONIT_ESGSVEIP_URL=$DB"
               "DISPONIT_TEST_ESGSVEIP_DSN=${DB}_test")
+# 137 (M-29): hendelsessveipens DSN. Skrives HER og ikke i
+# klyngefundamentet: fundamentet oppretter ROLLEN, modulens PR skriver
+# DSN-en sammen med `opp.sh`s preflight for den samme DSN-en.
+HENDELSESSVEIP_DSN=("DISPONIT_HENDELSESSVEIP_URL=$DB"
+                    "DISPONIT_TEST_HENDELSESSVEIP_DSN=${DB}_test")
 # 132 (M-36): optimalisatorsveipens DSN.
 OPTIMALISATORSVEIP_DSN=("DISPONIT_OPTIMALISATORSVEIP_URL=$DB"
                         "DISPONIT_TEST_OPTIMALISATORSVEIP_DSN=${DB}_test")
@@ -637,6 +642,7 @@ sikre_rolle_dsn "$MOTESVEIP" "${MOTESVEIP_DSN[@]}"
 sikre_rolle_dsn "$INNHOLDSSVEIP" "${INNHOLDSSVEIP_DSN[@]}"
 sikre_rolle_dsn "$TELEFONISVEIP" "${TELEFONISVEIP_DSN[@]}"
 sikre_rolle_dsn "$ESGSVEIP" "${ESGSVEIP_DSN[@]}"
+sikre_rolle_dsn "$HENDELSESSVEIP" "${HENDELSESSVEIP_DSN[@]}"
 sikre_attestasjonsnokler
 sikre_mac_nokler          # PR-012: MAC-register (oppstartsperre for API-et)
 # KEK og token-pepper (PR-005b). KEK manglet helt etter PR-005a: krypteringen

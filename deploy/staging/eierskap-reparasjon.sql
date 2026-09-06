@@ -1557,7 +1557,43 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm45_registrer_paastand(text,uuid,uuid,integer,text,uuid,uuid,text)',                          'disponit_esg_eier'),
     ('FUNCTION', 'm45_sammenstill(text,uuid,uuid,text)',                                                        'disponit_esg_eier'),
     ('FUNCTION', 'm45_sett_krav(text,integer,integer,integer,text)',                                            'disponit_esg_eier'),
-    ('FUNCTION', 'm45_sveip_esg(integer)',                                                                      'disponit_esg_eier');
+    ('FUNCTION', 'm45_sveip_esg(integer)',                                                                      'disponit_esg_eier'),
+    -- 137 (M-29): hendelsesregisterets doerer og sveipen.
+    --
+    -- KLYNGENS FARLIGSTE EIERSKAP AA FAA FEIL. Eide migrator disse,
+    -- ville en SECURITY DEFINER-doer lopt som migrator — og migrator
+    -- ser forbi FORCE RLS. `m29_signalkilden` ville da lest ALLE
+    -- tenanters revisjonslogg i stedet for den ene den ble spurt om.
+    --
+    -- `m29_signalkilden` STAAR HER selv om den bare leser: den er
+    -- SECURITY DEFINER og loper som modulrollen, og det er nettopp den
+    -- som har SELECT paa `revisjonslogg`.
+    --
+    -- `m29_regel_gyldig` og `m29_funn_er_sveipens` er modulens indre og
+    -- gis ingen EXECUTE. De staar likevel her: en funksjon uten eier i
+    -- designet blir ALTER-et til migrator av reparasjonen, og da ville
+    -- `m29_regel_gyldig` — som lesedoerene kaller — kjort som feil rolle.
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN.
+    ('FUNCTION', 'm29_avvikle_regel(text,uuid,date,text)',                                                'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_bildet(text)',                                                                      'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_evidens(text,uuid,text,text,jsonb)',                                                'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_foresla_inngrep(text,uuid,uuid,uuid,text,text)',                                    'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_funn_er_sveipens(text)',                                                            'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_hendelsene(text,integer)',                                                          'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_hendelsesfunn(text,integer)',                                                       'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_korreler(text,uuid,uuid,integer,bigint[],text[],timestamp with time zone[],text)',  'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_lukk_funn(text,uuid,text,text)',                                                    'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_lukk_hendelse(text,uuid,text,text)',                                                'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_playbookene(text)',                                                                 'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_regel_gyldig(date,date)',                                                           'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_registrer_playbook(text,uuid,text,text,boolean,text[],date,date,text)',             'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_registrer_regel(text,uuid,text,text,integer,integer,text,date,date,text)',          'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_reglene(text)',                                                                     'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_sett_krav(text,integer,integer,integer,integer,text)',                      'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_signalkilden(text,timestamp with time zone)',                                       'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_sveip_hendelse(integer)',                                                           'disponit_hendelse_eier'),
+    ('FUNCTION', 'm29_tidslinjen(text,uuid)',                                                             'disponit_hendelse_eier');
 
 DO $$
 DECLARE

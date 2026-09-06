@@ -60,6 +60,7 @@ import { visOptimalisator } from "./flater/optimalisator.js";
 import { visMote } from "./flater/mote.js";
 import { visInnhold } from "./flater/innhold.js";
 import { visTelefoni } from "./flater/telefoni.js";
+import { visHendelse } from "./flater/hendelse.js";
 import { visEsg } from "./flater/esg.js";
 import { visBetaling } from "./flater/betaling.js";
 import { visKampanje } from "./flater/kampanje.js";
@@ -163,6 +164,7 @@ const FLATER = {
   mote: visMote,
   innhold: visInnhold,
   telefoni: visTelefoni,
+  hendelse: visHendelse,
   esg: visEsg,
 };
 

@@ -1,0 +1,86 @@
+# M-29 (137): hendelsessveipen. KORRELASJONEN ER PRODUKTET.
+#
+# SVEIPEN ISOLERER INGEN KONTO, ROTERER INGEN HEMMELIGHET OG KJØRER
+# INGEN KOMMANDO. Den sier fra om at en hendelse har stått åpen lenger
+# enn tenantens frist, om at en hendelse OVER TERSKEL står uten et
+# eneste inngrepsforslag, om at en playbook har mistet stegene sine, og
+# om at en regel har stått i tre måneder uten et treff — og der stopper
+# den.
+#
+# KLYNGENS DELTE DOM: en handling med virkning i den virkelige verden
+# angres ikke av en rollback. Klynge 9s ytring kunne ikke tas tilbake
+# fordi noen hadde LEST den; denne trenger ingen leser. Kontoen er
+# stengt, hemmeligheten er rullet, og tokenet den gamle klienten holdt
+# er dødt.
+#
+# DENNE SVEIPEN ER FLÅTENS FARLIGSTE Å GI FOR MYE. Fullmaktsmålene
+# ligger allerede i basen: `api_tokener`, `modultoken`, `brukersesjon`,
+# `tenant_pseudonymnokkel` og `brukeridentitet`. Rollen har INGEN
+# rettighet på noen av dem — ikke engang SELECT: en jobb som kunne LESE
+# `secret_mac` har allerede hemmeligheten.
+#
+# FIRE FUNNTYPER KAN ALDRI REISES HERFRA, og at de ikke kan er beviset:
+# `inngrep_uten_playbook` (`playbook_id` NOT NULL, og `inngrepsforslag`
+# har ingen `utfort_ts` i det hele tatt), `fri_kommando_kjort`
+# (`playbooksteg.stegtype` er et lukket sett uten fritekstfølge),
+# `hendelse_uten_score` og `score_uten_regel` (begge NOT NULL).
+# Alle fire er utelukket av datamodellen, ikke oppdaget av en sveip.
+#
+# DET SVEIPEN RYDDER ETTER ER TIDEN. Døra nektet da regelen ble
+# registrert, da playbooken ble skrevet og da korrelasjonen ble gjort.
+# Så gikk det døgn, og ingen så på hendelsen. Ingen dør kunne fanget
+# det, fordi ingen kalte noen dør.
+#
+# `RestrictAddressFamilies` slipper AF_INET fordi DATABASEN nås over
+# TCP — ikke fordi noe skal isoleres over nettet.
+#
+# ETT FUNN, IKKE ETT PER DØGN. Idempotensen bor i basen, og 125/126s
+# lukkevern sørger for at et menneskes lukking står natten over.
+#
+# TO SAMMENHENGENDE FEILEDE KJØRINGER → ALARM. En stille hendelsessveip
+# er et deteksjonsapparat som ikke detekterer, og det ser nøyaktig ut
+# som en base uten hendelser.
+#
+# ROLLEN ER JOBBENS EGEN. `disponit_hendelsessveip` har nøyaktig ÉN
+# rettighet: EXECUTE på `m29_sveip_hendelse`. INGEN tabellrettigheter.
+#
+# UNIX-IDENTITETEN ER DRIFTSTIMERNES, `disponit-domener`.
+
+[Unit]
+Description=Disponit hendelsessveip (aapne hendelser over frist, hendelser over terskel uten forslag, playbooker uten steg, regler uten treff)
+
+[Service]
+Type=oneshot
+User=disponit-domener
+Group=disponit-domener
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core
+StateDirectory=disponit
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+CapabilityBoundingSet=
+AmbientCapabilities=
+LoadCredential=DISPONIT_HENDELSESSVEIP_URL:/etc/disponit/hendelsessveip/DISPONIT_HENDELSESSVEIP_URL
+ExecStart=/opt/disponit/.venv/bin/python -m drift.kjor_hendelsessveip
+# Sveipen er ETT funksjonskall som gjør fire setninger per tenant, alle
+# indeksdekket (`sikkerhetshendelse_apne`, `sikkerhetsregel_aktive`,
+# `hendelsesfunn_ett_apent`).
+# Går dette over ti minutter, henger noe — og da er avbrudd riktig
+# svar: funnene er idempotente, så neste døgn tar kjøringen igjen.
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

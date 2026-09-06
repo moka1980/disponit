@@ -130,7 +130,7 @@ UBYGDE_GRENSER = frozenset({
     # nøyaktig den fullmakten modulen ser ut til å trenge.
     #
     # Se docs/KLYNGE10-FUNDAMENT.md.
-    "m29-v1",
+    # `m29-v1` gikk ut 6/9, da 137 landet med sin dekningsport.
     "m32-v1",
     "m28-v1",
     "m40-v1",

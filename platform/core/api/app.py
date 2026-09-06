@@ -2313,6 +2313,85 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import esg as esgmodul
         return esgmodul.lukk_funn_endepunkt(tjeneste, request)
 
+    # M-29 (137). INGEN RUTE ISOLERER EN KONTO ELLER ROTERER EN
+    # HEMMELIGHET — det finnes ingen `/isoler`, ingen `/roter` og ingen
+    # `/utfor`, og porten leser denne tabellen.
+    #
+    # Det er ikke en utelatelse. Fullmaktsmålene ligger ALLEREDE i
+    # basen (`api_tokener`, `modultoken`, `brukersesjon`,
+    # `tenant_pseudonymnokkel`, `brukeridentitet`), og verken
+    # modulrollen eller sveiperollen har så mye som SELECT på noen av
+    # dem. En rute her ville ikke hatt noe å skrive med.
+    #
+    # OG INGEN RUTE TAR EN KOMMANDOSTRENG. `/playbook` tar en LISTE MED
+    # NAVN fra et lukket sett, uten en parameter som følger med et navn.
+    # `isoler_konto` pluss en fri parameterstreng ER en fri kommando med
+    # et pent navn.
+    #
+    # KALLEREN OPPGIR ALDRI EN SCORE. `/korreler` regner den av regelens
+    # poeng mot dens egen terskel — 132s lærdom, anvendt på en
+    # sikkerhetsscore.
+    def hendelse_bilde(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.hendelsesbilde(tjeneste, request)
+
+    def hendelse_hendelser(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.hendelser_endepunkt(tjeneste, request)
+
+    def hendelse_signaler(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.signaler_endepunkt(tjeneste, request)
+
+    def hendelse_regler(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.regler_endepunkt(tjeneste, request)
+
+    def hendelse_playbooker(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.playbooker_endepunkt(tjeneste, request)
+
+    def hendelse_funn(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.funn_endepunkt(tjeneste, request)
+
+    def hendelse_tidslinje(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.tidslinje_endepunkt(tjeneste, request)
+
+    def hendelse_krav(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.krav_endepunkt(tjeneste, request)
+
+    def hendelse_regel_ny(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.registrer_regel_endepunkt(tjeneste, request)
+
+    def hendelse_regel_avvikle(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.avvikle_regel_endepunkt(tjeneste, request)
+
+    def hendelse_playbook_ny(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.registrer_playbook_endepunkt(tjeneste,
+                                                          request)
+
+    def hendelse_korreler(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.korreler_endepunkt(tjeneste, request)
+
+    def hendelse_forslag(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.foresla_inngrep_endepunkt(tjeneste, request)
+
+    def hendelse_lukk(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.lukk_hendelse_endepunkt(tjeneste, request)
+
+    def hendelse_lukk_funn(request: Request) -> Response:
+        from . import hendelse as hendelsemodul
+        return hendelsemodul.lukk_funn_endepunkt(tjeneste, request)
+
 
 
 
@@ -3725,6 +3804,32 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               esg_sammenstill, methods=["POST"]),
         Route("/v1/esg/funn/{funn_id:uuid}/lukk", esg_lukk_funn,
               methods=["POST"]),
+        # M-29 (137). Faste stier FØR parametriserte.
+        Route("/v1/hendelse", hendelse_bilde, methods=["GET"]),
+        Route("/v1/hendelse/hendelser", hendelse_hendelser,
+              methods=["GET"]),
+        Route("/v1/hendelse/signaler", hendelse_signaler,
+              methods=["GET"]),
+        Route("/v1/hendelse/regler", hendelse_regler, methods=["GET"]),
+        Route("/v1/hendelse/playbooker", hendelse_playbooker,
+              methods=["GET"]),
+        Route("/v1/hendelse/funn", hendelse_funn, methods=["GET"]),
+        Route("/v1/hendelse/krav", hendelse_krav, methods=["POST"]),
+        Route("/v1/hendelse/regel", hendelse_regel_ny, methods=["POST"]),
+        Route("/v1/hendelse/regel/{regel_id:uuid}/avvikle",
+              hendelse_regel_avvikle, methods=["POST"]),
+        Route("/v1/hendelse/playbook", hendelse_playbook_ny,
+              methods=["POST"]),
+        Route("/v1/hendelse/korreler", hendelse_korreler,
+              methods=["POST"]),
+        Route("/v1/hendelse/funn/{funn_id:uuid}/lukk",
+              hendelse_lukk_funn, methods=["POST"]),
+        Route("/v1/hendelse/{hendelse_id:uuid}/tidslinje",
+              hendelse_tidslinje, methods=["GET"]),
+        Route("/v1/hendelse/{hendelse_id:uuid}/forslag",
+              hendelse_forslag, methods=["POST"]),
+        Route("/v1/hendelse/{hendelse_id:uuid}/lukk", hendelse_lukk,
+              methods=["POST"]),
         # M-53 (127). Faste stier FØR parametriserte.
         Route("/v1/hms", hms_bilde, methods=["GET"]),
         Route("/v1/hms/avvik", hms_avvik, methods=["GET"]),
@@ -5100,6 +5205,29 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/esg/periode/{periode_id:uuid}/sammenstill"):
         "bestilling:opprett",
     ("POST", "/v1/esg/funn/{funn_id:uuid}/lukk"):
+        "bestilling:opprett",
+    # M-29 (137). Lesescopet er `security:read`: en sikkerhetshendelse
+    # navngir aktører og peker på rader i revisjonsloggen. Samme
+    # vurdering som M-43 for transkripsjoner og M-12 for tilgangsfunn.
+    ("GET",  "/v1/hendelse"):                    "security:read",
+    ("GET",  "/v1/hendelse/hendelser"):          "security:read",
+    ("GET",  "/v1/hendelse/signaler"):           "security:read",
+    ("GET",  "/v1/hendelse/regler"):             "security:read",
+    ("GET",  "/v1/hendelse/playbooker"):         "security:read",
+    ("GET",  "/v1/hendelse/funn"):               "security:read",
+    ("GET",  "/v1/hendelse/{hendelse_id:uuid}/tidslinje"):
+        "security:read",
+    ("POST", "/v1/hendelse/krav"):               "bestilling:opprett",
+    ("POST", "/v1/hendelse/regel"):              "bestilling:opprett",
+    ("POST", "/v1/hendelse/regel/{regel_id:uuid}/avvikle"):
+        "bestilling:opprett",
+    ("POST", "/v1/hendelse/playbook"):           "bestilling:opprett",
+    ("POST", "/v1/hendelse/korreler"):           "bestilling:opprett",
+    ("POST", "/v1/hendelse/{hendelse_id:uuid}/forslag"):
+        "bestilling:opprett",
+    ("POST", "/v1/hendelse/{hendelse_id:uuid}/lukk"):
+        "bestilling:opprett",
+    ("POST", "/v1/hendelse/funn/{funn_id:uuid}/lukk"):
         "bestilling:opprett",
     # M-53 (127). INGEN RUTE VARSLER EN MYNDIGHET — det finnes ingen
     # `/send`, ingen `/innsending` og ingen `/varsle`, og porten leser
