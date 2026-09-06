@@ -1299,7 +1299,7 @@ def test_timeren_gaar_etter_hele_stigen():
             f" ({bak.group(1)}) — statusen ville meldt den uteblitt")
     egen = (katalog / "disponit-prognosesveip.timer").read_text(
         encoding="utf-8")
-    assert "OnCalendar=*-*-* 11:35:00 UTC" in egen
+    assert "OnCalendar=*-*-* 06:25:00 UTC" in egen
     assert "Persistent=true" in egen
 
 

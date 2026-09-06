@@ -157,12 +157,21 @@ sist fordi den har mest å registrere og minst å arve.
 | M-43 | `disponit_telefoni_eier` | `disponit_telefonisveip` | 13:05 |
 | M-45 | `disponit_esg_eier` | `disponit_esgsveip` | 13:20 |
 
+> **KLOKKESLETTENE I TABELLEN OVER ER HISTORISKE.** Stigen ble strammet 5/9:
+> trinnet var 15 minutter mens spredningen var 30, så stigen overlappet
+> seg selv. Nå er trinnet 5 og spredningen 4. Gjeldende tider står i
+> `deploy/staging/*.timer` og måles av `test_spredningen_er_mindre_enn_trinnet`.
+
 **KLOKKESLETTENE TILDELES HER, MEN INGEN TIMER INSTALLERES HER.**
 
 Og regnestykket må gjøres av hver enkelt PR, ikke av dette dokumentet.
 132 lærte det: `RandomizedDelaySec` etablerer ingen rekkefølge. Det som
 må gå opp er **START + SPREDNING + `TimeoutStartSec`** for hver
 overvåket sveip, målt mot statussveipens TIDLIGSTE start.
+
+> **AVSNITTET UNDER ER HISTORISK.** Regnestykket gjaldt stigen slik den
+> sto da klynge 9 ble planlagt. Det som faktisk skjedde står under
+> «Etterord».
 
 Med 15 minutters trinn og 10 minutters timeout betyr det at hver av de
 fire må ha `RandomizedDelaySec` på høyst **5 minutter**, og at
@@ -175,6 +184,41 @@ går den fra 08:20 til 13:35 — over fem timer der én treg sveip skyver
 alle etter seg. Klynge 8 skrev at «den riktige responsen når grensen
 nås er å la sveipene kjøre PARALLELT der de ikke deler rolle». Grensen
 er nådd. Det står som en egen sak, og den bør tas FØR klynge 10.
+
+## Etterord: stigesaken, tatt 5/9
+
+Saken over ble tatt rett etter at klynge 9 var komplett, og den viste
+seg å være noe annet enn den så ut som.
+
+**STIGEN VAR IKKE FULL. DEN OVERLAPPET SEG SELV.** Trinnet var 15
+minutter mens `RandomizedDelaySec` var 30: en sveip på 04:05 kunne
+starte 04:35, og den på 04:20 kunne starte 04:50. Hver enkelt timerfil
+sa i sin egen prosa at to fulltenant-skann ikke skal treffe samme
+sekund — og spredningen gjorde nettopp det mulig, hver eneste natt, i
+over et år.
+
+`test_ingen_to_kalendertimere_deler_klokkeslett` fanget den ekte
+kollisjonen mellom `personvernsveip` og `tilgangssveip` i sin tid, men
+den måler PLANLAGT TID. Spredningen lå utenfor det den så.
+
+**RETTELSEN: trinn 5, spredning 4.** Spredningen er nå mindre enn
+trinnet, så to planlagte tider kan ikke overlappe. Stigen ble kortere
+av det samme grepet — 04:00–06:50 mot 04:05–13:20 — og
+`disponit-sveipestatus.timer` står 07:30, med plass til klynge 10s fire
+trinn (07:24) uten at den må flyttes igjen.
+
+**OG ET LAG TIL NED:** systemds `AccuracySec` er ett minutt som
+standard, og den er en lisens til å SLÅ SAMMEN — systemd forskyver
+timere innenfor vinduet for å vekke maskinen færre ganger. Uten
+`AccuracySec=1us` ville spredningen vært opphevet av den mekanismen som
+skulle håndheve den. Rettelsen ville sett riktig ut, hatt en grønn
+port, og ikke virket.
+
+**PARALLELLISERINGEN ER IKKE GJORT.** Klynge 8s forslag — å la sveip
+som ikke deler rolle kjøre samtidig — ville fjernet
+`test_ingen_to_kalendertimere_deler_klokkeslett`, en vakt med en ekte
+hendelse bak seg. Det er en avveining eieren skal ta, ikke en nattjobb.
+Stigen har nå plass til klynge 10 uten den.
 
 ## Fire eiere og fire sveipere
 

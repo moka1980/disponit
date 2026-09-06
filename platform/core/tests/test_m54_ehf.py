@@ -1209,7 +1209,7 @@ def test_timeren_er_klynge_sjus_forste_plass():
     """
     sti_t = ROT / "deploy" / "staging" / "disponit-ehfsveip.timer"
     timer = sti_t.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 10:05:00 UTC" in timer
+    assert "OnCalendar=*-*-* 06:00:00 UTC" in timer
     assert "Persistent=true" in timer
     sti_status = (ROT / "deploy" / "staging"
                   / "disponit-sveipestatus.timer")

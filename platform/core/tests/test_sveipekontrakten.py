@@ -287,3 +287,120 @@ def test_opptatt_las_er_hverken_suksess_eller_feil(navn, doer):
     assert res.feilet is False and res.alarm_utlost is False
     # …og den rørte ingenting: bare låseforsøket står i sporet.
     assert conn.spor == ["las"], conn.spor
+
+
+# =====================================================================
+# STIGEN (5/9). SPREDNINGEN SKAL VÆRE MINDRE ENN TRINNET.
+# =====================================================================
+
+#: Trinnet mellom to nabotider i stigen.
+TRINN_MIN = 5
+#: Spredningen INNENFOR et trinn. Den MÅ være mindre enn trinnet —
+#: det er hele rettelsen 5/9.
+SPREDNING_MIN = 4
+#: Statussveipens klokkeslett. Den skal lese flåtens tilstand ETTER at
+#: flåten har kjørt, og det er den ENESTE ekte ordningen i flåten.
+STATUS = "07:30"
+#: Klynge 10 er fire moduler (M-28, M-29, M-32, M-40).
+KLYNGE10 = 4
+
+_KATALOG = ROT / "deploy" / "staging"
+
+
+def _timerklokke(fil):
+    import re as _re
+    tekst = (_KATALOG / fil).read_text(encoding="utf-8")
+    kl = _re.search(r"OnCalendar=\*-\*-\* (\d\d:\d\d):00 UTC", tekst)
+    sp = _re.search(r"RandomizedDelaySec=(\d+)min", tekst)
+    assert kl, f"{fil} har intet klokkeslett"
+    return kl.group(1), (int(sp.group(1)) if sp else 0)
+
+
+def _minutt(kl):
+    t, m = kl.split(":")
+    return int(t) * 60 + int(m)
+
+
+def test_spredningen_er_mindre_enn_trinnet():
+    """STIGEN OVERLAPPET SEG SELV, HVER ENESTE NATT.
+
+    Trinnet var 15 minutter mens `RandomizedDelaySec` var 30. En sveip
+    på 04:05 kunne altså starte 04:35, og den på 04:20 kunne starte
+    04:50 — og hver enkelt timerfil sa i sin egen prosa at nettopp det
+    ikke skulle skje.
+
+    `test_ingen_to_kalendertimere_deler_klokkeslett` (test_deploy_
+    timerplan) fanget den ekte kollisjonen mellom `personvernsveip` og
+    `tilgangssveip` i sin tid, men den måler PLANLAGT TID. Spredningen
+    lå utenfor det den så, og feilen sto i over et år.
+
+    DENNE PORTEN LUKKER GAPET: er spredningen mindre enn trinnet, kan
+    to planlagte tider ikke overlappe.
+
+    MUTASJONEN SOM DREPER DENNE: sett spredningen tilbake til 30.
+    """
+    tider = []
+    feil_spredning = {}
+    for navn, _sql in SVEIPENE:
+        fil = f"disponit-{navn}.timer"
+        # EN MANGLENDE TIMERFIL SKAL FELLE PORTEN, IKKE HOPPES OVER.
+        assert (_KATALOG / fil).exists(), f"{navn} har ingen timerfil"
+        kl, sp = _timerklokke(fil)
+        tider.append((_minutt(kl), navn))
+        if sp != SPREDNING_MIN:
+            feil_spredning[navn] = sp
+    assert feil_spredning == {}, (
+        f"spredningen er ikke {SPREDNING_MIN} min: {feil_spredning}")
+    assert SPREDNING_MIN < TRINN_MIN, (
+        "spredningen er ikke mindre enn trinnet — stigen overlapper"
+        " seg selv")
+    tider.sort()
+    for (a, na), (b, nb) in zip(tider, tider[1:]):
+        assert b - a >= TRINN_MIN, (
+            f"{na} ({a}) og {nb} ({b}) staar naermere enn"
+            f" {TRINN_MIN} minutter")
+
+
+def test_ingen_sveip_kan_holde_paa_naar_statussveipen_starter():
+    """DEN ENESTE EKTE ORDNINGEN I FLÅTEN.
+
+    Målt mot basen leser INGEN av sveipene en annen moduls
+    funnregister — null krysslesing. Rekkefølgen mellom sveipene betyr
+    derfor ingenting. Det som betyr noe er at observatøren leser
+    flåtens tilstand ETTER at flåten har kjørt.
+    """
+    import re as _re
+    status = _minutt(STATUS)
+    faktisk, _ = _timerklokke("disponit-sveipestatus.timer")
+    assert faktisk == STATUS, (
+        f"statussveipen staar {faktisk}, konstanten sier {STATUS}")
+    for navn, _sql in SVEIPENE:
+        fil = f"disponit-{navn}.timer"
+        assert (_KATALOG / fil).exists(), f"{navn} har ingen timerfil"
+        kl, sp = _timerklokke(fil)
+        tj = _KATALOG / f"disponit-{navn}.service"
+        m = (_re.search(r"TimeoutStartSec=(\d+)min",
+                        tj.read_text(encoding="utf-8"))
+             if tj.exists() else None)
+        slutt = _minutt(kl) + sp + (int(m.group(1)) if m else 0)
+        assert slutt <= status, (
+            f"{navn} kan holde paa til {slutt // 60}:{slutt % 60:02d}"
+            f" mens statussveipen starter {STATUS}")
+
+
+def test_stigen_har_plass_til_klynge_ti():
+    """EN STIGE SOM ER FULL ER EN STIGE INGEN KAN UTVIDE.
+
+    Klynge 10 er fire moduler til. Med trinn på 5 minutter trenger de
+    20 minutter, og de må få plass FØR statussveipen — ellers må den
+    flyttes, og det skal den som bygger M-28 vite på forhånd.
+    """
+    siste = max(_minutt(_timerklokke(f"disponit-{navn}.timer")[0])
+                for navn, _sql in SVEIPENE
+                if (_KATALOG / f"disponit-{navn}.timer").exists())
+    # Fire nye trinn, pluss spredning og timeout på det siste.
+    trengs = siste + KLYNGE10 * TRINN_MIN + SPREDNING_MIN + 10
+    assert trengs <= _minutt(STATUS), (
+        f"klynge 10 ville strekke stigen til {trengs // 60}:"
+        f"{trengs % 60:02d}, mens statussveipen starter {STATUS} —"
+        " den maa flyttes i samme PR")

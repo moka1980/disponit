@@ -1363,7 +1363,7 @@ def test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter():
             f"{fil.name} kan holde paa til {slutt // 60}:{slutt % 60:02d}"
             f" mens statussveipen kan starte"
             f" {status_start // 60}:{status_start % 60:02d}")
-    assert _tid("disponit-innholdssveip.timer") == (12 * 60 + 50, 5)
+    assert _tid("disponit-innholdssveip.timer") == (6 * 60 + 40, 4)
 
 
 def test_sveipens_dsn_star_i_ci():

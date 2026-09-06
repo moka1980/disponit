@@ -140,10 +140,10 @@ ville båret de andres fullmakt.
 
 | Modul | Eier | Sveip | Klokkeslett (UTC) |
 |---|---|---|---|
-| M-41 | `disponit_betaling_eier` | `disponit_betalingssveip` | 07:35 |
-| M-19 | `disponit_adresse_eier` | `disponit_adressesveip` | 07:50 |
-| M-39 | `disponit_lonn_eier` | `disponit_lonnssveip` | 08:05 |
-| M-44 | `disponit_kampanje_eier` | `disponit_kampanjesveip` | 08:20 |
+| M-41 | `disponit_betaling_eier` | `disponit_betalingssveip` | 05:10 |
+| M-19 | `disponit_adresse_eier` | `disponit_adressesveip` | 05:15 |
+| M-39 | `disponit_lonn_eier` | `disponit_lonnssveip` | 05:20 |
+| M-44 | `disponit_kampanje_eier` | `disponit_kampanjesveip` | 05:25 |
 
 Med klynge 5 er plattformen oppe i **atten** nattlige sveip (03:15 →
 08:20). Driftssaken fra klynge 4 står uendret og er nå tyngre: en felles

@@ -14,24 +14,57 @@
 # versjon — flytter `gjeldende` i SAMME transaksjon, og flaten leser
 # alltid det gjeldende begrepet direkte.
 #
-# `RandomizedDelaySec=30min`: sveipen leser alle tenanters begreper i
+# `RandomizedDelaySec=4min`: sveipen leser alle tenanters begreper i
 # sitt første steg. Fyrer den på nøyaktig samme sekund som resten av
 # nattens jobber (backup 03:15, m57-utsending, evidensreaperen), legger
 # den seg oppå deres I/O uten grunn — den har ingen frist å rekke.
-# Spredningen er også grunnen til at klokkeslettet er 04:20 og ikke et
 # rundt tall: nabotimerne står på hele og halve timer.
 #
 # `Persistent=true`: en vert som var nede da døgnet passerte, kjører én
 # sveip ved oppstart. Det er riktig her — sveipen måler NÅ («hvilke
 # begreper er utløpt i dag»), ikke da, og et utløpt begrep som ingen har
 # fått funn på er nøyaktig det denne timeren finnes for.
+#
+# TRINNET ER 5 MINUTTER OG SPREDNINGEN 4 (5/9).
+#
+# FØR VAR TRINNET 15 OG SPREDNINGEN 30. En sveip på 04:05 kunne altså
+# starte 04:35, og den på 04:20 kunne starte 04:50 — STIGEN OVERLAPPET
+# SEG SELV, hver eneste natt. Doktrinen i denne fila sa at to
+# fulltenant-skann ikke skal treffe samme sekund, og spredningen
+# gjorde nettopp det mulig.
+#
+# NÅ ER SPREDNINGEN MINDRE ENN TRINNET. To sveip i stigen kan ikke
+# lenger overlappe ved planlagt tid: 04:00 + 4 < 04:05.
+#
+# Og stigen ble kortere av det samme grepet: 35 sveip à 5 minutter er
+# 04:00–06:50 mot 04:05–13:20 før. `disponit-sveipestatus.timer` (115)
+# står bakerst på 07:30, og den er den ENESTE ekte ordningen i
+# flåten — målt mot basen leser ingen av sveipene en annen moduls
+# funnregister.
+#
+# KLOKKESLETTET ER 04:05, TRINN 2 AV 35.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit begrepssveip-timer
 
 [Timer]
-OnCalendar=*-*-* 04:20:00 UTC
-RandomizedDelaySec=30min
+OnCalendar=*-*-* 04:05:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
 Persistent=true
 
 [Install]

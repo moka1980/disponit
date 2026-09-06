@@ -800,10 +800,10 @@ def test_kjoreskriptet_har_ingen_fallback_til_database_url():
 
 
 def test_timeren_staar_i_klyngestigen():
-    """09:20 — stigen er fordelt i klyngefundamentet."""
+    """05:45 — stigen er fordelt i klyngefundamentet."""
     sti_t = ROT / "deploy" / "staging" / "disponit-anbudssveip.timer"
     timer = sti_t.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* 09:20:00 UTC" in timer
+    assert "OnCalendar=*-*-* 05:45:00 UTC" in timer
     assert "Persistent=true" in timer
     sti_s = ROT / "deploy" / "staging" / "disponit-anbudssveip.service"
     tjeneste = sti_s.read_text(encoding="utf-8")

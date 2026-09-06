@@ -33,6 +33,11 @@
 # bevisst avgrensning, ikke en glemt en. En slik sveip hører
 # varselsenderen til (091-formen), og den skal registreres som et krav
 # før den bygges, ikke oppstå som en bieffekt.
+#
+# `AccuracySec=1us`: systemds standard er ETT MINUTT, og den er en
+# LISENS TIL Å SLÅ SAMMEN — systemd forskyver timere innenfor
+# vinduet for å vekke maskinen færre ganger. Denne jobben deler
+# natt med 35 sveip, og uten linjen kan de havne i samme sekund.
 
 [Unit]
 Description=Disponit datakvalitetsprofilering-timer
@@ -40,6 +45,7 @@ Description=Disponit datakvalitetsprofilering-timer
 [Timer]
 OnCalendar=*-*-* 02:20:00 UTC
 RandomizedDelaySec=30min
+AccuracySec=1us
 Persistent=true
 
 [Install]

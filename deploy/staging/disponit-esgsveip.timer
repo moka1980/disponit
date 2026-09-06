@@ -4,38 +4,37 @@
 # ser på det oftere. Sjeldnere ville latt en foreldet standardversjon
 # stå en uke i en åpen periode.
 #
-# KLOKKESLETTET ER 13:20, klynge 9s FJERDE OG SISTE trinn (12:35,
-# 12:50, 13:05, 13:20). `disponit-sveipestatus.timer` (115) står
-# bakerst på 13:35 — og denne modulen er den siste foran den.
-#
-# `RandomizedDelaySec=5min` OG IKKE 30 (131/132s lærdom).
+# `RandomizedDelaySec=4min` OG IKKE 30 (131/132s lærdom).
 #
 # Spredningen etablerer INGEN rekkefølge mellom timere — den finnes for
 # å hindre at de fyrer samtidig. REGNESTYKKET SOM MÅ GÅ OPP er
 # START + SPREDNING + `TimeoutStartSec` for HVER overvåket sveip, målt
 # mot statussveipens TIDLIGSTE start.
 #
-# Her: 12:35 + 5 + 10 = 12:50, og statussveipen starter tidligst 13:35
-# etter at DENNE PR-en flyttet den dit. Den flyttingen går lenger enn
-# M-45 trenger, fordi hvert mellomliggende tall ville landet på et slot
-# fundamentet alt har tildelt M-45, M-45 eller M-45 — se
-# `disponit-sveipestatus.timer` for regnestykket. Med klynge 9s fire trinn 15 minutter
-# fra hverandre er 5 minutters spredning det som får regnestykket til å
-# gå opp for ALLE fire — 30 ville ikke gjort det for noen av dem.
+# Her: 06:50 + 4 + 10 = 07:04, og statussveipen
+# starter tidligst 07:30.
 #
-# `test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter` måler
-# dette for hele stigen, så en PR som glemmer det faller.
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
 #
-# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
-# likevel oppdage at et møte står uten referat. Uten den ville nedetid
-# blitt til stillhet om nettopp det modulen finnes for.
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit ESG-sveip-timer
 
 [Timer]
-OnCalendar=*-*-* 13:20:00 UTC
-RandomizedDelaySec=5min
+OnCalendar=*-*-* 06:50:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
 Persistent=true
 
 [Install]

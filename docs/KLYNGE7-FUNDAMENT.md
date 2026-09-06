@@ -172,6 +172,11 @@ M-53 sist, av grunnen over.
 | M-50 | `disponit_postjournal_eier` | `disponit_postjournalsveip` | 10:50 |
 | M-53 | `disponit_hms_eier` | `disponit_hmssveip` | 11:05 |
 
+> **KLOKKESLETTENE I TABELLEN OVER ER HISTORISKE.** Stigen ble strammet 5/9:
+> trinnet var 15 minutter mens spredningen var 30, så stigen overlappet
+> seg selv. Nå er trinnet 5 og spredningen 4. Gjeldende tider står i
+> `deploy/staging/*.timer` og måles av `test_spredningen_er_mindre_enn_trinnet`.
+
 Fem eiere og fem sveipere, av samme grunn som før: en delt sveiperolle
 måtte hatt EXECUTE på alle kryss-tenant-definerne, og en feil i én
 sveip ville båret de andres fullmakt.

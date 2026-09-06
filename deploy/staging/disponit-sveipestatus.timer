@@ -1,78 +1,96 @@
-# 115: én gang i døgnet, ETTER hele sveipestigen.
+# 115: STATUSSVEIPEN. KLOKKESLETTET ER 07:30 UTC.
 #
-# KLOKKESLETTET ER 13:35 UTC fordi rekkefølgen er poenget:
-# observatøren skal lese flåtens tilstand ETTER at flåten har kjørt,
-# ikke før. Kjørte den 02:00, ville hver eneste sveip sett ut som
-# «ikke kjørt i dag», og varselet vært en falsk alarm hver natt.
+# REKKEFØLGEN ER POENGET, og den er den ENESTE ekte ordningen i
+# flåten: observatøren skal lese flåtens tilstand ETTER at flåten har
+# kjørt. En statussveip som løp først ville lest forrige døgns
+# tilstandsfiler og meldt alt friskt.
 #
-# DEN HAR FLYTTET TO GANGER, OG BEGGE GANGER PÅ SAMME MÅTE. Den sto
-# 08:35 til M-48 (116) kom, og 10:05 gjennom hele klynge 6. Nå
-# fordeler klynge 7 (121–125) 10:05–11:05 til fem nye sveip, og
-# observatøren flyttes BAKENFOR HELE den stigen med én gang i stedet
-# for å skyves femten minutter fem ganger.
+# REGNESTYKKET: siste sveip i stigen står 06:50, spredningen er 4
+# minutter og `TimeoutStartSec` er 10. 06:50 + 4 + 10 = 07:04.
 #
-# GAPET FRA 09:50 TIL 13:35 ER TOMT I DAG og fylles etter hvert som
-# M-54, M-52, M-47, M-50 og M-53 lander. Det er med vilje: klyngens
-# fundament flytter observatøren FØR modulene kommer, så ingen
-# modul-PR trenger å røre denne fila — og to PR-er som begge flyttet
-# den ville gitt en fletting der et tapt klokkeslett ser ut som
-# ingenting. `test_timeren_gaar_etter_hele_stigen` holder rekkefølgen
-# ærlig uansett hvilken vei det går.
+# OG TALLET ER 07:30, IKKE 07:10. Klynge 10 er fire moduler til, og
+# med trinn på 5 minutter strekker de stigen til 07:10 — pluss
+# spredning og timeout blir det 07:24. `test_stigen_har_plass_til_
+# klynge_ti` regner det ut, og den fant at 07:15 IKKE holdt.
 #
-# 08:35 STÅR IKKE LEDIG LENGER: M-15 (128) tok det.
+# Plassen er laget NÅ, ikke når M-28 kommer. Det er forskjellen på en
+# grense som er valgt og en som blir oppdaget.
+# `test_ingen_sveip_kan_holde_paa_naar_statussveipen_starter` måler
+# det for hele flåten — ikke for én sveip om gangen.
 #
-# FLYTTET TO GANGER, OG ANDRE GANG ER LÆRDOMMEN.
+# ---------------------------------------------------------------------
+# HISTORIKK. TALLET HAR FLYTTET SEG SEKS GANGER.
 #
-# 11:20 → 12:05 i M-33s PR (130): klynge 8 la de to siste sveipene BAK
-# klynge 7, og en statussveip på 11:20 ville lest flåtens tilstand FØR
-# to av medlemmene hadde kjørt.
+# ALLE KLOKKESLETTENE UNDER ER HISTORISKE. De står fordi de forklarer
+# hvorfor formen ble som den ble — ikke fordi noen av dem gjelder.
 #
-# 12:05 → 12:20 i M-36s PR (132), OG DET VAR ET REGNESTYKKE INGEN
-# HADDE GJORT: et klokkeslett er ikke en rekkefølge.
+#   08:35  → 10:05   da klynge 6 fylte 08:50–09:50
+#   10:05  → 11:20   da klynge 7 fylte 10:05–11:05
+#   11:20  → 12:05   i M-33s PR (130)
+#   12:05  → 12:20   i M-36s PR (132)
+#   12:20  → 13:35   i M-7s PR (133)
+#   13:35  → 07:30   5/9, DA TRINNET BLE 5 OG SPREDNINGEN 4
 #
-# 12:20 → 13:35 i M-7s PR (133), OG DEN FLYTTINGEN GÅR LENGER ENN
-# M-7 STRENGT TATT TRENGER. Grunnen skal stå:
+# DEN SISTE FLYTTINGEN ER AV ET ANNET SLAG ENN DE FEM FØRSTE. De fem
+# var reaksjoner: en ny sveip kom bakerst, og observatøren måtte
+# flyttes bak den igjen.
 #
-# M-7 alene krever bare 12:50 (12:35 + 5 + 10). Men klynge
-# 9-fundamentet har ALT tildelt 12:50, 13:05 og 13:20 til M-20, M-43
-# og M-45. Hvert mellomliggende tall ville derfor landet PÅ et slot
-# som er reservert, og statussveipen måtte flyttet igjen tre ganger —
-# hver gang forbi en sveip som ennå ikke finnes.
+# DEN SJETTE VAR EN RETTELSE AV EN FEIL SOM HADDE STÅTT HELE TIDEN.
+# Trinnet var 15 minutter mens `RandomizedDelaySec` var 30 — stigen
+# overlappet seg selv hver eneste natt, og doktrinen i hver enkelt
+# timerfil sa at nettopp det ikke skulle skje.
+# `test_ingen_to_kalendertimere_deler_klokkeslett` fanget kollisjonen
+# mellom `personvernsveip` og `tilgangssveip` i sin tid, men den måler
+# PLANLAGT TID — og spredningen lå utenfor det den så.
 #
-# 13:35 er det eneste tallet som ikke kolliderer med en tildelt plass,
-# og det er valgt av den grunnen — ikke fordi M-45 er bygget. Prisen
-# er at statussveipen står 45 minutter bak flåten til klynge 9 er
-# ferdig. Det er en ærlig pris, og den står her.
-# `RandomizedDelaySec` finnes for å hindre samtidighet, ikke for å
-# ordne. Det som må gå opp er START + SPREDNING + `TimeoutStartSec`
-# for HVER overvåket sveip, og M-36 på 11:50 + 10 + 10 = 12:10
-# passerte 12:05. Statussveipen ville lest forrige døgns tilstandsfil
-# og meldt en FALSK «uteblitt».
+# Med trinn 5 og spredning 4 kan to planlagte tider ikke lenger
+# overlappe, og stigen gikk fra 04:05–13:20 til 04:00–06:50.
 #
-# Porten `test_sveipen_rekker_aa_bli_ferdig_for_statussveipen_starter`
-# gjør regnestykket til en måling, i begge modulenes suiter. DEN NESTE
-# SOM LEGGER EN SVEIP I STIGEN MÅ GJØRE DET SAMME REGNESTYKKET — og
-# porten faller hvis han lar være.
+# `Persistent=true`: en vert som var nede da tidspunktet passerte skal
+# likevel lese flåtens tilstand.
 #
-# FLYTTINGEN HØRER TIL TIMEREN SOM GJØR DEN NØDVENDIG, ikke til
-# fundamentet: et fundament som endrer drift for noe som ennå ikke
-# finnes, gjetter. Da M-33 kom, var flyttingen en måling — og
-# `test_timeren_gaar_etter_hele_stigen` er den målingen.
+# ---------------------------------------------------------------------
+# OPPSTARTSBYGEN, OG HVORFOR DEN ER AKSEPTERT.
 #
-# `RandomizedDelaySec=15min` og ikke 30: vinduet må være ferdig før
-# varselsenderen henter køen, og spredningen har mindre å tjene her —
-# jobben leser 22 småfiler, den skanner ingen tabell.
+# `Persistent=true` står på alle 35 sveipene. En vert som har vært nede
+# over natten kjører derfor ALLE de tapte sveipene når den kommer opp.
+# `RandomizedDelaySec` gjelder også for innhentingen, så bygen er
+# spredt over fire minutter — men det er fortsatt 35 sveip på fire
+# minutter, mot ett trinn hvert femte minutt i normal drift.
 #
-# `Persistent=true`: en vert som var nede da tidspunktet passerte,
-# fører flåtens tilstand én gang når den kommer opp. Det er nettopp da
-# observasjonen er mest verdt.
+# DET ER AKSEPTERT. Hver sveip er ÉN tilkobling som gjør ETT
+# funksjonskall, og hver har sin egen advisory-lås som hindrer at den
+# overlapper SEG SELV. En byge gir et tregere oppstartsminutt, aldri et
+# galt funn.
+#
+# ALTERNATIVET ER VERRE. Uten `Persistent` ville en nattlig måling
+# forsvunnet stille hver gang verten startet på nytt i feil vindu — og
+# stillhet er nettopp det hele flåten finnes for å hindre.
+#
+# CodeRabbit reiste dette 5/9. Avveiningen står her fordi et akseptert
+# vilkår som ingen har skrevet ned er et vilkår ingen kan revurdere.
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit sveipestatus-timer
 
 [Timer]
-OnCalendar=*-*-* 13:35:00 UTC
+OnCalendar=*-*-* 07:30:00 UTC
 RandomizedDelaySec=15min
+AccuracySec=1us
 Persistent=true
 
 [Install]

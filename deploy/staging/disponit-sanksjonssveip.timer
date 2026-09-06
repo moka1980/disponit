@@ -3,20 +3,58 @@
 # Kadensen og regelen hører sammen: `uavklart_frist_dogn`,
 # `kontroll_gyldig_dogn` og `ukontrollert_dogn` måles alle i DØGN.
 #
-# KLOKKESLETTET ER 09:05 fordi 02:20 til 08:50 alt er tatt, og fordi
-# klyngefundamentet fordelte 08:50–09:50 til klynge 6. Sveipens
-# første steg leser ALLE tenanters subjekter, og to slike skann på
-# samme sekund legger seg oppå hverandres I/O uten grunn.
+# SVEIPENS FØRSTE STEG LESER ALLE TENANTERS SUBJEKTER, og to slike
+# skann på samme sekund legger seg oppå hverandres I/O uten grunn.
+# uten grunn. Spredningen er nå MINDRE enn trinnet (4 mot 5), så
+# to planlagte tider i stigen ikke kan overlappe.
 #
-# `RandomizedDelaySec=30min` og `Persistent=true`: samme begrunnelse
+# DET ER EN LASTBETRAKTNING, IKKE EN KORREKTHETSBETRAKTNING.
+#
+# `RandomizedDelaySec=4min` og `Persistent=true`: samme begrunnelse
 # som nabosveipene.
+#
+# TRINNET ER 5 MINUTTER OG SPREDNINGEN 4 (5/9).
+#
+# FØR VAR TRINNET 15 OG SPREDNINGEN 30. En sveip på 04:05 kunne altså
+# starte 04:35, og den på 04:20 kunne starte 04:50 — STIGEN OVERLAPPET
+# SEG SELV, hver eneste natt. Doktrinen i denne fila sa at to
+# fulltenant-skann ikke skal treffe samme sekund, og spredningen
+# gjorde nettopp det mulig.
+#
+# NÅ ER SPREDNINGEN MINDRE ENN TRINNET. To sveip i stigen kan ikke
+# lenger overlappe ved planlagt tid: 04:00 + 4 < 04:05.
+#
+# Og stigen ble kortere av det samme grepet: 35 sveip à 5 minutter er
+# 04:00–06:50 mot 04:05–13:20 før. `disponit-sveipestatus.timer` (115)
+# står bakerst på 07:30, og den er den ENESTE ekte ordningen i
+# flåten — målt mot basen leser ingen av sveipene en annen moduls
+# funnregister.
+#
+# KLOKKESLETTET ER 05:40, TRINN 21 AV 35.
+# (KLOKKESLETTENE I AVSNITTET OVER ER HISTORISKE. Gjeldende tid
+#  staar i `OnCalendar` under.)
+#
+# `AccuracySec=1us` OG IKKE STANDARDVERDIEN.
+#
+# systemds standard er ETT MINUTT, og den er ikke en presisjonsgrense
+# — den er en LISENS TIL Å SLÅ SAMMEN. systemd forskyver timere
+# innenfor vinduet for å vekke maskinen færre ganger, og med 35 timere
+# betyr det at flere av dem kan fyre i samme sekund.
+#
+# DA VILLE SPREDNINGEN VÆRT OPPHEVET AV DEN SOM SKULLE HÅNDHEVE DEN.
+# Hele stigen hviler på at planlagte tider ligger fra hverandre, og
+# `RandomizedDelaySec` på fire minutter er meningsløs hvis systemd
+# samler resultatet tilbake til minuttet.
+#
+# CodeRabbit fant det 5/9, samme natt som spredningen ble strammet.
 
 [Unit]
 Description=Disponit sanksjonssveip-timer
 
 [Timer]
-OnCalendar=*-*-* 09:05:00 UTC
-RandomizedDelaySec=30min
+OnCalendar=*-*-* 05:40:00 UTC
+RandomizedDelaySec=4min
+AccuracySec=1us
 Persistent=true
 
 [Install]
