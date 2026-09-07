@@ -487,8 +487,8 @@ def oppslag_endepunkt(tjeneste, request):
     """
     from . import foretaksregister as fr
     from .app import _rid
-    from .policyadmin_http import (_browserkontekst, _krev_idem, _kropp,
-                                   _med_conn, _ok)
+    from .policyadmin_http import (_browserkontekst, _gjenopprett_kontekst,
+                                   _krev_idem, _kropp, _med_conn, _ok)
     rid = _rid(request)
 
     def kjor(conn):
@@ -523,6 +523,14 @@ def oppslag_endepunkt(tjeneste, request):
                 raise
             raise avbrudd from e
         conn.commit()
+        # KONTEKSTEN DØDE MED COMMIT-EN (Fjordlys-kampanjen 7/9, #409).
+        # `sett_kontekst` er SET LOCAL: etter commit-en over er
+        # `disponit.tenant` unset, og under FORCE RLS fant steg C ingen
+        # rad — `m48_fullfor_oppslag` reiste «ukjent oppslag», svaret ble
+        # 409, og reservasjonen ble stående som «reservert» for godt.
+        # Hvert eneste oppslag i produksjon endte slik. Samme klasse som
+        # `inndata.py` navngir; samme hjelper som varselveien bruker.
+        _gjenopprett_kontekst(conn, tenant, bid, rid)
 
         # --- B: forespørselen. Ingen transaksjon åpen. ---
         lest = datetime.date.today().isoformat()

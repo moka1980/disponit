@@ -1220,3 +1220,88 @@ def test_registeret_kan_ikke_svare_om_et_annet_foretak():
     assert f.organisasjonsnummer == "999999999"
     with pytest.raises(OppslagFeil):
         tolk(b"ikke json")
+
+
+# ---------------------------------------------------------------------------
+# #409 — HELE VEIEN gjennom HTTP-døra, med commit midt i.
+# ---------------------------------------------------------------------------
+
+def _m48_browserokt(migrator, tenant, roller=("admin",)):
+    """En innlogget browserøkt i `tenant` (speiler m12s minirigg)."""
+    from api import sesjon as sesjonmodul
+    _sett_kontekst(migrator, tenant)
+    bid = migrator.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES"
+        " ('https://m48.test', %s) RETURNING bruker_id",
+        ("s48-" + secrets.token_hex(6),)).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO brukermedlemskap (tenant, bruker_id, roller, aktiv)"
+        " VALUES (%s,%s,%s,true)", (tenant, bid, list(roller)))
+    ver = migrator.execute(
+        "SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
+        " AND bruker_id=%s", (tenant, bid)).fetchone()[0]
+    cookie, csrf = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    migrator.execute(
+        "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+        " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+        " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
+        " now()+interval '1 hour', false)",
+        (sesjonmodul._hash(cookie), tenant, bid, ver,
+         sesjonmodul._hash(csrf)))
+    migrator.commit()
+    return cookie, csrf
+
+
+@pg
+def test_http_oppslaget_fullfores_etter_commit_en(miljo, migrator, klient,
+                                                  monkeypatch):
+    """#409 — Fjordlys-kampanjen 7/9: HVERT oppslag i produksjon endte
+    409 `motpart_ulovlig_tilstand` og etterlot raden «reservert».
+
+    Endepunktet committer reservasjonen med vilje (steg A), gjør
+    forespørselen utenfor transaksjon (B) og fullfører (C). Men
+    `sett_kontekst` er SET LOCAL: etter commit-en var `disponit.tenant`
+    unset, og under FORCE RLS fant `m48_fullfor_oppslag` ingen rad —
+    «ukjent oppslag» → 409. Enhetstestene så det aldri, fordi de aldri
+    committer midt i. Denne går HELE veien gjennom HTTP-døra, som
+    policy-rundturen lærte oss: en kjede som stopper ett sted skjuler
+    portene bak.
+
+    Registerklienten byttes ut — porten handler om transaksjonsgrensen,
+    ikke om Brønnøysund — og svarer «ikke funnet», som den gjorde for
+    Fjordlys' fiktive organisasjonsnummer.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `_gjenopprett_kontekst` etter
+    `conn.commit()` i `oppslag_endepunkt`.
+    """
+    from api import foretaksregister as fr
+    from api import sesjon as sesjonmodul
+    tenant = _tenantnavn("http")
+    with _rt() as c:
+        _krav(c, tenant, ferskhet=24)
+        mid, _ = _motpart(c, tenant)
+    cookie, csrf = _m48_browserokt(migrator, tenant)
+    kalt = []
+
+    def falsk_hent(vert, orgnr, lest):
+        kalt.append((vert, orgnr))
+        return None                      # ikke funnet — som for et fiktivt orgnr
+
+    monkeypatch.setattr(fr, "hent", falsk_hent)
+    r = klient.post(f"/v1/motpart/{mid}/oppslag",
+                    json={"formaal": "kredittvurdering",
+                          "hjemmel": "Kredittvurdering før tilbud"},
+                    cookies={sesjonmodul.C_SESJON: cookie},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_urlsafe(24)})
+    assert r.status_code == 200, r.text
+    assert r.json()["svarstatus"] == "ikke_funnet"
+    assert kalt and kalt[0][1] is not None, "forespørselen gikk aldri ut"
+    # …og raden er FULLFØRT, ikke stående som reservert. Lest med
+    # migratoren: runtime-rollen har med vilje ikke SELECT på tabellen.
+    _sett_kontekst(migrator, tenant)
+    rad = migrator.execute(
+        "SELECT svarstatus, fullfort FROM foretaksoppslag"
+        " WHERE tenant=%s AND motpart_id=%s", (tenant, mid)).fetchone()
+    migrator.rollback()
+    assert rad[0] == "ikke_funnet" and rad[1] is not None, rad
