@@ -150,7 +150,7 @@ def _dato_valgfri(kropp, felt: str, rid):
 def _sti_uuid(request, navn: str, rid) -> uuidlib.UUID:
     from .policyadmin_http import _Avbrudd, _feil
     try:
-        return uuidlib.UUID(request.path_params[navn])
+        return uuidlib.UUID(str(request.path_params.get(navn)))
     except (KeyError, ValueError, AttributeError, TypeError) as e:
         raise _Avbrudd(_feil("request_feilformet", rid)) from e
 
@@ -180,7 +180,7 @@ def _doerfeil(e, rid):
     (`krev_tenantkontekst`, 038) reiser nettopp den når et kall ber om
     en annen tenants data.
     """
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, (psycopg.errors.RaiseException,
                       psycopg.errors.InvalidParameterValue,
                       psycopg.errors.InsufficientPrivilege,
@@ -190,7 +190,7 @@ def _doerfeil(e, rid):
                       psycopg.errors.UniqueViolation,
                       psycopg.errors.ForeignKeyViolation)):
         return _Avbrudd(_feil("request_feilformet", rid,
-                              detalj=str(e).split("\n")[0]))
+                              detalj=_doerdetalj(e)))
     return None
 
 

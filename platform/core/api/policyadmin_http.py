@@ -95,9 +95,31 @@ class _Avbrudd(Exception):
         self.respons = respons
 
 
-def _feil(kode: str, rid: str, http: int | None = None):
+def _doerdetalj(e) -> str | None:
+    """Dørens EGEN setning — og bare den — som `detalj` til klienten.
+
+    En `RAISE EXCEPTION 'm40: løpet … er ikke åpent'` er skrevet FOR
+    brukeren; første linje er hele meldingen. Alt annet postgres kan
+    reise — constraint-navn i en UniqueViolation, «DETAIL: Key (…)» —
+    er husets indre og blir hos oss (CodeRabbit på #410-fiksen)."""
+    import psycopg
+    if isinstance(e, psycopg.errors.RaiseException):
+        return str(e).split("\n")[0]
+    return None
+
+
+def _feil(kode: str, rid: str, http: int | None = None,
+          detalj: str | None = None):
+    """Feilsvaret. `detalj` er dørens egen setning («m40: løpet … er ikke
+    åpent») for de tolv modulene hvis `_doerfeil` sender den med — de
+    kalte alltid `_feil(..., detalj=...)`, men signaturen hadde den ikke,
+    så hver eneste dørnekt der ble en `TypeError` og et 500 i stedet for
+    det 400-svaret koden mente (Fjordlys-kampanjen 7/9, #410)."""
     from starlette.responses import JSONResponse
-    return JSONResponse({"feil": kode, "request_id": rid},
+    kropp = {"feil": kode, "request_id": rid}
+    if detalj:
+        kropp["detalj"] = detalj
+    return JSONResponse(kropp,
                         status_code=http or _FEIL_HTTP.get(kode, 409),
                         headers={"x-request-id": rid})
 

@@ -43,7 +43,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from .test_api import (DSN, MIGRATOR_DSN,  # noqa: F401
+                       app, klient, migrator, miljo)
 
 MEDARBEIDERSVEIP_DSN = os.environ.get("DISPONIT_TEST_MEDARBEIDERSVEIP_DSN")
 
@@ -1031,3 +1032,60 @@ def test_alle_lagre_er_registrert_i_retensjonsregisteret():
         f"lagre uten dom: {set(EGNE) - set(rader)}")
     assert rader["pulssvar"] == "uten_frist_akseptert"
     assert rader["ansattlop"] == "uten_frist_apen"
+
+
+# ---------------------------------------------------------------------------
+# #410 — {lop_id:uuid} gjennom Starlettes ruter, ikke bare handleren.
+# ---------------------------------------------------------------------------
+
+@pg
+def test_http_steg_gjennom_ruteren_naar_doren(miljo, migrator, klient):
+    """#410 — Fjordlys-kampanjen 7/9: `POST /v1/medarbeider/lop/{id}/steg`
+    med gyldig kropp svarte 400 `request_feilformet` i produksjon.
+
+    Ruten er `{lop_id:uuid}`; Starlette leverer en `uuid.UUID`, og
+    `uuid.UUID(<UUID>)` kaster. Tolv moduler, 52 skriveveier. Testene
+    fanget det ikke fordi de nådde handleren uten ruteren. Denne går
+    gjennom `TestClient` med en ukjent id: svaret skal komme fra DØRA
+    («løpet … er ikke åpent», 400 med `detalj`), ikke fra `_sti_uuid`
+    (400 uten) og ikke som 500 fra en `_doerfeil` som ikke kan svare.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `str(` i `_sti_uuid`.
+    """
+    import secrets as _s
+    import uuid as _u
+    from api import sesjon as sesjonmodul
+    tenant = "t-m40-http-" + _s.token_hex(3)
+    _sett_kontekst(migrator, tenant)
+    bid = migrator.execute(
+        "INSERT INTO brukeridentitet (issuer, sub) VALUES"
+        " ('https://m40.test', %s) RETURNING bruker_id",
+        ("s40-" + _s.token_hex(6),)).fetchone()[0]
+    migrator.execute(
+        "INSERT INTO brukermedlemskap (tenant, bruker_id, roller, aktiv)"
+        " VALUES (%s,%s,%s,true)", (tenant, bid, ["admin"]))
+    ver = migrator.execute(
+        "SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
+        " AND bruker_id=%s", (tenant, bid)).fetchone()[0]
+    cookie, csrf = _s.token_urlsafe(24), _s.token_urlsafe(24)
+    migrator.execute(
+        "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+        " authz_snapshot, csrf_hash, opprettet, siste_bruk, utloper,"
+        " tilbakekalt) VALUES (%s,%s,%s,%s,%s, now(), now(),"
+        " now()+interval '1 hour', false)",
+        (sesjonmodul._hash(cookie), tenant, bid, ver,
+         sesjonmodul._hash(csrf)))
+    migrator.commit()
+    r = klient.post(f"/v1/medarbeider/lop/{_u.uuid4()}/steg",
+                    json={"stegnr": 1, "stegtype": "utstyr_utlevert"},
+                    cookies={sesjonmodul.C_SESJON: cookie},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": _s.token_urlsafe(24)})
+    # Modulens egen dør avgjør en ukjent id: «løpet … er ikke åpent»,
+    # oversatt av `_doerfeil` til 400 MED dørens setning som `detalj`.
+    # Uten str() i `_sti_uuid` kom svaret aldri så langt — samme 400,
+    # men uten `detalj`, fra `_sti_uuid` selv. Og uten `detalj` i
+    # `_feil` ble dørens nekt et 500. Begge feilene måles her.
+    assert r.status_code != 500, r.text
+    assert r.status_code == 400, r.text
+    assert "ikke apent" in r.json().get("detalj", ""), r.text

@@ -180,7 +180,7 @@ def _beskrivelse(kropp, felt: str, rid) -> str:
 def _sti_uuid(request, navn: str, rid) -> uuidlib.UUID:
     from .policyadmin_http import _Avbrudd, _feil
     try:
-        return uuidlib.UUID(request.path_params[navn])
+        return uuidlib.UUID(str(request.path_params.get(navn)))
     except (KeyError, ValueError, AttributeError, TypeError) as e:
         raise _Avbrudd(_feil("request_feilformet", rid)) from e
 
@@ -193,7 +193,7 @@ def _doerfeil(e, rid):
     handle på (121–124s form, og 123s `str.isalpha()`-lærdom om at et
     galt svar er verre enn et tregt).
     """
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, (psycopg.errors.RaiseException,
                       psycopg.errors.InvalidParameterValue,
                       psycopg.errors.InsufficientPrivilege,
@@ -202,7 +202,7 @@ def _doerfeil(e, rid):
                       psycopg.errors.UniqueViolation,
                       psycopg.errors.ForeignKeyViolation)):
         return _Avbrudd(_feil("request_feilformet", rid,
-                              detalj=str(e).split("\n")[0]))
+                              detalj=_doerdetalj(e)))
     return None
 
 
