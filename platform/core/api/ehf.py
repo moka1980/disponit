@@ -273,7 +273,7 @@ def _kropp_uuid(kropp, felt: str, rid) -> uuidlib.UUID:
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112–120."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if ("ehfvalidering_unik" in str(e)
                 or "ehfdokument_unik" in str(e)
@@ -281,20 +281,26 @@ def _doerfeil(e, rid):
                 or "ehfregel_unik" in str(e)
                 or "ehfretting_unik" in str(e)
                 or "ehffelt_unik" in str(e)):
-            return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: utløpt regelsett, retting av et
         # `uten_grunnlag`-avvik, klarmerking med urettet formfeil.
-        return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, (psycopg.errors.IntegrityConstraintViolation,
                       psycopg.errors.CheckViolation,
                       psycopg.errors.InsufficientPrivilege)):
-        return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("ehf_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

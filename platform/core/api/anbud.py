@@ -208,28 +208,34 @@ def _kropp_uuid(kropp, felt: str, rid) -> uuidlib.UUID:
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112/114/116/117."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if ("ref_unik" in str(e) or "sum_unik" in str(e)
                 or "nummer_unikt" in str(e)
                 or "krav_unikt" in str(e)
                 or "versjon_unik" in str(e)):
-            return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: et udekket absolutt krav, en utløpt
         # kilde, et krav fra et annet anbud, et klart utkast.
-        return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, (psycopg.errors.IntegrityConstraintViolation,
                       psycopg.errors.CheckViolation,
                       psycopg.errors.InsufficientPrivilege)):
         # Vaktenes dommer, blant dem nektet mot å lukke et udekket
         # absolutt krav bort.
-        return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("anbud_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

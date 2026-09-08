@@ -128,25 +128,30 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         # DEN EKSAKTE DUBLETTEN lander her, via `faktura_en_per_nummer`.
         # Det er en TILSTAND som sier nei, ikke en idempotenskonflikt:
         # kalleren ba om en NY faktura, og den finnes fra før. Det er
         # dessuten selve kontrollen modulen er navngitt for.
         if "en_per_nummer" in str(e):
-            return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en avgjørelse uten begrunnelse, et
         # ukjent utfall, en manuell kontroll uten notat.
-        return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # `netto + mva <> brutto`, en overlappende satsperiode, en
         # gjenåpnet faktura. Alle er TILSTANDER som sier nei.
-        return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("faktura_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

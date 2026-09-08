@@ -101,11 +101,22 @@ def _doerdetalj(e) -> str | None:
     En `RAISE EXCEPTION 'm40: løpet … er ikke åpent'` er skrevet FOR
     brukeren; første linje er hele meldingen. Alt annet postgres kan
     reise — constraint-navn i en UniqueViolation, «DETAIL: Key (…)» —
-    er husets indre og blir hos oss (CodeRabbit på #410-fiksen)."""
+    er husets indre og blir hos oss (CodeRabbit på #410-fiksen).
+
+    SKILLET GÅR PÅ HVOR FEILEN KOM FRA, ikke på psycopg-klassen: en
+    plpgsql-RAISE bærer `diag.source_function == 'exec_stmt_raise'`
+    uansett hvilken ERRCODE døra valgte. Dørene reiser gjerne
+    `USING ERRCODE = 'invalid_parameter_value'` — da er klassen
+    `InvalidParameterValue`, ikke `RaiseException`, og en klassetest
+    mistet setningen («uke 1 er ikke over») hver gang (#415)."""
     import psycopg
-    if isinstance(e, psycopg.errors.RaiseException):
-        return str(e).split("\n")[0]
-    return None
+    diag = getattr(e, "diag", None)
+    fra_raise = (isinstance(e, psycopg.errors.RaiseException)
+                 or getattr(diag, "source_function", None)
+                 == "exec_stmt_raise")
+    if not fra_raise:
+        return None
+    return str(e).split("\n")[0] or None
 
 
 def _feil(kode: str, rid: str, http: int | None = None,

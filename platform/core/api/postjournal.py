@@ -257,21 +257,26 @@ def _personer(kropp, rid):
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112–124."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if ("journalpost_unik" in str(e)
                 or "journalkilde_unik" in str(e)):
-            return _Avbrudd(_feil("journal_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("journal_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: post uten krav, avviklet kilde,
         # slettefrist over taket, NULL/ulik lengde, og de to funnene
         # sveipen eier.
-        return _Avbrudd(_feil("journal_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("journal_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

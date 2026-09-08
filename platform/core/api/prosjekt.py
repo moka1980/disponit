@@ -177,21 +177,26 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "navn_unik" in str(e):
-            return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en milepæl uten dokumentasjon, en
         # betalingsplan uten milepæler, arbeid på et avsluttet prosjekt.
-        return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Vaktens dommer: en nådd milepæl som skulle endres, et frosset
         # budsjett, et gjenåpnet prosjekt. TILSTANDER som sier nei.
-        return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("prosjekt_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

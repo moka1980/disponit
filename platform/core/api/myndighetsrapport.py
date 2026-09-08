@@ -206,23 +206,27 @@ def _kropp_uuid(kropp, felt: str, rid) -> uuidlib.UUID:
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112–123."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if ("rapportplikt_unik" in str(e)
                 or "regelverk_unik" in str(e)
                 or "plikttype_unik" in str(e)
                 or "rapportbevis_unik" in str(e)):
-            return _Avbrudd(_feil("myndighet_ulovlig_tilstand", rid,
-                                  409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("myndighet_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: plikt uten krav, plikt mot avviklet
         # regelverk, bevis i framtiden, og de to funnene sveipen eier.
-        return _Avbrudd(_feil("myndighet_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("myndighet_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

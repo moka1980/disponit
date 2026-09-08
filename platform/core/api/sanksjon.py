@@ -238,27 +238,33 @@ def _treffliste(kropp, felt: str, rid, nokkel: str,
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112/114/116."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "versjon_unik" in str(e) or "ref_unik" in str(e) \
                 or "treff_unik" in str(e):
-            return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: et eksakt identifikatortreff på et
         # subjekt uten identifikator, en avklaring uten begrunnelse,
         # et treff som alt er avklart.
-        return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, (psycopg.errors.IntegrityConstraintViolation,
                       psycopg.errors.CheckViolation,
                       psycopg.errors.InsufficientPrivilege)):
         # Vaktenes dommer, blant dem nektet mot å lukke et bekreftet
         # treff bort.
-        return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("sanksjon_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

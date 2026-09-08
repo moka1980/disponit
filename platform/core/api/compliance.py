@@ -139,19 +139,23 @@ def _doerfeil(e, rid):
     """Dørens ERRCODE → flatens feilkode. ÉN kilde, så alle tre
     skriveveiene svarer likt på samme dom. `None` = ikke en dom;
     kalleren kaster originalen videre."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: tom evidenshenvisning, manglende dato,
         # avvik uten beskrivelse, tom begrunnelse, eier som ikke er
         # medlem. Kroppen ER velformet — det er innholdskravet basen
         # håndhever som sier nei.
-        return _Avbrudd(_feil("kontroll_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("kontroll_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
-        return _Avbrudd(_feil("kontroll_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("kontroll_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

@@ -158,21 +158,25 @@ def _doerfeil(e, rid):
     """Dørens ERRCODE → flatens feilkode. ÉN kilde, så alle skriveveiene
     svarer likt på samme dom. `None` = ikke en dom; kalleren kaster
     originalen videre."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
         # Kontoen, posten eller bilaget finnes ikke. Det er ikke en
         # feilformet kropp — id-en er velformet — men en henvisning til
         # noe som ikke er der.
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: feil fortegn, overdekning, for kort
         # kontonummer, tom bankreferanse, beløp på null. Kroppen ER
         # velformet — det er innholdskravet basen håndhever som sier nei.
-        return _Avbrudd(_feil("avstemming_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("avstemming_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
-        return _Avbrudd(_feil("avstemming_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("avstemming_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 
