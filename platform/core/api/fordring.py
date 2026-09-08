@@ -1,6 +1,6 @@
 """M-23 kundefordringsagentens API (migrasjon 104).
 
-Ti endepunkter: fem leseveier og fem skriveveier. Ingen av dem rører en
+Elleve endepunkter: fem leseveier og seks skriveveier. Ingen av dem rører en
 tabell direkte — hver gjør nøyaktig ett kall mot en
 `disponit_fordring_eier`-eid SECURITY DEFINER-dør i 104, og runtime har
 ingen tabellrettigheter i det hele tatt (SP-7).
@@ -166,6 +166,42 @@ def _trinnliste(kropp, rid) -> str:
     return json.dumps(ut)
 
 
+MAKS_MOTTAKER_EPOST = 254
+_AAD_MOTTAKER = b"m23:mottaker"
+
+
+def _mottaker(conn, tenant, kropp, rid):
+    """Mottakerens e-post: normalisert, MASKERT for flaten og KRYPTERT
+    for basen. Returnerer (None, None, None, None) når feltet ikke er
+    med — mottakeren er valgfri ved registrering, og et fravær er et
+    fravær, ikke en tom streng."""
+    from .policyadmin_http import _Avbrudd, _feil
+    verdi = kropp.get("mottaker_epost")
+    if verdi is None:
+        return None, None, None, None, None
+    if not isinstance(verdi, str):
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj="«mottaker_epost»: mangler eller er ugyldig"))
+    adresse = verdi.strip().lower()
+    lokal, skille, domene = adresse.partition("@")
+    if (not skille or not lokal or "." not in domene or "@" in domene
+            or len(adresse) > MAKS_MOTTAKER_EPOST
+            or any(c.isspace() for c in adresse)):
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj="«mottaker_epost»: må være én e-postadresse"))
+    # MASKEN, M-44s form: første tegn, fire stjerner, hele domenet.
+    maske = lokal[0] + "****@" + domene
+    # HASHEN, tenant-saltet: likhet uten klartekst, og ikke et oppslagsverk
+    # på tvers av tenanter.
+    import hashlib
+    hasj = hashlib.sha256(f"{tenant}\n{adresse}".encode("utf-8")).hexdigest()
+    from db import kryptering
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+    ct, nonce = kryptering.krypter(dek, {"e": adresse}, tenant, key_id,
+                                   ekstra_aad=_AAD_MOTTAKER)
+    return maske, ct, nonce, key_id, hasj
+
+
 _DOERDOMMER = (
     psycopg.errors.IntegrityConstraintViolation,
     psycopg.errors.CheckViolation,
@@ -217,7 +253,8 @@ def svar_for(conn, tenant: str) -> dict:
          "rest_ore": r[5], "utstedt": r[6].isoformat(),
          "forfall": r[7].isoformat(), "dogn_over_forfall": r[8],
          "status": r[9], "trinn": r[10], "trinn_navn": r[11],
-         "moden_for_trinn": r[12], "apne_funn": list(r[13] or ())}
+         "moden_for_trinn": r[12], "apne_funn": list(r[13] or ()),
+         "mottaker_maske": r[14]}
         for r in conn.execute("SELECT * FROM m23_fordringene(%s,%s)",
                               (tenant, MAKS_FORDRINGER)).fetchall()]
     purreplan = [
@@ -286,7 +323,7 @@ def _skriv(tjeneste, request, bygg):
                                        "bestilling:opprett")
         nokkel = _krev_idem(request, rid)
         kropp = _kropp(request)
-        sql, args, svar, felt = bygg(tenant, bid, nokkel, kropp, rid,
+        sql, args, svar, felt = bygg(conn, tenant, bid, nokkel, kropp, rid,
                                      request)
         try:
             ut = conn.execute(sql, args).fetchone()[0]
@@ -327,7 +364,7 @@ def purreplan_endepunkt(tjeneste, request):
     trinn om gangen ville latt planen stå halvferdig, og sveipen ville
     vurdert fordringer mot den i det vinduet.
     """
-    def bygg(tenant, bid, _nokkel, kropp, rid, _request):
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
         trinn = _trinnliste(kropp, rid)
         return ("SELECT m23_sett_purreplan(%s,%s::jsonb,%s)",
                 (tenant, trinn, bid), {}, "versjon")
@@ -336,17 +373,41 @@ def purreplan_endepunkt(tjeneste, request):
 
 def registrer_endepunkt(tjeneste, request):
     """POST /v1/fordring (bestilling:opprett, idem)."""
-    def bygg(tenant, bid, nokkel, kropp, rid, _request):
+    def bygg(conn, tenant, bid, nokkel, kropp, rid, _request):
         kunde = _tekst(kropp, "kunde_ref", rid, MAKS_KUNDE_REF)
         nummer = _tekst(kropp, "fakturanummer", rid, MAKS_FAKTURANUMMER)
         belop = _ore(kropp, "belop_ore", rid)
         utstedt = _tekst(kropp, "utstedt", rid, 32)
         forfall = _tekst(kropp, "forfall", rid, 32)
+        maske, ct, nonce, key_id, hasj = _mottaker(conn, tenant, kropp, rid)
         fid = _utled("fordring", tenant, nokkel)
         return ("SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,%s::date,"
-                "                              %s::date,%s)",
-                (tenant, fid, kunde, nummer, belop, utstedt, forfall, bid),
-                {"fordring_id": str(fid)}, "ny")
+                "                              %s::date,%s,%s,%s,%s,%s,%s)",
+                (tenant, fid, kunde, nummer, belop, utstedt, forfall, bid,
+                 maske, ct, nonce, key_id, hasj),
+                {"fordring_id": str(fid), "mottaker_maske": maske}, "ny")
+    return _skriv(tjeneste, request, bygg)
+
+
+def mottaker_endepunkt(tjeneste, request):
+    """POST /v1/fordring/{fordring_id}/mottaker (bestilling:opprett, idem).
+
+    ADRESSEN PURRINGEN SKAL TIL (146, ARC B). Kroppen bærer
+    `mottaker_epost`; svaret og listen bærer bare MASKEN. Adressen
+    krypteres her med tenantens DEK, og basen ser aldri klartekst.
+    Kan settes og rettes så lenge fordringen er åpen.
+    """
+    def bygg(conn, tenant, bid, nokkel, kropp, rid, request_):
+        fid = _sti_uuid(request_, "fordring_id", rid)
+        if kropp.get("mottaker_epost") is None:
+            from .policyadmin_http import _Avbrudd, _feil
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«mottaker_epost»: mangler eller er ugyldig"))
+        maske, ct, nonce, key_id, hasj = _mottaker(conn, tenant, kropp, rid)
+        return ("SELECT m23_sett_mottaker(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, fid, maske, ct, nonce, key_id, hasj, bid),
+                {"fordring_id": str(fid), "mottaker_maske": maske},
+                "endret")
     return _skriv(tjeneste, request, bygg)
 
 
@@ -360,7 +421,7 @@ def betaling_endepunkt(tjeneste, request):
     FULLT BETALT LUKKER KRAVET i samme transaksjon. Uten det ville en
     oppgjort fordring fortsatt stått som åpen og blitt et funn i natt.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, request):
         fid = _sti_uuid(request, "fordring_id", rid)
         belop = _ore(kropp, "belop_ore", rid)
         inntruffet = _tekst(kropp, "inntruffet", rid, 32)
@@ -384,7 +445,7 @@ def neste_trinn_endepunkt(tjeneste, request):
     fordringer som er modne — men en jobb som eskalerer om natten er
     nøyaktig den fullmakten v1 ikke gir seg selv.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, request):
         fid = _sti_uuid(request, "fordring_id", rid)
         begrunnelse = _valgfri_tekst(kropp, "begrunnelse", rid,
                                      MAKS_BEGRUNNELSE)
@@ -402,7 +463,7 @@ def ettergi_endepunkt(tjeneste, request):
     etterprøve senere. Begrunnelsen kreves av døren og av CHECK-en;
     her sjekkes den ikke — et forsøk blir 409 fordi BASEN nektet.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, request):
         fid = _sti_uuid(request, "fordring_id", rid)
         begrunnelse = _tekst(kropp, "begrunnelse", rid, MAKS_BEGRUNNELSE)
         hid = _utled("ettergi", tenant, nokkel)

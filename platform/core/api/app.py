@@ -1325,6 +1325,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def fordring_neste_trinn(request: Request) -> Response:
         from . import fordring as fordringmodul
         return fordringmodul.neste_trinn_endepunkt(tjeneste, request)
+    def fordring_mottaker(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.mottaker_endepunkt(tjeneste, request)
 
     def fordring_ettergi(request: Request) -> Response:
         from . import fordring as fordringmodul
@@ -3637,6 +3640,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               fordring_betaling, methods=["POST"]),
         Route("/v1/fordring/{fordring_id:uuid}/neste-trinn",
               fordring_neste_trinn, methods=["POST"]),
+        Route("/v1/fordring/{fordring_id:uuid}/mottaker",
+              fordring_mottaker, methods=["POST"]),
         Route("/v1/fordring/{fordring_id:uuid}/ettergi", fordring_ettergi,
               methods=["POST"]),
         # 105 (M-24): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
@@ -5075,6 +5080,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/fordring/{fordring_id:uuid}/betaling"):
         "bestilling:opprett",
     ("POST", "/v1/fordring/{fordring_id:uuid}/neste-trinn"):
+        "bestilling:opprett",
+    ("POST", "/v1/fordring/{fordring_id:uuid}/mottaker"):
         "bestilling:opprett",
     ("POST", "/v1/fordring/{fordring_id:uuid}/ettergi"):
         "bestilling:opprett",
