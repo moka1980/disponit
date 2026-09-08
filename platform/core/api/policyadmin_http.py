@@ -259,15 +259,30 @@ def _browserkontekst(tjeneste, request, conn, rid: str, scope: str):
     except kjerne.Feilsvar as f:
         raise _Avbrudd(_feil(f.kode, rid))
     sesjon_cookie = request.cookies.get(sesjonmodul.C_SESJON)
+    token_id = getattr(auth, "token_id", "") or ""
+    if sesjon_cookie is None and token_id and not token_id.startswith("sesjon:"):
+        # MASKINVEIEN (#411, eiervedtak 7/9: «it should be able enter the
+        # module by machine»). `_autentiser` har alt avgjort at Bearer-
+        # tokenet bærer rutens scope. CSRF er dobbel-innsending mot en
+        # COOKIE — en token i en header kan ikke sendes av en fremmed
+        # side, så kravet er meningsløst her og ble i praksis et forbud:
+        # alle 278 skriveveier svarte `csrf_ugyldig` til hver integrasjon.
+        # Aktøren er tokenet, navngitt som det, så revisjonsloggen sier
+        # HVILKEN integrasjon som skrev. Idempotency-Key kreves som før,
+        # og cookie+Bearer samtidig er fortsatt 400 (v2 §8).
+        tenant = auth.tenant
+        bid = f"token:{token_id}"
+        _gjenopprett_kontekst(conn, tenant, bid, rid)
+        return tenant, bid
     rad = conn.execute("SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
                        (sesjonmodul._hash(sesjon_cookie),)).fetchone() \
         if sesjon_cookie else None
-    conn.rollback()
+    conn.commit()   # #413, se policyadmin_http._gjenopprett_kontekst
     if rad is None or not sesjonmodul.csrf_matcher(rad[0], request):
         tjeneste.logg.hendelse("csrf_ugyldig", rid)
         raise _Avbrudd(_feil("csrf_ugyldig", rid))
     tenant = auth.tenant
-    bid = auth.token_id.split("sesjon:", 1)[-1]
+    bid = token_id.split("sesjon:", 1)[-1]
     _gjenopprett_kontekst(conn, tenant, bid, rid)
     return tenant, bid
 

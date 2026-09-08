@@ -526,7 +526,7 @@ def sesjon_logout(tjeneste, request: Request) -> Response:
             rad = conn.execute(
                 "SELECT csrf_hash FROM slaa_opp_sesjon(%s)",
                 (_hash(sesjon),)).fetchone()
-            conn.rollback()
+            conn.commit()   # #413, se policyadmin_http._gjenopprett_kontekst
             if rad is not None:
                 if not csrf_matcher(rad[0], request):
                     # Forget-forsøk med feil/uten token: ØKTEN URØRT, 403.
@@ -595,7 +595,12 @@ def slaa_opp_prinsipal(tjeneste, conn, request: Request, rid: str,
     ident = conn.execute(
         "SELECT profil->>'epost' FROM brukeridentitet WHERE bruker_id=%s",
         (bid,)).fetchone() if (gyldig and med_profil) else None
-    conn.rollback()
+    # #413: COMMIT, IKKE ROLLBACK. `slaa_opp_sesjon` bumper `siste_bruk` i
+    # denne transaksjonen; rollbacken kastet bumpen hver gang, og «inaktiv
+    # i 30 minutter» ble «30 minutter siden innlogging» for alle. SET LOCAL-
+    # konteksten dør uansett ved commit — det var hele grunnen til at
+    # transaksjonen skulle lukkes her (se `_gjenopprett_kontekst`).
+    conn.commit()
     if not gyldig:
         return None
     # `brukermedlemskap.roller` er `TEXT[] NOT NULL` — men det forbyr bare
