@@ -470,9 +470,9 @@ def tidslinje_endepunkt(tjeneste, request):
     from .app import _rid
     from .lesing import _les, kanonisk_json
     rid = _rid(request)
-    hid = _sti_uuid(request, "hendelse_id", rid)
 
     def _fn(conn, auth, rid_):
+        hid = _sti_uuid(request, "hendelse_id", rid_)   # innenfor rammen (#421)
         rader = conn.execute("SELECT * FROM m29_tidslinjen(%s,%s)",
                              (auth.tenant, hid)).fetchall()
         return kanonisk_json(
@@ -496,12 +496,14 @@ def signaler_endepunkt(tjeneste, request):
     from .lesing import _les, kanonisk_json
     from .policyadmin_http import _Avbrudd, _feil
     rid = _rid(request)
-    fra = request.query_params.get("fra")
-    if not fra:
-        raise _Avbrudd(_feil("request_feilformet", rid))
-    fra = _tidspunkt_str(fra, rid)
 
     def _fn(conn, auth, rid_):
+        # Parameterkontrollen INNENFOR rammen: `_les` fanger `_Avbrudd`
+        # der, og et manglende `fra` er et 400, ikke en 500 (#421).
+        fra = request.query_params.get("fra")
+        if not fra:
+            raise _Avbrudd(_feil("request_feilformet", rid_))
+        fra = _tidspunkt_str(fra, rid_)
         rader = conn.execute("SELECT * FROM m29_signalkilden(%s,%s)",
                              (auth.tenant, fra)).fetchall()
         return kanonisk_json(

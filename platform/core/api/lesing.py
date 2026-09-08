@@ -56,6 +56,7 @@ def _les(tjeneste, request: Request, scope: str, fn) -> Response:
     en Response. Transaksjonen rulles alltid tilbake — et leseendepunkt som
     kan committe er ett refaktoreringsuhell unna å bli et skrivende.
     """
+    from .policyadmin_http import _Avbrudd
     rid = _rid(request)
     try:
         conn = tjeneste.pool.hent()
@@ -72,6 +73,12 @@ def _les(tjeneste, request: Request, scope: str, fn) -> Response:
             # samme inngang som beslutningsveien og `/v1/unntak`.
             sett_kontekst(conn, auth.tenant, auth.aktor, rid)
             return fn(conn, auth, rid)
+        except _Avbrudd as a:
+            # Et ferdig svar båret ut av en hjelper (parameterkontroll,
+            # dørnekt) — som `_med_conn` gjør for skriveveiene. Uten
+            # dette ble hver ugyldig parameter i en lesevei en 500
+            # (hendelse/signaler, skatt/land; Fjordlys 8/9, #421).
+            return a.respons
         except kjerne.Feilsvar as f:
             tjeneste.logg.hendelse(f.kode, rid, auth.tenant)
             return _feilsvar(f.kode, rid)
