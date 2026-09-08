@@ -338,6 +338,9 @@ class _TellendeConn:
     def rollback(self):
         self.spor.append("ROLLBACK")
 
+    def commit(self):
+        self.spor.append("COMMIT")
+
 
 class _Foresporsel:
     def __init__(self, cookie):
@@ -371,15 +374,20 @@ def test_profildata_hentes_bare_der_den_skal_vises():
     assert prin[5] is None, "profil skal ikke hentes uten med_profil"
     assert not [q for q in spor if "brukeridentitet" in q], \
         "et vanlig API-kall skal ikke røre brukeridentitet"
-    assert spor.count("ROLLBACK") == 1, "én transaksjon, én rollback"
+    # #413: transaksjonen lukkes med COMMIT, ikke rollback — `slaa_opp_sesjon`
+    # bumper `siste_bruk` i den, og en rollback kastet bumpen hver gang, så
+    # hver økt døde 30 minutter etter innlogging uansett bruk. Fortsatt ÉN
+    # transaksjon; det er lukkingen som byttet fortegn.
+    assert spor.count("COMMIT") == 1 and "ROLLBACK" not in spor, \
+        "én transaksjon, lukket med commit (#413)"
 
     prin2, spor2 = _oppslag(True)
     assert prin2[5] == "kari@acme.no"
     ident = [i for i, q in enumerate(spor2) if "brukeridentitet" in q]
     assert len(ident) == 1, "profilen skal hentes én gang"
-    assert spor2.count("ROLLBACK") == 1, \
+    assert spor2.count("COMMIT") == 1 and "ROLLBACK" not in spor2, \
         "profilen skal ikke koste en ekstra transaksjon"
-    assert ident[0] < spor2.index("ROLLBACK"), \
+    assert ident[0] < spor2.index("COMMIT"), \
         "profiloppslaget skal ligge i samme transaksjon som medlemskapet"
 
 
