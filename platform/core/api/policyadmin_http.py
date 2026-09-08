@@ -135,9 +135,34 @@ def _feil(kode: str, rid: str, http: int | None = None,
                         headers={"x-request-id": rid})
 
 
+def _json_standard(verdi):
+    """Det JSON ikke kan si selv: en UUID og et tidspunkt fra døra.
+
+    Dørene returnerer `UUID` og `timestamptz`, og de 35 `_skriv`-kopiene
+    legger dørens retur rett i svaret (`{**svar, felt: ut}`). Starlettes
+    JSONResponse serialiserer uten `default`, så hver dør som returnerte
+    en UUID ga 500 «Object of type UUID is not JSON serializable» — og
+    raden var alt committet (innhold/kilde, innhold/visning, telefoni/
+    hjemmel, telefoni/regel; Fjordlys-kampanjen 8/9, #417)."""
+    import datetime
+    import uuid
+    if isinstance(verdi, uuid.UUID):
+        return str(verdi)
+    if isinstance(verdi, (datetime.datetime, datetime.date)):
+        return verdi.isoformat()
+    raise TypeError(f"Object of type {type(verdi).__name__} "
+                    "is not JSON serializable")
+
+
 def _ok(res: dict, rid: str, http: int = 200):
-    from starlette.responses import JSONResponse
-    return JSONResponse(res, status_code=http, headers={"x-request-id": rid})
+    import json
+
+    from starlette.responses import Response
+    data = json.dumps(res, ensure_ascii=False, allow_nan=False,
+                      separators=(",", ":"), default=_json_standard)
+    return Response(content=data.encode("utf-8"), status_code=http,
+                    media_type="application/json",
+                    headers={"x-request-id": rid})
 
 
 def _ok_lagret(conn, res: dict, rid: str, http: int = 200):
