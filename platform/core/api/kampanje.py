@@ -171,25 +171,31 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "ref_unik" in str(e) or "kilde_unik" in str(e):
-            return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409))
+            return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
         # PK-kollisjon på en SP-2-utledet id, eller samme mottaker lagt
         # i samme plan to ganger: SAMME nøkkel, samme rad.
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: et samtykke i framtida, en avlyst
         # kampanje, en deaktivert mottaker.
-        return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Vaktenes dommer: en frosset samtykkehendelse, en gjenåpnet
         # kampanje.
-        return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("kampanje_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

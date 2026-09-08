@@ -168,24 +168,30 @@ def _grunnlagsliste(kropp, felt: str, rid) -> list[str]:
 
 def _doerfeil(e, rid):
     """Dørenes dommer → API-feil. Samme form som 112/114."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "orgnr_unik" in str(e) or "oppslag_unik" in str(e):
-            return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: et oppslag innenfor ferskhetsvinduet,
         # en ukjent vert, et grunnlag tenanten ikke har godkjent, et
         # oppslag som alt er fullført.
-        return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, (psycopg.errors.IntegrityConstraintViolation,
                       psycopg.errors.CheckViolation,
                       psycopg.errors.InsufficientPrivilege)):
-        return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("motpart_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

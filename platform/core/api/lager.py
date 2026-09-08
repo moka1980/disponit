@@ -154,23 +154,28 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "kode_unik" in str(e) or "ett_apent" in str(e):
-            return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409))
+            return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
         # PK-kollisjon på en SP-2-utledet id: SAMME nøkkel, samme rad.
         # En gjentatt POST må ikke bli to linjer i hovedboken.
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: et punkt skrevet bakover, en ukjent
         # bevegelsestype, en bevegelse på en deaktivert vare.
-        return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Vaktens dommer: en NEGATIV BEHOLDNING, en frosset
         # hovedbokslinje, to overlappende punktversjoner.
-        return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("lager_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

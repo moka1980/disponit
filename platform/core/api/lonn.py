@@ -159,24 +159,30 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "ref_unik" in str(e) or "kilde_unik" in str(e) \
                 or "versjon_unik" in str(e):
-            return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409))
+            return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
         # PK-kollisjon på en SP-2-utledet id: SAMME nøkkel, samme rad.
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en time i framtida, en plan skrevet
         # bakover, en uke kortere enn en dag.
-        return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Vaktenes dommer: en frosset time, to overlappende planer.
-        return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("lonn_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

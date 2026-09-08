@@ -153,23 +153,27 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en eier som ikke er aktivt medlem, et
         # avsluttet løp som får flere steg, et avbrutt løp uten
         # begrunnelse. Kroppen ER velformet — det er innholdskravet
         # basen håndhever som sier nei.
-        return _Avbrudd(_feil("onboarding_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("onboarding_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # SEKVENSREGELEN LANDER HER, via vaktens
         # `insufficient_privilege`: et steg som ble forsøkt fullført før
         # sitt forgjengersteg. Det er en TILSTAND som sier nei, ikke en
         # feilformet kropp — og 409 er derfor det ærlige svaret.
-        return _Avbrudd(_feil("onboarding_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("onboarding_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

@@ -151,7 +151,7 @@ def _doerfeil(e, rid):
     """Dørens ERRCODE → flatens feilkode. ÉN kilde, så alle tre
     skriveveiene svarer likt på samme dom. `None` = ikke en dom;
     kalleren kaster originalen videre."""
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         # TO HELT ULIKE SANNHETER MED SAMME SQLSTATE, og de skal ikke
         # svare likt. SP-2s materialitetskonflikt reises av DØREN med en
@@ -164,20 +164,25 @@ def _doerfeil(e, rid):
         # sto i registeret fra før.
         if getattr(e.diag, "constraint_name", None) in (
                 "tilgang_unik", "tilgangsobjekt_unik"):
-            return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er på en eier som ikke er medlem, og på en
         # gjennomgang uten navn. Kroppen ER velformet — det er tilstanden
         # eller innholdskravet som sier nei.
-        return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Fremmednøkkelen mot et objekt som ikke finnes, den ikke-tomme
         # CHECKen på hjemmelen, og unikhetskravet på (objekt, subjekt,
         # nivå) lander her.
-        return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("tilgang_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

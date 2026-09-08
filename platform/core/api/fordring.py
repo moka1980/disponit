@@ -170,22 +170,26 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: overbetaling, en eskalering på et
         # avsluttet krav, et trinn planen ikke har, en ettergivelse uten
         # begrunnelse. Kroppen ER velformet — det er innholdskravet
         # basen håndhever som sier nei.
-        return _Avbrudd(_feil("fordring_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("fordring_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # TRINNHOPPET LANDER HER, via vaktens `insufficient_privilege`,
         # og bakoverplanen via `check_violation`. Begge er TILSTANDER som
         # sier nei, ikke feilformede kropper.
-        return _Avbrudd(_feil("fordring_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("fordring_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

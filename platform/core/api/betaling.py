@@ -160,22 +160,27 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         if "ref_unik" in str(e) or "kilde_unik" in str(e) \
                 or "en_apen" in str(e):
-            return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409))
+            return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
         # PK-kollisjon på en SP-2-utledet id: SAMME nøkkel, samme rad.
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en status i framtida, et for kort
         # betalingsmiddel, en periode skrevet bakover.
-        return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # Vaktens dommer: en frosset hendelse, to overlappende perioder.
-        return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("betaling_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

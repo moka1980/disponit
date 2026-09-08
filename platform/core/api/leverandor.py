@@ -159,28 +159,33 @@ _DOERDOMMER = (
 
 
 def _doerfeil(e, rid):
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
         # TO AKTIVE AVTALER PÅ SAMME LEVERANDØR OG YTELSE lander her, via
         # `leveranseavtale_en_aktiv`. Det er en TILSTAND som sier nei —
         # ikke en idempotenskonflikt: kalleren ba om en NY avtale, og den
         # gamle er fortsatt aktiv.
         if "en_aktiv" in str(e) or "navn_unik" in str(e):
-            return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409))
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+            return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409,
+                                  detalj=_doerdetalj(e)))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.ForeignKeyViolation):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.InvalidParameterValue):
         # Dørenes egne RAISE-er: en ukjent `sla_type`, en måling mot en
         # avsluttet avtale, en avslutning uten begrunnelse. Kroppen ER
         # velformet — det er innholdskravet basen håndhever som sier nei.
-        return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # MÅLINGEN UTENFOR AVTALENS VINDU lander her, via vaktens
         # `check_violation`. Den er en TILSTAND som sier nei, ikke en
         # feilformet kropp: datoen er lesbar, avtalen finnes, og likevel
         # er målingen et tall uten dom.
-        return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("leverandor_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 

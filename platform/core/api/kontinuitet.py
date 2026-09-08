@@ -179,16 +179,19 @@ def _doerfeil(e, rid):
     Returnerer et `_Avbrudd` for de dommene dørene faktisk feller, og
     `None` for alt annet — kalleren kaster da originalfeilen videre.
     """
-    from .policyadmin_http import _Avbrudd, _feil
+    from .policyadmin_http import _Avbrudd, _doerdetalj, _feil
     if isinstance(e, psycopg.errors.UniqueViolation):
-        return _Avbrudd(_feil("idempotenskonflikt", rid))
+        return _Avbrudd(_feil("idempotenskonflikt", rid,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, psycopg.errors.NoDataFound):
-        return _Avbrudd(_feil("ikke_funnet", rid, 404))
+        return _Avbrudd(_feil("ikke_funnet", rid, 404,
+                              detalj=_doerdetalj(e)))
     if isinstance(e, _DOERDOMMER):
         # 409, ikke 400: kroppen ER velformet — det er TILSTANDEN som
         # sier nei, og forskjellen er hele forklaringen mennesket
         # trenger.
-        return _Avbrudd(_feil("kontinuitet_ulovlig_tilstand", rid, 409))
+        return _Avbrudd(_feil("kontinuitet_ulovlig_tilstand", rid, 409,
+                              detalj=_doerdetalj(e)))
     return None
 
 
