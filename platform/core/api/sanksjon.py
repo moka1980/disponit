@@ -91,10 +91,12 @@ def _tekst(kropp, felt: str, rid, maks: int) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip()
     if not verdi or len(verdi) > maks:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -114,7 +116,9 @@ def _valg(kropp, felt: str, rid, lovlige) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if verdi not in lovlige:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: må være ett av "
+            f"{', '.join(map(str, lovlige))}"))
     return verdi
 
 
@@ -123,9 +127,11 @@ def _heltall(kropp, felt: str, rid, minst: int, mest: int) -> int:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, int) or isinstance(verdi, bool):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if not (minst <= verdi <= mest):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -135,11 +141,13 @@ def _dato(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     try:
         datetime.date.fromisoformat(verdi)
     except ValueError:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -153,11 +161,13 @@ def _sha256(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip().lower()
     if len(verdi) != 64 or any(c not in "0123456789abcdef"
                                for c in verdi):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -166,11 +176,13 @@ def _feltliste(kropp, felt: str, rid) -> list[str]:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, list) or not verdi:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     ut = []
     for f in verdi:
         if not isinstance(f, str) or not f.strip() or len(f) > 60:
-            raise _Avbrudd(_feil("request_feilformet", rid))
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«{felt}»: mangler eller er ugyldig"))
         if f.strip() not in ut:
             ut.append(f.strip())
     return ut
@@ -203,11 +215,13 @@ def _treffliste(kropp, felt: str, rid, nokkel: str,
     if verdi is None:
         return []
     if not isinstance(verdi, list) or len(verdi) > MAKS_TREFF:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     ut = []
     for i, rad in enumerate(verdi):
         if not isinstance(rad, dict):
-            raise _Avbrudd(_feil("request_feilformet", rid))
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«{felt}»: mangler eller er ugyldig"))
         matchtype = _valg(rad, "matchtype", rid, MATCHTYPER)
         matchfelt = _feltliste(rad, "matchfelt", rid)
         likhet = _heltall(rad, "likhet", rid, 0, 100)
@@ -216,12 +230,18 @@ def _treffliste(kropp, felt: str, rid, nokkel: str,
         # kunne blokkere maskinelt, vært utvisket.
         if matchtype == "navnelikhet":
             if likhet >= 100:
-                raise _Avbrudd(_feil("request_feilformet", rid))
+                raise _Avbrudd(_feil("request_feilformet", rid,
+                    detalj=f"«{felt}[].likhet»: navnelikhet må være"
+                    " under 100"))
         elif likhet != 100:
-            raise _Avbrudd(_feil("request_feilformet", rid))
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«{felt}[].likhet»: et eksakt treff har"
+                " likhet 100"))
         if (matchtype == "eksakt_identifikator"
                 and "identifikator" not in matchfelt):
-            raise _Avbrudd(_feil("request_feilformet", rid))
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«{felt}[].matchfelt»: eksakt_identifikator"
+                " krever «identifikator» i matchfelt"))
         ut.append({
             "treff_id": str(_utled(f"treff:{i}", tenant, nokkel)),
             "matchtype": matchtype,
@@ -571,7 +591,8 @@ def _sti_uuid_kropp(kropp, felt: str, rid) -> uuidlib.UUID:
     try:
         return uuidlib.UUID(str(kropp.get(felt)))
     except (ValueError, TypeError):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
 
 
 def avklar_endepunkt(tjeneste, request):

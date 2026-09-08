@@ -143,7 +143,8 @@ def _tekst(kropp, felt: str, rid, maks: int = 4000) -> str:
     verdi = kropp.get(felt)
     if not isinstance(verdi, str) or not verdi.strip() \
             or len(verdi) > maks:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
