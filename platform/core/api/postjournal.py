@@ -97,10 +97,12 @@ def _tekst(kropp, felt: str, rid, maks: int) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip()
     if not verdi or len(verdi) > maks:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -114,7 +116,9 @@ def _valg(kropp, felt: str, rid, lovlige) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if verdi not in lovlige:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: må være ett av "
+            f"{', '.join(map(str, lovlige))}"))
     return verdi
 
 
@@ -123,9 +127,11 @@ def _heltall(kropp, felt: str, rid, minst: int, mest: int) -> int:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, int) or isinstance(verdi, bool):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if not (minst <= verdi <= mest):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -133,11 +139,13 @@ def _dato(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     try:
         datetime.date.fromisoformat(verdi)
     except ValueError:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -160,7 +168,8 @@ def _dato_som_kan_vaere_null(kropp, felt: str, rid) -> str | None:
     """
     from .policyadmin_http import _Avbrudd, _feil
     if felt not in kropp:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if kropp[felt] is None:
         return None
     return _dato(kropp, felt, rid)
@@ -170,11 +179,13 @@ def _sha256(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip().lower()
     if len(verdi) != 64 or any(c not in "0123456789abcdef"
                                for c in verdi):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -191,7 +202,8 @@ def _kropp_uuid(kropp, felt: str, rid) -> uuidlib.UUID:
     try:
         return uuidlib.UUID(str(kropp.get(felt)))
     except (ValueError, TypeError):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
 
 
 
@@ -212,7 +224,8 @@ def _organnummer(kropp, felt: str, rid) -> str | None:
         return None
     verdi = _tekst(kropp, felt, rid, 9)
     if not _ORGNR_RE.match(verdi):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -227,7 +240,8 @@ def _formaal(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = _tekst(kropp, felt, rid, MAKS_TEKST)
     if len(verdi) < MIN_FORMAAL:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 

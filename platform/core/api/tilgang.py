@@ -98,7 +98,8 @@ def _tekst(kropp, felt: str, rid, maks: int) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str) or not verdi.strip() or len(verdi) > maks:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -106,7 +107,9 @@ def _valg(kropp, felt: str, lovlige: tuple[str, ...], rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if verdi not in lovlige:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: må være ett av "
+            f"{', '.join(map(str, lovlige))}"))
     return verdi
 
 
@@ -123,7 +126,8 @@ def _uuid_felt(kropp, felt: str, rid) -> uuidlib.UUID:
     try:
         return uuidlib.UUID(str(kropp.get(felt)))
     except (ValueError, TypeError):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
 
 
 #: De ENESTE feilklassene dørene bruker som DOM (089/096s liste, samme

@@ -84,10 +84,12 @@ def _tekst(kropp, felt: str, rid, maks: int) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip()
     if not verdi or len(verdi) > maks:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -104,7 +106,9 @@ def _valg(kropp, felt: str, rid, lovlige) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if verdi not in lovlige:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: må være ett av "
+            f"{', '.join(map(str, lovlige))}"))
     return verdi
 
 
@@ -113,9 +117,11 @@ def _heltall(kropp, felt: str, rid, minst: int, mest: int) -> int:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, int) or isinstance(verdi, bool):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if not (minst <= verdi <= mest):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -123,7 +129,8 @@ def _bool(kropp, felt: str, rid) -> bool:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, bool):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -131,11 +138,13 @@ def _dato(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     try:
         datetime.date.fromisoformat(verdi)
     except ValueError:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -143,11 +152,13 @@ def _tidspunkt(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     try:
         datetime.datetime.fromisoformat(verdi)
     except ValueError:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -162,9 +173,11 @@ def _url(kropp, felt: str, rid) -> str:
     verdi = _tekst(kropp, felt, rid, MAKS_URL)
     if not (verdi.startswith("http://")
             or verdi.startswith("https://")):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if any(c.isspace() for c in verdi):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -173,10 +186,12 @@ def _medietype(kropp, felt: str, rid) -> str:
     verdi = _tekst(kropp, felt, rid, MAKS_REF).lower()
     hoved, _, under = verdi.partition("/")
     if not hoved.isalpha() or not under:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789.+-"
            for c in under):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -184,11 +199,13 @@ def _sha256(kropp, felt: str, rid) -> str:
     from .policyadmin_http import _Avbrudd, _feil
     verdi = kropp.get(felt)
     if not isinstance(verdi, str):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     verdi = verdi.strip().lower()
     if len(verdi) != 64 or any(c not in "0123456789abcdef"
                                for c in verdi):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     return verdi
 
 
@@ -200,11 +217,13 @@ def _klasser(kropp, felt: str, rid) -> list[str]:
     if verdi is None:
         return []
     if not isinstance(verdi, list) or len(verdi) > 50:
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
     ut = []
     for x in verdi:
         if not isinstance(x, str) or not x.strip() or len(x) > 50:
-            raise _Avbrudd(_feil("request_feilformet", rid))
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«{felt}»: mangler eller er ugyldig"))
         ut.append(x.strip())
     return ut
 
@@ -222,7 +241,8 @@ def _kropp_uuid(kropp, felt: str, rid) -> uuidlib.UUID:
     try:
         return uuidlib.UUID(str(kropp.get(felt)))
     except (ValueError, TypeError):
-        raise _Avbrudd(_feil("request_feilformet", rid))
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj=f"«{felt}»: mangler eller er ugyldig"))
 
 
 def _doerfeil(e, rid):
