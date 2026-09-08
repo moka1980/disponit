@@ -159,6 +159,17 @@ def _kampanje(c, tenant, *, ref=None, dato="2026-08-10",
     return kid
 
 
+def _plan_direkte(migrator, tenant, kid, mid):
+    """En planrad UTENOM døra — slik rader fra før 142 ser ut. Døra nekter
+    nå (#423) det sveipen skal finne; sveipens invariant måles på rader
+    døra aldri ville sluppet gjennom."""
+    _sett_kontekst(migrator, tenant)
+    migrator.execute(
+        "INSERT INTO kampanjeplan (tenant, kampanje_id, mottaker_id,"
+        " lagt_til_av) VALUES (%s,%s,%s,'for-142')", (tenant, kid, mid))
+    migrator.commit()
+
+
 def _plan(c, tenant, kid, mid, *, aktor="u-test"):
     _sett_kontekst(c, tenant)
     n = c.execute("SELECT m44_legg_i_plan(%s,%s,%s,%s)",
@@ -341,7 +352,9 @@ def test_invariant_mottaker_uten_samtykke(migrator):
         med_ja, _ = _mottaker(c, tenant, ref="MED-JA")
         _samtykke(c, tenant, med_ja, "gitt", "2026-08-01")
         kid = _kampanje(c, tenant, dato="2026-08-10")
-        _plan(c, tenant, kid, i_plan)
+        # Døra nekter en mottaker uten samtykke (#423); raden legges
+        # utenom døra, slik rader fra før 142 ser ut.
+        _plan_direkte(migrator, tenant, kid, i_plan)
         _plan(c, tenant, kid, med_ja)
     finally:
         c.close()
@@ -709,7 +722,7 @@ def test_invariant_over_frekvensgrense_uten_funn(migrator):
     tenant = _tenantnavn("tak")
     c = _rt()
     try:
-        _grense(c, tenant, maks=2, periode=7)
+        _grense(c, tenant, maks=3, periode=7)
         paa, _ = _mottaker(c, tenant, ref="PAA")
         over, _ = _mottaker(c, tenant, ref="OVER")
         spredt, _ = _mottaker(c, tenant, ref="SPREDT")
@@ -724,6 +737,9 @@ def test_invariant_over_frekvensgrense_uten_funn(migrator):
         # SPREDT: 3, men fordelt over mer enn 7 døgn.
         for d in ("2026-08-01", "2026-08-10", "2026-08-20"):
             _plan(c, tenant, _kampanje(c, tenant, dato=d), spredt)
+        # Taket strammes ETTER planleggingen: døra dømte med tak 3 (#423),
+        # sveipen dømmer med det som gjelder nå.
+        _grense(c, tenant, maks=2, periode=7)
     finally:
         c.close()
     _sett_kontekst(migrator, tenant)
@@ -751,7 +767,7 @@ def test_en_avlyst_kampanje_teller_ikke_mot_taket(migrator):
     tenant = _tenantnavn("avlyst")
     c = _rt()
     try:
-        _grense(c, tenant, maks=2, periode=7)
+        _grense(c, tenant, maks=3, periode=7)
         mid, _ = _mottaker(c, tenant)
         _samtykke(c, tenant, mid, "gitt", "2026-08-01")
         kids = []
@@ -759,6 +775,7 @@ def test_en_avlyst_kampanje_teller_ikke_mot_taket(migrator):
             k = _kampanje(c, tenant, dato=d)
             _plan(c, tenant, k, mid)
             kids.append(k)
+        _grense(c, tenant, maks=2, periode=7)   # strammes etterpå (#423)
     finally:
         c.close()
     with _sv() as v:
@@ -799,8 +816,9 @@ def test_doren_svarer_med_antallet_i_perioden(migrator):
     tenant = _tenantnavn("svar")
     c = _rt()
     try:
-        _grense(c, tenant, maks=2, periode=7)
+        _grense(c, tenant, maks=3, periode=7)
         mid, _ = _mottaker(c, tenant)
+        _samtykke(c, tenant, mid, "gitt", "2026-08-01")
         svar = []
         for d in ("2026-08-10", "2026-08-12", "2026-08-14"):
             svar.append(_plan(c, tenant, _kampanje(c, tenant, dato=d),
@@ -815,18 +833,21 @@ def test_samtykke_trukket_og_utlopt_er_egne_funn(migrator):
     tenant = _tenantnavn("samtykkefunn")
     c = _rt()
     try:
-        _grense(c, tenant, maks=99, periode=7, gyldig=365)
+        _grense(c, tenant, maks=99, periode=7, gyldig=3650)
         trukket, _ = _mottaker(c, tenant, ref="TRUKKET")
         utlopt, _ = _mottaker(c, tenant, ref="UTLOPT")
         fersk, _ = _mottaker(c, tenant, ref="FERSK")
         _samtykke(c, tenant, trukket, "gitt", "2026-01-01")
-        _samtykke(c, tenant, trukket, "trukket", "2026-02-01",
-                  kanal="avmeldingslenke")
         _samtykke(c, tenant, utlopt, "gitt", "2024-01-01")
         _samtykke(c, tenant, fersk, "bekreftet", "2026-08-01")
         kid = _kampanje(c, tenant, dato="2026-08-20")
         for m_ in (trukket, utlopt, fersk):
             _plan(c, tenant, kid, m_)
+        # Etter planleggingen: samtykket trekkes, og gyldigheten strammes
+        # — døra sa ja da, sveipen sier fra nå (#423).
+        _samtykke(c, tenant, trukket, "trukket", "2026-02-01",
+                  kanal="avmeldingslenke")
+        _grense(c, tenant, maks=99, periode=7, gyldig=365)
     finally:
         c.close()
     _sett_kontekst(migrator, tenant)
@@ -893,11 +914,12 @@ def test_sveipen_er_idempotent_og_lukker_uten_aa_slette(migrator):
     tenant = _tenantnavn("idempotens")
     c = _rt()
     try:
-        _grense(c, tenant, maks=1, periode=7)
+        _grense(c, tenant, maks=2, periode=7)
         mid, _ = _mottaker(c, tenant)
         _samtykke(c, tenant, mid, "gitt", "2026-08-01")
         for d in ("2026-08-10", "2026-08-12"):
             _plan(c, tenant, _kampanje(c, tenant, dato=d), mid)
+        _grense(c, tenant, maks=1, periode=7)   # strammes etterpå (#423)
     finally:
         c.close()
     with _sv() as v:
@@ -938,11 +960,12 @@ def test_sveipen_sender_ingenting_og_rorer_ingen_hendelse(migrator):
     tenant = _tenantnavn("sveip")
     c = _rt()
     try:
-        _grense(c, tenant, maks=1, periode=7)
+        _grense(c, tenant, maks=2, periode=7)
         mid, _ = _mottaker(c, tenant)
         _samtykke(c, tenant, mid, "gitt", "2026-08-01")
         for d in ("2026-08-10", "2026-08-12"):
             _plan(c, tenant, _kampanje(c, tenant, dato=d), mid)
+        _grense(c, tenant, maks=1, periode=7)   # strammes etterpå (#423)
     finally:
         c.close()
     _sett_kontekst(migrator, tenant)
@@ -1082,11 +1105,12 @@ def test_ingen_av_tabellene_kan_tommes(migrator):
     tenant = _tenantnavn("truncate")
     c = _rt()
     try:
-        _grense(c, tenant, maks=1)
+        _grense(c, tenant, maks=2)
         mid, _ = _mottaker(c, tenant)
         _samtykke(c, tenant, mid, "gitt", "2026-08-01")
         for d in ("2026-08-10", "2026-08-12"):
             _plan(c, tenant, _kampanje(c, tenant, dato=d), mid)
+        _grense(c, tenant, maks=1)   # strammes etterpå (#423)
     finally:
         c.close()
     with _sv() as v:

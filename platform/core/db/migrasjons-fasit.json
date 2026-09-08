@@ -139,5 +139,6 @@
   "138_m32_skatt.sql": "483985ddbc1b8ce7bf0fa59c9f05673de36839b3f57c10372a966c82787fbb85",
   "139_m28_transport.sql": "810b5f03ea09c52f301ab0836fa0247757dd9504d7476930d40238d8c2255354",
   "140_m40_medarbeider.sql": "d24724ff691996bd809282983afadf045cb58d484c9df499754cc317c98d8daa",
-  "141_snapshotfri_sakskilde.sql": "9685707ac885dfb4f272a0d36277fc597abfb74c980c2983ff5bf801b5e7aefe"
+  "141_snapshotfri_sakskilde.sql": "9685707ac885dfb4f272a0d36277fc597abfb74c980c2983ff5bf801b5e7aefe",
+  "142_m44_samtykke_i_doera.sql": "942e839dfc595cbcc5f8de2fe6d035ce50a04e76b2ce0d325208a553d1fed023"
 }
