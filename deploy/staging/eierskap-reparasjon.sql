@@ -377,6 +377,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm23_evidens(text,uuid,text,text,jsonb)',              'disponit_fordring_eier'),
     ('FUNCTION', 'm23_sett_purreplan(text,jsonb,text)',                 'disponit_fordring_eier'),
     ('FUNCTION', 'm23_registrer_fordring(text,uuid,text,text,bigint,date,date,text)', 'disponit_fordring_eier'),
+    -- 146 (M-23, ARC B): mottakeradressen på fordringen — den 13-parametrede
+    -- overlasten av registreringsdøra og den egne adressedøra.
+    ('FUNCTION', 'm23_registrer_fordring(text,uuid,text,text,bigint,date,date,text,text,bytea,bytea,text,text)', 'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_sett_mottaker(text,uuid,text,bytea,bytea,text,text,text)', 'disponit_fordring_eier'),
     ('FUNCTION', 'm23_registrer_betaling(text,uuid,uuid,bigint,date,text)', 'disponit_fordring_eier'),
     ('FUNCTION', 'm23_neste_trinn(text,uuid,uuid,text,text)',           'disponit_fordring_eier'),
     ('FUNCTION', 'm23_ettergi(text,uuid,uuid,text,text)',               'disponit_fordring_eier'),
