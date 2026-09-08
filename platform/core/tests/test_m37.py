@@ -1388,6 +1388,13 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
     # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
     # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
     # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    # CHECK-en slik BASEN har den nå (041, utvidet i 102 med
+    # `henvendelse`), så den legges tilbake i samme form. En hardkodet
+    # 041-form etterlot basen strengere enn migrasjonene og felte hver
+    # M-17-test som kjørte etterpå i samme base (#419).
+    check_def = migrator.execute(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+        " WHERE conname = 'unntak_snapshot_komplett'").fetchone()[0]
     migrator.execute(
         "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
@@ -1425,14 +1432,8 @@ def test_vilkaar_V2_backfill_bruker_hele_policyidentiteten(migrator, malpolicy):
     # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
     # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
     migrator.execute(
-        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
-        " (sakskilde = 'domeneovertakelse'"
-        "    AND maks_auto_forsok_snapshot IS NULL"
-        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
-        " OR (sakskilde <> 'domeneovertakelse'"
-        "    AND maks_auto_forsok_snapshot IS NOT NULL"
-        "    AND policy_versjon IS NOT NULL"
-        "    AND policy_content_hash IS NOT NULL))")
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett "
+        + check_def)
     migrator.commit()
 
     _sett_kontekst(migrator, TENANT)
@@ -3817,6 +3818,13 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
     # 041: totalitets-CHECKen krever trioen for policybrudd — pre-006-
     # tilstanden fixturen gjenskaper er nettopp trio=NULL, så sperren
     # løftes eksplisitt og settes tilbake nederst, som NOT NULL-ene.
+    # CHECK-en slik BASEN har den nå (041, utvidet i 102 med
+    # `henvendelse`), så den legges tilbake i samme form. En hardkodet
+    # 041-form etterlot basen strengere enn migrasjonene og felte hver
+    # M-17-test som kjørte etterpå i samme base (#419).
+    check_def = migrator.execute(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+        " WHERE conname = 'unntak_snapshot_komplett'").fetchone()[0]
     migrator.execute(
         "ALTER TABLE unntak DROP CONSTRAINT unntak_snapshot_komplett")
     migrator.execute("ALTER TABLE unntak DISABLE TRIGGER unntak_laas")
@@ -3838,14 +3846,8 @@ def test_backfill_finner_evidens_paa_produksjonsformet_loggpost(migrator,
     # nå av CHECK-en alene: ADD CONSTRAINT validerer HELE tabellen, så en
     # policybrudd-rad backfillen hoppet over ville felt nettopp denne linjen.
     migrator.execute(
-        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett CHECK ("
-        " (sakskilde = 'domeneovertakelse'"
-        "    AND maks_auto_forsok_snapshot IS NULL"
-        "    AND policy_versjon IS NULL AND policy_content_hash IS NULL)"
-        " OR (sakskilde <> 'domeneovertakelse'"
-        "    AND maks_auto_forsok_snapshot IS NOT NULL"
-        "    AND policy_versjon IS NOT NULL"
-        "    AND policy_content_hash IS NOT NULL))")
+        "ALTER TABLE unntak ADD CONSTRAINT unntak_snapshot_komplett "
+        + check_def)
     migrator.commit()
 
     assert res.fra_evidens >= 1, (

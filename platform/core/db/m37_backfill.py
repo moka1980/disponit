@@ -65,6 +65,17 @@ class Resultat:
         return self.fra_evidens + self.legacy
 
 
+#: SAKSKILDENE SOM IKKE HAR POLICYSNAPSHOT — og ikke skal få det.
+#: Speiler CHECK-en `unntak_snapshot_komplett` (041, utvidet i 102): en
+#: domeneovertakelse og en henvendelse er saker uten policyavgjørelse, og
+#: constrainten KREVER at snapshotet er NULL for dem. Backfillen unntok
+#: bare den første; da M-17 la den første henvendelsen i unntakskøen på
+#: disponit.com (Fjordlys-kampanjen 8/9), prøvde backfillen å fylle
+#: snapshotet på den, brøt CHECK-en, og hver deploy etterpå ble avbrutt
+#: og selv-reversert (#419). Listen står ETT sted; 141 speiler den i
+#: `tenanter_uten_policysnapshot()`.
+SAKSKILDER_UTEN_SNAPSHOT = ("domeneovertakelse", "henvendelse")
+
 def _historisk_policy(conn: psycopg.Connection, tenant: str, policy_id: str,
                       logg_hash: str, *, forventet_versjon: str | None = None
                       ) -> tuple[str, int] | str:
@@ -135,11 +146,15 @@ def _backfill_tenant(conn: psycopg.Connection, tenant: str,
         # ERA-GATE: backfillen kjøres også midt i en fersk rebuild (etter
         # migrasjon 6, FØR 041) — da finnes ikke kolonnen, og da finnes
         # heller ingen overtakelsessaker å skjerme.
-        + (" AND u.sakskilde <> 'domeneovertakelse'" if har_sakskilde else "")
+        + ((" AND (u.sakskilde IS NULL OR u.sakskilde NOT IN ("
+            + ",".join(["%s"] * len(SAKSKILDER_UTEN_SNAPSHOT)) + "))")
+           if har_sakskilde else "")
         + " AND (u.maks_auto_forsok_snapshot IS NULL"
         "        OR u.policy_versjon IS NULL"
         "        OR u.policy_content_hash IS NULL)"
-        " ORDER BY u.id", (tenant,)).fetchall()
+        " ORDER BY u.id",
+        (tenant, *(SAKSKILDER_UTEN_SNAPSHOT if har_sakskilde else ()))
+    ).fetchall()
 
     for unntak_id, status, policy_id, logg_hash in rader:
         utfall: tuple[str, int] | str
