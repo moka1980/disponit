@@ -387,6 +387,30 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                      " og leverer rapporten som artefakt. Ingen ekstern"
                      " trafikk, ingen mutasjon av kundedata; RTO-tallet"
                      " er restore-til-isolert-base-proxyen (dom 5).")),
+    # ARC B (eiervedtak 9/9): purring som selvbetjening. Policyhandlingen
+    # `purring.send` fantes i bransjemalen fra første dag (M-23, auto,
+    # unntakskø, frekvens 1/14 d per faktura, vilkår attestert av
+    # v_fordring); dette er oppdragstypen som gjør den til noe en
+    # eiermodul kan claime. Payloaden bærer REFERANSER og tall — aldri
+    # adressen: den ligger kryptert på fordringen (146) og hentes av
+    # utføreren i det øyeblikket den sender.
+    #
+    # Prefikset er den KANONISKE handlingen og ikke «purring.» — det
+    # navnerommet eies alt av `reinnsending` (R1), og lengste treff
+    # skiller dem.
+    "purring.send": Oppdragstype(
+        navn="purring.send",
+        handlingsprefikser=("purring.send",),
+        felter=frozenset({"fordring_id", "fakturanummer", "trinn",
+                          "handling_trinn", "rest_ore", "omfang"}),
+        paakrevde=frozenset({"fordring_id", "fakturanummer", "trinn",
+                             "handling_trinn", "rest_ore", "omfang"}),
+        eiermodul="m23_fordring",
+        beskrivelse=("M-23: send purretrinnet fordringen er moden for — "
+                     "påminnelse eller purring innenfor policy — til "
+                     "fordringens registrerte mottaker, og lever signert "
+                     "kvittering. Inkassovarsel går alltid via "
+                     "unntakskøen; inkasso er aldri et oppdrag.")),
 }
 
 
@@ -943,6 +967,12 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     # M-57: ett omfang i v1 — «bunt». Enumen er lukket med vilje: en ny
     # verdi skal være en feil (og en fristbeslutning), ikke stillhet.
     "rekruttering.evaluering": {"omfang": ("bunt",)},
+    # M-23 (ARC B): omfanget er ett trinn; trinnhandlingene er de tre
+    # bransjemalen kjenner. «inkasso» står IKKE her — den sendes aldri
+    # automatisk (eiervedtaket 8/9), og en payload som bærer den er feil.
+    "purring.send": {"omfang": ("trinn",),
+                     "handling_trinn": ("paaminnelse", "purring",
+                                        "inkassovarsel")},
     # M-6: ett omfang i v1 — «postboks». Samme lukkede form.
     "epost.behandling": {"omfang": ("postboks",)},
     "kontroll.wcag.nettsted": {
@@ -959,6 +989,9 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
 #: oppfylle, siden `sider_kontrollert` har `maxItems: 50`.
 FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     "kontroll.wcag.nettsted": {"maks_sider": (1, 50)},
+    # Purretrinnet er 1..20 (104s plan har høyst så mange); resten i øre
+    # er positiv og under en milliard kroner.
+    "purring.send": {"trinn": (1, 20), "rest_ore": (1, 100_000_000_000)},
     # M-57-klarsignalet §4: 5000 er HARD — 5001 avvises ved validering,
     # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
     # oppdrag som fikk 5001 har alt brutt det før parseren startet).
@@ -1006,6 +1039,7 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     # M-6: en kildereferanse som ikke er en referanse avvises der
     # bestillingen tas imot, ikke der den utføres.
     "epost.behandling": ("kilde_id",),
+    "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
 #: URL-felter hvis RAPPORTFORM (`rapporturl`) har en lengdegrense, per
@@ -1054,6 +1088,9 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # med god margin, og fristen ligger godt innenfor leasetaket (037),
     # så ingen fornyelsesvei trengs.
     "kontinuitet.ovelse": ("omfang", {"full": 30 * 60}),
+    # Purringen er én malutfylling og ett SMTP-kall: 15 min holder med
+    # god margin, og ligger godt innenfor leasetaket (037).
+    "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
     # før modulen aksepteres; avviker det, oppdateres klarsignalet, aldri
