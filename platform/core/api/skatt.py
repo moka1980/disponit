@@ -319,15 +319,17 @@ def satser_endepunkt(tjeneste, request):
     from .policyadmin_http import _Avbrudd, _feil
     import re
     rid = _rid(request)
-    kode = str(request.path_params.get("landkode", ""))
-    if not re.fullmatch(r"[A-Z]{2}", kode):
-        raise _Avbrudd(_feil("request_feilformet", rid))
-    try:
-        versjon = int(request.path_params["regelversjon"])
-    except (KeyError, ValueError, TypeError) as e:
-        raise _Avbrudd(_feil("request_feilformet", rid)) from e
 
     def _fn(conn, _auth, rid_):
+        # Parameterkontrollen INNENFOR rammen (#421): `_les` fanger
+        # `_Avbrudd` der; utenfor ble «no» i stedet for «NO» en 500.
+        kode = str(request.path_params.get("landkode", ""))
+        if not re.fullmatch(r"[A-Z]{2}", kode):
+            raise _Avbrudd(_feil("request_feilformet", rid_))
+        try:
+            versjon = int(request.path_params["regelversjon"])
+        except (KeyError, ValueError, TypeError) as e:
+            raise _Avbrudd(_feil("request_feilformet", rid_)) from e
         rader = conn.execute("SELECT * FROM m32_satsene(%s,%s)",
                              (kode, versjon)).fetchall()
         return kanonisk_json(
