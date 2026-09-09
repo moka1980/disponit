@@ -1,0 +1,69 @@
+{
+  "krav_id": "m23-purring-v1",
+  "ts": "2026-09-09T11:30:00Z",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m23_fordring",
+    "commit": "ff15fb9c0edcf5b3798e629e00bbf5ea2e64f3b8",
+    "vert": "disponit-srv (disponit.com, miljo staging)",
+    "tenant": "disponit",
+    "release": "m23-r1",
+    "notat": "Fjordlys Elektro AS: tre fordringer 9/9 — A (F-2026-131, 30 dogn over forfall, adresse), B (F-2026-132, 10 dogn, adresse), C (F-2026-133, 30 dogn, uten adresse). Policy tjenestebedrift-no 0.4.2 (purring.send auto, 1/14 d, forfall_passert_dager>=14, agent). Sveip + planrunde: A tillat -> oppdrag 102 -> modulen sendte paaminnelse-v1 -> kvittering 200 -> fordringen paa trinn 1, hendelse purring, evidens purring.sendt. B brudd (attestasjon under terskel) -> sak 121. C aldri kandidat. Runde to: A trinn 2 brudd (frekvens) -> sak 122; ingen ny bestilling for trinn 1. POST /v1/bestilling med trinn i kroppen -> 400. Menneske under agent-policyen -> brudd rolle_ikke_tillatt (sak 123). Kill-switch av -> purring_utloser_av; paa igjen -> 3 rader i purringsbestilling som foer. Adressen finnes ikke i API-svar, oppdragets kvittering eller journalene til api/plan/m23. Punkt 2 (uten policy) og trinn_flyttet i punkt 6 er maalt av portene i CI, ikke live."
+  },
+  "maalt": {
+    "adresse_i_klartekst_utenfor_fordringen_forsok": 5,
+    "adresse_i_klartekst_utenfor_fordringen_brudd": 0,
+    "bestilling_uten_policy_forsok": 1,
+    "bestilling_uten_policy_brudd": 0,
+    "sending_uten_mottaker_forsok": 2,
+    "sending_uten_mottaker_brudd": 0,
+    "dobbel_bestilling_samme_trinn_forsok": 2,
+    "dobbel_bestilling_samme_trinn_brudd": 0,
+    "dobbel_sending_samme_oppdrag_forsok": 1,
+    "dobbel_sending_samme_oppdrag_brudd": 0,
+    "trinn_valgt_av_bestiller_forsok": 2,
+    "trinn_valgt_av_bestiller_brudd": 0,
+    "policygrense_omgaatt_forsok": 2,
+    "policygrense_omgaatt_brudd": 0,
+    "inkasso_sendt_automatisk_forsok": 1,
+    "inkasso_sendt_automatisk_brudd": 0,
+    "kvittering_uten_bokforing_forsok": 1,
+    "kvittering_uten_bokforing_brudd": 0,
+    "kill_switch_konsumerte_trinn_forsok": 1,
+    "kill_switch_konsumerte_trinn_brudd": 0,
+    "rundtur_paa_disponit_com": true
+  },
+  "funn": [
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m23.purring.punkt_maalt_kun_i_port",
+      "detalj": {
+        "punkter": [
+          "bestilling_uten_policy"
+        ],
+        "port": "test_m23_purringsutloser_port.py"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m23.purring.inkassovarsel_ikke_policygatet",
+      "detalj": {
+        "vedtak": "inkassovarsel alltid unntakskoe (9/9, valg 2)",
+        "tilstand": "policyen skiller ikke trinnhandlingene: purring.send dekker paaminnelse, purring og inkassovarsel likt; bare inkasso er utelukket i kontrakten",
+        "oppfolging": "egen handling purring.send_inkassovarsel med modus alltid_stopp, eller handling_trinn som policyvilkaar"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m23.purring.m37_verifikator_mangler",
+      "detalj": {
+        "tilstand": "brudd-saker med attestasjonsmangel gaar manuell i M-37 (fase 1 krever en v_fordring-verifikatormodul som ikke finnes)",
+        "saker": [
+          121,
+          122,
+          123
+        ]
+      }
+    }
+  ]
+}

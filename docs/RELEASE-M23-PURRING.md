@@ -123,3 +123,24 @@ disponit.com, med tre fordringer (0, 5 og 20 døgn over forfall):
 
 Artefaktet skrives som `{"krav_id":"m23-purring-v1","bestatt":true,
 "maalt":{…}}` og måles med `manifestskjema._sjekk_grenser`.
+
+## Gjennomført 9/9-2026 på disponit-srv
+
+Alt i §2–§5 ble kjørt med `deploy/staging/m23-oppsett.sh <0600-fil med hemmeligheten>`
+(idempotent; `opp.sh` materialiserte nøkkelen, modulkjeden ble
+registrert som `m23-r1`, `bytt_release` ga `claiming` i `staging`,
+modulhode `aktiv`, onboarding via et engangs drift-token som ble
+tilbakekalt etterpå). Én lærdom: `/etc/disponit` er lukket for andre
+grupper, så tjenesten trenger `setfacl -m g:disponit-m23:--x
+/etc/disponit` (m57-formen) — det står nå i skriptet.
+
+Bevisrunden (§7) gikk samme dag; artefaktet er
+`deploy/staging/artefakter/m23-purring-v1-20260909T113000Z.json` og
+porten `test_bevisartefaktet_passerer_grensen` måler det. Tre gule funn:
+punkt 2 er målt av portene, ikke live; **inkassovarsel er ikke
+policy-gatet** (vedtak 9/9 valg 2 sier «alltid unntakskø», men
+`purring.send` skiller ikke trinnhandlingene — oppfølging: egen
+handling `purring.send_inkassovarsel` med `alltid_stopp`, eller
+`handling_trinn` som policyvilkår); og M-37 mangler en
+`v_fordring`-verifikatormodul, så brudd-saker med attestasjonsmangel
+går manuelt.

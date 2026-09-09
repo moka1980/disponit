@@ -2191,6 +2191,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "rollback-m56-v1": "artefakt-rollback-m56-skjema.json",
     "m57-v1": "artefakt-m57-skjema.json",
     "m35-v1": "artefakt-m35-skjema.json",
+    "m23-purring-v1": "artefakt-m23-purring-skjema.json",
 }
 
 
