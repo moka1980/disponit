@@ -148,9 +148,9 @@ def test_kampanjen_gaar_ut_hele_veien(migrator, miljo, app, klient, token):
     assert adresse not in str(kv) and "høstsjekk" not in str(kv).lower()
     # …og adressen står heller ikke i oppdragets payload.
     assert adresse not in str(_payload(migrator, oid))
-    # Neste runde: ingenting igjen for modulen.
-    assert controller.kjor_en(klient, mtk, sender, _signer) \
-        == {"utfall": "tomt"}
+    # Neste runde: ingenting igjen for modulen — og ingen ny e-post,
+    # heller ikke for rester andre tester la i planen.
+    assert _kjor_til(klient, mtk, sender, _signer, kid) == {"utfall": "tomt"}
     assert len(sender.sendt) == 1
 
 

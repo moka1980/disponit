@@ -40,6 +40,9 @@ PER_KATEGORI: dict[str, tuple[str, ...]] = {
 PER_HANDLING: dict[str, tuple[str, ...]] = {
     "purring.send": ("fordring_id", "fakturanummer", "trinn",
                      "handling_trinn", "rest_ore", "omfang"),
+    # ARC B kampanje (154/157): referansene, aldri adressen eller teksten.
+    "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt",
+                      "omfang"),
 }
 
 #: Kildereferansen er allerede ugjennomsiktig og slippes gjennom som den er.

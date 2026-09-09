@@ -251,6 +251,16 @@ APPEND_ONLY_TRIGGERE = (
     ("fordringshendelse", "m23_hendelse_vakt"),
     ("fordring", "m23_fordring_vakt"),
     ("purretrinn", "m23_purretrinn_vakt"),
+    # 114 (M-44): seks vakter nekter DELETE — et samtykke er append-only,
+    # en mottaker deaktiveres, en kampanje avlyses, planen og funnene står,
+    # grensen versjoneres. Uten opprydding hoper mottakerne seg opp over
+    # listens tak (200) på tvers av testene (ARC B kampanje, PR 5).
+    ("kampanjefunn", "m44_funn_vakt"),
+    ("kampanjeplan", "m44_plan_vakt"),
+    ("samtykkehendelse", "m44_samtykke_vakt"),
+    ("kampanje", "m44_kampanje_vakt"),
+    ("kampanjemottaker", "m44_mottaker_vakt"),
+    ("kampanjegrense", "m44_grense_vakt"),
     # 105 (M-24): alle fem vaktene nekter DELETE — en avtale avsluttes
     # med begrunnelse, en registrert måling forsvinner ikke fordi den
     # ble ubehagelig, en leverandør deaktiveres, funnet lukkes, og en
@@ -458,6 +468,13 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # 104 (M-23): funnene og hendelsene peker på fordringen,
                  # og purretrinnene på purreplanen. Barna først,
                  # fordringen, så trinnene, planen sist.
+                 # 114/155/157 (M-44, ARC B): leveringen og bestillingen
+                 # peker på planen, planen og funnene på kampanje og
+                 # mottaker, samtykket på mottakeren; grense og avsender
+                 # står fritt.
+                 "kampanjelevering", "kampanjebestilling", "kampanjefunn",
+                 "kampanjeplan", "samtykkehendelse", "kampanje",
+                 "kampanjemottaker", "kampanjegrense", "kampanjeavsender",
                  "purringsbestilling", "fordringsfunn", "fordringshendelse", "fordring",
                  "purretrinn", "purreplan",
                  # 105 (M-24): funnene og målingene peker på avtalen, og

@@ -591,6 +591,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm44_sett_avsender(text,text,text,text)',              'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_avsenderen(text)',                                'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_for_sending(text,uuid,uuid)',                     'disponit_kampanje_eier'),
+    -- 157 (M-44, ARC B): kvitteringen når registeret.
+    ('FUNCTION', 'm44_kampanje_levert(text,uuid,uuid,bigint,timestamp with time zone,text,text,text)', 'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_leveringene(text,uuid)',                          'disponit_kampanje_eier'),
     -- 116 (M-48): motpartsregisterets doerer og
     -- motpartssveipen. KLYNGE 6s ENE UTGAAENDE KANAL:
     -- foretaksregisteret er koblet paa, kredittleverandoeren
