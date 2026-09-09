@@ -49,6 +49,8 @@ from __future__ import annotations
 
 import uuid as uuidlib
 
+import re
+
 import psycopg
 
 MAKS_MOTTAKERE = 200
@@ -535,6 +537,97 @@ def innhold_endepunkt(tjeneste, request):
                 (tenant, kid, emne, tekst, bid),
                 {"kampanje_id": str(kid)}, "endret")
     return _skriv(tjeneste, request, bygg)
+
+
+_SVAR_TIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAKS_AVSENDER = 120
+
+
+def _valgfri_tekst(kropp, felt: str, rid, maks: int):
+    if kropp.get(felt) is None:
+        return None
+    return _tekst(kropp, felt, rid, maks)
+
+
+def avsender_endepunkt(tjeneste, request):
+    """POST /v1/kampanje/avsender (bestilling:opprett, idem).
+
+    TENANTENS AVSENDERPROFIL (156, ARC B): navnet kampanjen leveres i og
+    adressen mottakeren kan svare til. E-posten går fra husets kanal —
+    profilen er det mottakeren ser.
+    """
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
+        navn = _tekst(kropp, "avsender_navn", rid, MAKS_AVSENDER)
+        svar_til = _valgfri_tekst(kropp, "svar_til", rid, 254)
+        # SAMME regel som CHECK-en i 156 — én form, to steder som er enige.
+        if svar_til is not None and not _SVAR_TIL.fullmatch(svar_til):
+            from .policyadmin_http import _Avbrudd, _feil
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«svar_til»: ikke en e-postadresse"))
+        return ("SELECT m44_sett_avsender(%s,%s,%s,%s)",
+                (tenant, navn.strip(), svar_til, bid),
+                {"avsender_navn": navn.strip(), "svar_til": svar_til},
+                "endret")
+    return _skriv(tjeneste, request, bygg)
+
+
+def _maske(adresse: str) -> str:
+    lokal, _, domene = adresse.partition("@")
+    return (lokal[:1] or "*") + "****@" + domene
+
+
+def utforelse_for_sending(conn, tenant: str, kampanje_id, mottaker_id) -> dict:
+    """Det claim-veien gir kampanjemodulen ved siden av payloaden (156).
+
+    ADRESSEN DEKRYPTERES HER, i API-ets tillit, med tenantens DEK — og
+    lever bare i claim-svaret, aldri i oppdraget. Resten er tenantens
+    tekst og avsenderprofil. En `hindring` betyr at modulen skal
+    kvittere `feilet` uten å levere: kampanjen er borte eller avlyst,
+    paret står ikke i planen, mottakeren er deaktivert, uten adresse
+    eller uleselig, innholdet mangler — eller samtykket er trukket siden
+    bestillingen (registeret spørres en gang til, på dagen).
+    """
+    if not kampanje_id or not mottaker_id:
+        return {"hindring": "kampanje_ukjent"}
+    rad = conn.execute("SELECT * FROM m44_for_sending(%s,%s,%s)",
+                       (tenant, kampanje_id, mottaker_id)).fetchone()
+    if rad is None:
+        return {"hindring": "kampanje_ukjent"}
+    (status, dato, emne, tekst, lenke, i_plan, aktiv, navn, maske, ct,
+     nonce, key_id, s_tilstand, avsender_navn, svar_til) = rad
+    if status != "registrert":
+        return {"hindring": "kampanje_avlyst"}
+    if aktiv is None:
+        return {"hindring": "mottaker_ukjent"}
+    if not i_plan:
+        return {"hindring": "ikke_i_planen"}
+    if not aktiv:
+        return {"hindring": "mottaker_deaktivert"}
+    if tekst is None or emne is None:
+        return {"hindring": "innhold_mangler"}
+    if s_tilstand not in ("gitt", "bekreftet"):
+        return {"hindring": "samtykke_ugyldig"}
+    if ct is None or nonce is None or key_id is None:
+        return {"hindring": "mottaker_mangler"}
+    from db import kryptering
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, key_id)).fetchone()
+    if nok is None or nok[0] is None:
+        return {"hindring": "mottaker_uleselig"}
+    try:
+        dek = kryptering._pakk_ut((key_id, nok[0]), tenant)[1]
+        adresse = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant,
+                                       key_id, ekstra_aad=_AAD_KONTAKT)["e"]
+    except Exception:                                   # noqa: BLE001
+        return {"hindring": "mottaker_uleselig"}
+    if not isinstance(adresse, str) or "@" not in adresse:
+        return {"hindring": "mottaker_uleselig"}
+    return {"mottaker_epost": adresse,
+            "mottaker_maske": maske or _maske(adresse),
+            "mottaker_navn": navn, "emne": emne, "tekst": tekst,
+            "avmeldingslenke": lenke, "planlagt_sendt": dato.isoformat(),
+            "avsender_navn": avsender_navn, "svar_til": svar_til}
 
 
 def avlys_kampanje_endepunkt(tjeneste, request):

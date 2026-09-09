@@ -3098,6 +3098,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kampanje as kampanjemodul
         return kampanjemodul.innhold_endepunkt(tjeneste, request)
 
+    def kampanje_avsender(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.avsender_endepunkt(tjeneste, request)
+
     def kampanje_aktiv(request: Request) -> Response:
         from . import kampanje as kampanjemodul
         return kampanjemodul.sett_aktiv_endepunkt(tjeneste, request)
@@ -4299,6 +4303,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kampanje_kontakt, methods=["POST"]),
         Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold",
               kampanje_innhold, methods=["POST"]),
+        Route("/v1/kampanje/avsender", kampanje_avsender, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -5787,6 +5792,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold"):
         "bestilling:opprett",
+    ("POST", "/v1/kampanje/avsender"):           "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av
@@ -6376,6 +6382,13 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 from .fordring import utforelse_for_sending
                 utforelse = utforelse_for_sending(
                     conn, tenant, (minimert or {}).get("fordring_id"))
+            # M-44 (156, ARC B kampanje PR 4): samme grep for kampanjen —
+            # adressen OG tenantens tekst, og samtykket spurt en gang til.
+            elif oppdragstype == "kampanje.send":
+                from .kampanje import utforelse_for_sending
+                utforelse = utforelse_for_sending(
+                    conn, tenant, (minimert or {}).get("kampanje_id"),
+                    (minimert or {}).get("mottaker_id"))
 
             # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
             # claimen. Feiler utstedelsen, finnes heller ingen claim —
