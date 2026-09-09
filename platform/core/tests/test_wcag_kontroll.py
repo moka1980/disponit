@@ -1369,8 +1369,13 @@ def test_oppdraget_bindes_til_den_deklarerte_eiermodulen():
             == ok.OPPDRAGSTYPER["kontroll.wcag.nettsted"].eiermodul)
     # De eierløse legacy-typene beholder det SYNTETISKE navnet — for dem
     # finnes ingen modulrad, og eksisterende rader og tokener peker hit.
-    assert _eiermodul_for("purring.send") == "eiermodul:reinnsending"
+    assert _eiermodul_for("faktura.bokfor") == "eiermodul:reinnsending"
     assert _eiermodul_for("verifiser.belop") == "eiermodul:verifikasjon"
+    # ARC B (147): `purring.send` er ikke lenger eierløs — M-23 eier den,
+    # og lengste prefiks vinner over legacy-prefikset `purring.`.
+    assert _eiermodul_for("purring.send") == "m23_fordring"
+    assert _eiermodul_for("purring.beklag_og_korriger") \
+        == "eiermodul:reinnsending"
     # Ukjent handling er fortsatt fail-closed: en modul-id ingen har.
     assert _eiermodul_for("noe.helt.annet") == "eiermodul:ukjent"
 
@@ -3308,7 +3313,9 @@ def test_bestillingsveien_oppretter_ikke_et_ugyldig_oppdrag():
     # opprettelsen, akkurat som WCAG-reglene vil gjøre når den veien
     # åpnes.
     from m37 import reparasjoner
-    payload = {"handling": "purring.send", "ressurs_id": "r-1",
+    # `faktura.bokfor`, ikke `purring.send`: den siste er siden ARC B en
+    # egen, eid oppdragstype med sin egen feltkontrakt.
+    payload = {"handling": "faktura.bokfor", "ressurs_id": "r-1",
                "kategori": "ukjent_kategori"}
     plan = reparasjoner._r1_reinnsending(payload, None)
     assert plan.utfall == "oppdrag", plan
