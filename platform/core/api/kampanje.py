@@ -557,9 +557,11 @@ def kontakt_endepunkt(tjeneste, request):
         mid = _sti_uuid(request, "mottaker_id", rid)
         kontakt = _tekst(kropp, "kontakt", rid, MAKS_KONTAKT)
         ct, nonce, key_id = _kontakt_kryptert(conn, tenant, kontakt)
-        return ("SELECT m44_sett_kontakt(%s,%s,%s,%s,%s,%s)",
-                (tenant, mid, ct, nonce, key_id, bid),
-                {"mottaker_id": str(mid)}, "endret")
+        # 159: masken og hashen følger adressen — klarteksten går til
+        # døra i samme kall som chifferteksten, og lever aldri i basen.
+        return ("SELECT m44_sett_kontakt(%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, mid, kontakt.strip(), ct, nonce, key_id, bid),
+                {"mottaker_id": str(mid), "endret": True}, "kontakt_maske")
     return _skriv(tjeneste, request, bygg)
 
 

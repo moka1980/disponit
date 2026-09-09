@@ -156,3 +156,43 @@ def test_rutene_er_deklarert_med_scope():
         == "bestilling:opprett"
     assert RUTESCOPE[("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold")] \
         == "bestilling:opprett"
+
+
+@pg
+def test_ny_adresse_gir_ny_maske_og_ny_hash(migrator, miljo, klient, token):
+    """Bevisrunden 9/9 (gult funn): 153 byttet chifferteksten, men masken
+    og hashen fra registreringen sto igjen — flaten og kvitteringen viste
+    en maske som ikke var adressens. 159: samme kall setter alle tre."""
+    from .test_m44_kampanje import _mottaker, _rt
+    tok, _ = token(rolle="bestiller",
+                   scopes=("bestilling:opprett", "okonomi:read"))
+    c = _rt()
+    try:
+        mid, maske_for = _mottaker(c, TENANT, kontakt="Siv.Berg@Tromso.example")
+        mid = str(mid)
+    finally:
+        c.close()
+    assert maske_for == "s****@tromso.example"
+    _sett_kontekst(migrator, TENANT)
+    hasj_for = migrator.execute(
+        "SELECT kontakt_hash FROM kampanjemottaker WHERE tenant=%s"
+        " AND mottaker_id=%s", (TENANT, mid)).fetchone()[0]
+    migrator.rollback()
+    r = _post(klient, tok, f"/v1/kampanje/mottaker/{mid}/kontakt",
+              {"kontakt": "Kari.Nordmann@Nordvik.EXAMPLE"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kontakt_maske"] == "k****@nordvik.example", r.text
+    rad = _rad(migrator, mid)
+    assert rad[0] == "k****@nordvik.example"
+    assert _dekrypter(migrator, rad) == "Kari.Nordmann@Nordvik.EXAMPLE"
+    _sett_kontekst(migrator, TENANT)
+    hasj = migrator.execute(
+        "SELECT kontakt_hash FROM kampanjemottaker WHERE tenant=%s"
+        " AND mottaker_id=%s", (TENANT, mid)).fetchone()[0]
+    migrator.rollback()
+    assert hasj != hasj_for and len(hasj) == 64
+    # …og listen viser den nye masken, aldri adressen.
+    r = klient.get("/v1/kampanje", headers={"authorization": f"Bearer {tok}"})
+    m = [x for x in r.json()["mottakere"] if x["mottaker_id"] == mid][0]
+    assert m["kontakt_maske"] == "k****@nordvik.example"
+    assert "nordvik.example" in r.text and "Kari.Nordmann" not in r.text

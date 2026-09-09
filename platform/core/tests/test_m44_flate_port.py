@@ -160,3 +160,27 @@ def test_artefaktskjemaet_er_generert_fra_invariantene():
     assert valider_artefaktformat(art, "m44-kampanje-v1") == []
     assert valider_artefaktformat({**art, "maalt": {**m, "x": 1}},
                                   "m44-kampanje-v1")
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 9/9 mot disponit.com: artefaktet er innsjekket, har
+    skjemaets form og passerer `m44-kampanje-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M44_KAMPANJE_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / "deploy/staging/artefakter/m44-kampanje-v1-20260909T163500Z.json"
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m44-kampanje-v1") == []
+    assert _sjekk_grenser("m44-kampanje-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M44_KAMPANJE_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    assert "m44.kampanje.punkt_maalt_kun_i_port" in nokler
+    assert "m44.kampanje.maske_ikke_oppdatert_ved_ny_adresse" in nokler
+    assert "m44.kampanje.aldri_samtykket_maalt_kun_i_port" in nokler
