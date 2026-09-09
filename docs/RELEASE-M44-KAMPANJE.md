@@ -70,3 +70,52 @@ tilbakekalles, `systemctl enable --now disponit-m44`.
 
 Artefaktet skrives som `{"krav_id":"m44-kampanje-v1","bestatt":true,
 "maalt":{…}}` og måles med `manifestskjema._sjekk_grenser`.
+
+## Gjennomført 9/9-2026 på disponit-srv
+
+Alle seks PR-ene (#440–#445) ble merget og deployet samme dag (main
+`78dcfcbd`, migrasjoner 153–158). Vertsteget kjørte med
+`deploy/staging/m44-oppsett.sh` gjennom en wrapper som lagde
+`v_samtykke`-hemmeligheten PÅ verten (0600, aldri via samtalen):
+`disponit-m44` oppe, `m44-r1` claiming i `staging`, modulhode aktiv,
+nøkkelen i både API-ets og planarbeiderens `DISPONIT_ATT_NOKLER`.
+
+Policyen: editoren i portalen kan bare endre roller og grenser på
+handlinger malen alt har — ikke legge til `kampanje.send` eller
+`v_samtykke`. Utkastet `u-b05f9689ec74b089` (0.5.0 = kopi av 0.4.2 +
+begge utvidelsene) ble derfor laget via API-et med et engangs-token
+(`policyforvalter`, `policy:write`, tilbakekalt etterpå), validert, og
+aktivert av eier med fire øyne 16:22Z. **Lærdom:** en utvidelse som
+bærer nye handlinger eller verifikatorer trenger en «lim inn
+utvidelse»-vei i editoren.
+
+Samme kveld sto portalen tom etter innlogging i friske nettlesere:
+appen henter ~430 moduler på fem sekunder ved kald cache, og `/ui/`
+delte den generelle rate-sonen (600 r/m, burst 100) → 877 × 429. Egen
+sone `disponit_ui` (#446), lagt på verten med backup og reload.
+
+Bevisrunden (§7) gikk 16:05–16:35Z; artefaktet er
+`deploy/staging/artefakter/m44-kampanje-v1-20260909T163500Z.json` og
+porten `test_bevisartefaktet_passerer_grensen` måler det. Live: to
+runder uten policy bestilte ingenting (punkt 2); etter aktivering
+oppdrag 103+104 → levert (kvittering 200, `kampanjelevering`, evidens);
+K2/K3/K4: kill-switch av → ingenting, på → K2-tb levert (105), K2-arcb-2
+med samtykke trukket etter planleggingen → sak 124, K3-tb tredje innen
+30 døgn → sak 125 (frekvens), K4 uten innhold aldri kandidat; runde
+etter → ingen nye par; menneskelig bestilling av K4 → 409; dato i
+kroppen → 400; adressen finnes ingen steder utenfor registeret. Tre
+e-poster i eiers postkasse fra husets SMTP i navnet «Fjordlys Elektro AS».
+
+Fire gule funn: kvittering-to-ganger og lenken-i-e-posten er målt av
+portene (live bare som «tre e-poster for tre oppdrag, med lenke i foten»);
+«aldri samtykket → ikke kandidat» kan ikke rigges live (plandøra nekter
+det) og er målt i porten; **en ny adresse fikk ikke ny maske** (153) —
+rettet i migrasjon 159 i samme PR som artefaktet; og M-37 mangler en
+`v_samtykke`-verifikatormodul, så saker 124/125 står `manuell`.
+
+**Reparasjon etter 159:** rader som fikk adressen byttet gjennom 153
+bærer fortsatt registreringens maske. Migrasjonen kan ikke rette dem
+(masken krever klarteksten, og basen har ingen nøkkel); de rettes ved å
+sette adressen på nytt gjennom `POST /v1/kampanje/mottaker/{id}/kontakt`.
+På tenant `disponit` gjelder det én rad (kunde-tb) — rettet etter deploy
+av #447.

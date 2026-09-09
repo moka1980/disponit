@@ -1,0 +1,77 @@
+{
+  "krav_id": "m44-kampanje-v1",
+  "ts": "2026-09-09T16:35:00Z",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m44_kampanje",
+    "commit": "78dcfcbd6bc9f19cbcfd90e31ac083a4bd346fbe",
+    "vert": "disponit-srv (disponit.com, miljo staging)",
+    "tenant": "disponit",
+    "release": "m44-r1",
+    "notat": "Fjordlys Elektro AS 9/9: policy tjenestebedrift-no 0.5.0 (kampanje.send auto, 2/30 d per mottaker, agent, v_samtykke) aktivert med fire oeyne 16:22Z. Mottakere: kunde-tb (samtykke gitt, adresse eiers), kunde-arcb-2 (gitt, adresse eiers+arcb2). Kampanjer datert 9/9: K1 med innhold (begge i planen) -> foer aktivering: to runder plukket 2, bestilte 0 (kampanje_uten_policy); etter aktivering: oppdrag 103+104 tillat -> modulen leverte begge (kvittering 200) -> kampanjelevering 2, evidens kampanje.levert. K2 (tb + arcb-2, samtykke for arcb-2 TRUKKET etter planlegging), K3 (tb, tredje innen 30 d), K4 uten innhold (tb). Kill-switch av -> kampanje_utloser_av, 0 nye par; paa -> runde plukket 3 (K4 aldri kandidat): K2-tb tillat oppdrag 105 levert, K2-arcb-2 brudd sak 124 (attestasjon_negativ), K3-tb brudd sak 125 (frekvensgrense_naadd maks 2). Runde etter: ingen nye par (5). Menneskelig bestilling av K4-paret -> 409 kampanje_ikke_klar_for_levering; dato i kroppen -> 400. Adressen finnes ikke i GET /v1/kampanje, leveringslinjene, oppdragskvitteringene, revisjonsloggen, kampanjebestilling eller journalene til api/plan/m44 (masken baerer domenet, som 114 sier). Tre e-poster i eiers postkasse fra husets SMTP i navnet Fjordlys Elektro AS."
+  },
+  "maalt": {
+    "adresse_i_klartekst_utenfor_registeret_forsok": 8,
+    "adresse_i_klartekst_utenfor_registeret_brudd": 0,
+    "bestilling_uten_policy_forsok": 2,
+    "bestilling_uten_policy_brudd": 0,
+    "levering_uten_samtykke_forsok": 1,
+    "levering_uten_samtykke_brudd": 0,
+    "dobbel_bestilling_samme_par_forsok": 2,
+    "dobbel_bestilling_samme_par_brudd": 0,
+    "dobbel_levering_samme_oppdrag_forsok": 1,
+    "dobbel_levering_samme_oppdrag_brudd": 0,
+    "levering_uten_avmeldingslenke_forsok": 1,
+    "levering_uten_avmeldingslenke_brudd": 0,
+    "innhold_eller_adresse_mangler_forsok": 2,
+    "innhold_eller_adresse_mangler_brudd": 0,
+    "policygrense_omgaatt_forsok": 2,
+    "policygrense_omgaatt_brudd": 0,
+    "kvittering_uten_bokforing_forsok": 3,
+    "kvittering_uten_bokforing_brudd": 0,
+    "kill_switch_konsumerte_par_forsok": 1,
+    "kill_switch_konsumerte_par_brudd": 0,
+    "rundtur_paa_disponit_com": true
+  },
+  "funn": [
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m44.kampanje.punkt_maalt_kun_i_port",
+      "detalj": {
+        "punkter": [
+          "dobbel_levering_samme_oppdrag",
+          "levering_uten_avmeldingslenke"
+        ],
+        "tilstand": "kvittering to ganger (idempotent) og avmeldingslenken i e-posten er maalt av portene test_m44_bokforing_port/test_m44_controller; live er de maalt som tre e-poster for tre oppdrag i eiers postkasse, med lenke i foten",
+        "port": "test_m44_bokforing_port.py, test_m44_controller.py"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m44.kampanje.aldri_samtykket_maalt_kun_i_port",
+      "detalj": {
+        "punkt": "levering_uten_samtykke",
+        "tilstand": "plandoera (142) nekter en mottaker uten samtykke, saa 'aldri samtykket -> ikke kandidat' kan ikke rigges live; maalt i test_m44_kampanjeutloser_port"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m44.kampanje.maske_ikke_oppdatert_ved_ny_adresse",
+      "detalj": {
+        "tilstand": "153 byttet chifferteksten men ikke masken/hashen: kunde-tb fikk levering til ny adresse mens flate, kvittering og leveringslinje viste gammel maske",
+        "oppfolging": "migrasjon 159 i samme PR som artefaktet: ny adresse gir ny maske og hash"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m44.kampanje.m37_verifikator_mangler",
+      "detalj": {
+        "tilstand": "brudd-saker gaar manuell i M-37 (ingen v_samtykke-verifikatormodul i fase 1)",
+        "saker": [
+          124,
+          125
+        ]
+      }
+    }
+  ]
+}

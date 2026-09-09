@@ -597,6 +597,8 @@ INSERT INTO _design VALUES
     -- 158 (M-44, ARC B): det flaten ser — leveransen per kampanje.
     ('FUNCTION', 'm44_leveransestatus(text)',                           'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_kampanjeleveringene(text,uuid)',                  'disponit_kampanje_eier'),
+    -- 159 (M-44, ARC B bevisrunde): ny adresse gir ny maske.
+    ('FUNCTION', 'm44_sett_kontakt(text,uuid,text,bytea,bytea,text,text)', 'disponit_kampanje_eier'),
     -- 116 (M-48): motpartsregisterets doerer og
     -- motpartssveipen. KLYNGE 6s ENE UTGAAENDE KANAL:
     -- foretaksregisteret er koblet paa, kredittleverandoeren
