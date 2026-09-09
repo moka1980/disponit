@@ -456,7 +456,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # 104 (M-23): funnene og hendelsene peker på fordringen,
                  # og purretrinnene på purreplanen. Barna først,
                  # fordringen, så trinnene, planen sist.
-                 "fordringsfunn", "fordringshendelse", "fordring",
+                 "purringsbestilling", "fordringsfunn", "fordringshendelse", "fordring",
                  "purretrinn", "purreplan",
                  # 105 (M-24): funnene og målingene peker på avtalen, og
                  # avtalen på leverandøren. Barna først, avtalen, så

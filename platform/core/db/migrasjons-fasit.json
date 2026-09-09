@@ -145,5 +145,6 @@
   "144_m15_forpliktelse_negativ.sql": "fd46b97ef082f276840dc88edf4313522408c76f8ee4d3e8cffff68a76ba1146",
   "145_m45_tom_sammenstilling.sql": "575aa0264effc2972cb43cfa5b5c9f32e9e1ec1d818800dfbde5bf9e573acfd0",
   "146_m23_mottaker_paa_fordringen.sql": "2f0aec4069360872ea9ba0ce7148b91ac5164f3dc93a5ab29d6e99836a0fa5a6",
-  "147_m23_fordring_for_purring.sql": "af864fb75c21301dee146ec00907868100d1fed7cc9b90113b00c2d93932e8b7"
+  "147_m23_fordring_for_purring.sql": "af864fb75c21301dee146ec00907868100d1fed7cc9b90113b00c2d93932e8b7",
+  "148_m23_purringsutloser.sql": "916777199652de5bdbbea8c4dcd984a265a3993bc73433bec7d9ab83e887560d"
 }

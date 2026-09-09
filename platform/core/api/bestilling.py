@@ -1136,9 +1136,16 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                     "fordring_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
             from policy_validator.engine import EvaluationContext
+            # ROLLEN FØLGER AKTØREN (ARC B, PR 3). Et menneske og planen
+            # bestiller som `bestiller`; den automatiserte utløseren
+            # (`agent:<hva>`) ER agenten policyen navngir — bransjemalen
+            # tillater `purring.send` for nettopp `agent`, og en policy som
+            # ikke nevner agenten stopper den her med `rolle_ikke_tillatt`.
             ctx = EvaluationContext(
-                tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
-                kilde="api_token")
+                tenant_id=tenant,
+                aktor_rolle=("agent" if str(aktor).startswith("agent:")
+                             else "bestiller"),
+                autentisert=True, kilde="api_token")
             try:
                 svar = kjerne.behandle(
                     conn, ctx, policy_id=policy_id, event=event,
