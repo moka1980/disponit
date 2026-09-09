@@ -1329,6 +1329,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import fordring as fordringmodul
         return fordringmodul.mottaker_endepunkt(tjeneste, request)
 
+    def fordring_avsender(request: Request) -> Response:
+        from . import fordring as fordringmodul
+        return fordringmodul.avsender_endepunkt(tjeneste, request)
+
     def fordring_ettergi(request: Request) -> Response:
         from . import fordring as fordringmodul
         return fordringmodul.ettergi_endepunkt(tjeneste, request)
@@ -3642,6 +3646,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               fordring_neste_trinn, methods=["POST"]),
         Route("/v1/fordring/{fordring_id:uuid}/mottaker",
               fordring_mottaker, methods=["POST"]),
+        Route("/v1/fordring/avsender", fordring_avsender, methods=["POST"]),
         Route("/v1/fordring/{fordring_id:uuid}/ettergi", fordring_ettergi,
               methods=["POST"]),
         # 105 (M-24): kolleksjonsruten FØRST, og ORDRUTENE (`terskler`,
@@ -5083,6 +5088,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/fordring/{fordring_id:uuid}/mottaker"):
         "bestilling:opprett",
+    ("POST", "/v1/fordring/avsender"):       "bestilling:opprett",
     ("POST", "/v1/fordring/{fordring_id:uuid}/ettergi"):
         "bestilling:opprett",
     # 105 (M-24): leverandør- og SLA-registeret. LESINGEN bærer
@@ -6342,6 +6348,18 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 tjeneste.logg.hendelse("request_feilformet", rid, tenant,
                                        oppdragstype=oppdragstype)
                 return _feilsvar("request_feilformet", rid)
+            # M-23 (149, ARC B PR 4): DET SOM IKKE STÅR I PAYLOADEN, MEN
+            # SOM UTFØREREN MÅ HA. Adressen ligger kryptert på fordringen,
+            # aldri i oppdraget; modulen har verken KEK eller base. Den
+            # dekrypteres HER — samme sted og samme tillit som payloaden —
+            # og gis som `utforelse` ved siden av den minimerte payloaden.
+            # Er fordringen avsluttet eller uten adresse, bærer feltet en
+            # `hindring` modulen kvitterer `feilet` på, uten å sende.
+            utforelse = None
+            if oppdragstype == "purring.send":
+                from .fordring import utforelse_for_sending
+                utforelse = utforelse_for_sending(
+                    conn, tenant, (minimert or {}).get("fordring_id"))
 
             # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
             # claimen. Feiler utstedelsen, finnes heller ingen claim —
@@ -6449,7 +6467,7 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
         # Klartekst logges ALDRI. Sikkerhetsloggen får id-er, ikke innhold —
         # canary-testen i suiten planter en kjent verdi i payloaden og
         # feiler hvis den dukker opp i logg eller på disk.
-        return kanonisk_json({
+        svar = {
             "oppdrag_id": opp_id, "tenant": tenant, "unntak_id": unntak_id,
             # 038 §5: `unntak_id` er null for beslutningsoppdrag — saken
             # peker på oppdraget, aldri omvendt (port 27/28).
@@ -6474,8 +6492,10 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
             # claimen lykkes likevel (port 22).
             "opplasting": opplasting,
             "verification_generation": verifikasjonsgen,
-            "payload": minimert, "request_id": rid}, 200,
-            {"x-request-id": rid})
+            "payload": minimert, "request_id": rid}
+        if utforelse is not None:
+            svar["utforelse"] = utforelse
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)
 
