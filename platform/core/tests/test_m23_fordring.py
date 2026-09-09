@@ -210,7 +210,7 @@ def test_invariant_modulen_sendte_til_kunde_har_ingen_sendetilstand():
     ingen kontoplan.
 
     MUTASJONEN SOM DREPER DENNE: legg `sendt` i status-CHECKen, eller en
-    åttende rute som heter `.../purr`.
+    niende rute som heter `.../purr` (den åttende er mottakeren, 146).
     """
     sql = MIGRASJON.read_text(encoding="utf-8")
     kode = "\n".join(l for l in sql.splitlines()
@@ -230,6 +230,7 @@ def test_invariant_modulen_sendte_til_kunde_har_ingen_sendetilstand():
         "/v1/fordring/{fordring_id:uuid}/betaling",
         "/v1/fordring/{fordring_id:uuid}/ettergi",
         "/v1/fordring/{fordring_id:uuid}/hendelser",
+        "/v1/fordring/{fordring_id:uuid}/mottaker",
         "/v1/fordring/{fordring_id:uuid}/neste-trinn",
     ], mine
 

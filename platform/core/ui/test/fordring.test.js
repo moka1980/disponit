@@ -336,8 +336,11 @@ test("Fordring: flaten har ingen send-kontroll", () => {
   const kilde = readFileSync(
     join(HER, "..", "static", "js", "flater", "fordring.js"), "utf8");
   const uten = kilde.replace(/^\s*\/\/.*$/gm, "");
-  for (const ord of ["sendPurring", "sendVarsel", "epost", "mailto:",
-                     "/v1/utsending", "sms"]) {
+  // «epost» sto i lista til 146: nå bærer flaten mottakerens
+  // e-postADRESSE (et felt), men fortsatt ingen måte å sende på — det
+  // er sendekontrollene som er dommen, ikke ordet.
+  for (const ord of ["sendPurring", "sendVarsel", "mailto:",
+                     "/v1/utsending", "sms", "send_epost", "sendEpost"]) {
     assert.ok(!uten.toLowerCase().includes(ord.toLowerCase()),
       `flaten bærer «${ord}» — v1 sender ingenting`);
   }
@@ -389,8 +392,11 @@ test("Fordring: listen tegnes med modenhet som tekst, axe rent",
     assert.ok(rader[1].textContent.includes("1000,00"));
     assert.ok(rader[1].textContent.includes("600,00"));
     // KUNDEN NAVNGIR RADEN.
-    assert.equal(rader[0].querySelector('th[scope="row"]').textContent,
+    assert.equal(rader[0].querySelector('th[scope="row"] span').textContent,
       "Nordvik AS");
+    // MOTTAKEREN (146) står som maske under kunden — eller som «ingen
+    // mottaker» i ord, aldri som en tom celle.
+    assert.ok(rader[0].textContent.includes(t("ui.fordring.mottaker_mangler")));
 
     // ALDERSFORDELINGEN TEGNER ALLE FEM BØTTENE, også den tomme — en
     // fordeling som endret form fra dag til dag kan ingen sammenligne.
@@ -650,3 +656,38 @@ test("Fordring: kvitteringen og panelet overlever tegningen", async () => {
   assert.ok(h.textContent.includes("Nordvik AS · F-1001"),
     "panelet lukket seg etter en innbetaling");
 });
+
+// ---------------------------------------------------------------------
+// 146: mottakeren
+// ---------------------------------------------------------------------
+
+test("Fordring: skjemaet har et e-postfelt for purring, og listen viser masken",
+  async () => {
+    const bilde = JSON.parse(JSON.stringify(BILDE));
+    bilde.fordringer[0].mottaker_maske = "r****@nordvik-as.no";
+    // En rå adresse i svaret (skal aldri komme fra API-et) må heller
+    // aldri nå skjermen: flaten tegner masken, ikke feltet.
+    bilde.fordringer[0].mottaker_epost = "regnskap@nordvik-as.no";
+    SVAR = { ...fullSvar(), "/v1/fordring": bilde };
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    const felt = h.querySelector("#fo-ny-mottaker");
+    assert.ok(felt, "skjemaet mangler mottakerfeltet");
+    assert.equal(felt.type, "email");
+    assert.equal(felt.required, false, "mottakeren er valgfri ved registrering");
+    assert.ok(h.querySelector('label[for="fo-ny-mottaker"]'));
+    const rader = [...h.querySelectorAll("table")[1].querySelectorAll("tbody tr")];
+    assert.ok(rader[0].textContent.includes("r****@nordvik-as.no"));
+    assert.ok(!rader[0].textContent.includes("regnskap@"), "adressen lekket");
+    assert.ok(rader[1].textContent.includes(t("ui.fordring.mottaker_mangler")));
+    // Begge språk har nøklene.
+    const EN = JSON.parse(readFileSync(
+      join(HER, "..", "..", "..", "..", "locales", "en.json"), "utf8"));
+    for (const n of ["ui.fordring.skjema.mottaker",
+                     "ui.fordring.skjema.mottaker_hjelp",
+                     "ui.fordring.mottaker_mangler"]) {
+      assert.ok(NB[n], `nb mangler ${n}`);
+      assert.ok(EN[n], `en mangler ${n}`);
+    }
+  });

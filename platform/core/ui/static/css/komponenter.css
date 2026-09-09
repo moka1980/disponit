@@ -1727,3 +1727,6 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 }
 .oppstartsfeil p { margin: 0 0 var(--sp-2); }
 .oppstartsfeil button { min-height: 44px; }
+
+/* Underlinje i en celle (146): mottakerens maske under kundenavnet. */
+.celle-under { display: block; font-size: 0.85em; }

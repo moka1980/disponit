@@ -86,8 +86,12 @@ function trinnTekst(f) {
 function fordringsrad(f, ctx, apneDetalj) {
   const rad = el("tr", {});
   // KUNDEN NAVNGIR raden.
-  rad.append(el("th", { scope: "row", class: "celle-tekst",
-                        text: f.kunde_ref }));
+  rad.append(el("th", { scope: "row", class: "celle-tekst" },
+    el("span", { text: f.kunde_ref }),
+    f.mottaker_maske
+      ? el("span", { class: "muted celle-under", text: f.mottaker_maske })
+      : el("span", { class: "muted celle-under",
+                     text: t("ui.fordring.mottaker_mangler") })));
   rad.append(el("td", { class: "celle-id", text: f.fakturanummer }));
   rad.append(el("td", { class: "celle-tall",
                         text: belopTekst(f.belop_ore) }));
@@ -431,6 +435,10 @@ function nySkjema(ctx, last, kvitter) {
     type: "date", required: true });
   const forfall = el("input", { id: "fo-ny-forfall", name: "forfall",
     type: "date", required: true });
+  // MOTTAKEREN (146): valgfri ved registrering, kreves før purringen kan
+  // sendes av systemet. Flaten sender adressen én gang og får masken.
+  const mottaker = el("input", { id: "fo-ny-mottaker", name: "mottaker_epost",
+    type: "email", autocomplete: "off", maxlength: 254 });
   const knapp = el("button", { type: "submit",
     text: t("ui.fordring.knapp.ny") });
   skjema.append(
@@ -439,6 +447,8 @@ function nySkjema(ctx, last, kvitter) {
     felt("fo-ny-belop", "ui.fordring.skjema.belop", belop),
     felt("fo-ny-utstedt", "ui.fordring.skjema.utstedt", utstedt),
     felt("fo-ny-forfall", "ui.fordring.skjema.forfall", forfall),
+    felt("fo-ny-mottaker", "ui.fordring.skjema.mottaker", mottaker,
+         "ui.fordring.skjema.mottaker_hjelp"),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
     skjema, knapp, utfall, kvitter,
@@ -447,9 +457,11 @@ function nySkjema(ctx, last, kvitter) {
       kunde_ref: kunde.value, fakturanummer: faktura.value,
       belop_ore: tilOre(belop.value), utstedt: utstedt.value,
       forfall: forfall.value,
+      ...(mottaker.value.trim() ? { mottaker_epost: mottaker.value.trim() } : {}),
     }, idem),
     tilbakestill: () => {
       kunde.value = ""; faktura.value = ""; belop.value = "";
+      mottaker.value = "";
     },
   });
   return el("div", { class: "skjemaboks" },
