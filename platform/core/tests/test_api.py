@@ -34,6 +34,8 @@ ANNEN_TENANT = "t-api-annen"
 PEPPER = "p" * 40
 KEK = "b" * 64
 NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40},
+          # ARC B kampanje (154): registerets eget samtykkevitne.
+          "v_samtykke": {"k1": "s" * 40},
           # 038/aksept: plattformens egen domenekontroll-verifikator —
           # bestillingsveien signerer domenekontroll_verifisert med den.
           "v_domenekontroll": {"k1": "d" * 40}}

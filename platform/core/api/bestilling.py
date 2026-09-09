@@ -177,6 +177,19 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
     # for — bestilleren velger ALDRI hvilket, døra flytter ett hakk).
     # Policyhandlingen `purring.send` har stått i bransjemalen fra første
     # dag; eiermodulen er M-23 selv (M-6/M-35-formen).
+    # ARC B kampanje (154): én mottaker i én kampanje på sendedagen.
+    # Kroppen bærer to referanser og ett omfang; datoen, innholdet og
+    # adressen er registerets — ikke bestillerens.
+    "kampanje.send": Bestillingstype(
+        handling="kampanje.send",
+        oppdragstype="kampanje.send",
+        eiermodul="m44_kampanje",
+        kravsett=(),
+        omfang=("mottaker",),
+        skjemafelt=frozenset({"bestillingstype", "kampanje_ref",
+                              "mottaker_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "kampanje_id",
+                        "mottaker_id", "omfang")),
     "purring.send": Bestillingstype(
         handling="purring.send",
         oppdragstype="purring.send",
@@ -205,6 +218,9 @@ _KILDE_REF = re.compile(
 #: Policyhandlingen for purretrinnet `inkassovarsel` (PR 8): samme
 #: oppdragstype (`purring.send` er prefikset), egen fullmakt i policyen.
 INKASSOVARSEL_HANDLING = "purring.send.inkassovarsel"
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_KAMPANJE_REF = re.compile(r"^kampanje:" + _UUID + "$")
+_MOTTAKER_REF = re.compile(r"^mottaker:" + _UUID + "$")
 _FORDRING_REF = re.compile(
     r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
@@ -252,6 +268,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_epost(tenant, bt, data)
     if bt.oppdragstype == "purring.send":
         return _normaliser_purring(tenant, bt, data)
+    if bt.oppdragstype == "kampanje.send":
+        return _normaliser_kampanje(tenant, bt, data)
     if bt.oppdragstype == "kontinuitet.ovelse":
         # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
         # eies av øvelseslogikken selv.
@@ -286,6 +304,22 @@ def normaliser(tenant: str, data: dict) -> dict:
             "mal_url": f"https://{host}{sti}",
             "kravsett": data["kravsett"], "omfang": omfang,
             "maks_sider": maks}
+
+
+def _normaliser_kampanje(tenant: str, bt: Bestillingstype,
+                         data: dict) -> dict:
+    """M-44: to referanser (`kampanje:<uuid>`, `mottaker:<uuid>`) og
+    omfanget. Ingen dato, intet innhold, ingen adresse i kroppen."""
+    k = _KAMPANJE_REF.fullmatch(str(data.get("kampanje_ref") or ""))
+    m = _MOTTAKER_REF.fullmatch(str(data.get("mottaker_ref") or ""))
+    if k is None or m is None:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "kampanje_id": k.group(0).split(":", 1)[1],
+            "mottaker_id": m.group(0).split(":", 1)[1],
+            "omfang": data["omfang"]}
 
 
 def _normaliser_purring(tenant: str, bt: Bestillingstype,
@@ -840,6 +874,55 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                        "trinn_dogn": int(n_dogn)}
             if n_handling == "inkassovarsel":
                 handling_eff = INKASSOVARSEL_HANDLING
+        # KAMPANJENS MÅLPORT (ARC B, 154): kampanjen må finnes, ikke
+        # være avlyst, mottakeren må stå i planen, være aktiv, ha en
+        # adresse, og kampanjen må ha innhold — registerets tilstand,
+        # målt FØR beslutningen brenner kvote. Samtykket er IKKE
+        # målportens: det er policyens vilkår, attestert under.
+        kampanje = None
+        if bt.oppdragstype == "kampanje.send":
+            sett_kontekst(conn, tenant, aktor, rid)
+            krad = conn.execute(
+                "SELECT f.*, current_date FROM m44_for_levering(%s,%s,%s) f",
+                (tenant, norm["kampanje_id"], norm["mottaker_id"])).fetchone()
+            conn.rollback()
+            if krad is None or krad[6] is None:
+                tjeneste.logg.hendelse("kampanje_ukjent", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "kampanje_ukjent")
+            (k_status, k_dato, k_innhold, k_lenke, k_emne, k_i_plan,
+             m_aktiv, m_kontakt, m_navn, s_tilstand, s_dato,
+             s_gyldig_dogn, i_dag) = krad
+            hindring = (
+                "avlyst" if k_status != "registrert"
+                else "ikke_i_planen" if not k_i_plan
+                else "mottaker_deaktivert" if not m_aktiv
+                else "mottaker_uten_adresse" if not m_kontakt
+                else "kampanje_uten_innhold" if not k_innhold
+                else None)
+            if hindring is not None:
+                tjeneste.logg.hendelse("kampanje_ikke_klar_for_levering",
+                                       rid, tenant, art="drift",
+                                       grunn=hindring)
+                return ("feil", "kampanje_ikke_klar_for_levering")
+            # SAMTYKKET SLIK REGISTERET VET DET på sendedatoen: gyldig
+            # er `gitt`/`bekreftet` og ikke eldre enn tenantens vindu.
+            # Ingen hendelse er «ingen samtykke» — attesteres som usant.
+            # «I dag» er BASENS dag (samme klokke som dørens
+            # `current_date`), ikke prosessens — de kan stå i hver sin
+            # tidssone rundt midnatt.
+            gyldig = False
+            if s_tilstand in ("gitt", "bekreftet") and s_dato is not None:
+                alder = (max(k_dato, i_dag) - s_dato).days
+                gyldig = alder <= int(s_gyldig_dogn or 730)
+            kampanje = {"kampanje_id": norm["kampanje_id"],
+                        "mottaker_id": norm["mottaker_id"],
+                        "planlagt_sendt": k_dato.isoformat(),
+                        "avmeldingslenke": k_lenke,
+                        "samtykke_gyldig": gyldig,
+                        "samtykke_tilstand": s_tilstand,
+                        "samtykke_dato": (s_dato.isoformat()
+                                          if s_dato else None)}
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -1031,6 +1114,18 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "maks_sider": norm["maks_sider"],
                          "dataklasser": ["offentlig"],
                          "dataklasser_kilde": "connector"}
+            elif kampanje is not None:
+                # Frekvensen grupperes på `mottaker_id` (utvidelsen), så
+                # samme person aldri får flere enn policyen sier.
+                event = {"handling": bt.handling,
+                         "ressurs_id": ("kampanje:" + kampanje["kampanje_id"]
+                                        + ":" + kampanje["mottaker_id"]),
+                         "mottaker_id": kampanje["mottaker_id"],
+                         "kampanje_id": kampanje["kampanje_id"],
+                         "planlagt_sendt": kampanje["planlagt_sendt"],
+                         "omfang": norm["omfang"],
+                         "dataklasser": ["offentlig", "persondata"],
+                         "dataklasser_kilde": "connector"}
             elif purring is not None:
                 # BELØPET ER RESTEN, i kroner med to desimaler — det er
                 # det policyens `belop_maks` måler. Frekvensen grupperes
@@ -1153,6 +1248,41 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse(
                     "fordring_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
+            # M-44 ATTESTERER SAMTYKKET (ARC B kampanje). `samtykke_gyldig`
+            # er registerets svar på «hadde vi lov den dagen» — resultatet
+            # er SANT eller USANT slik historikken sier, aldri pyntet: et
+            # trukket samtykke gir `attestasjon_negativ` og en sak.
+            # `avmeldingslenke` er kampanjens (https, 114).
+            sa_nokler = (tjeneste.nokler or {}).get("v_samtykke") or {}
+            if kampanje is not None and sa_nokler:
+                from policy_validator import attestering
+                nid = sorted(sa_nokler)[0]
+                naa_att = datetime.now(timezone.utc)
+                ressurs = event["ressurs_id"]
+                event["attestasjoner"] = {}
+                for vilkaar, resultat, ekstra in (
+                        ("samtykke_gyldig", kampanje["samtykke_gyldig"],
+                         {"verdi": kampanje["samtykke_tilstand"] or "ingen"}),
+                        ("avmeldingslenke",
+                         bool(kampanje["avmeldingslenke"]), {})):
+                    jti_grunnlag = (f"{tenant}|{ressurs}|{kjernenokkel}|"
+                                    f"{vilkaar}")
+                    event["attestasjoner"][vilkaar] = attestering.signer({
+                        "verifikator": "v_samtykke",
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": vilkaar, "ressurs_id": ressurs,
+                        "policy_id": policy_id,
+                        "utstedt": naa_att.isoformat(),
+                        "utloper": (naa_att
+                                    + timedelta(hours=24)).isoformat(),
+                        "jti": "sa-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": bool(resultat), **ekstra,
+                    }, nid, sa_nokler[nid])
+            elif kampanje is not None:
+                tjeneste.logg.hendelse(
+                    "kampanje_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
             from policy_validator.engine import EvaluationContext
             # ROLLEN FØLGER AKTØREN (ARC B, PR 3). Et menneske og planen
             # bestiller som `bestiller`; den automatiserte utløseren
@@ -1192,6 +1322,23 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             if hostname is not None:
                 payload = {k: norm[k] for k in ("mal_url", "kravsett",
                                                 "omfang", "maks_sider")}
+            elif kampanje is not None:
+                # REFERANSER OG DATOEN — aldri adressen, aldri teksten.
+                import oppdragskontrakt
+                payload = oppdragskontrakt.minimer(bt.oppdragstype, {
+                    "kampanje_id": kampanje["kampanje_id"],
+                    "mottaker_id": kampanje["mottaker_id"],
+                    "planlagt_sendt": kampanje["planlagt_sendt"],
+                    "omfang": norm["omfang"]})
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       payload)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, payload)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
             elif purring is not None:
                 # REFERANSER OG TALL — aldri adressen. Utføreren henter
                 # den kryptert fra fordringen når den sender.

@@ -398,6 +398,18 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
     # Prefikset er den KANONISKE handlingen og ikke «purring.» — det
     # navnerommet eies alt av `reinnsending` (R1), og lengste treff
     # skiller dem.
+    # ARC B kampanje (154): én mottaker i én kampanje på sendedagen.
+    # Payloaden er referanser og datoen — aldri adressen, aldri teksten
+    # (utføreren henter dem gjennom claim-veien, som for purring).
+    "kampanje.send": Oppdragstype(
+        navn="kampanje.send",
+        handlingsprefikser=("kampanje.send",),
+        felter=frozenset({"kampanje_id", "mottaker_id", "omfang",
+                          "planlagt_sendt"}),
+        paakrevde=frozenset({"kampanje_id", "mottaker_id", "omfang",
+                             "planlagt_sendt"}),
+        eiermodul="m44_kampanje",
+        beskrivelse="M-44: levering av én kampanje til én mottaker"),
     "purring.send": Oppdragstype(
         navn="purring.send",
         handlingsprefikser=("purring.send",),
@@ -970,6 +982,7 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     # M-23 (ARC B): omfanget er ett trinn; trinnhandlingene er de tre
     # bransjemalen kjenner. «inkasso» står IKKE her — den sendes aldri
     # automatisk (eiervedtaket 8/9), og en payload som bærer den er feil.
+    "kampanje.send": {"omfang": ("mottaker",)},
     "purring.send": {"omfang": ("trinn",),
                      "handling_trinn": ("paaminnelse", "purring",
                                         "inkassovarsel")},
@@ -1039,6 +1052,7 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     # M-6: en kildereferanse som ikke er en referanse avvises der
     # bestillingen tas imot, ikke der den utføres.
     "epost.behandling": ("kilde_id",),
+    "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt"),
     "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
@@ -1090,6 +1104,7 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kontinuitet.ovelse": ("omfang", {"full": 30 * 60}),
     # Purringen er én malutfylling og ett SMTP-kall: 15 min holder med
     # god margin, og ligger godt innenfor leasetaket (037).
+    "kampanje.send": ("omfang", {"mottaker": 15 * 60}),
     "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
