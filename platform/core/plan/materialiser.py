@@ -321,9 +321,13 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # registeret bestiller når trinnet forfaller, policyen avgjør.
     from plan.purring import kjor_en_runde as purringsrunde
     purring = purringsrunde(tjeneste, conn)
+    # M-44 (155): kampanjeutløseren likeså — registeret bestiller på
+    # sendedagen, samtykket attesteres, policyen avgjør.
+    from plan.kampanje import kjor_en_runde as kampanjerunde
+    kampanje = kampanjerunde(tjeneste, conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
            "resultater": resultater, "klassifisering": klassifisering,
-           "purring": purring}
+           "purring": purring, "kampanje": kampanje}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)
