@@ -1,0 +1,43 @@
+# m23_fordring-arbeideren: claimer purring.send-oppdrag over API-et med
+# modultokenet fra onboarding (035), sender purringen gjennom HUSETS SMTP
+# med tenantens avsendernavn (149), og kvitterer signert.
+#
+# TILLITSSNITTET (m56/m57-formen): prosessen har modultoken,
+# kvitteringsnøkkel og SMTP-oppsett — men INGEN DB-tilgang, ingen KEK,
+# ingen tenant-nøkler. Adressen kommer dekryptert i claim-svaret og lever
+# bare i minnet så lenge sendingen varer.
+#
+# Enables FØRST når modulen er registrert (registrer-m23-fordring.py) og
+# onboardet — før det ville claim svart 403 og uniten bare pollet seg varm.
+#
+# Installasjon: kopier til /etc/systemd/system/, opprett bruker
+# disponit-m23, fyll /etc/disponit/m23/{konfig,DISPONIT_MODULTOKEN,
+# kvitteringsnokkel.json} (0600), daemon-reload. `konfig` bærer
+# DISPONIT_API_URL, DISPONIT_KVITTERINGSNOKKEL og DISPONIT_SMTP_* (samme
+# verdier som /etc/disponit/varsel/smtp.env).
+[Unit]
+Description=Disponit M-23 purringsarbeider (m23_fordring)
+After=network-online.target disponit-api.service
+Wants=network-online.target
+
+[Service]
+User=disponit-m23
+Group=disponit-m23
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/m23/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/m23/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-m23
+Environment=XDG_RUNTIME_DIR=/run/disponit-m23
+ExecStart=/opt/disponit/.venv/bin/python -m drift.m23_arbeider
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/disponit
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

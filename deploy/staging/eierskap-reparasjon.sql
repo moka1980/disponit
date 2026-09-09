@@ -397,6 +397,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm23_purringskandidater(integer)',                   'disponit_fordring_eier'),
     ('FUNCTION', 'm23_bokfor_purringsbestilling(text,uuid,integer,text,text,text,bigint,bigint,text,jsonb)', 'disponit_fordring_eier'),
     ('FUNCTION', 'm23_purringsbestillingene(text,uuid)',              'disponit_fordring_eier'),
+    -- 149 (M-23, ARC B): sendedøra for claim-veien og avsenderprofilen.
+    ('FUNCTION', 'm23_sett_avsender(text,text,text,text)',            'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_for_sending(text,uuid)',                        'disponit_fordring_eier'),
     -- 105 (M-24): leverandorregisterets doerer og leverandorsveipen.
     -- Vaktene `m24_terskel_vakt`, `m24_part_vakt`, `m24_avtale_vakt`,
     -- `m24_leveranse_vakt` og `m24_funn_vakt` staar bevisst IKKE her: de

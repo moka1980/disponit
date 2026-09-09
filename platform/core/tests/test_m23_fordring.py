@@ -209,8 +209,15 @@ def test_invariant_modulen_sendte_til_kunde_har_ingen_sendetilstand():
     OG DEN POSTERER IKKE: samme snitt som M-13 (101). Ingen hovedbok,
     ingen kontoplan.
 
+    ARC B (146–149) endrer ikke DETTE: M-23s egne ruter er fortsatt
+    register (mottakeren og avsenderprofilen er innstillinger, ikke
+    sendinger). Sendingen finnes — men den går gjennom plattformens
+    bestillingsvei, oppdrag og claim, policy-gatet, aldri gjennom en
+    fordringsrute som sender.
+
     MUTASJONEN SOM DREPER DENNE: legg `sendt` i status-CHECKen, eller en
-    niende rute som heter `.../purr` (den åttende er mottakeren, 146).
+    tiende rute som heter `.../purr` (den åttende er mottakeren, 146, og
+    den niende avsenderprofilen, 149).
     """
     sql = MIGRASJON.read_text(encoding="utf-8")
     kode = "\n".join(l for l in sql.splitlines()
@@ -226,6 +233,7 @@ def test_invariant_modulen_sendte_til_kunde_har_ingen_sendetilstand():
     assert mine == [
         "/v1/fordring",
         "/v1/fordring",
+        "/v1/fordring/avsender",
         "/v1/fordring/purreplan",
         "/v1/fordring/{fordring_id:uuid}/betaling",
         "/v1/fordring/{fordring_id:uuid}/ettergi",

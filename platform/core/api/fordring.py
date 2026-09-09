@@ -42,6 +42,7 @@ lavt — og et krav ville blitt lukket for tidlig.
 from __future__ import annotations
 
 import json
+import re
 import uuid as uuidlib
 
 import psycopg
@@ -168,6 +169,7 @@ def _trinnliste(kropp, rid) -> str:
 
 MAKS_MOTTAKER_EPOST = 254
 _AAD_MOTTAKER = b"m23:mottaker"
+_SVAR_TIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _mottaker(conn, tenant, kropp, rid):
@@ -409,6 +411,73 @@ def mottaker_endepunkt(tjeneste, request):
                 {"fordring_id": str(fid), "mottaker_maske": maske},
                 "endret")
     return _skriv(tjeneste, request, bygg)
+
+
+def avsender_endepunkt(tjeneste, request):
+    """POST /v1/fordring/avsender (bestilling:opprett, idem).
+
+    TENANTENS AVSENDERPROFIL (149, ARC B): navnet purringen sendes i og
+    adressen kunden kan svare til. E-posten går fra husets SMTP
+    (eiervedtaket 9/9, valg 3) — profilen er det kunden ser.
+    """
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
+        navn = _tekst(kropp, "avsender_navn", rid, 120)
+        svar_til = _valgfri_tekst(kropp, "svar_til", rid, 254)
+        # SAMME regel som CHECK-en i 149 — én form, to steder som er enige.
+        if svar_til is not None and not _SVAR_TIL.fullmatch(svar_til):
+            from .policyadmin_http import _Avbrudd, _feil
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«svar_til»: ikke en e-postadresse"))
+        return ("SELECT m23_sett_avsender(%s,%s,%s,%s)",
+                (tenant, navn.strip(), svar_til, bid),
+                {"avsender_navn": navn.strip(), "svar_til": svar_til},
+                "endret")
+    return _skriv(tjeneste, request, bygg)
+
+
+def utforelse_for_sending(conn, tenant: str, fordring_id) -> dict:
+    """Det claim-veien gir purringsmodulen ved siden av payloaden (149).
+
+    ADRESSEN DEKRYPTERES HER, i API-ets tillit, med tenantens DEK — og
+    lever bare i claim-svaret, aldri i oppdraget. Alt annet er tallene
+    e-posten trenger og tenantens avsenderprofil. En `hindring` betyr at
+    modulen skal kvittere `feilet` uten å sende: fordringen er borte,
+    avsluttet, uten adresse, eller adressen lar seg ikke lese.
+    """
+    if not fordring_id:
+        return {"hindring": "fordring_ukjent"}
+    rad = conn.execute("SELECT * FROM m23_for_sending(%s,%s)",
+                       (tenant, fordring_id)).fetchone()
+    if rad is None:
+        return {"hindring": "fordring_ukjent"}
+    (status, kunde_ref, fakturanummer, rest_ore, forfall, trinn,
+     neste_trinn, handling_trinn, gebyr_ore, maske, ct, nonce, key_id,
+     avsender_navn, svar_til) = rad
+    if status != "apen":
+        return {"hindring": "fordring_avsluttet"}
+    if ct is None or nonce is None or key_id is None:
+        return {"hindring": "mottaker_mangler"}
+    from db import kryptering
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, key_id)).fetchone()
+    if nok is None or nok[0] is None:
+        return {"hindring": "mottaker_uleselig"}
+    try:
+        dek = kryptering._pakk_ut((key_id, nok[0]), tenant)[1]
+        adresse = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant,
+                                       key_id, ekstra_aad=_AAD_MOTTAKER)["e"]
+    except Exception:                                   # noqa: BLE001
+        return {"hindring": "mottaker_uleselig"}
+    return {"mottaker_epost": adresse, "mottaker_maske": maske,
+            "kunde_ref": kunde_ref, "fakturanummer": fakturanummer,
+            "rest_ore": int(rest_ore), "forfall": forfall.isoformat(),
+            "trinn": int(trinn),
+            "neste_trinn": (int(neste_trinn) if neste_trinn is not None
+                            else None),
+            "handling_trinn": handling_trinn,
+            "gebyr_ore": int(gebyr_ore or 0),
+            "avsender_navn": avsender_navn, "svar_til": svar_til}
 
 
 def betaling_endepunkt(tjeneste, request):
