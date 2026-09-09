@@ -357,6 +357,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_ta_imot(text,uuid,text,text,timestamp with time zone,text,bytea,bytea,bytea,bytea,text,text,text,bytea,bytea)', 'disponit_kundeservice_eier'),
     -- 161 (M-17, ARC B): bestillingsveiens målport for kundeservice.svar.send.
     ('FUNCTION', 'm17_for_svar(text,uuid,uuid)',                        'disponit_kundeservice_eier'),
+    -- 162 (M-17, ARC B): svarutløseren — kandidater, bokføring, lesedør.
+    ('FUNCTION', 'm17_svarkandidater(integer)',                         'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_bokfor_svarbestilling(text,uuid,uuid,text,text,bigint,bigint,text,jsonb)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_svarbestillingene(text,uuid)',                    'disponit_kundeservice_eier'),
     -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.
     -- NOLOGIN-eieren `disponit_onboarding_eier` eier funksjonene, ikke
     -- tabellene. Vaktene `m18_malsteg_vakt`, `m18_lop_vakt`,
