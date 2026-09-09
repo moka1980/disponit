@@ -26,7 +26,9 @@ Punkt → port:
   policygrense_omgaatt → test_bestilling_purring_port (frekvens, under
       minimum), test_m23_purringsutloser_port (under minimum → brudd)
   inkasso_sendt_automatisk → test_bestilling_purring_port
-      (FELTVERDIER uten inkasso), test_m23_controller (maler uten inkasso)
+      (FELTVERDIER uten inkasso), test_m23_controller (maler uten inkasso),
+      test_m23_inkassovarsel_port (PR 8: utløseren bestiller aldri
+      inkassovarsel/inkasso; agenten avvises av policyen; mennesket bestiller)
   kvittering_uten_bokforing → test_m23_bokforing_port
   kill_switch_konsumerte_trinn → test_m23_purringsutloser_port
       (kill-switch, plattformtilstand)

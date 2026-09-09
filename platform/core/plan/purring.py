@@ -38,6 +38,14 @@ MAKS_PER_TENANT = int(os.environ.get("DISPONIT_PURRING_MAKS", "50"))
 
 AKTOR = "agent:purring"
 
+#: TRINNHANDLINGENE AGENTEN ALDRI BESTILLER (eiervedtak 9/9, valg 2):
+#: inkassovarsel er et menneskes bestilling (policyhandlingen
+#: `purring.send.inkassovarsel`, flaten har knappen); inkasso sendes
+#: aldri av systemet. Utløseren bokfører «krever et menneske» og lar
+#: kandidaten ligge — ingen beslutning brennes, ingen sak fødes.
+MENNESKE_KREVES = {"inkassovarsel": "inkassovarsel_krever_menneske",
+                   "inkasso": "inkasso_aldri_automatisk"}
+
 
 def er_av() -> bool:
     return os.environ.get("DISPONIT_PURRING_UTLOSER", "").strip().lower() \
@@ -132,6 +140,26 @@ def utlos_en(tjeneste, conn, rad) -> dict:
             "bokfort": bool(ny)}
 
 
+def bokfor_menneske_kreves(conn, rad) -> dict:
+    """Kandidaten er et trinn agenten ikke tar. Bokføres én gang per
+    fordring og trinn, med grunnen — så flaten kan si det, og runden
+    ikke ser den igjen."""
+    from db.pg import sett_kontekst
+    tenant, fordring_id, trinn, handling_trinn, _dogn = rad
+    fid = str(fordring_id)
+    rid = f"purring-{fid[:8]}-{int(trinn)}"
+    sett_kontekst(conn, tenant, AKTOR, rid)
+    ny = conn.execute(
+        "SELECT m23_bokfor_purringsbestilling(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        "%s::jsonb)",
+        (tenant, fordring_id, int(trinn), handling_trinn,
+         idempotensnokkel(fid, trinn), "menneske_kreves", None, None, rid,
+         json.dumps({"grunn": MENNESKE_KREVES[handling_trinn]}))).fetchone()[0]
+    conn.commit()
+    return {"fordring": fid, "trinn": int(trinn), "utfall": "menneske_kreves",
+            "grunn": MENNESKE_KREVES[handling_trinn], "bokfort": bool(ny)}
+
+
 def kjor_en_runde(tjeneste, conn) -> dict:
     if er_av():
         print(json.dumps({"hendelse": "purring_utloser_av"}), flush=True)
@@ -149,6 +177,9 @@ def kjor_en_runde(tjeneste, conn) -> dict:
                                   "tenant": tenant}), flush=True)
         if not har_policy[tenant]:
             hoppet_uten_policy += 1
+            continue
+        if rad[3] in MENNESKE_KREVES:
+            resultater.append(bokfor_menneske_kreves(conn, rad))
             continue
         resultater.append(utlos_en(tjeneste, conn, rad))
     res = {"plukket": len(rader), "uten_policy": hoppet_uten_policy,

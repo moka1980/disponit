@@ -799,3 +799,75 @@ test("Fordring: purringstekst — feil:<kode> blir én setning", () => {
   assert.ok(s.includes("2026-08-01"));
   assert.ok(s.includes(t("ui.fordring.handling.paaminnelse")));
 });
+
+// ---------------------------------------------------------------------
+// PR 8: inkassovarsel er et menneskes bestilling
+// ---------------------------------------------------------------------
+
+function medInkassovarsel() {
+  const h = { ...HENDELSER, purringer: [
+    { trinn: 2, handling_trinn: "inkassovarsel", utfall: "menneske_kreves",
+      oppdrag_id: null, unntak_id: null, request_id: "purring-1111-2",
+      bestilt_ts: "2026-09-01T06:00:00+00:00" }] };
+  return { ...fullSvar(), [`/v1/fordring/${F1}/hendelser`]: h };
+}
+
+test("Fordring: «krever et menneske» vises i ord, og inkasso «aldri»", () => {
+  const a = purringstekst({ trinn: 2, handling_trinn: "inkassovarsel",
+    utfall: "menneske_kreves", bestilt_ts: "2026-09-01T06:00:00Z" });
+  assert.ok(a.includes(t("ui.fordring.purring.utfall.menneske_kreves")));
+  const b = purringstekst({ trinn: 3, handling_trinn: "inkasso",
+    utfall: "menneske_kreves", bestilt_ts: "2026-09-01T06:00:00Z" });
+  assert.ok(b.includes(t("ui.fordring.purring.utfall.aldri_automatisk")));
+  assert.ok(!b.includes("menneske_kreves"));
+});
+
+test("Fordring: bestill-knappen for inkassovarsel vises bare når trinnet"
+  + " krever et menneske, og bestiller uten trinn i kroppen", async () => {
+    SVAR = medInkassovarsel();
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    h.querySelector("table button").click();
+    await vent(() => h.textContent.includes(
+      t("ui.fordring.purring.utfall.menneske_kreves")));
+    const knapp = [...h.querySelectorAll("button")].find((b) =>
+      b.textContent === t("ui.fordring.knapp.bestill_inkassovarsel"));
+    assert.ok(knapp && !knapp.closest("div[hidden]") && knapp.offsetParent !== undefined,
+      "bestill-knappen mangler");
+    assert.ok(!knapp.closest("[hidden]"), "bestill-knappen er skjult");
+    assert.ok(h.textContent.includes(t("ui.fordring.skjema.inkassovarsel_hjelp")));
+    knapp.closest("form").dispatchEvent(
+      new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE && SISTE.sti === "/v1/bestilling");
+    assert.deepEqual(SISTE.kropp, { bestillingstype: "purring.send",
+      fordring_ref: `fordring:${F1}`, omfang: "trinn" });
+    assert.ok(SISTE.headers["Idempotency-Key"]);
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Fordring: uten «krever et menneske» finnes ingen bestill-knapp,"
+  + " og en lesende økt ser den aldri", async () => {
+    SVAR = fullSvar();
+    let h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    h.querySelector("table button").click();
+    await vent(() => h.textContent.includes(
+      t("ui.fordring.detalj.purringer.tittel")));
+    let knapp = [...h.querySelectorAll("button")].find((b) =>
+      b.textContent === t("ui.fordring.knapp.bestill_inkassovarsel"));
+    assert.ok(!knapp || knapp.closest("[hidden]"), "knappen vises uten grunn");
+
+    SVAR = medInkassovarsel();
+    h = nyHoved();
+    visFordring(h, ctx(["okonomi:read"]));
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    h.querySelector("table button").click();
+    await vent(() => h.textContent.includes(
+      t("ui.fordring.purring.utfall.menneske_kreves")));
+    knapp = [...h.querySelectorAll("button")].find((b) =>
+      b.textContent === t("ui.fordring.knapp.bestill_inkassovarsel"));
+    assert.equal(knapp, undefined);
+  });

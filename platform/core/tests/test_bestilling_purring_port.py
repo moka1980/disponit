@@ -102,8 +102,9 @@ def _purring_policy(m, *, tillatt_for=("bestiller",)):
     p = _yaml.safe_load(
         (POLICIES / "bransjemal-tjenestebedrift.yaml")
         .read_text(encoding="utf-8"))
-    p["roller"].append({"id": "bestiller",
-                        "beskrivelse": "Bestiller purringer"})
+    if not any(r.get("id") == "bestiller" for r in p["roller"]):
+        p["roller"].append({"id": "bestiller",
+                            "beskrivelse": "Bestiller purringer"})
     h = next(h for h in p["handlinger"] if h["id"] == "purring.send")
     h["tillatt_for"] = sorted(set(h["tillatt_for"]) | set(tillatt_for))
     policyregister.registrer(m, TENANT, p, p["meta"]["status"])

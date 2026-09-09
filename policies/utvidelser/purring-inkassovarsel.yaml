@@ -1,0 +1,35 @@
+# ============================================================
+# POLICY-UTVIDELSE · M-23 · INKASSOVARSEL ER ET MENNESKES BESTILLING
+# (eiervedtak 9/9-2026, valg 2 — ARC B, PR 8)
+#
+# Limes inn i tenantens policy (utkast → fire øyne → aktivering).
+# Bransjemalen røres ikke: den er byte-bundet til M-02s akseptartefakt
+# (K2-beslutningen i #131), så en utvidelse er en egen fil.
+#
+# Handlingen har SAMME oppdragstype som `purring.send` (segmentprefikset
+# `purring.send.`), men egen fullmakt: bestillingsveien måler purringen
+# som denne handlingen når fordringens neste trinn er `inkassovarsel`.
+# Utløseren (agenten) bestiller den aldri — den bokfører «krever et
+# menneske», og flaten viser knappen. Vil en tenant automatisere
+# inkassovarselet, er det ETT ord under: `agent`.
+# ============================================================
+roller:
+  - {id: bestiller, beskrivelse: "Bestiller kontroller, evalueringer og purringer på vegne av virksomheten"}
+
+handlinger:
+  - id: purring.send.inkassovarsel
+    modul: M-23
+    modus: auto
+    ved_brudd: unntakskø
+    tillatt_for: [bestiller]
+    dataklasser_tillatt: [finansiell, persondata]
+    grenser:
+      frekvens:
+        maks: 1
+        periode_antall: 14
+        periode_enhet: dager
+        grupperingsnokkel: faktura_id
+    vilkaar:
+      - {navn: forfall_passert_dager, verifikator: v_fordring, min: 14}
+      - {navn: ingen_aktiv_tvist, verifikator: v_fordring}
+    reversering: {type: kompenserende, handling: purring.beklag_og_korriger}
