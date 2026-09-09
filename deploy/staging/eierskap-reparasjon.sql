@@ -365,6 +365,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_sett_avsenderprofil(text,text,text,text,text)',   'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_avsenderprofilen(text)',                          'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_for_sending(text,uuid,uuid)',                     'disponit_kundeservice_eier'),
+    -- 164 (M-17, ARC B): kvitteringen når registeret.
+    ('FUNCTION', 'm17_svar_sendt(text,uuid,uuid,bigint,timestamp with time zone,text,text,text)', 'disponit_kundeservice_eier'),
     -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.
     -- NOLOGIN-eieren `disponit_onboarding_eier` eier funksjonene, ikke
     -- tabellene. Vaktene `m18_malsteg_vakt`, `m18_lop_vakt`,

@@ -125,7 +125,7 @@ R1 = Handlerdeklarasjon(
     sideeffektfri=False,
     krever_outbox=True,
     tillatte_malhandlinger=("purring.", "faktura.", "melding.",
-                            "kampanje."),
+                            "kampanje.", "kundeservice."),
     timeout_s=60, lease_s=180)
 
 R2 = Handlerdeklarasjon(
