@@ -317,8 +317,13 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     from plan.klassifiser import klassifiser_vinduer
     klassifisering = klassifiser_vinduer(conn)
     pausete = pausesveip(conn)
+    # M-23 (148): purringsutløseren i SAMME runde og SAMME tillitsnivå —
+    # registeret bestiller når trinnet forfaller, policyen avgjør.
+    from plan.purring import kjor_en_runde as purringsrunde
+    purring = purringsrunde(tjeneste, conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
-           "resultater": resultater, "klassifisering": klassifisering}
+           "resultater": resultater, "klassifisering": klassifisering,
+           "purring": purring}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)
