@@ -775,6 +775,15 @@ export const settAvsender = (avsenderNavn, svarTil, idem) =>
          { avsender_navn: avsenderNavn, svar_til: svarTil || null },
          idem || nyIdempotensnokkel());
 
+// PR 8: inkassovarselet er et MENNESKES bestilling. Kroppen bærer ingen
+// trinn og ingen handling — døra sier hvilket trinn som er neste, og
+// policyhandlingen følger trinnet (`purring.send.inkassovarsel`).
+export const bestillPurring = (fordringId, idem) =>
+  _muter("/v1/bestilling", "POST",
+         { bestillingstype: "purring.send",
+           fordring_ref: `fordring:${fordringId}`, omfang: "trinn" },
+         idem || nyIdempotensnokkel());
+
 // M-24 (105): leverandør- og SLA-registeret. LEVERANDØREN, AVTALEN og
 // hver MÅLING bærer sin egen SP-2-nøkkel — serveren utleder id-en av
 // den. En dobbelt registrert måling ville telt det samme bruddet to

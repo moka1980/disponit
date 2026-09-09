@@ -65,6 +65,15 @@ def _bransjemal(m, *, uten_purring=False):
     if uten_purring:
         p["handlinger"] = [h for h in p["handlinger"]
                            if h["id"] != "purring.send"]
+    # PR 8: policy-utvidelsen for inkassovarsel (egen fil — bransjemalen
+    # er byte-bundet til M-02s akseptartefakt og røres ikke).
+    utv = _yaml.safe_load(
+        (POLICIES / "utvidelser" / "purring-inkassovarsel.yaml")
+        .read_text(encoding="utf-8"))
+    for r in utv["roller"]:
+        if not any(x.get("id") == r["id"] for x in p["roller"]):
+            p["roller"].append(r)
+    p["handlinger"] += utv["handlinger"]
     policyregister.registrer(m, TENANT, p, p["meta"]["status"])
     m.commit()
     _sikre_m23_claimbar(m)

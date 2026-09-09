@@ -144,3 +144,27 @@ handling `purring.send_inkassovarsel` med `alltid_stopp`, eller
 `handling_trinn` som policyvilkår); og M-37 mangler en
 `v_fordring`-verifikatormodul, så brudd-saker med attestasjonsmangel
 går manuelt.
+
+## PR 8 (9/9): inkassovarsel er et menneskes bestilling
+
+Det gule funnet «inkassovarsel ikke policy-gatet» er lukket slik:
+
+- Policy-utvidelsen `policies/utvidelser/purring-inkassovarsel.yaml`
+  har handlingen `purring.send.inkassovarsel` (samme oppdragstype som
+  `purring.send` — segmentprefikset) med `tillatt_for: [bestiller]`,
+  aldri `agent`, og rollen `bestiller`. Bransjemalen røres ikke: den er
+  byte-bundet til M-02s akseptartefakt (K2, #131).
+- Bestillingsveien måler purringen som denne handlingen når
+  fordringens neste trinn er `inkassovarsel`; bestilleren velger det ikke.
+- Utløseren bestiller aldri inkassovarsel eller inkasso: den bokfører
+  `menneske_kreves` (migrasjon 152) og lar kandidaten ligge — ingen
+  beslutning, ingen sak.
+- Flaten viser «krever at et menneske bestiller den» og en knapp
+  «Bestill inkassovarsel» (bestilling:opprett) som går gjennom
+  `POST /v1/bestilling`; policyen avgjør, plattformens utfører sender.
+
+**Tenanten må aktivere en policyversjon som har den nye handlingen**
+(lim utvidelsen inn i utkastet → fire øyne). Til da svarer bestillingsveien
+`ukjent_handling` for inkassovarsel-trinnet, og ingenting sendes.
+Vil en tenant automatisere inkassovarselet, er det ETT ord i policyen:
+`tillatt_for: [agent]`.

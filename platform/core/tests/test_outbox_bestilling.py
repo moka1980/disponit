@@ -596,8 +596,9 @@ def _wcag_policy(migrator_, *, med_handling=True,
         # en tom liste avvises. Målautorisasjonen bæres av domenekontroll-
         # porten i endepunktet, ikke av et policyvilkår (klarsignal §6:
         # «dette er ikke policyens ansvar»).
-        p["roller"].append({"id": "bestiller",
-                            "beskrivelse": "Bestiller kontroller"})
+        if not any(r.get("id") == "bestiller" for r in p["roller"]):
+            p["roller"].append({"id": "bestiller",
+                                "beskrivelse": "Bestiller kontroller"})
         p["handlinger"].append({
             "id": "kontroll.wcag.nettsted", "modul": "M-56",
             "modus": "auto", "ved_brudd": ved_brudd,

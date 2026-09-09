@@ -40,8 +40,9 @@ def _rekr_policy(migrator_, *, ved_brudd="unntakskø",
     p = _yaml.safe_load(
         (POLICIES / "bransjemal-tjenestebedrift.yaml")
         .read_text(encoding="utf-8"))
-    p["roller"].append({"id": "bestiller",
-                        "beskrivelse": "Bestiller evalueringer"})
+    if not any(r.get("id") == "bestiller" for r in p["roller"]):
+        p["roller"].append({"id": "bestiller",
+                            "beskrivelse": "Bestiller evalueringer"})
     p["handlinger"].append({
         "id": "rekruttering.evaluering", "modul": "M-57",
         "modus": "auto", "ved_brudd": ved_brudd,

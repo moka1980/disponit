@@ -26,7 +26,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  UautorisertFeil, ettergiFordring, hentJson, nesteTrinn,
+  UautorisertFeil, bestillPurring, ettergiFordring, hentJson, nesteTrinn,
   nyIdempotensnokkel, registrerBetaling, registrerFordring, settAvsender,
   settPurreplan,
 } from "../api.js";
@@ -221,9 +221,10 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       if (e && e.status >= 400 && e.status < 500) idem = null;
       sett(utfall, el("span", { role: "alert",
-        text: e && e.status === 409
-          ? t("ui.fordring.feil.tilstand")
-          : t("ui.fordring.feil.generell") }));
+        text: e && e.tekstnokkel ? t(e.tekstnokkel)
+          : e && e.status === 409
+            ? t("ui.fordring.feil.tilstand")
+            : t("ui.fordring.feil.generell") }));
       return;
     }
     idem = null;
@@ -358,13 +359,48 @@ function detaljpanel(ctx, last, kvitter, settApen) {
     },
   });
 
+  // --- inkassovarsel (PR 8): et MENNESKES bestilling ---
+  // Vises bare når neste trinn er inkassovarsel og utløseren har bokført
+  // «krever et menneske». Kroppen bærer ingen trinn; policyen avgjør.
+  const iSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const iKnapp = el("button", { type: "submit",
+    text: t("ui.fordring.knapp.bestill_inkassovarsel") });
+  const iUtfall = el("p", { "aria-live": "polite" });
+  iSkjema.append(
+    el("p", { class: "muted", id: "fo-ink-hjelp",
+      text: t("ui.fordring.skjema.inkassovarsel_hjelp") }),
+    el("div", { class: "skjema-bunn" }, iKnapp));
+  iKnapp.setAttribute("aria-describedby", "fo-ink-hjelp");
+  const iBoks = el("div", {},
+    el("h4", { text: t("ui.fordring.skjema.inkassovarsel_tittel") }),
+    iSkjema, iUtfall);
+  iBoks.hidden = true;
+  skjemaramme(ctx, last, {
+    skjema: iSkjema, knapp: iKnapp, utfall: iUtfall, kvitter,
+    okNokkel: "ui.fordring.skjema.inkassovarsel_ok",
+    send: async (idem) => {
+      const svar = await bestillPurring(gjeldende.fordring_id, idem);
+      if (svar && svar.beslutning && svar.beslutning !== "tillat") {
+        // POLICYENS NEI ER IKKE EN FEIL i transporten — men det er heller
+        // ikke «bestilt». Setningen sier hvor saken ligger.
+        const stopp = new Error("stoppet");
+        stopp.status = 409;
+        stopp.tekstnokkel = "ui.fordring.skjema.inkassovarsel_stoppet";
+        throw stopp;
+      }
+      return svar;
+    },
+    tilbakestill: () => {},
+  });
+  iSkjema.addEventListener("submit", () => {}, true);
+
   const skriver = harScope(ctx, "bestilling:opprett");
   innhold.append(el("h3", { text: t("ui.fordring.detalj.tittel") }),
     merkelinje, historikk,
     el("h4", { text: t("ui.fordring.detalj.purringer.tittel") }),
     purringer);
   if (skriver) {
-    innhold.append(
+    innhold.append(iBoks,
       el("h4", { text: t("ui.fordring.skjema.betaling_tittel") }), bSkjema,
       el("h4", { text: t("ui.fordring.knapp.neste_trinn") }), tSkjema,
       el("h4", { text: t("ui.fordring.knapp.ettergi") }), eSkjema);
@@ -433,6 +469,12 @@ function detaljpanel(ctx, last, kvitter, settApen) {
         sett(historikk, ul);
       }
       const bestillinger = d.purringer || [];
+      // Knappen for inkassovarsel: neste trinn er bokført «krever et
+      // menneske», fordringen er åpen, og økten kan bestille.
+      iBoks.hidden = !(skriver && apen && bestillinger.some((b) =>
+        b.utfall === "menneske_kreves"
+        && b.handling_trinn === "inkassovarsel"
+        && Number(b.trinn) === Number(f.trinn) + 1));
       if (!bestillinger.length) {
         sett(purringer, el("p", { class: "muted",
           text: t("ui.fordring.detalj.purringer.ingen") }));
@@ -536,9 +578,14 @@ function planSkjema(ctx, last, kvitter) {
 // FØR beslutningen (ukjent/ikke klar) — én setning, ikke koden.
 export function purringstekst(b) {
   const utfall = String(b.utfall || "");
-  const nokkel = utfall.startsWith("feil:")
+  let nokkel = utfall.startsWith("feil:")
     ? "ui.fordring.purring.utfall.feil"
     : `ui.fordring.purring.utfall.${utfall}`;
+  // PR 8: «krever et menneske» sier HVILKET menneske-valg det er —
+  // inkassovarsel bestilles av et menneske, inkasso sendes aldri.
+  if (utfall === "menneske_kreves" && b.handling_trinn === "inkasso") {
+    nokkel = "ui.fordring.purring.utfall.aldri_automatisk";
+  }
   const handlingNokkel = `ui.fordring.handling.${b.handling_trinn}`;
   const handling = HANDLINGER.includes(b.handling_trinn)
     ? t(handlingNokkel) : String(b.handling_trinn || "");

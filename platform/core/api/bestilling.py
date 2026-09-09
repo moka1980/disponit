@@ -202,6 +202,9 @@ _INNDATA_REF = re.compile(
 _KILDE_REF = re.compile(
     r"^kilde:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
+#: Policyhandlingen for purretrinnet `inkassovarsel` (PR 8): samme
+#: oppdragstype (`purring.send` er prefikset), egen fullmakt i policyen.
+INKASSOVARSEL_HANDLING = "purring.send.inkassovarsel"
 _FORDRING_REF = re.compile(
     r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
@@ -535,6 +538,13 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                    flate="bestilling")
             return ("feil", f.kode)
         bt = BESTILLINGSTYPER[norm["bestillingstype"]]
+        # HANDLINGEN POLICYEN MÅLER er bestillingstypens — med ETT unntak
+        # (ARC B, PR 8): purring på trinnet `inkassovarsel` måles som
+        # `purring.send.inkassovarsel`, en egen policyhandling som
+        # bransjemalen tillater for `bestiller` og aldri for `agent`.
+        # Bestilleren velger ikke dette; døra sier hvilket trinn som er
+        # neste, og handlingen følger trinnet.
+        handling_eff = bt.handling
         # `hostname` finnes bare i WCAG-formen; rekrutteringsformens
         # målautorisasjon er referansene (egne porter under).
         hostname = (norm["mal_url"].split("://", 1)[1].split("/", 1)[0]
@@ -828,6 +838,8 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                        "trinn": int(n_trinn), "trinn_navn": n_navn,
                        "handling_trinn": n_handling,
                        "trinn_dogn": int(n_dogn)}
+            if n_handling == "inkassovarsel":
+                handling_eff = INKASSOVARSEL_HANDLING
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -1025,7 +1037,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 # på `faktura_id` (bransjemalen), så samme faktura aldri
                 # purres oftere enn taket sier.
                 rest = purring["rest_ore"]
-                event = {"handling": bt.handling,
+                event = {"handling": handling_eff,
                          "ressurs_id": "fordring:" + purring["fordring_id"],
                          "faktura_id": purring["fakturanummer"],
                          "belop": f"{rest // 100}.{rest % 100:02d}",
@@ -1127,7 +1139,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                                     f"{vilkaar}")
                     event["attestasjoner"][vilkaar] = attestering.signer({
                         "verifikator": "v_fordring",
-                        "tenant_id": tenant, "handling": bt.handling,
+                        "tenant_id": tenant, "handling": handling_eff,
                         "vilkaar": vilkaar, "ressurs_id": ressurs,
                         "policy_id": policy_id,
                         "utstedt": naa_att.isoformat(),
@@ -1275,7 +1287,7 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 oppdrag_id = int(conn.execute(
                     "SELECT opprett_beslutningsoppdrag(%s,%s,%s,%s,%s,"
                     "%s,%s,%s,%s,%s)",
-                    (tenant, logg[0], bt.oppdragstype, bt.handling,
+                    (tenant, logg[0], bt.oppdragstype, handling_eff,
                      bt.eiermodul, ct, key_id, nonce,
                      naa + timedelta(seconds=frist_s),
                      naa + timedelta(seconds=frist_s))).fetchone()[0])
