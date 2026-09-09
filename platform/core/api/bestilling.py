@@ -1033,6 +1033,12 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "trinn": purring["trinn"],
                          "handling_trinn": purring["handling_trinn"],
                          "omfang": norm["omfang"],
+                         # Oppdragstypens egne felter (150): blir det en
+                         # SAK av beslutningen, må saken bære nok til at
+                         # R1 kan bygge oppdraget når saken løses.
+                         "fordring_id": purring["fordring_id"],
+                         "fakturanummer": purring["fakturanummer"],
+                         "rest_ore": purring["rest_ore"],
                          "dataklasser": ["finansiell", "persondata"],
                          "dataklasser_kilde": "connector"}
             else:
