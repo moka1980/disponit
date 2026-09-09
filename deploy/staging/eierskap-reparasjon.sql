@@ -402,6 +402,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm23_for_sending(text,uuid)',                        'disponit_fordring_eier'),
     -- 150 (M-23, ARC B): kvitteringens vei tilbake til registeret.
     ('FUNCTION', 'm23_purring_sendt(text,uuid,integer,bigint,timestamp with time zone,text,text,text)', 'disponit_fordring_eier'),
+    ('FUNCTION', 'm23_avsenderen(text)',                              'disponit_fordring_eier'),
     -- 105 (M-24): leverandorregisterets doerer og leverandorsveipen.
     -- Vaktene `m24_terskel_vakt`, `m24_part_vakt`, `m24_avtale_vakt`,
     -- `m24_leveranse_vakt` og `m24_funn_vakt` staar bevisst IKKE her: de

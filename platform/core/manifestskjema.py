@@ -1265,6 +1265,51 @@ KRAVGRENSER["m23-v1"] = {
     "punktbinding": {},
 }
 
+#: M-23 ARC B (146–151) — PURRINGEN SOM SELVBETJENING. Ti punkter,
+#: pinnet FØR bevisrunden med Fjordlys på disponit.com (§0-regelen), i
+#: parformen: hvert punkt måles som (forsøk, brudd). Punktene er
+#: briefens (9/9): «Samme fordring, samme trinn, to sveip → én
+#: bestilling, én sending» osv. Aldri et punkt kjeden ikke kan måle.
+M23_PURRING_INVARIANTER: tuple[str, ...] = (
+    # 1. Adressen lever bare kryptert på fordringen; flaten, oppdraget,
+    #    kvitteringen og loggene bærer aldri klartekst.
+    "adresse_i_klartekst_utenfor_fordringen",
+    # 2. Uten policy med `purring.send` bestilles ingenting — og ingen
+    #    beslutning brennes.
+    "bestilling_uten_policy",
+    # 3. Uten mottaker bestilles ingenting fra utløseren; et menneskelig
+    #    oppdrag uten adresse kvitteres `feilet` uten sending.
+    "sending_uten_mottaker",
+    # 4. Samme fordring, samme trinn, to sveip → én bestilling.
+    "dobbel_bestilling_samme_trinn",
+    # 5. Samme oppdrag, to claim/kvitteringer → én e-post.
+    "dobbel_sending_samme_oppdrag",
+    # 6. Trinnet er dørens: bestilleren kan ikke velge, og en flyttet
+    #    fordring sendes ikke på det gamle trinnet.
+    "trinn_valgt_av_bestiller",
+    # 7. Policyens frekvens (1/14 d per faktura) og vilkår (min 14 døgn)
+    #    stopper i unntakskøen — aldri stille, aldri tillat.
+    "policygrense_omgaatt",
+    # 8. `inkasso` sendes aldri automatisk; inkassovarsel går alltid via
+    #    unntakskøen når policyen sier det.
+    "inkasso_sendt_automatisk",
+    # 9. Kvitteringen når registeret: fordringen står på trinnet som ble
+    #    purret, hendelsen står i historikken, evidensen i loggen.
+    "kvittering_uten_bokforing",
+    # 10. Kill-switch og plattformtilstand stopper uten å konsumere:
+    #     fordringen er kandidat igjen når bryteren er på.
+    "kill_switch_konsumerte_trinn",
+)
+KRAVGRENSER["m23-purring-v1"] = {
+    "invarianter": M23_PURRING_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: bevisrunden gikk mot disponit.com med et EKTE oppdrag
+    # gjennom modulen (ikke stub-SMTP) — kvitteringen står i basen.
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 M24_INVARIANTER: tuple[str, ...] = (
     # V1-DOMMEN: modulen BETALER INGENTING. En utgående betaling er den
     # ene handlingen i katalogen som er umulig å angre.
@@ -2402,7 +2447,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # egen kopi per modul ville vært fem steder å glemme en rettelse.
     if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
-                   "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1"):
+                   "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
+                   "m23-purring-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

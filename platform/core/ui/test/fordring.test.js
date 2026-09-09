@@ -26,7 +26,8 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
-  belopTekst, erModen, forfallTekst, parsePlanlinjer, tilOre, visFordring,
+  belopTekst, erModen, forfallTekst, parsePlanlinjer, purringstekst, tilOre,
+  visFordring,
 } from "../static/js/flater/fordring.js";
 
 settI18nForTest(NB, "nb");
@@ -103,9 +104,23 @@ const HENDELSER = {
     { hendelse_id: "h-2", art: "trinn", belop_ore: null, trinn: 1,
       inntruffet: "2026-07-05", begrunnelse: "purret per telefon",
       opprettet_av: "kari@example.test" },
+    { hendelse_id: "h-3", art: "purring", belop_ore: null, trinn: 2,
+      inntruffet: "2026-08-01", begrunnelse: "oppdrag 77 (purring-v1)",
+      opprettet_av: "modul:m23_fordring" },
+  ],
+  purringer: [
+    { trinn: 2, handling_trinn: "purring", utfall: "tillat",
+      oppdrag_id: 77, unntak_id: null, request_id: "purring-1111-2",
+      bestilt_ts: "2026-08-01T06:00:00+00:00" },
+    { trinn: 3, handling_trinn: "inkassovarsel", utfall: "brudd",
+      oppdrag_id: null, unntak_id: 910, request_id: "purring-1111-3",
+      bestilt_ts: "2026-08-20T06:00:00+00:00" },
   ],
   request_id: "r-c",
 };
+const AVSENDER = { avsender_navn: "Fjordlys Elektro AS",
+  svar_til: "regnskap@fjordlys.example",
+  oppdatert: "2026-09-01T10:00:00+00:00" };
 
 let SVAR;
 let SISTE;
@@ -691,3 +706,96 @@ test("Fordring: skjemaet har et e-postfelt for purring, og listen viser masken",
       assert.ok(EN[n], `en mangler ${n}`);
     }
   });
+
+// ---------------------------------------------------------------------
+// ARC B (146–151): avsenderen, purringshistorikken, hendelsesarten
+// ---------------------------------------------------------------------
+
+test("Fordring: uten avsenderprofil sies det høyt, med profil vises den",
+  async () => {
+    SVAR = fullSvar();
+    let h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    assert.ok(h.textContent.includes(t("ui.fordring.avsender.ingen")));
+    assert.ok(h.querySelector("#fo-avs-navn"), "avsenderskjemaet mangler");
+    assert.equal(h.querySelector("#fo-avs-navn").value, "");
+
+    SVAR = { ...fullSvar(), "/v1/fordring": { ...BILDE, avsender: AVSENDER } };
+    h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    assert.ok(h.textContent.includes(t("ui.fordring.avsender.navn")
+      .replace("{navn}", "Fjordlys Elektro AS")));
+    assert.ok(h.textContent.includes("regnskap@fjordlys.example"));
+    assert.ok(!h.textContent.includes(t("ui.fordring.avsender.ingen")));
+    // Skjemaet er forhåndsutfylt med profilen — å rette er å skrive om.
+    assert.equal(h.querySelector("#fo-avs-navn").value,
+      "Fjordlys Elektro AS");
+    assert.equal(h.querySelector("#fo-avs-svar").value,
+      "regnskap@fjordlys.example");
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Fordring: avsenderskjemaet sender navn og svar-til, med idempotens",
+  async () => {
+    SVAR = fullSvar();
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelector("#fo-avs-navn"));
+    h.querySelector("#fo-avs-navn").value = "  Fjordlys Elektro AS ";
+    h.querySelector("#fo-avs-svar").value = "regnskap@fjordlys.example";
+    h.querySelector("#fo-avs-navn").closest("form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE && SISTE.sti === "/v1/fordring/avsender");
+    assert.equal(SISTE.sti, "/v1/fordring/avsender");
+    assert.deepEqual(SISTE.kropp, { avsender_navn: "Fjordlys Elektro AS",
+      svar_til: "regnskap@fjordlys.example" });
+    assert.ok(SISTE.headers["Idempotency-Key"]);
+  });
+
+test("Fordring: en lesende økt ser avsenderen, men intet avsenderskjema",
+  async () => {
+    SVAR = { ...fullSvar(), "/v1/fordring": { ...BILDE, avsender: AVSENDER } };
+    const h = nyHoved();
+    visFordring(h, ctx(["okonomi:read"]));
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    assert.ok(h.textContent.includes("Fjordlys Elektro AS"));
+    assert.equal(h.querySelector("#fo-avs-navn"), null);
+  });
+
+test("Fordring: detaljpanelet viser purringene i ord og hendelsesarten",
+  async () => {
+    SVAR = fullSvar();
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 3);
+    h.querySelector("button.knapp-liten, table button").click();
+    await vent(() => h.textContent.includes(
+      t("ui.fordring.detalj.purringer.tittel")) && h.textContent.includes(
+      t("ui.fordring.purring.utfall.brudd")));
+    const tekst = h.textContent;
+    // Purringen som ble SENDT står som hendelse med trinnet i ord…
+    assert.ok(tekst.includes(t("ui.fordring.detalj.art.purring")
+      .replace("{trinn}", "2")));
+    // …og bestillingene står per trinn, med utfallet i ord — aldri koden.
+    assert.ok(tekst.includes(t("ui.fordring.purring.utfall.tillat")));
+    assert.ok(tekst.includes(t("ui.fordring.purring.utfall.brudd")));
+    assert.ok(tekst.includes(t("ui.fordring.handling.inkassovarsel")));
+    assert.ok(!/\bbrudd\b|\btillat\b/.test(
+      tekst.replace(t("ui.fordring.purring.utfall.brudd"), "")
+        .replace(t("ui.fordring.purring.utfall.tillat"), "")),
+      "utfallskoden lekker som råtekst");
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Fordring: purringstekst — feil:<kode> blir én setning", () => {
+  const s = purringstekst({ trinn: 1, handling_trinn: "paaminnelse",
+    utfall: "feil:fordring_ukjent", bestilt_ts: "2026-08-01T06:00:00Z" });
+  assert.ok(s.includes(t("ui.fordring.purring.utfall.feil")));
+  assert.ok(!s.includes("fordring_ukjent"));
+  assert.ok(s.includes("2026-08-01"));
+  assert.ok(s.includes(t("ui.fordring.handling.paaminnelse")));
+});

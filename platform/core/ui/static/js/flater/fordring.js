@@ -27,7 +27,8 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   UautorisertFeil, ettergiFordring, hentJson, nesteTrinn,
-  nyIdempotensnokkel, registrerBetaling, registrerFordring, settPurreplan,
+  nyIdempotensnokkel, registrerBetaling, registrerFordring, settAvsender,
+  settPurreplan,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -288,6 +289,10 @@ function detaljpanel(ctx, last, kvitter, settApen) {
 
   const merkelinje = el("p", { class: "muted" });
   const historikk = el("div", {});
+  // ARC B (148): det utløseren har gjort med fordringen, per trinn, med
+  // beslutningens utfall i ORD — «stoppet av policyen» er et menneskes
+  // sak, «bestilt og sendt» er plattformens.
+  const purringer = el("div", {});
 
   // --- innbetaling ---
   const bSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
@@ -355,7 +360,9 @@ function detaljpanel(ctx, last, kvitter, settApen) {
 
   const skriver = harScope(ctx, "bestilling:opprett");
   innhold.append(el("h3", { text: t("ui.fordring.detalj.tittel") }),
-    merkelinje, historikk);
+    merkelinje, historikk,
+    el("h4", { text: t("ui.fordring.detalj.purringer.tittel") }),
+    purringer);
   if (skriver) {
     innhold.append(
       el("h4", { text: t("ui.fordring.skjema.betaling_tittel") }), bSkjema,
@@ -368,6 +375,12 @@ function detaljpanel(ctx, last, kvitter, settApen) {
   function hendelsestekst(h) {
     if (h.art === "trinn") {
       return t("ui.fordring.detalj.art.trinn")
+        .replace("{trinn}", String(h.trinn));
+    }
+    if (h.art === "purring") {
+      // ARC B (150): purringen ER sendt — plattformens kvittering
+      // bokførte den. Teksten sier det, ikke bare et trinnummer.
+      return t("ui.fordring.detalj.art.purring")
         .replace("{trinn}", String(h.trinn));
     }
     if (h.art === "betaling") {
@@ -384,6 +397,7 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       settApen(f.fordring_id);
       sett(utfall);
       sett(historikk);
+      sett(purringer);            // aldri forrige rads purringer under en ny rad
       merkelinje.textContent = `${f.kunde_ref} · ${f.fakturanummer} · `
         + `${belopTekst(f.rest_ore)} · ${forfallTekst(f.dogn_over_forfall)}`;
       // ET AVSLUTTET KRAV TAR IKKE IMOT NOE. Knappene deaktiveres i
@@ -407,17 +421,28 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       if (!liste.length) {
         sett(historikk, el("p", { class: "muted",
           text: t("ui.fordring.detalj.ingen") }));
-        return;
+      } else {
+        const ul = el("ul", {});
+        for (const h of liste) {
+          ul.append(el("li", {},
+            el("span", { text: `${h.inntruffet} — ${hendelsestekst(h)}` }),
+            el("span", { class: "muted",
+              text: ` · ${h.opprettet_av}`
+                + (h.begrunnelse ? ` · ${h.begrunnelse}` : "") })));
+        }
+        sett(historikk, ul);
       }
-      const ul = el("ul", {});
-      for (const h of liste) {
-        ul.append(el("li", {},
-          el("span", { text: `${h.inntruffet} — ${hendelsestekst(h)}` }),
-          el("span", { class: "muted",
-            text: ` · ${h.opprettet_av}`
-              + (h.begrunnelse ? ` · ${h.begrunnelse}` : "") })));
+      const bestillinger = d.purringer || [];
+      if (!bestillinger.length) {
+        sett(purringer, el("p", { class: "muted",
+          text: t("ui.fordring.detalj.purringer.ingen") }));
+      } else {
+        const pl = el("ul", {});
+        for (const b of bestillinger) {
+          pl.append(el("li", { text: purringstekst(b) }));
+        }
+        sett(purringer, pl);
       }
-      sett(historikk, ul);
     },
   };
 }
@@ -507,6 +532,70 @@ function planSkjema(ctx, last, kvitter) {
     skjema, utfall);
 }
 
+// Purringsbestillingens utfall i ord. `feil:<kode>` er plattformens nei
+// FØR beslutningen (ukjent/ikke klar) — én setning, ikke koden.
+export function purringstekst(b) {
+  const utfall = String(b.utfall || "");
+  const nokkel = utfall.startsWith("feil:")
+    ? "ui.fordring.purring.utfall.feil"
+    : `ui.fordring.purring.utfall.${utfall}`;
+  const handlingNokkel = `ui.fordring.handling.${b.handling_trinn}`;
+  const handling = HANDLINGER.includes(b.handling_trinn)
+    ? t(handlingNokkel) : String(b.handling_trinn || "");
+  return t("ui.fordring.detalj.purringer.linje")
+    .replace("{trinn}", String(b.trinn))
+    .replace("{handling}", handling)
+    .replace("{utfall}", t(nokkel)) + ` · ${String(b.bestilt_ts || "")
+      .slice(0, 10)}`;
+}
+
+// AVSENDEREN ER DET KUNDEN SER. Uten profil sies det høyt — før den
+// første purringen går ut i tenantens id i stedet for et navn.
+function avsenderSeksjon(a) {
+  const boks = el("section", { class: "kpi-kort" },
+    el("h2", { text: t("ui.fordring.avsender.tittel") }));
+  if (!a || !a.avsender_navn) {
+    boks.append(el("p", {}, el("strong", {
+      text: t("ui.fordring.avsender.ingen") })));
+    return boks;
+  }
+  boks.append(el("p", {
+    text: t("ui.fordring.avsender.navn").replace("{navn}", a.avsender_navn) }));
+  boks.append(el("p", { class: a.svar_til ? "" : "muted",
+    text: a.svar_til
+      ? t("ui.fordring.avsender.svar_til").replace("{adresse}", a.svar_til)
+      : t("ui.fordring.avsender.uten_svar_til") }));
+  return boks;
+}
+
+function avsenderSkjema(ctx, last, kvitter, a) {
+  const utfall = el("p", { "aria-live": "polite" });
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const navn = el("input", { id: "fo-avs-navn", name: "avsender_navn",
+    type: "text", required: true, maxlength: 120,
+    value: (a && a.avsender_navn) || "" });
+  const svarTil = el("input", { id: "fo-avs-svar", name: "svar_til",
+    type: "email", maxlength: 254, value: (a && a.svar_til) || "" });
+  const knapp = el("button", { type: "submit",
+    text: t("ui.fordring.knapp.lagre_avsender") });
+  skjema.append(
+    felt("fo-avs-navn", "ui.fordring.skjema.avsender_navn", navn,
+         "ui.fordring.skjema.avsender_navn_hjelp"),
+    felt("fo-avs-svar", "ui.fordring.skjema.svar_til", svarTil,
+         "ui.fordring.skjema.svar_til_hjelp"),
+    el("div", { class: "skjema-bunn" }, knapp));
+  skjemaramme(ctx, last, {
+    skjema, knapp, utfall, kvitter,
+    okNokkel: "ui.fordring.skjema.avsender_ok",
+    send: (idem) => settAvsender(navn.value.trim(),
+                                 svarTil.value.trim() || null, idem),
+    tilbakestill: () => {},
+  });
+  return el("div", { class: "skjemaboks" },
+    el("h3", { text: t("ui.fordring.skjema.avsender_tittel") }),
+    skjema, utfall);
+}
+
 // Sammendraget. TALLENE KOMMER FRA SIN EGEN DØR og gjelder ALT.
 function sammendrag(s) {
   const p = el("p", {
@@ -589,10 +678,12 @@ export function visFordring(hoved, ctx) {
           planTabell(plan));
       }
 
-      const deler = [oversikt, alder, liste, planseksjon, detalj.node];
+      const deler = [oversikt, alder, liste, planseksjon,
+                     avsenderSeksjon(d.avsender), detalj.node];
       if (harScope(ctx, "bestilling:opprett")) {
         deler.push(nySkjema(ctx, last, kvitter),
-                   planSkjema(ctx, last, kvitter));
+                   planSkjema(ctx, last, kvitter),
+                   avsenderSkjema(ctx, last, kvitter, d.avsender));
       }
       sett(kropp, ...deler);
       // GJENÅPNE PANELET på raden som sto åpen. Finnes den ikke lenger

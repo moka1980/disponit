@@ -767,6 +767,14 @@ export const ettergiFordring = (fordringId, begrunnelse, idem) =>
   _muter(`/v1/fordring/${encodeURIComponent(fordringId)}/ettergi`,
          "POST", { begrunnelse }, idem || nyIdempotensnokkel());
 
+// ARC B (146–151): purringen sendes av PLATTFORMEN, innenfor policyen —
+// aldri herfra. Flaten setter bare det kunden ser: avsenderprofilen
+// (navnet purringen sendes i, og adressen kunden svarer til).
+export const settAvsender = (avsenderNavn, svarTil, idem) =>
+  _muter("/v1/fordring/avsender", "POST",
+         { avsender_navn: avsenderNavn, svar_til: svarTil || null },
+         idem || nyIdempotensnokkel());
+
 // M-24 (105): leverandør- og SLA-registeret. LEVERANDØREN, AVTALEN og
 // hver MÅLING bærer sin egen SP-2-nøkkel — serveren utleder id-en av
 // den. En dobbelt registrert måling ville telt det samme bruddet to
