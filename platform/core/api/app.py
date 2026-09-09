@@ -3102,6 +3102,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kampanje as kampanjemodul
         return kampanjemodul.avsender_endepunkt(tjeneste, request)
 
+    def kampanje_leveringer(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.leveringer_endepunkt(tjeneste, request)
+
     def kampanje_aktiv(request: Request) -> Response:
         from . import kampanje as kampanjemodul
         return kampanjemodul.sett_aktiv_endepunkt(tjeneste, request)
@@ -4304,6 +4308,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold",
               kampanje_innhold, methods=["POST"]),
         Route("/v1/kampanje/avsender", kampanje_avsender, methods=["POST"]),
+        Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/leveringer",
+              kampanje_leveringer, methods=["GET"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -5793,6 +5799,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold"):
         "bestilling:opprett",
     ("POST", "/v1/kampanje/avsender"):           "bestilling:opprett",
+    ("GET",  "/v1/kampanje/kampanje/{kampanje_id:uuid}/leveringer"):
+        "okonomi:read",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME
     # admin-lesescope som model card over. Ingen tenantdata i noen av

@@ -20,12 +20,17 @@
 # Vilkårene har verifikatorer som FINNES (v_samtykke, og v_prisbok fra
 # klynge 4). Det er handlingen selv som mangler en modul.
 #
-# v1 SENDER INGENTING.
+# REGISTERET SENDER INGENTING — EIERMODULEN LEVERER (ARC B, 153–158).
 #
-# DET GJØR TILBAKEHOLDELSEN STERKERE, IKKE SVAKERE. Modulen finnes for å
-# sende; v1 sender null. En utsending er irreversibel på den måten som
-# betyr noe — en e-post kan ikke kalles tilbake, og en for mye er en
-# klage, en avmelding eller et tilsynsspørsmål.
+# v1 sendte null, og tilbakeholdelsen sto til fullmakten fantes som
+# policy og samtykket som attestasjon. Nå leverer `m44_kampanje`
+# (modules/m44_kampanje) én mottaker i én kampanje på sendedagen —
+# bestilt av planrunden gjennom bestillingsveien, avgjort av tenantens
+# policy (`kampanje.send`, frekvens per mottaker), med samtykket
+# attestert av registeret (`v_samtykke`) og spurt en gang til ved
+# claim. Registeret, sveipen og flaten sender fortsatt ingenting; en
+# e-post kan ikke kalles tilbake, og derfor er hver levering en
+# bestilling policyen har sagt ja til, med kvittering som evidens.
 #
 # v1 GJØR ÉN TING: registrerer kampanjen, mottakerne og samtykkets
 # tilstand — og MÅLER frekvenstaket malen alt har satt. Et brudd er et
@@ -38,10 +43,12 @@
 # slettet svaret.
 #
 # GRENSEN MOT M-6: M-6 eier E-POSTEN som kanal. M-44 eier KAMPANJEN og
-# samtykket. v1 kobler dem ikke — koblingen er nettopp utsendingen vi
-# ikke gjør.
+# samtykket. Koblingen er eiermodulens levering gjennom husets SMTP i
+# tenantens avsendernavn — aldri registerets.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# TO AKSER, ÆRLIG LEST: grensen `m44-kampanje-v1` måler leveringen
+# (docs/RELEASE-M44-KAMPANJE.md §7); release og drift registreres på
+# verten med `deploy/staging/m44-oppsett.sh`.
 id: m44_kampanje
 navn: Kampanjeutsendingsagent
 versjon: 0.1.0
@@ -60,8 +67,9 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      KREVER: suitekjøring på staging med modulens andel pinnet og
+      stagingidentitet bundet. Modulen finnes (ARC B, release m44-r1
+      registreres med m44-oppsett.sh); kjøringen er ikke gjort.
   syntetisk_datasett_likt_lokalt:
     status: nei
     notat: >-
@@ -85,4 +93,6 @@ staging_sjekkliste:
   rollback_testet:
     status: nei
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      KREVER: en release å rulle tilbake fra, og en målt tilbakerulling
+      (bytt_release til forrige). m44-r1 er den første — ingenting å
+      rulle tilbake til ennå.

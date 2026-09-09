@@ -282,6 +282,8 @@ def test_invariant_modulen_sendte():
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys",
         # 153: innhold og adresse er REGISTER, ikke levering.
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold",
+        # 158: leveringene per kampanje — lesevei, maske, aldri adresse.
+        "/v1/kampanje/kampanje/{kampanje_id:uuid}/leveringer",
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/plan",
         "/v1/kampanje/mottaker",
         "/v1/kampanje/mottaker/{mottaker_id:uuid}/aktiv",
