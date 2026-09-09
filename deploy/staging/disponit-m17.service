@@ -1,0 +1,43 @@
+# m17_kundeservice-arbeideren: claimer kundeservice.svar.send-oppdrag over API-et med
+# modultokenet fra onboarding (035), sender svaret gjennom HUSETS SMTP
+# med tenantens avsendernavn (163), og kvitterer signert.
+#
+# TILLITSSNITTET (m56/m57-formen): prosessen har modultoken,
+# kvitteringsnøkkel og SMTP-oppsett — men INGEN DB-tilgang, ingen KEK,
+# ingen tenant-nøkler. Adressen kommer dekryptert i claim-svaret og lever
+# bare i minnet så lenge sendingen varer.
+#
+# Enables FØRST når modulen er registrert (registrer-m17-kundeservice.py) og
+# onboardet — før det ville claim svart 403 og uniten bare pollet seg varm.
+#
+# Installasjon: kopier til /etc/systemd/system/, opprett bruker
+# disponit-m17, fyll /etc/disponit/m17/{konfig,DISPONIT_MODULTOKEN,
+# kvitteringsnokkel.json} (0600), daemon-reload. `konfig` bærer
+# DISPONIT_API_URL, DISPONIT_KVITTERINGSNOKKEL og DISPONIT_SMTP_* (samme
+# verdier som /etc/disponit/varsel/smtp.env).
+[Unit]
+Description=Disponit M-17 svararbeider (m17_kundeservice)
+After=network-online.target disponit-api.service
+Wants=network-online.target
+
+[Service]
+User=disponit-m17
+Group=disponit-m17
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/m17/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/m17/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-m17
+Environment=XDG_RUNTIME_DIR=/run/disponit-m17
+ExecStart=/opt/disponit/.venv/bin/python -m drift.m17_arbeider
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/disponit
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

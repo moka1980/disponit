@@ -1244,6 +1244,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.avsender_endepunkt(tjeneste, request)
 
+    def kundeservice_avsenderprofil(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.avsenderprofil_endepunkt(tjeneste, request)
+
     def kundeservice_unntakskoe(request: Request) -> Response:
         from . import kundeservice as ksmodul
         return ksmodul.unntakskoe_endepunkt(tjeneste, request)
@@ -3628,6 +3632,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_klassifiser, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
               kundeservice_avsender, methods=["POST"]),
+        Route("/v1/kundeservice/avsender", kundeservice_avsenderprofil,
+              methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
               kundeservice_unntakskoe, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
@@ -5072,6 +5078,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender"):
         "bestilling:opprett",
+    ("POST", "/v1/kundeservice/avsender"):      "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny"):
@@ -6405,6 +6412,13 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 utforelse = utforelse_for_sending(
                     conn, tenant, (minimert or {}).get("kampanje_id"),
                     (minimert or {}).get("mottaker_id"))
+            # M-17 (163, ARC B kundeservice PR 4): adressen, emnet og det
+            # godkjente utkastet — og tilstanden spurt en gang til.
+            elif oppdragstype == "kundeservice.svar.send":
+                from .kundeservice import utforelse_for_sending
+                utforelse = utforelse_for_sending(
+                    conn, tenant, (minimert or {}).get("henvendelse_id"),
+                    (minimert or {}).get("utkast_id"))
 
             # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
             # claimen. Feiler utstedelsen, finnes heller ingen claim —

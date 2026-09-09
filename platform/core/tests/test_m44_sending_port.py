@@ -209,9 +209,10 @@ def test_avsenderprofilen_valideres(miljo, klient, token, migrator):
     assert rad == ("Fjordlys Elektro AS", None) and n >= 1
 
 
-def test_claim_svaret_barer_utforelse_for_begge_eiermodulene():
-    """Statisk: `utforelse` legges på svaret for purring.send og
-    kampanje.send — og bare dem; m56/m57-kontrakten er urørt."""
+def test_claim_svaret_barer_utforelse_for_eiermodulene():
+    """Statisk: `utforelse` legges på svaret for purring.send,
+    kampanje.send og kundeservice.svar.send — og bare dem;
+    m56/m57-kontrakten er urørt."""
     from pathlib import Path
     kode = (Path(__file__).resolve().parents[1] / "api" / "app.py"
             ).read_text(encoding="utf-8")
@@ -219,5 +220,6 @@ def test_claim_svaret_barer_utforelse_for_begge_eiermodulene():
     blokk = kode[i - 400:i + 900]
     assert 'if oppdragstype == "purring.send":' in blokk
     assert 'elif oppdragstype == "kampanje.send":' in blokk
-    assert kode.count("utforelse = utforelse_for_sending(") == 2
+    assert 'elif oppdragstype == "kundeservice.svar.send":' in kode
+    assert kode.count("utforelse = utforelse_for_sending(") == 3
     assert 'if utforelse is not None:\n            svar["utforelse"]' in kode

@@ -199,8 +199,8 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
 
     En sendevei kan ikke finnes uten en tilstand som sier at noe ble
     sendt. `svarutkast.status` har nøyaktig fire verdier (160 la til
-    `godkjent`), og ingen av dem heter `sendt`; `app.py` registrerer ti kundeservice-ruter (160 la til
-    adressen — register, ikke sending), og ingen av dem er en sending.
+    `godkjent`), og ingen av dem heter `sendt`; `app.py` registrerer elleve kundeservice-ruter (160 la til
+    adressen, 163 avsenderprofilen — register, ikke sending), og ingen av dem er en sending.
 
     Dette er halvdelen som ville overlevd at noen skrev sin egen
     socket-kode uten å importere noe: uten en tilstand å skrive ned,
@@ -232,6 +232,8 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
                   if sti.startswith("/v1/kundeservice"))
     assert mine == [
         "/v1/kundeservice",
+        # 163: avsenderprofilen — navnet eiermodulen svarer i (ARC B).
+        "/v1/kundeservice/avsender",
         "/v1/kundeservice/henvendelse",
         # 160 (ARC B): adressen er REGISTER, ikke sending.
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
