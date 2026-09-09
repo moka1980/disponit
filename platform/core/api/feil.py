@@ -365,6 +365,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
                   " ikke i planen, er deaktivert, mangler adresse, eller"
                   " kampanjen mangler innhold — registerets tilstand,"
                   " ikke policyens dom."),
+    Feilvei("henvendelse_ukjent", 404, ("sikkerhet",), None,
+            notat="ARC B kundeservice: bestillingen peker på en henvendelse"
+                  " eller et utkast tenanten ikke har — målt FØR"
+                  " beslutningen."),
+    Feilvei("svar_ikke_klart_for_sending", 409, ("drift",), None,
+            notat="ARC B kundeservice: henvendelsen er lukket eller i"
+                  " unntakskøen, mangler adresse eller svarvei, eller"
+                  " utkastet er ikke henvendelsens — registerets tilstand,"
+                  " målt FØR beslutningen brenner kvote."),
     Feilvei("inndata_opptatt", 409, ("drift",), None, notat=(
         "En annen bestilling holder engangsbunten AKKURAT NÅ (#215). "
         "Forbigående, ingen dom: ingen beslutning er tatt, ingen kvote "
