@@ -760,3 +760,24 @@ def test_rollbackmaalet_tar_med_psql_feilen_i_dommen():
     # inn i en setning. En flerlinjes psql-feil må derfor foldes.
     assert len(r.stdout.strip().splitlines()) == 1, \
         f"dommen skal være énlinjes: {r.stdout!r}"
+
+
+def test_ui_ressursene_har_egen_sone_dimensjonert_for_oppstarten():
+    """9/9-2026: appen henter noen hundre moduler, stilark og fonter i én
+    burst ved kald cache (etter hver deploy, og alltid på en fersk
+    nettleser). Den generelle sonen (600 r/m, burst 100) svarte 429 midt i
+    lastingen og ga en TOM SIDE etter innlogging — 877 treff på én time på
+    verten. `/ui/` skal ha sin egen sone, dimensjonert for oppstarten.
+
+    MUTASJONEN SOM DREPER DENNE: sett `/ui/` tilbake på `disponit_general`.
+    """
+    https = _https()
+    ui = re.search(r"location /ui/ \{.*?\}", https, re.S).group(0)
+    assert "zone=disponit_ui" in ui, "/ui/ mangler sin egen sone"
+    assert "zone=disponit_general" not in ui, \
+        "/ui/ skal ikke ha den generelle sonen — den er for stram for oppstarten"
+    burst = int(re.search(r"zone=disponit_ui burst=(\d+)", ui).group(1))
+    assert burst >= 500, f"burst={burst}: appens oppstart er ~430 forespørsler"
+    rate = (NGINX / "rate-soner.conf").read_text(encoding="utf-8")
+    sone = re.search(r"zone=disponit_ui:\d+m rate=(\d+)r/m", rate)
+    assert sone and int(sone.group(1)) >= 3000, "sonen disponit_ui mangler eller er for stram"
