@@ -121,3 +121,26 @@ def test_bevisgrensen_har_ti_punkter_med_navngitte_porter():
                           art(dobbel_sending_samme_oppdrag_forsok=0))
     assert _sjekk_grenser("m23-purring-v1",
                           art(rundtur_paa_disponit_com="ja"))
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 9/9 mot disponit.com: artefaktet er innsjekket, har
+    skjemaets form og passerer `m23-purring-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M23_PURRING_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / "deploy/staging/artefakter/m23-purring-v1-20260909T113000Z.json"
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m23-purring-v1") == []
+    assert _sjekk_grenser("m23-purring-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M23_PURRING_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    assert "m23.purring.inkassovarsel_ikke_policygatet" in nokler
+    assert "m23.purring.punkt_maalt_kun_i_port" in nokler
