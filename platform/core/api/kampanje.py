@@ -50,6 +50,7 @@ from __future__ import annotations
 import uuid as uuidlib
 
 import re
+from datetime import datetime
 
 import psycopg
 
@@ -628,6 +629,67 @@ def utforelse_for_sending(conn, tenant: str, kampanje_id, mottaker_id) -> dict:
             "mottaker_navn": navn, "emne": emne, "tekst": tekst,
             "avmeldingslenke": lenke, "planlagt_sendt": dato.isoformat(),
             "avsender_navn": avsender_navn, "svar_til": svar_til}
+
+
+def bokfor_kampanje_levert(conn, tenant: str, oppdrag_id: int,
+                           kvittering: dict, aktor: str) -> dict:
+    """Kvitteringens vei tilbake til registeret (157). -> {bokfort} eller
+    {avvik: <grunn>} — aldri et unntak ut: kalleren har alt en levert
+    e-post å stå inne for.
+
+    RESSURSEN MÅ VÆRE OPPDRAGETS: kvitteringen er signert av modulen, men
+    modulen kunne navngi et annet par enn det oppdraget gjaldt. Payloaden
+    dekrypteres her, som ved claim, og paret sammenlignes FØR noe
+    bokføres.
+    """
+    ressurs = str(kvittering.get("ressurs_id") or "")
+    if not ressurs.startswith("kampanje:"):
+        return {"avvik": "ressurs_id_ikke_kampanje"}
+    try:
+        _, kid, mid = ressurs.split(":", 2)
+        kid, mid = uuidlib.UUID(kid), uuidlib.UUID(mid)
+    except ValueError:
+        return {"avvik": "kvittering_uten_gyldig_ressurs"}
+    from db import kryptering
+    orad = conn.execute(
+        "SELECT payload_kryptert, key_id, nonce FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, int(oppdrag_id))).fetchone()
+    if orad is None:
+        return {"avvik": "oppdrag_ukjent"}
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, orad[1])).fetchone()
+    try:
+        dek = kryptering._pakk_ut((orad[1], nok[0]), tenant)[1]
+        payload = kryptering.dekrypter(dek, bytes(orad[0]), bytes(orad[2]),
+                                       tenant, orad[1])
+    except Exception:                                   # noqa: BLE001
+        return {"avvik": "oppdrag_uleselig"}
+    if str(payload.get("kampanje_id") or "") != str(kid) \
+            or str(payload.get("mottaker_id") or "") != str(mid):
+        return {"avvik": "ressurs_avvik"}
+    levert_ts = kvittering.get("sendt_ts")
+    try:
+        levert = (datetime.fromisoformat(str(levert_ts)
+                                         .replace("Z", "+00:00"))
+                  if levert_ts else None)
+        if levert is not None and levert.tzinfo is None:
+            levert = None
+    except ValueError:
+        levert = None
+    try:
+        with conn.transaction():
+            rad = conn.execute(
+                "SELECT m44_kampanje_levert(%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, kid, mid, int(oppdrag_id), levert,
+                 str(kvittering.get("malversjon") or "")[:64] or None,
+                 str(kvittering.get("mottaker_maske") or "")[:254] or None,
+                 aktor)).fetchone()
+    except psycopg.Error as e:
+        return {"avvik": f"dor_nektet:{type(e).__name__}"}
+    if rad is None:
+        return {"avvik": "dor_uten_svar"}
+    return {"bokfort": bool(rad[0])}
 
 
 def avlys_kampanje_endepunkt(tjeneste, request):
