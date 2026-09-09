@@ -98,14 +98,21 @@ echo "== 5/5 onboarding → modultoken → start"
 if [ -s /etc/disponit/m23/DISPONIT_MODULTOKEN ]; then
   echo "   modultoken finnes alt"
 else
-  UT=$("$PY" deploy/staging/token-cli.py opprett --tenant disponit --rolle drift --scope modules:onboard --bootstrap 2>&1)
+  # `|| true`: under set -e ville et ikke-null-svar drept skriptet FØR
+  # diagnosen under (CodeRabbit på ARC B kundeservice PR 6).
+  UT=$("$PY" deploy/staging/token-cli.py opprett --tenant disponit --rolle drift --scope modules:onboard --bootstrap 2>&1 || true)
   DRIFT=$(printf '%s\n' "$UT" | grep -oE '^\s*tk_[A-Za-z0-9_-]+\.[^ ]+' | tr -d ' ' | head -1)
   DRIFT_ID=${DRIFT%%.*}
   [ -n "$DRIFT" ] || { echo "   fikk ikke drift-token:"; printf '%s\n' "$UT" | grep -v '\.' | sed 's/^/   /'; exit 1; }
-  SVAR=$(curl -s -X POST https://disponit.com/v1/modul/onboarding -H "authorization: Bearer $DRIFT" -H 'content-type: application/json' -d "{\"modul_id\":\"$MODUL\",\"miljo\":\"$MILJO\",\"release_id\":\"$REL\"}")
+  # Tokenet og hemmeligheten går ALDRI som argument (de ville stått i
+  # `ps` for alle på verten): headeren leses fra en prosess-substitusjon,
+  # kroppen fra stdin.
+  SVAR=$(printf '{"modul_id":"%s","miljo":"%s","release_id":"%s"}' "$MODUL" "$MILJO" "$REL" \
+    | curl -s -X POST https://disponit.com/v1/modul/onboarding -H @<(printf 'authorization: Bearer %s' "$DRIFT") -H 'content-type: application/json' -d @-)
   HEM=$(printf '%s' "$SVAR" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hemmelighet',''))" 2>/dev/null || true)
   [ -n "$HEM" ] || { echo "   onboarding avvist: $SVAR"; "$PY" deploy/staging/token-cli.py deaktiver "$DRIFT_ID" >/dev/null 2>&1 || true; exit 1; }
-  SVAR2=$(curl -s -X POST https://disponit.com/v1/modul/onboarding/innlos -H 'content-type: application/json' -d "{\"hemmelighet\":\"$HEM\"}")
+  SVAR2=$(printf '{"hemmelighet":"%s"}' "$HEM" \
+    | curl -s -X POST https://disponit.com/v1/modul/onboarding/innlos -H 'content-type: application/json' -d @-)
   TOK=$(printf '%s' "$SVAR2" | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
   [ -n "$TOK" ] || { echo "   innløsning avvist: $SVAR2"; "$PY" deploy/staging/token-cli.py deaktiver "$DRIFT_ID" >/dev/null 2>&1 || true; exit 1; }
   printf '%s' "$TOK" > /etc/disponit/m23/DISPONIT_MODULTOKEN
