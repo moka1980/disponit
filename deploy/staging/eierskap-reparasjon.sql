@@ -581,6 +581,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm44_registrer_mottaker(text,uuid,text,text,text,bytea,bytea,text,text)', 'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_sett_innhold(text,uuid,text,text,text)',           'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_registrer_kampanje(text,uuid,text,text,text,text,date,text,text,text)', 'disponit_kampanje_eier'),
+    -- 154 (M-44, ARC B): bestillingsveiens målport for kampanje.send.
+    ('FUNCTION', 'm44_for_levering(text,uuid,uuid)',                    'disponit_kampanje_eier'),
     -- 116 (M-48): motpartsregisterets doerer og
     -- motpartssveipen. KLYNGE 6s ENE UTGAAENDE KANAL:
     -- foretaksregisteret er koblet paa, kredittleverandoeren

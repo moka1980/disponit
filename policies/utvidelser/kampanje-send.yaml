@@ -1,0 +1,40 @@
+# ============================================================
+# POLICY-UTVIDELSE · M-44 · KAMPANJEN LEVERES INNENFOR POLICYEN
+# (ARC B kampanje, PR 2)
+#
+# Limes inn i tenantens policy (utkast → fire øyne → aktivering).
+# Bransjemalen for tjenestebedrift har ingen kampanjehandling, og malen
+# røres ikke (byte-bundet til M-02s akseptartefakt, K2 #131).
+#
+# Formen er netthandelsmalens `kampanje.send` — uten `priser_fra_prisbok`
+# (en tjenestebedrifts kampanjetekst bærer ingen priser fra prisboken).
+# `v_samtykke` er REGISTERETS eget vitne: bestillingsveien attesterer
+# samtykkets tilstand på sendedatoen fra samtykkehistorikken (append-
+# only), og avmeldingslenken fra kampanjen. Et trukket eller utløpt
+# samtykke blir dermed en SAK i unntakskøen, aldri en stille levering.
+#
+# Frekvensen her er POLICYENS tak per mottaker; registerets eget tak
+# (`kampanjegrense`) nekter alt i plandøra (#423). To gjerder.
+# ============================================================
+verifikatorer:
+  v_samtykke:
+    beskrivelse: "Registerets samtykkehistorikk (M-44), attestert av plattformen"
+    betrodd_for: [samtykke_gyldig, avmeldingslenke]
+
+handlinger:
+  - id: kampanje.send
+    modul: M-44
+    modus: auto
+    ved_brudd: unntakskø
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, persondata]
+    grenser:
+      frekvens:
+        maks: 2
+        periode_antall: 30
+        periode_enhet: dager
+        grupperingsnokkel: mottaker_id
+    vilkaar:
+      - {navn: samtykke_gyldig, verifikator: v_samtykke}
+      - {navn: avmeldingslenke, verifikator: v_samtykke}
+    reversering: {type: kompenserende, handling: kampanje.send_korreksjon}

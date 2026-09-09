@@ -357,6 +357,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "trinn etter det den står på. Målt FØR beslutningen brenner "
         "kvote (rekrutteringsformens økonomi); dørens egen dom ved "
         "utførelsen står uansett bak.")),
+    Feilvei("kampanje_ukjent", 404, ("sikkerhet",), None,
+            notat="ARC B kampanje: bestillingen peker på en kampanje eller"
+                  " mottaker tenanten ikke har — målt FØR beslutningen."),
+    Feilvei("kampanje_ikke_klar_for_levering", 409, ("drift",), None,
+            notat="ARC B kampanje: kampanjen er avlyst, mottakeren står"
+                  " ikke i planen, er deaktivert, mangler adresse, eller"
+                  " kampanjen mangler innhold — registerets tilstand,"
+                  " ikke policyens dom."),
     Feilvei("inndata_opptatt", 409, ("drift",), None, notat=(
         "En annen bestilling holder engangsbunten AKKURAT NÅ (#215). "
         "Forbigående, ingen dom: ingen beslutning er tatt, ingen kvote "
