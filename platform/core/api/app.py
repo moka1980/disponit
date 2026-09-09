@@ -3090,6 +3090,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kampanje as kampanjemodul
         return kampanjemodul.legg_i_plan_endepunkt(tjeneste, request)
 
+    def kampanje_kontakt(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.kontakt_endepunkt(tjeneste, request)
+
+    def kampanje_innhold(request: Request) -> Response:
+        from . import kampanje as kampanjemodul
+        return kampanjemodul.innhold_endepunkt(tjeneste, request)
+
     def kampanje_aktiv(request: Request) -> Response:
         from . import kampanje as kampanjemodul
         return kampanjemodul.sett_aktiv_endepunkt(tjeneste, request)
@@ -4287,6 +4295,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kampanje_avlys, methods=["POST"]),
         Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/plan",
               kampanje_plan, methods=["POST"]),
+        Route("/v1/kampanje/mottaker/{mottaker_id:uuid}/kontakt",
+              kampanje_kontakt, methods=["POST"]),
+        Route("/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold",
+              kampanje_innhold, methods=["POST"]),
         Route("/v1/drift/backup", drift_backup, methods=["GET"]),
         Route("/v1/drift/selvtest", drift_selvtest, methods=["GET"]),
         Route("/v1/datakvalitet", datakvalitet, methods=["GET"]),
@@ -5770,6 +5782,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys"):
         "bestilling:opprett",
     ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/plan"):
+        "bestilling:opprett",
+    ("POST", "/v1/kampanje/mottaker/{mottaker_id:uuid}/kontakt"):
+        "bestilling:opprett",
+    ("POST", "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold"):
         "bestilling:opprett",
     # M-10 (090) / M-11 (091): plattformdriftens eget innsyn — backupens
     # verifiseringshistorikk og selvtestens runder, bak SAMME

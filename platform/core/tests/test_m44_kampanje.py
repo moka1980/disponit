@@ -278,9 +278,12 @@ def test_invariant_modulen_sendte():
         "/v1/kampanje/grense",
         "/v1/kampanje/kampanje",
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys",
+        # 153: innhold og adresse er REGISTER, ikke levering.
+        "/v1/kampanje/kampanje/{kampanje_id:uuid}/innhold",
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/plan",
         "/v1/kampanje/mottaker",
         "/v1/kampanje/mottaker/{mottaker_id:uuid}/aktiv",
+        "/v1/kampanje/mottaker/{mottaker_id:uuid}/kontakt",
         "/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke",
         "/v1/kampanje/mottaker/{mottaker_id:uuid}/samtykke/{dag:str}",
     ], mine
@@ -696,7 +699,9 @@ def test_invariant_frekvensgrense_hardkodet():
             assert m.group(1) in (
                 "GRENSE", "GRENSER", "MAKS_MOTTAKERE", "MAKS_KAMPANJER",
                 "MAKS_HISTORIKK", "MAKS_REF", "MAKS_NAVN",
-                "MAKS_KONTAKT", "MAKS_LENKE", "MAKS_NOTAT"), \
+                "MAKS_KONTAKT", "MAKS_LENKE", "MAKS_NOTAT",
+                # 153: feltlengder for innholdet — ikke frekvens.
+                "MAKS_EMNE", "MAKS_TEKST"), \
                 f"{fil.name} har grensekonstanten {m.group(1)}"
     from drift import kampanjesveip
     assert kampanjesveip.GRENSE == 500

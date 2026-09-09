@@ -64,7 +64,7 @@ const BILDE = {
       formal: "salg", avmeldingslenke: "https://x.example/avmeld",
       planlagt_sendt: "2026-08-10", status: "registrert",
       mottakere: 2, opprettet: "2026-08-01T09:00:00+00:00",
-      opprettet_av: "kari" },
+      opprettet_av: "kari", har_innhold: true, emne: "Høstsalg starter" },
     { kampanje_id: "aaaaaaaa-2222-2222-2222-222222222222",
       ekstern_ref: "KAMP-2", navn: "Avlyst",
       formal: "salg", avmeldingslenke: "https://x.example/avmeld2",
@@ -632,3 +632,62 @@ test("Kampanje: ingen hardkodet tekst", async () => {
     settI18nForTest(NB, "nb");
   }
 });
+
+// ---------------------------------------------------------------------
+// 153 (ARC B kampanje, PR 1): adressen finnes eller ikke; innholdet
+// finnes eller ikke — i ord, aldri innholdet av dem.
+// ---------------------------------------------------------------------
+
+test("Kampanje: mottakerlisten sier om adressen er lagret, kampanjelisten"
+  + " om innholdet er klart", async () => {
+    SVAR = { ...fullSvar(), "/v1/kampanje": { ...BILDE,
+      mottakere: BILDE.mottakere.map((m, i) => ({ ...m, har_kontakt: i === 0 })),
+      kampanjer: [BILDE.kampanjer[0],
+        { ...BILDE.kampanjer[1], har_innhold: false, emne: null }] } };
+    const h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 2);
+    const tekst = h.textContent;
+    assert.ok(tekst.includes(t("ui.kampanje.kontakt.satt")));
+    assert.ok(tekst.includes(t("ui.kampanje.kontakt.mangler")));
+    assert.ok(tekst.includes(t("ui.kampanje.innhold.satt")));
+    assert.ok(tekst.includes("Høstsalg starter"));
+    assert.ok(tekst.includes(t("ui.kampanje.innhold.mangler")));
+    assert.ok(tekst.includes(t("ui.kampanje.kolonne.innhold")));
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Kampanje: kampanjeskjemaet sender emne og tekst bare når de er"
+  + " fylt ut", async () => {
+    // To skjermer, ikke én: etter en vellykket innsending tegnes flaten
+    // om, og det gamle skjemaet er løsrevet.
+    const fyll = (h, medInnhold) => {
+      const sett = (id, v) => { h.querySelector(id).value = v; };
+      sett("#kp-k-ref", "K-9"); sett("#kp-k-navn", "Vinter");
+      sett("#kp-k-formal", "tilbud");
+      sett("#kp-k-lenke", "https://x.example/av");
+      sett("#kp-k-dato", "2026-11-01");
+      if (medInnhold) {
+        sett("#kp-k-emne", "Vintersjekk"); sett("#kp-k-tekst", "Hei {navn}");
+      }
+      h.querySelector("#kp-k-emne").closest("form")
+        .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    };
+    SVAR = fullSvar();
+    let h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => !!h.querySelector("#kp-k-emne"));
+    fyll(h, false);
+    await vent(() => SISTE && SISTE.sti === "/v1/kampanje/kampanje");
+    assert.ok(!("emne" in SISTE.kropp) && !("tekst" in SISTE.kropp));
+
+    SVAR = fullSvar();
+    h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => !!h.querySelector("#kp-k-emne"));
+    fyll(h, true);
+    await vent(() => SISTE && SISTE.sti === "/v1/kampanje/kampanje");
+    assert.equal(SISTE.kropp.emne, "Vintersjekk");
+    assert.equal(SISTE.kropp.tekst, "Hei {navn}");
+  });
