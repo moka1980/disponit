@@ -198,8 +198,8 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
     """ANDRE HALVDEL, målt på DATAMODELLEN og på rutene.
 
     En sendevei kan ikke finnes uten en tilstand som sier at noe ble
-    sendt. `svarutkast.status` har nøyaktig fire verdier (160 la til
-    `godkjent`), og ingen av dem heter `sendt`; `app.py` registrerer elleve kundeservice-ruter (160 la til
+    sendt. `svarutkast.status` har fem verdier (160 la til `godkjent`,
+    164 `sendt` — bokføringens ord, aldri en dom); `app.py` registrerer elleve kundeservice-ruter (160 la til
     adressen, 163 avsenderprofilen — register, ikke sending), og ingen av dem er en sending.
 
     Dette er halvdelen som ville overlevd at noen skrev sin egen
@@ -226,6 +226,21 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
     assert "'brukt_manuelt'" in kode, \
         "utkastets positive menneskedom skal si at et MENNESKE brukte det"
     assert "'godkjent'" in kode
+    # 164 (ARC B PR 5): `sendt` finnes — som BOKFØRINGENS ord, satt bare av
+    # kvitteringens vei (`m17_svar_sendt`), aldri av en dom: 160s
+    # `m17_avgjor_utkast` nekter den fortsatt, og vakten slipper bare
+    # godkjent → sendt.
+    sql164 = MIGRASJON.with_name("164_m17_svar_sendt.sql").read_text(
+        encoding="utf-8")
+    kode164 = "\n".join(l for l in sql164.splitlines()
+                        if not l.lstrip().startswith("--"))
+    assert "'sendt'" in kode164 and "m17_svar_sendt" in kode164
+    for ord_ in ("smtp", "mottakeradresse", "utgaaende_ko", "webhook"):
+        assert ord_ not in kode164.lower()
+    assert "godkjent' AND NEW.status = 'sendt'" in kode164
+    # …og foreslått går ALDRI rett til sendt: bare de tre dommene.
+    assert "AND NEW.status IN ('forkastet', 'brukt_manuelt', 'godkjent')" \
+        in kode164
 
     from api.app import RUTESCOPE
     mine = sorted(sti for _m, sti in RUTESCOPE
@@ -252,7 +267,9 @@ def test_invariant_modulen_sendte_svar_lukking_krever_menneskets_spor(
         migrator):
     """TREDJE HALVDEL, målt på VIRKELIGHETEN — og den er dommens kjerne:
     en henvendelse kan bare lukkes som «besvart» hvis et MENNESKE har
-    merket et utkast som brukt.
+    merket et utkast som brukt — eller, fra 164, plattformen har sendt et
+    godkjent utkast med signert kvittering (`sendt`). Begge er spor noen
+    kan etterprøve.
 
     Uten kravet ville «besvart» vært et ord noen kunne klikke, og
     registeret ville hatt en tilstand det ikke kan vise noe bak. MED

@@ -438,6 +438,68 @@ def utforelse_for_sending(conn, tenant: str, henvendelse_id, utkast_id) -> dict:
             "signatur": p_sign}
 
 
+def bokfor_svar_sendt(conn, tenant: str, oppdrag_id: int,
+                      kvittering: dict, aktor: str) -> dict:
+    """Kvitteringens vei tilbake til registeret (164). -> {bokfort,
+    lukket} eller {avvik: <grunn>} — aldri et unntak ut: kalleren har alt
+    et sendt svar å stå inne for.
+
+    RESSURSEN MÅ VÆRE OPPDRAGETS: kvitteringen er signert av modulen, men
+    modulen kunne navngi et annet par enn det oppdraget gjaldt. Payloaden
+    dekrypteres her, som ved claim, og paret sammenlignes FØR noe
+    bokføres.
+    """
+    ressurs = str(kvittering.get("ressurs_id") or "")
+    if not ressurs.startswith("henvendelse:"):
+        return {"avvik": "ressurs_id_ikke_henvendelse"}
+    try:
+        _, hid, uid = ressurs.split(":", 2)
+        hid, uid = uuidlib.UUID(hid), uuidlib.UUID(uid)
+    except ValueError:
+        return {"avvik": "kvittering_uten_gyldig_ressurs"}
+    from db import kryptering
+    orad = conn.execute(
+        "SELECT payload_kryptert, key_id, nonce FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, int(oppdrag_id))).fetchone()
+    if orad is None:
+        return {"avvik": "oppdrag_ukjent"}
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, orad[1])).fetchone()
+    try:
+        dek = kryptering._pakk_ut((orad[1], nok[0]), tenant)[1]
+        payload = kryptering.dekrypter(dek, bytes(orad[0]), bytes(orad[2]),
+                                       tenant, orad[1])
+    except Exception:                                   # noqa: BLE001
+        return {"avvik": "oppdrag_uleselig"}
+    if str(payload.get("henvendelse_id") or "") != str(hid) \
+            or str(payload.get("utkast_id") or "") != str(uid):
+        return {"avvik": "ressurs_avvik"}
+    from datetime import datetime
+    sendt_ts = kvittering.get("sendt_ts")
+    try:
+        sendt = (datetime.fromisoformat(str(sendt_ts).replace("Z", "+00:00"))
+                 if sendt_ts else None)
+        if sendt is not None and sendt.tzinfo is None:
+            sendt = None
+    except ValueError:
+        sendt = None
+    try:
+        with conn.transaction():
+            rad = conn.execute(
+                "SELECT bokfort, lukket FROM m17_svar_sendt(%s,%s,%s,%s,%s,"
+                "%s,%s,%s)",
+                (tenant, hid, uid, int(oppdrag_id), sendt,
+                 str(kvittering.get("malversjon") or "")[:64] or None,
+                 str(kvittering.get("mottaker_maske") or "")[:254] or None,
+                 aktor)).fetchone()
+    except psycopg.Error as e:
+        return {"avvik": f"dor_nektet:{type(e).__name__}"}
+    if rad is None:
+        return {"avvik": "dor_uten_svar"}
+    return {"bokfort": bool(rad[0]), "lukket": bool(rad[1])}
+
+
 def klassifiser_endepunkt(tjeneste, request):
     """POST /v1/kundeservice/henvendelse/{henvendelse_id}/klassifiser
     (bestilling:opprett, idem).

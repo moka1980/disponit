@@ -43,6 +43,8 @@ PER_HANDLING: dict[str, tuple[str, ...]] = {
     # ARC B kampanje (154/157): referansene, aldri adressen eller teksten.
     "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt",
                       "omfang"),
+    # ARC B kundeservice (161/164): referansene, aldri adressen eller teksten.
+    "kundeservice.svar.send": ("henvendelse_id", "utkast_id", "omfang"),
 }
 
 #: Kildereferansen er allerede ugjennomsiktig og slippes gjennom som den er.
