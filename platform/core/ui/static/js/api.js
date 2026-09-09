@@ -1269,8 +1269,9 @@ export const settLonnstakerAktiv = (takerId, aktiv, idem) =>
 //
 // DET FINNES INGEN SENDEFUNKSJON HER, og fraværet er dommen. M-44 er en
 // annen figur enn de tre andre i klyngen: de er manglende
-// VERIFIKATORER, denne er den manglende AKTØREN. Modulen finnes FOR å
-// sende, og v1 sender null. Og botemiddelet malen foreslår for en
+// VERIFIKATORER, denne er den manglende AKTØREN. Leveringen skjer i
+// EIERMODULEN (ARC B, 153–158), bestilt av planrunden og avgjort av
+// policyen — aldri fra flaten. Og botemiddelet malen foreslår for en
 // feilsendt e-post er å sende en TIL.
 //
 // `leggIKampanjeplan` SENDER INGENTING. Den skriver ned at mottakeren
@@ -1304,6 +1305,14 @@ export const leggIKampanjeplan = (kampanjeId, mottakerId, idem) =>
 export const settKampanjemottakerAktiv = (mottakerId, aktiv, idem) =>
   _muter(`/v1/kampanje/mottaker/${encodeURIComponent(mottakerId)}/aktiv`,
          "POST", { aktiv }, idem || nyIdempotensnokkel());
+
+// ARC B (156): kampanjen leveres av PLATTFORMENS eiermodul, innenfor
+// policyen — aldri herfra. Flaten setter bare det mottakeren ser:
+// avsenderprofilen (navnet kampanjen leveres i, og svaradressen).
+export const settKampanjeavsender = (avsenderNavn, svarTil, idem) =>
+  _muter("/v1/kampanje/avsender", "POST",
+         { avsender_navn: avsenderNavn, svar_til: svarTil || null },
+         idem || nyIdempotensnokkel());
 
 // M-55 (120): merkevare- og IP-overvåkeren. Alle bærer SP-2-nøkkel.
 //

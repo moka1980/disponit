@@ -1630,6 +1630,51 @@ KRAVGRENSER["m44-v1"] = {
     "punktbinding": {},
 }
 
+M44_KAMPANJE_INVARIANTER: tuple[str, ...] = (
+    # ARC B kampanje (153–158): modulen LEVERER nå — innenfor policyen,
+    # med samtykket attestert av registeret. De ti punktene er M-23s
+    # form, kampanjens dommer.
+    # 1. Adressen lever bare kryptert på mottakeren; flaten, oppdraget,
+    #    kvitteringen, saken og loggene bærer aldri klartekst — og
+    #    heller ikke teksten.
+    "adresse_i_klartekst_utenfor_registeret",
+    # 2. Uten policy med `kampanje.send` bestilles ingenting — og ingen
+    #    beslutning brennes.
+    "bestilling_uten_policy",
+    # 3. Aldri samtykket → ikke kandidat; trukket etter planleggingen →
+    #    brudd og sak; trukket mellom bestilling og claim → `feilet`
+    #    uten levering. Ingen stille levering uten gyldig samtykke.
+    "levering_uten_samtykke",
+    # 4. Samme kampanje, samme mottaker, to runder → én bestilling.
+    "dobbel_bestilling_samme_par",
+    # 5. Samme oppdrag, to claim/kvitteringer → én e-post.
+    "dobbel_levering_samme_oppdrag",
+    # 6. Avmeldingslenken står i hver e-post; uten lenke leveres
+    #    ingenting.
+    "levering_uten_avmeldingslenke",
+    # 7. Uten innhold eller adresse: 409 fra bestillingsveien, ikke
+    #    kandidat for utløseren, `feilet` fra modulen.
+    "innhold_eller_adresse_mangler",
+    # 8. Policyens frekvens (2/30 d per mottaker) stopper i unntakskøen
+    #    — aldri stille, aldri tillat.
+    "policygrense_omgaatt",
+    # 9. Kvitteringen når registeret: raden i `kampanjelevering`,
+    #    evidensen `kampanje.levert`; gjenspill er én rad.
+    "kvittering_uten_bokforing",
+    # 10. Kill-switch og plattformtilstand stopper uten å konsumere:
+    #     paret er kandidat igjen når bryteren er på.
+    "kill_switch_konsumerte_par",
+)
+KRAVGRENSER["m44-kampanje-v1"] = {
+    "invarianter": M44_KAMPANJE_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: bevisrunden gikk mot disponit.com med et EKTE oppdrag
+    # gjennom modulen (ikke stub-SMTP) — kvitteringen står i basen.
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
@@ -2192,6 +2237,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m57-v1": "artefakt-m57-skjema.json",
     "m35-v1": "artefakt-m35-skjema.json",
     "m23-purring-v1": "artefakt-m23-purring-skjema.json",
+    "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
 }
 
 
@@ -2449,7 +2495,7 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
-                   "m23-purring-v1"):
+                   "m23-purring-v1", "m44-kampanje-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

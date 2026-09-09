@@ -691,3 +691,114 @@ test("Kampanje: kampanjeskjemaet sender emne og tekst bare når de er"
     assert.equal(SISTE.kropp.emne, "Vintersjekk");
     assert.equal(SISTE.kropp.tekst, "Hei {navn}");
   });
+
+// ---------------------------------------------------------------------
+// ARC B kampanje (156–158): avsenderen, leveransen og leveringene
+// ---------------------------------------------------------------------
+
+const AVSENDER = { avsender_navn: "Fjordlys Elektro AS",
+  svar_til: "post@fjordlys.example",
+  oppdatert: "2026-09-09T09:00:00+00:00" };
+const LEVERANSE = { bestilt: 3, tillat: 2, brudd: 1, feil: 0, levert: 2 };
+const LEVERINGER = {
+  kampanje_id: K1,
+  linjer: [
+    { mottaker_id: M1, ekstern_ref: "MOT-100", navn: "Kari Kunde",
+      kontakt_maske: "k****@example.com", utfall: "tillat",
+      oppdrag_id: 7, unntak_id: null,
+      bestilt_ts: "2026-09-09T08:00:00+00:00",
+      levert_ts: "2026-09-09T08:05:00+00:00", malversjon: "kampanje-v1" },
+    { mottaker_id: M2, ekstern_ref: "MOT-200", navn: "Ola Kunde",
+      kontakt_maske: "o****@example.com", utfall: "brudd",
+      oppdrag_id: null, unntak_id: 12,
+      bestilt_ts: "2026-09-09T08:00:00+00:00",
+      levert_ts: null, malversjon: null },
+  ],
+  request_id: "r-l",
+};
+
+test("Kampanje: uten avsenderprofil sies det høyt, med profil vises den",
+  async () => {
+    SVAR = fullSvar();
+    let h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => tabeller(h).length >= 3);
+    assert.ok(h.textContent.includes(t("ui.kampanje.avsender.ingen")));
+    assert.ok(h.querySelector("#kp-avs-navn"), "avsenderskjemaet mangler");
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+
+    SVAR = { ...fullSvar(), "/v1/kampanje": { ...BILDE, avsender: AVSENDER } };
+    h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => tabeller(h).length >= 3);
+    assert.ok(h.textContent.includes(t("ui.kampanje.avsender.navn")
+      .replace("{navn}", "Fjordlys Elektro AS")));
+    assert.ok(h.textContent.includes("post@fjordlys.example"));
+    assert.ok(!h.textContent.includes(t("ui.kampanje.avsender.ingen")));
+    assert.equal(h.querySelector("#kp-avs-navn").value,
+      "Fjordlys Elektro AS");
+    // En lesende økt ser profilen, men ikke skjemaet.
+    h = nyHoved();
+    visKampanje(h, ctx(["okonomi:read"]));
+    await vent(() => tabeller(h).length >= 3);
+    assert.ok(h.textContent.includes("Fjordlys Elektro AS"));
+    assert.ok(!h.querySelector("#kp-avs-navn"));
+  });
+
+test("Kampanje: avsenderskjemaet sender navn og svar-til, med idempotens",
+  async () => {
+    SVAR = fullSvar();
+    const h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => !!h.querySelector("#kp-avs-navn"));
+    h.querySelector("#kp-avs-navn").value = "Fjordlys Elektro AS";
+    h.querySelector("#kp-avs-svar").value = "post@fjordlys.example";
+    h.querySelector("#kp-avs-navn").closest("form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE && SISTE.sti === "/v1/kampanje/avsender");
+    assert.deepEqual(SISTE.kropp, { avsender_navn: "Fjordlys Elektro AS",
+      svar_til: "post@fjordlys.example" });
+    assert.ok(SISTE.headers["Idempotency-Key"]);
+  });
+
+test("Kampanje: leveransen står som tall, og leveringene åpnes per"
+  + " kampanje med maske, aldri adresse", async () => {
+    SVAR = { ...fullSvar(),
+      "/v1/kampanje": { ...BILDE, kampanjer: [
+        { ...BILDE.kampanjer[0], leveranse: LEVERANSE },
+        BILDE.kampanjer[1]] },
+      [`/v1/kampanje/kampanje/${K1}/leveringer`]: LEVERINGER };
+    const h = nyHoved();
+    visKampanje(h, ctx());
+    await vent(() => tabeller(h).length >= 3);
+    const rader = [...tabeller(h)[1].querySelectorAll("tbody tr")];
+    assert.ok(rader[0].textContent.includes(
+      t("ui.kampanje.leveranse.bestilt").replace("{n}", "3")));
+    assert.ok(rader[0].textContent.includes(
+      t("ui.kampanje.leveranse.levert").replace("{n}", "2")));
+    assert.ok(rader[0].textContent.includes(
+      t("ui.kampanje.leveranse.brudd").replace("{n}", "1")));
+    assert.ok(rader[1].textContent.includes(
+      t("ui.kampanje.leveranse.ingen")));
+    // Knappen står bare der noe er bestilt.
+    const knapper = [...h.querySelectorAll("button")]
+      .filter((b) => b.textContent === t("ui.kampanje.knapp.vis_leveringer"));
+    assert.equal(knapper.length, 1);
+    knapper[0].click();
+    // «MOT-100» står alt i mottakerlisten — vent på LINJEN i panelet.
+    await vent(() => h.textContent.includes(
+      t("ui.kampanje.levering.utfall.tillat")));
+    assert.ok(KALL.some((k) => k.sti === `/v1/kampanje/kampanje/${K1}/leveringer`));
+    assert.ok(h.textContent.includes(
+      t("ui.kampanje.levering.tittel").replace("{navn}", "Høstsalg")));
+    assert.ok(h.textContent.includes("k****@example.com"));
+    assert.ok(h.textContent.includes(
+      t("ui.kampanje.levering.utfall.brudd")));
+    assert.ok(h.textContent.includes(
+      t("ui.kampanje.levering.levert").replace("{dato}", "2026-09-09")));
+    assert.ok(!h.textContent.includes("@example.com>")
+      && !h.textContent.toLowerCase().includes("kari.nordmann"));
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });

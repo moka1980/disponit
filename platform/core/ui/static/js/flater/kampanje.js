@@ -29,6 +29,7 @@ import {
   UautorisertFeil, avlysKampanje, hentJson, leggIKampanjeplan,
   nyIdempotensnokkel, registrerKampanje, registrerKampanjemottaker,
   registrerSamtykke, settKampanjegrense, settKampanjemottakerAktiv,
+  settKampanjeavsender,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -153,7 +154,128 @@ function mottakerTabell(mottakere, maks, apneDetalj) {
   return el("div", { class: "tablewrap" }, tb);
 }
 
-function kampanjeTabell(kampanjer, avlys, skriver) {
+// LEVERANSEN SOM ORD: «bestilt 3 · levert 2 · i unntakskø 1». Ingenting
+// er levert før modulen har kvittert (158).
+export function leveranseTekst(l) {
+  if (!l || !l.bestilt) return t("ui.kampanje.leveranse.ingen");
+  const deler = [t("ui.kampanje.leveranse.bestilt")
+    .replace("{n}", String(l.bestilt))];
+  if (l.levert) deler.push(t("ui.kampanje.leveranse.levert")
+    .replace("{n}", String(l.levert)));
+  if (l.brudd) deler.push(t("ui.kampanje.leveranse.brudd")
+    .replace("{n}", String(l.brudd)));
+  if (l.feil) deler.push(t("ui.kampanje.leveranse.feil")
+    .replace("{n}", String(l.feil)));
+  return deler.join(" · ");
+}
+
+export function leveringslinje(x) {
+  const utfall = String(x.utfall || "");
+  const nokkel = utfall.startsWith("feil:")
+    ? "ui.kampanje.levering.utfall.feil"
+    : `ui.kampanje.levering.utfall.${utfall}`;
+  let tekst = t("ui.kampanje.levering.linje")
+    .replace("{ref}", String(x.ekstern_ref || ""))
+    .replace("{maske}", maskeTekst(x.kontakt_maske))
+    .replace("{utfall}", t(nokkel));
+  if (x.levert_ts) {
+    tekst += " · " + t("ui.kampanje.levering.levert")
+      .replace("{dato}", String(x.levert_ts).slice(0, 10));
+  }
+  return tekst;
+}
+
+function leveringspanel() {
+  const boks = el("div", { class: "skjemaboks" });
+  const innhold = el("div", { hidden: true });
+  const tittel = el("h3", {});
+  const liste = el("div", {});
+  let apningsnr = 0;
+  innhold.append(tittel, liste);
+  boks.append(innhold);
+  return {
+    node: boks,
+    async apne(k) {
+      const nr = ++apningsnr;
+      innhold.hidden = false;
+      tittel.textContent = t("ui.kampanje.levering.tittel")
+        .replace("{navn}", k.navn);
+      sett(liste, el("p", { class: "muted",
+        text: t("ui.kampanje.levering.henter") }));
+      let d;
+      try {
+        d = await hentJson(`/v1/kampanje/kampanje/${
+          encodeURIComponent(k.kampanje_id)}/leveringer`);
+      } catch (e) {
+        if (nr !== apningsnr) return;
+        sett(liste, el("p", { role: "alert",
+          text: t("ui.kampanje.feil.generell") }));
+        return;
+      }
+      if (nr !== apningsnr) return;
+      const linjer = d.linjer || [];
+      if (!linjer.length) {
+        sett(liste, el("p", { class: "muted",
+          text: t("ui.kampanje.levering.ingen") }));
+        return;
+      }
+      const ul = el("ul", {});
+      for (const x of linjer) ul.append(el("li", { text: leveringslinje(x) }));
+      sett(liste, ul);
+      innhold.focus && innhold.focus();
+    },
+  };
+}
+
+// AVSENDEREN ER DET MOTTAKEREN SER. Uten profil sies det høyt — før den
+// første kampanjen går ut i tenantens id i stedet for et navn.
+function avsenderSeksjon(a) {
+  const boks = el("section", { class: "kpi-kort" },
+    el("h2", { text: t("ui.kampanje.avsender.tittel") }));
+  if (!a || !a.avsender_navn) {
+    boks.append(el("p", {}, el("strong", {
+      text: t("ui.kampanje.avsender.ingen") })));
+    return boks;
+  }
+  boks.append(el("p", {
+    text: t("ui.kampanje.avsender.navn").replace("{navn}", a.avsender_navn) }));
+  boks.append(el("p", { class: a.svar_til ? "" : "muted",
+    text: a.svar_til
+      ? t("ui.kampanje.avsender.svar_til").replace("{adresse}", a.svar_til)
+      : t("ui.kampanje.avsender.uten_svar_til") }));
+  return boks;
+}
+
+function avsenderSkjema(ctx, last, kvitter, a) {
+  const utfall = el("p", { "aria-live": "polite" });
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const navn = el("input", { id: "kp-avs-navn", name: "avsender_navn",
+    type: "text", required: true, maxlength: 120,
+    value: (a && a.avsender_navn) || "" });
+  const svarTil = el("input", { id: "kp-avs-svar", name: "svar_til",
+    type: "email", maxlength: 254, value: (a && a.svar_til) || "" });
+  const knapp = el("button", { type: "submit",
+    text: t("ui.kampanje.knapp.lagre_avsender") });
+  skjema.append(
+    felt("kp-avs-navn", "ui.kampanje.skjema.avsender_navn", navn,
+         "ui.kampanje.skjema.avsender_navn_hjelp"),
+    felt("kp-avs-svar", "ui.kampanje.skjema.svar_til", svarTil,
+         "ui.kampanje.skjema.svar_til_hjelp"),
+    el("div", { class: "skjema-bunn" }, knapp));
+  skjemaramme(ctx, last, {
+    skjema, knapp, utfall, kvitter,
+    okNokkel: "ui.kampanje.skjema.avsender_ok",
+    send: (idem) => settKampanjeavsender(navn.value.trim(),
+                                         svarTil.value.trim() || null,
+                                         idem),
+    tilbakestill: () => {},
+  });
+  return el("div", { class: "skjemaboks" },
+    el("h3", { text: t("ui.kampanje.skjema.avsender_tittel") }),
+    skjema, utfall);
+}
+
+function kampanjeTabell(kampanjer, avlys, skriver, apneLeveringer) {
   const tb = el("table", { class: "kpi-tabell" },
     el("caption", { text: t("ui.kampanje.kampanjer.caption") }));
   tb.append(el("thead", {}, el("tr", {},
@@ -164,6 +286,7 @@ function kampanjeTabell(kampanjer, avlys, skriver) {
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.mottakere") }),
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.innhold") }),
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.status") }),
+    el("th", { scope: "col", text: t("ui.kampanje.kolonne.leveranse") }),
     el("th", { scope: "col",
                text: t("ui.kampanje.kolonne.handling") }))));
   const tbody = el("tbody");
@@ -188,7 +311,16 @@ function kampanjeTabell(kampanjer, avlys, skriver) {
     rad.append(el("td", { class: "celle-tekst",
       text: t(k.status === "avlyst" ? "ui.kampanje.kampanje.avlyst"
                                     : "ui.kampanje.kampanje.registrert") }));
+    // ARC B (158): hva plattformen har gjort med kampanjen — tall.
+    rad.append(el("td", { class: "celle-tekst",
+                          text: leveranseTekst(k.leveranse) }));
     const handling = el("td", {});
+    if (k.leveranse && k.leveranse.bestilt > 0) {
+      const vis = el("button", { type: "button",
+        text: t("ui.kampanje.knapp.vis_leveringer") });
+      vis.addEventListener("click", () => apneLeveringer(k));
+      handling.append(vis);
+    }
     if (skriver && k.status !== "avlyst") {
       const knapp = el("button", { type: "button",
         text: t("ui.kampanje.knapp.avlys") });
@@ -635,6 +767,7 @@ export function visKampanje(hoved, ctx) {
       const maks = d.grense ? d.grense.maks_per_periode : null;
       const detalj = detaljpanel(ctx, last, kvitter, settApen,
                                  kampanjer);
+      const leveringer = leveringspanel();
       const skriver = harScope(ctx, "bestilling:opprett");
 
       let idemAvlys = null;
@@ -678,7 +811,7 @@ export function visKampanje(hoved, ctx) {
           text: t("ui.kampanje.kampanjer.ingen") }));
       } else {
         kampanjeseksjon.append(
-          kampanjeTabell(kampanjer, avlys, skriver));
+          kampanjeTabell(kampanjer, avlys, skriver, leveringer.apne));
       }
 
       const grenseseksjon = el("section", { class: "kpi-kort" },
@@ -694,12 +827,14 @@ export function visKampanje(hoved, ctx) {
           grenseTabell(d.grense));
       }
 
-      const deler = [oversikt, liste, kampanjeseksjon, grenseseksjon,
+      const deler = [oversikt, liste, kampanjeseksjon, leveringer.node,
+                     grenseseksjon, avsenderSeksjon(d.avsender),
                      detalj.node];
       if (skriver) {
         deler.push(mottakerSkjema(ctx, last, kvitter),
                    kampanjeSkjema(ctx, last, kvitter),
-                   grenseSkjema(ctx, last, d.grense, kvitter));
+                   grenseSkjema(ctx, last, d.grense, kvitter),
+                   avsenderSkjema(ctx, last, kvitter, d.avsender));
       }
       sett(kropp, ...deler);
       if (apenRad) {

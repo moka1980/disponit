@@ -235,7 +235,21 @@ def svar_for(conn, tenant: str) -> dict:
                               (tenant, MAKS_KAMPANJER)).fetchall()]
     g = conn.execute("SELECT * FROM m44_grensene(%s)",
                      (tenant,)).fetchone()
+    # ARC B (156/158): avsenderprofilen og leveransen per kampanje —
+    # tall, aldri adresser.
+    a = conn.execute("SELECT * FROM m44_avsenderen(%s)",
+                     (tenant,)).fetchone()
+    status = {str(r[0]): {"bestilt": r[1], "tillat": r[2], "brudd": r[3],
+                          "feil": r[4], "levert": r[5]}
+              for r in conn.execute("SELECT * FROM m44_leveransestatus(%s)",
+                                    (tenant,)).fetchall()}
+    for kmp in kampanjer:
+        kmp["leveranse"] = status.get(kmp["kampanje_id"]) or {
+            "bestilt": 0, "tillat": 0, "brudd": 0, "feil": 0, "levert": 0}
     return {
+        "avsender": None if a is None else {
+            "avsender_navn": a[0], "svar_til": a[1],
+            "oppdatert": a[2].isoformat()},
         "sammendrag": {
             "mottakere": s[0], "aktive": s[1], "med_samtykke": s[2],
             "kampanjer": s[3], "planlagte": s[4], "apne_funn": s[5],
@@ -257,6 +271,34 @@ def kampanjebilde(tjeneste, request):
         svar = svar_for(conn, auth.tenant)
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "okonomi:read", _fn)
+
+
+def leveringer_endepunkt(tjeneste, request):
+    """GET /v1/kampanje/kampanje/{kampanje_id}/leveringer (okonomi:read).
+
+    HVA UTLØSEREN OG MODULEN GJORDE MED KAMPANJEN, per mottaker (158):
+    bestillingens utfall, oppdraget, saken, og leveringen når den kom.
+    Mottakeren står med referanse, navn og MASKE — aldri adressen.
+    """
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        kid = _sti_uuid(request, "kampanje_id", rid)
+        rader = conn.execute(
+            "SELECT * FROM m44_kampanjeleveringene(%s,%s)",
+            (auth.tenant, kid)).fetchall()
+        return kanonisk_json({
+            "kampanje_id": str(kid),
+            "linjer": [
+                {"mottaker_id": str(r[0]), "ekstern_ref": r[1],
+                 "navn": r[2], "kontakt_maske": r[3], "utfall": r[4],
+                 "oppdrag_id": r[5], "unntak_id": r[6],
+                 "bestilt_ts": r[7].isoformat(),
+                 "levert_ts": r[8].isoformat() if r[8] else None,
+                 "malversjon": r[9]}
+                for r in rader],
+            "request_id": rid}, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "okonomi:read", _fn)
 
 
