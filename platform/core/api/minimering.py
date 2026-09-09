@@ -31,6 +31,17 @@ PER_KATEGORI: dict[str, tuple[str, ...]] = {
     "ukjent": (),
 }
 
+#: Ekstra felter PER HANDLING (ARC B, PR 5): referansene og tallene en
+#: eiermodul trenger for å utføre handlingen på nytt etter at saken er
+#: løst — nøyaktig oppdragstypens påkrevde felter, og ingen persondata.
+#: Uten dem kunne M-37s R1 aldri bygge et komplett `purring.send`-oppdrag
+#: av saken (`oppdrag_ufullstendig` → manuell), og et menneskes ja i
+#: unntakskøen ble til ingenting.
+PER_HANDLING: dict[str, tuple[str, ...]] = {
+    "purring.send": ("fordring_id", "fakturanummer", "trinn",
+                     "handling_trinn", "rest_ore", "omfang"),
+}
+
 #: Kildereferansen er allerede ugjennomsiktig og slippes gjennom som den er.
 KILDEREFERANSEFELT = "kildereferanser"
 KILDEREFERANSENOKLER = ("connector", "resource_id", "field_id")
@@ -103,6 +114,7 @@ def minimer_payload(event: dict, kategori: str | None,
     `vilkaar` — se `VILKAARSFELT`.
     """
     tillatt = set(FELLESFELT) | set(PER_KATEGORI.get(kategori or "", ()))
+    tillatt |= set(PER_HANDLING.get(str(event.get("handling") or ""), ()))
     ut: dict[str, object] = {}
     for felt in sorted(tillatt):
         if felt in event:

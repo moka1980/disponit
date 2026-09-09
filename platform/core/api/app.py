@@ -8362,6 +8362,21 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
+    # M-23 (150, ARC B PR 5): PURRINGEN ER SENDT → REGISTERET. Kvitteringen
+    # er signert av eiermodulen og ressursbundet til fordringen; det er
+    # den som flytter trinnet og fører hendelsen — i SAMME transaksjon som
+    # oppdraget lukkes. Kan bokføringen ikke gjøres (fordringen borte,
+    # kvitteringen uten trinn), aksepteres kvitteringen likevel: e-posten
+    # er ute, og et nei her ville skjult den. Avviket føres i driftsloggen.
+    if vellykket and oppdragstype == "purring.send":
+        from .fordring import bokfor_purring_sendt
+        with conn.transaction():
+            bokfort = bokfor_purring_sendt(conn, tenant, oppdrag_id,
+                                           kvittering, auth.aktor)
+        if bokfort.get("avvik"):
+            tjeneste.logg.hendelse("purring_bokforing_avvist", rid, tenant,
+                                   art="drift", oppdrag_id=oppdrag_id,
+                                   grunn=bokfort["avvik"])
     # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
     # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
     # lukkingen falt evalueringen til reaperens forlatt-frist målt fra

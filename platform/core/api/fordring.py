@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 import uuid as uuidlib
 
 import psycopg
@@ -478,6 +479,71 @@ def utforelse_for_sending(conn, tenant: str, fordring_id) -> dict:
             "handling_trinn": handling_trinn,
             "gebyr_ore": int(gebyr_ore or 0),
             "avsender_navn": avsender_navn, "svar_til": svar_til}
+
+
+def bokfor_purring_sendt(conn, tenant: str, oppdrag_id: int,
+                         kvittering: dict, aktor: str) -> dict:
+    """Kvitteringens vei tilbake til registeret (150). -> {bokfort,
+    flyttet, trinn_naa} eller {avvik: <grunn>} — aldri et unntak ut:
+    kalleren har alt en sendt e-post å stå inne for."""
+    import psycopg
+    ressurs = str(kvittering.get("ressurs_id") or "")
+    if not ressurs.startswith("fordring:"):
+        return {"avvik": "ressurs_id_ikke_fordring"}
+    try:
+        fid = uuidlib.UUID(ressurs.split(":", 1)[1])
+        trinn = int(kvittering.get("trinn"))
+        if isinstance(kvittering.get("trinn"), bool) or trinn < 1:
+            raise ValueError("trinn")
+    except (ValueError, TypeError):
+        return {"avvik": "kvittering_uten_gyldig_trinn"}
+    # RESSURSEN MÅ VÆRE OPPDRAGETS (CodeRabbit på PR 5). Kvitteringen er
+    # signert av modulen, men modulen kunne navngi en annen fordring enn
+    # den oppdraget gjaldt — og døra kan ikke lese oppdraget (kryptert,
+    # migrators tabell). API-et kan: payloaden dekrypteres her, som ved
+    # claim, og fordringen sammenlignes FØR noe bokføres.
+    from db import kryptering
+    orad = conn.execute(
+        "SELECT payload_kryptert, key_id, nonce FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, int(oppdrag_id))).fetchone()
+    if orad is None:
+        return {"avvik": "oppdrag_ukjent"}
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, orad[1])).fetchone()
+    try:
+        dek = kryptering._pakk_ut((orad[1], nok[0]), tenant)[1]
+        payload = kryptering.dekrypter(dek, bytes(orad[0]), bytes(orad[2]),
+                                       tenant, orad[1])
+    except Exception:                                   # noqa: BLE001
+        return {"avvik": "oppdrag_uleselig"}
+    if str(payload.get("fordring_id") or "") != str(fid):
+        return {"avvik": "ressurs_avvik"}
+    if int(payload.get("trinn") or 0) != trinn:
+        return {"avvik": "trinn_avvik"}
+    sendt_ts = kvittering.get("sendt_ts")
+    try:
+        sendt = (datetime.fromisoformat(str(sendt_ts).replace("Z", "+00:00"))
+                 if sendt_ts else None)
+        if sendt is not None and sendt.tzinfo is None:
+            sendt = None
+    except ValueError:
+        sendt = None
+    try:
+        with conn.transaction():
+            rad = conn.execute(
+                "SELECT bokfort, flyttet, trinn_naa FROM m23_purring_sendt("
+                "%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, fid, trinn, int(oppdrag_id), sendt,
+                 str(kvittering.get("malversjon") or "")[:64] or None,
+                 str(kvittering.get("mottaker_maske") or "")[:254] or None,
+                 aktor)).fetchone()
+    except psycopg.Error as e:
+        return {"avvik": f"dor_nektet:{type(e).__name__}"}
+    if rad is None:
+        return {"avvik": "dor_uten_svar"}
+    return {"bokfort": bool(rad[0]), "flyttet": bool(rad[1]),
+            "trinn_naa": int(rad[2])}
 
 
 def betaling_endepunkt(tjeneste, request):
