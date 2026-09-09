@@ -1,0 +1,44 @@
+# ============================================================
+# POLICY-UTVIDELSE · M-17 · KUNDESVARET SENDES INNENFOR POLICYEN
+# (ARC B kundeservice, PR 2)
+#
+# Limes inn i tenantens policy (utkast → fire øyne → aktivering).
+# Bransjemalen har `epost.send_kjent_mottaker` (M-6) med DLP-vilkårene;
+# kundesvaret er M-17s egen handling med SAMME vilkår pluss ett:
+# `svar_godkjent` — et menneske har godkjent utkastet (160). Bransjemalen
+# røres ikke (byte-bundet til M-02s akseptartefakt, K2 #131).
+#
+# `v_kundeservice` er REGISTERETS eget vitne om godkjenningen.
+# `v_dlp`-vilkårene måles av bestillingsveien på utkastteksten
+# (api/svarkontroll.py — en heuristikk som sier hva den fant, aldri
+# mer): et fødselsnummer eller et løfte om rabatt gir USANT → sak.
+# `mottaker_i_kontaktregister` er sant når henvendelsen bærer avsenderens
+# adresse — kunden skrev til oss.
+#
+# Frekvensen: tre svar per henvendelse per døgn — et fjerde er en samtale
+# et menneske skal ta.
+# ============================================================
+verifikatorer:
+  v_kundeservice:
+    beskrivelse: "Henvendelsesregisteret (M-17): godkjenningen av utkastet, attestert av plattformen"
+    betrodd_for: [svar_godkjent]
+
+handlinger:
+  - id: kundeservice.svar.send
+    modul: M-17
+    modus: auto
+    ved_brudd: unntakskø
+    tillatt_for: [agent]
+    dataklasser_tillatt: [intern, persondata]
+    grenser:
+      frekvens:
+        maks: 3
+        periode_antall: 1
+        periode_enhet: dager
+        grupperingsnokkel: henvendelse_id
+    vilkaar:
+      - {navn: svar_godkjent, verifikator: v_kundeservice}
+      - {navn: mottaker_i_kontaktregister, verifikator: v_dlp}
+      - {navn: dlp_sjekk, verifikator: v_dlp}
+      - {navn: ingen_okonomiske_lofter, verifikator: v_dlp}
+    reversering: {type: kompenserende, handling: kundeservice.svar.korriger}

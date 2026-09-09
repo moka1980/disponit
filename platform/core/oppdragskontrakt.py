@@ -410,6 +410,15 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
                              "planlagt_sendt"}),
         eiermodul="m44_kampanje",
         beskrivelse="M-44: levering av én kampanje til én mottaker"),
+    # ARC B kundeservice (161): ett godkjent utkast til én henvendelse.
+    # Payloaden er referanser — aldri adressen, aldri teksten.
+    "kundeservice.svar.send": Oppdragstype(
+        navn="kundeservice.svar.send",
+        handlingsprefikser=("kundeservice.svar.send",),
+        felter=frozenset({"henvendelse_id", "utkast_id", "omfang"}),
+        paakrevde=frozenset({"henvendelse_id", "utkast_id", "omfang"}),
+        eiermodul="m17_kundeservice",
+        beskrivelse="M-17: sending av ett godkjent svar til én henvendelse"),
     "purring.send": Oppdragstype(
         navn="purring.send",
         handlingsprefikser=("purring.send",),
@@ -983,6 +992,7 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     # bransjemalen kjenner. «inkasso» står IKKE her — den sendes aldri
     # automatisk (eiervedtaket 8/9), og en payload som bærer den er feil.
     "kampanje.send": {"omfang": ("mottaker",)},
+    "kundeservice.svar.send": {"omfang": ("svar",)},
     "purring.send": {"omfang": ("trinn",),
                      "handling_trinn": ("paaminnelse", "purring",
                                         "inkassovarsel")},
@@ -1053,6 +1063,7 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     # bestillingen tas imot, ikke der den utføres.
     "epost.behandling": ("kilde_id",),
     "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt"),
+    "kundeservice.svar.send": ("henvendelse_id", "utkast_id"),
     "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
@@ -1105,6 +1116,7 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # Purringen er én malutfylling og ett SMTP-kall: 15 min holder med
     # god margin, og ligger godt innenfor leasetaket (037).
     "kampanje.send": ("omfang", {"mottaker": 15 * 60}),
+    "kundeservice.svar.send": ("omfang", {"svar": 15 * 60}),
     "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring

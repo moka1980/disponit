@@ -36,6 +36,11 @@ KEK = "b" * 64
 NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40},
           # ARC B kampanje (154): registerets eget samtykkevitne.
           "v_samtykke": {"k1": "s" * 40},
+          # ARC B kundeservice (161): registerets vitne om et godkjent svar.
+          "v_kundeservice": {"k1": "u" * 40},
+          # …og DLP-vilkårene bransjemalen krever (heuristikken i
+          # api/svarkontroll.py signerer som v_dlp; prod har nøkkelen).
+          "v_dlp": {"k1": "p" * 40},
           # 038/aksept: plattformens egen domenekontroll-verifikator —
           # bestillingsveien signerer domenekontroll_verifisert med den.
           "v_domenekontroll": {"k1": "d" * 40}}

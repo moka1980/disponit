@@ -190,6 +190,19 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
                               "mottaker_ref", "omfang"}),
         intensjonsfelt=("tenant", "bestillingstype", "kampanje_id",
                         "mottaker_id", "omfang")),
+    # ARC B kundeservice (161): ett godkjent utkast til én henvendelse.
+    # Kroppen bærer to referanser og ett omfang; adressen og teksten er
+    # registerets — ikke bestillerens.
+    "kundeservice.svar.send": Bestillingstype(
+        handling="kundeservice.svar.send",
+        oppdragstype="kundeservice.svar.send",
+        eiermodul="m17_kundeservice",
+        kravsett=(),
+        omfang=("svar",),
+        skjemafelt=frozenset({"bestillingstype", "henvendelse_ref",
+                              "utkast_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "henvendelse_id",
+                        "utkast_id", "omfang")),
     "purring.send": Bestillingstype(
         handling="purring.send",
         oppdragstype="purring.send",
@@ -221,6 +234,8 @@ INKASSOVARSEL_HANDLING = "purring.send.inkassovarsel"
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _KAMPANJE_REF = re.compile(r"^kampanje:" + _UUID + "$")
 _MOTTAKER_REF = re.compile(r"^mottaker:" + _UUID + "$")
+_HENVENDELSE_REF = re.compile(r"^henvendelse:" + _UUID + "$")
+_UTKAST_REF = re.compile(r"^utkast:" + _UUID + "$")
 _FORDRING_REF = re.compile(
     r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
@@ -270,6 +285,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_purring(tenant, bt, data)
     if bt.oppdragstype == "kampanje.send":
         return _normaliser_kampanje(tenant, bt, data)
+    if bt.oppdragstype == "kundeservice.svar.send":
+        return _normaliser_svar(tenant, bt, data)
     if bt.oppdragstype == "kontinuitet.ovelse":
         # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
         # eies av øvelseslogikken selv.
@@ -319,6 +336,21 @@ def _normaliser_kampanje(tenant: str, bt: Bestillingstype,
     return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
             "kampanje_id": k.group(0).split(":", 1)[1],
             "mottaker_id": m.group(0).split(":", 1)[1],
+            "omfang": data["omfang"]}
+
+
+def _normaliser_svar(tenant: str, bt: Bestillingstype, data: dict) -> dict:
+    """M-17: to referanser (`henvendelse:<uuid>`, `utkast:<uuid>`) og
+    omfanget. Ingen adresse, ingen tekst i kroppen."""
+    h = _HENVENDELSE_REF.fullmatch(str(data.get("henvendelse_ref") or ""))
+    u = _UTKAST_REF.fullmatch(str(data.get("utkast_ref") or ""))
+    if h is None or u is None:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "henvendelse_id": h.group(0).split(":", 1)[1],
+            "utkast_id": u.group(0).split(":", 1)[1],
             "omfang": data["omfang"]}
 
 
@@ -923,6 +955,60 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                         "samtykke_tilstand": s_tilstand,
                         "samtykke_dato": (s_dato.isoformat()
                                           if s_dato else None)}
+        # KUNDESVARETS MÅLPORT (ARC B, 161): henvendelsen må finnes og
+        # være åpen, ikke stå i unntakskøen (M-37 eier den da), ha en
+        # adresse og en kanal plattformen kan svare i, og utkastet må
+        # være henvendelsens — registerets tilstand, målt FØR beslutningen
+        # brenner kvote. Godkjenningen og teksten er policyens vilkår,
+        # attestert under.
+        kundesvar = None
+        if bt.oppdragstype == "kundeservice.svar.send":
+            sett_kontekst(conn, tenant, aktor, rid)
+            srad = conn.execute(
+                "SELECT * FROM m17_for_svar(%s,%s,%s)",
+                (tenant, norm["henvendelse_id"], norm["utkast_id"])
+            ).fetchone()
+            if srad is None or srad[5] is None \
+                    or str(srad[5]) != norm["henvendelse_id"]:
+                conn.rollback()
+                tjeneste.logg.hendelse("henvendelse_ukjent", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "henvendelse_ukjent")
+            (h_lukket, h_i_koe, h_kanal, h_adresse, h_maske, _u_hid,
+             u_status, u_ct, u_nonce, u_key_id) = srad
+            hindring = (
+                "lukket" if h_lukket
+                else "i_unntakskoe" if h_i_koe
+                else "uten_adresse" if not h_adresse
+                else "kanal_uten_svarvei" if h_kanal != "epost"
+                else None)
+            if hindring is not None:
+                conn.rollback()
+                tjeneste.logg.hendelse("svar_ikke_klart_for_sending", rid,
+                                       tenant, art="drift", grunn=hindring)
+                return ("feil", "svar_ikke_klart_for_sending")
+            # TEKSTEN MÅLES HER, i API-ets tillit (154/156-formen): den
+            # dekrypteres for heuristikken og forlater aldri prosessen —
+            # hendelsen og saken bærer KODENE for det som ble funnet.
+            from db import kryptering
+            from . import svarkontroll
+            try:
+                u_dek = kryptering.hent_dek(conn, tenant, u_key_id)
+                u_tekst = kryptering.dekrypter(
+                    u_dek, bytes(u_ct), bytes(u_nonce), tenant, u_key_id)["t"]
+            except Exception:                           # noqa: BLE001
+                u_tekst = None
+            conn.rollback()
+            dlp = (svarkontroll.dlp_funn(u_tekst) if u_tekst is not None
+                   else ["uleselig"])
+            lofter = (svarkontroll.okonomiske_lofter(u_tekst)
+                      if u_tekst is not None else ["uleselig"])
+            kundesvar = {"henvendelse_id": norm["henvendelse_id"],
+                    "utkast_id": norm["utkast_id"],
+                    "godkjent": u_status == "godkjent",
+                    "utkast_status": u_status,
+                    "har_adresse": bool(h_adresse),
+                    "dlp_funn": dlp, "lofter": lofter}
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -1126,6 +1212,18 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "omfang": norm["omfang"],
                          "dataklasser": ["offentlig", "persondata"],
                          "dataklasser_kilde": "connector"}
+            elif kundesvar is not None:
+                # Frekvensen grupperes på `henvendelse_id` (utvidelsen):
+                # tre svar per henvendelse per døgn, så en samtale aldri
+                # blir en strøm.
+                event = {"handling": bt.handling,
+                         "ressurs_id": ("henvendelse:" + kundesvar["henvendelse_id"]
+                                        + ":" + kundesvar["utkast_id"]),
+                         "henvendelse_id": kundesvar["henvendelse_id"],
+                         "utkast_id": kundesvar["utkast_id"],
+                         "omfang": norm["omfang"],
+                         "dataklasser": ["intern", "persondata"],
+                         "dataklasser_kilde": "connector"}
             elif purring is not None:
                 # BELØPET ER RESTEN, i kroner med to desimaler — det er
                 # det policyens `belop_maks` måler. Frekvensen grupperes
@@ -1283,6 +1381,50 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse(
                     "kampanje_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
+            # M-17 ATTESTERER GODKJENNINGEN OG TEKSTEN (ARC B kundeservice).
+            # `svar_godkjent` er registerets svar på «sa et menneske ja» —
+            # sant bare for status `godkjent`. DLP-vilkårene er
+            # heuristikkens funn på utkastteksten: resultatet er USANT når
+            # den fant noe, og funnene bæres som KODER. Et nei her er en
+            # sak i unntakskøen, aldri en stille sending.
+            ks_nokler = (tjeneste.nokler or {}).get("v_kundeservice") or {}
+            dlp_nokler = (tjeneste.nokler or {}).get("v_dlp") or {}
+            if kundesvar is not None and ks_nokler and dlp_nokler:
+                from policy_validator import attestering
+                naa_att = datetime.now(timezone.utc)
+                ressurs = event["ressurs_id"]
+                event["attestasjoner"] = {}
+                for verif, nokler, vilkaar, resultat, ekstra in (
+                        ("v_kundeservice", ks_nokler, "svar_godkjent",
+                         kundesvar["godkjent"],
+                         {"verdi": kundesvar["utkast_status"] or "ingen"}),
+                        ("v_dlp", dlp_nokler, "mottaker_i_kontaktregister",
+                         kundesvar["har_adresse"], {}),
+                        ("v_dlp", dlp_nokler, "dlp_sjekk",
+                         not kundesvar["dlp_funn"],
+                         {"verdi": ",".join(kundesvar["dlp_funn"]) or "rent"}),
+                        ("v_dlp", dlp_nokler, "ingen_okonomiske_lofter",
+                         not kundesvar["lofter"],
+                         {"verdi": ",".join(kundesvar["lofter"]) or "rent"})):
+                    nid = sorted(nokler)[0]
+                    jti_grunnlag = (f"{tenant}|{ressurs}|{kjernenokkel}|"
+                                    f"{vilkaar}")
+                    event["attestasjoner"][vilkaar] = attestering.signer({
+                        "verifikator": verif,
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": vilkaar, "ressurs_id": ressurs,
+                        "policy_id": policy_id,
+                        "utstedt": naa_att.isoformat(),
+                        "utloper": (naa_att
+                                    + timedelta(hours=24)).isoformat(),
+                        "jti": "ks-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": bool(resultat), **ekstra,
+                    }, nid, nokler[nid])
+            elif kundesvar is not None:
+                tjeneste.logg.hendelse(
+                    "svar_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
             from policy_validator.engine import EvaluationContext
             # ROLLEN FØLGER AKTØREN (ARC B, PR 3). Et menneske og planen
             # bestiller som `bestiller`; den automatiserte utløseren
@@ -1329,6 +1471,22 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                     "kampanje_id": kampanje["kampanje_id"],
                     "mottaker_id": kampanje["mottaker_id"],
                     "planlagt_sendt": kampanje["planlagt_sendt"],
+                    "omfang": norm["omfang"]})
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       payload)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, payload)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
+            elif kundesvar is not None:
+                # REFERANSENE — aldri adressen, aldri teksten.
+                import oppdragskontrakt
+                payload = oppdragskontrakt.minimer(bt.oppdragstype, {
+                    "henvendelse_id": kundesvar["henvendelse_id"],
+                    "utkast_id": kundesvar["utkast_id"],
                     "omfang": norm["omfang"]})
                 if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
                                                        payload)

@@ -1505,7 +1505,8 @@ def test_feltparitet_mellom_skjema_og_intensjonshash():
     from api.bestilling import BESTILLINGSTYPER
     DEKNING = {"inndata_ref": "inndata_id", "kilde_ref": "kilde_id",
                "fordring_ref": "fordring_id", "kampanje_ref": "kampanje_id",
-               "mottaker_ref": "mottaker_id"}
+               "mottaker_ref": "mottaker_id",
+               "henvendelse_ref": "henvendelse_id", "utkast_ref": "utkast_id"}
     for navn, bt in BESTILLINGSTYPER.items():
         kilde = {DEKNING.get(f, f) for f in bt.skjemafelt
                  if f != "bestillingstype"}
