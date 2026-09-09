@@ -58,6 +58,7 @@ noen to ganger.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid as uuidlib
 
 import psycopg
@@ -348,6 +349,93 @@ def avsender_endepunkt(tjeneste, request):
                 (tenant, hid, maske, ct, nonce, key_id, bid),
                 {"henvendelse_id": str(hid), "avsender_maske": maske})
     return _skriv(tjeneste, request, bygg)
+
+
+_SVAR_TIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAKS_AVSENDERNAVN = 120
+MAKS_SIGNATUR = 500
+
+
+def _valgfri_tekst(kropp, felt: str, rid, maks: int):
+    if kropp.get(felt) is None:
+        return None
+    return _tekst(kropp, felt, rid, maks)
+
+
+def avsenderprofil_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/avsender (bestilling:opprett, idem).
+
+    TENANTENS AVSENDERPROFIL (163, ARC B): navnet svaret går i, adressen
+    kunden kan svare til, og signaturen under det godkjente utkastet.
+    E-posten går fra husets kanal — profilen er det kunden ser.
+    """
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
+        navn = _tekst(kropp, "avsender_navn", rid, MAKS_AVSENDERNAVN)
+        svar_til = _valgfri_tekst(kropp, "svar_til", rid, 254)
+        signatur = _valgfri_tekst(kropp, "signatur", rid, MAKS_SIGNATUR)
+        if svar_til is not None and not _SVAR_TIL.fullmatch(svar_til):
+            from .policyadmin_http import _Avbrudd, _feil
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«svar_til»: ikke en e-postadresse"))
+        return ("SELECT m17_sett_avsenderprofil(%s,%s,%s,%s,%s)",
+                (tenant, navn.strip(), svar_til, signatur, bid),
+                {"avsender_navn": navn.strip(), "svar_til": svar_til,
+                 "signatur": signatur})
+    return _skriv(tjeneste, request, bygg)
+
+
+def utforelse_for_sending(conn, tenant: str, henvendelse_id, utkast_id) -> dict:
+    """Det claim-veien gir svarmodulen ved siden av payloaden (163).
+
+    ADRESSEN, EMNET OG UTKASTET DEKRYPTERES HER, i API-ets tillit, med
+    tenantens DEK — og lever bare i claim-svaret, aldri i oppdraget. En
+    `hindring` betyr at modulen skal kvittere `feilet` uten å sende:
+    henvendelsen er borte, lukket eller i unntakskøen siden bestillingen,
+    utkastet er ikke henvendelsens eller ikke lenger godkjent, adressen
+    mangler eller lar seg ikke lese.
+    """
+    if not henvendelse_id or not utkast_id:
+        return {"hindring": "henvendelse_ukjent"}
+    rad = conn.execute("SELECT * FROM m17_for_sending(%s,%s,%s)",
+                       (tenant, henvendelse_id, utkast_id)).fetchone()
+    if rad is None:
+        return {"hindring": "henvendelse_ukjent"}
+    (lukket, i_koe, kanal, ref, maske, a_ct, a_n, a_key, e_ct, e_n, key_id,
+     u_hid, u_status, u_ct, u_n, u_key, p_navn, p_svar_til, p_sign) = rad
+    if u_hid is None or str(u_hid) != str(henvendelse_id):
+        return {"hindring": "henvendelse_ukjent"}
+    if lukket:
+        return {"hindring": "henvendelse_lukket"}
+    if i_koe:
+        return {"hindring": "henvendelse_i_unntakskoe"}
+    if u_status != "godkjent":
+        return {"hindring": "utkast_ikke_godkjent"}
+    if kanal != "epost":
+        return {"hindring": "kanal_uten_svarvei"}
+    if a_ct is None or a_n is None or a_key is None:
+        return {"hindring": "mottaker_mangler"}
+    from db import kryptering
+    try:
+        a_dek = kryptering.hent_dek(conn, tenant, a_key)
+        adresse = kryptering.dekrypter(a_dek, bytes(a_ct), bytes(a_n), tenant,
+                                       a_key, ekstra_aad=_AAD_AVSENDER)["t"]
+        e_dek = kryptering.hent_dek(conn, tenant, key_id)
+        emne = kryptering.dekrypter(e_dek, bytes(e_ct), bytes(e_n), tenant,
+                                    key_id)["t"]
+        u_dek = kryptering.hent_dek(conn, tenant, u_key)
+        tekst = kryptering.dekrypter(u_dek, bytes(u_ct), bytes(u_n), tenant,
+                                     u_key)["t"]
+    except psycopg.Error:
+        raise                       # basen svikter — driftsfeil, ikke en dom
+    except Exception:                                   # noqa: BLE001
+        return {"hindring": "mottaker_uleselig"}
+    if not isinstance(adresse, str) or not _SVAR_TIL.fullmatch(adresse):
+        return {"hindring": "mottaker_uleselig"}
+    return {"mottaker_epost": adresse,
+            "mottaker_maske": maske or _avsendermaske(adresse),
+            "ekstern_ref": ref, "emne": emne, "tekst": tekst,
+            "avsender_navn": p_navn, "svar_til": p_svar_til,
+            "signatur": p_sign}
 
 
 def klassifiser_endepunkt(tjeneste, request):
