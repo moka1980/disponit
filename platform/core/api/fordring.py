@@ -265,6 +265,12 @@ def svar_for(conn, tenant: str) -> dict:
          "dogn_etter_forfall": r[3], "handling": r[4], "gebyr_ore": r[5]}
         for r in conn.execute("SELECT * FROM m23_purreplanen(%s)",
                               (tenant,)).fetchall()]
+    # ARC B (151): avsenderprofilen — det kunden ser som avsender.
+    a = conn.execute("SELECT * FROM m23_avsenderen(%s)",
+                     (tenant,)).fetchone()
+    avsender = ({"avsender_navn": a[0], "svar_til": a[1],
+                 "oppdatert": a[2].isoformat() if a[2] else None}
+                if a is not None and a[0] else None)
     return {
         "sammendrag": {
             "apne": s[0], "apent_ore": s[1], "forfalte": s[2],
@@ -274,7 +280,8 @@ def svar_for(conn, tenant: str) -> dict:
             "vist": len(fordringer)},
         "aldersfordeling": aldersfordeling,
         "fordringer": fordringer,
-        "purreplan": purreplan}
+        "purreplan": purreplan,
+        "avsender": avsender}
 
 
 def fordringsbilde(tjeneste, request):
@@ -302,6 +309,11 @@ def hendelsene_endepunkt(tjeneste, request):
         fid = _sti_uuid(request, "fordring_id", rid)
         rader = conn.execute("SELECT * FROM m23_hendelsene(%s,%s)",
                              (auth.tenant, fid)).fetchall()
+        # ARC B (148): det utløseren har gjort med fordringen — per trinn,
+        # med beslutningens utfall. Adressen står aldri her.
+        purringer = conn.execute(
+            "SELECT * FROM m23_purringsbestillingene(%s,%s)",
+            (auth.tenant, fid)).fetchall()
         return kanonisk_json({
             "fordring_id": str(fid),
             "hendelser": [
@@ -310,6 +322,11 @@ def hendelsene_endepunkt(tjeneste, request):
                  "inntruffet": r[5].isoformat(),
                  "opprettet": r[6].isoformat(), "opprettet_av": r[7]}
                 for r in rader],
+            "purringer": [
+                {"trinn": r[0], "handling_trinn": r[1], "utfall": r[2],
+                 "oppdrag_id": r[3], "unntak_id": r[4],
+                 "request_id": r[5], "bestilt_ts": r[6].isoformat()}
+                for r in purringer],
             "request_id": rid}, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "okonomi:read", _fn)
 
