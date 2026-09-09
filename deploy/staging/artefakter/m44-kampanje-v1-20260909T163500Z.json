@@ -43,7 +43,8 @@
           "levering_uten_avmeldingslenke"
         ],
         "tilstand": "kvittering to ganger (idempotent) og avmeldingslenken i e-posten er maalt av portene test_m44_bokforing_port/test_m44_controller; live er de maalt som tre e-poster for tre oppdrag i eiers postkasse, med lenke i foten",
-        "port": "test_m44_bokforing_port.py, test_m44_controller.py"
+        "port": "test_m44_bokforing_port.py, test_m44_controller.py",
+        "eier_bekreftet": "9/9 ca. 18:55 lokal: e-postene kom, med lenken 'Meld deg av her' i foten (eiers ord: 'Ja eposten kom med lenken meld deg av her')"
       }
     },
     {
