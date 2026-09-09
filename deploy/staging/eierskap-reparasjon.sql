@@ -352,6 +352,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_utkastene(text,uuid)',                            'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_funnkandidater(text,date,integer,integer)',       'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_sveip_henvendelser(integer,integer,integer)',     'disponit_kundeservice_eier'),
+    -- 160 (M-17, ARC B): adressen på henvendelsen, inntak med adresse.
+    ('FUNCTION', 'm17_sett_avsender(text,uuid,text,bytea,bytea,text,text)', 'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_ta_imot(text,uuid,text,text,timestamp with time zone,text,bytea,bytea,bytea,bytea,text,text,text,bytea,bytea)', 'disponit_kundeservice_eier'),
     -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.
     -- NOLOGIN-eieren `disponit_onboarding_eier` eier funksjonene, ikke
     -- tabellene. Vaktene `m18_malsteg_vakt`, `m18_lop_vakt`,

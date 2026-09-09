@@ -198,9 +198,9 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
     """ANDRE HALVDEL, målt på DATAMODELLEN og på rutene.
 
     En sendevei kan ikke finnes uten en tilstand som sier at noe ble
-    sendt. `svarutkast.status` har nøyaktig tre verdier, og ingen av dem
-    heter `sendt`; `app.py` registrerer ni kundeservice-ruter, og ingen
-    av dem er en sending.
+    sendt. `svarutkast.status` har nøyaktig fire verdier (160 la til
+    `godkjent`), og ingen av dem heter `sendt`; `app.py` registrerer ti kundeservice-ruter (160 la til
+    adressen — register, ikke sending), og ingen av dem er en sending.
 
     Dette er halvdelen som ville overlevd at noen skrev sin egen
     socket-kode uten å importere noe: uten en tilstand å skrive ned,
@@ -209,15 +209,23 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
     MUTASJONEN SOM DREPER DENNE: legg `sendt` i status-CHECKen, eller en
     tiende rute som heter `.../send`.
     """
-    sql = MIGRASJON.read_text(encoding="utf-8")
-    kode = "\n".join(l for l in sql.splitlines()
-                     if not l.lstrip().startswith("--"))
+    # 102 OG 160: den andre la til dommen `godkjent` (et menneskes ja til
+    # at plattformen sender) — og fortsatt ingen `sendt`, ingen kanal.
+    # Statusen `sendt` er BOKFØRINGENS ord (ARC B PR 5) og kommer i en egen
+    # migrasjon; da flyttes denne porten ærlig, som for M-23 og M-44.
+    kode = ""
+    for fil in (MIGRASJON, MIGRASJON.with_name(
+            "160_m17_avsender_og_godkjenning.sql")):
+        sql = fil.read_text(encoding="utf-8")
+        kode += "\n".join(l for l in sql.splitlines()
+                          if not l.lstrip().startswith("--"))
     for ord_ in ("'sendt'", "smtp", "mottakeradresse", "utgaaende_ko",
                  "webhook"):
         assert ord_ not in kode.lower(), \
-            f"102 bærer «{ord_}» — v1 sender ingenting"
+            f"102/160 bærer «{ord_}» — registeret sender ingenting"
     assert "'brukt_manuelt'" in kode, \
-        "utkastets eneste positive dom skal si at et MENNESKE brukte det"
+        "utkastets positive menneskedom skal si at et MENNESKE brukte det"
+    assert "'godkjent'" in kode
 
     from api.app import RUTESCOPE
     mine = sorted(sti for _m, sti in RUTESCOPE
@@ -225,6 +233,8 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
     assert mine == [
         "/v1/kundeservice",
         "/v1/kundeservice/henvendelse",
+        # 160 (ARC B): adressen er REGISTER, ikke sending.
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk",

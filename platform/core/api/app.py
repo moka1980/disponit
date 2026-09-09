@@ -1240,6 +1240,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.klassifiser_endepunkt(tjeneste, request)
 
+    def kundeservice_avsender(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.avsender_endepunkt(tjeneste, request)
+
     def kundeservice_unntakskoe(request: Request) -> Response:
         from . import kundeservice as ksmodul
         return ksmodul.unntakskoe_endepunkt(tjeneste, request)
@@ -3622,6 +3626,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # at linjen skal få plass.
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
               kundeservice_klassifiser, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
+              kundeservice_avsender, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
               kundeservice_unntakskoe, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
@@ -5063,6 +5069,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "kundeservice:innhold",
     ("POST", "/v1/kundeservice/henvendelse"): "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe"):
         "bestilling:opprett",

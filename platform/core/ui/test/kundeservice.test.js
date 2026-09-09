@@ -280,7 +280,7 @@ test("Kundeservice: klassifiseringen sender de tre aksene med nøkkel",
     assert.ok(SISTE.headers["Idempotency-Key"]);
   });
 
-test("Kundeservice: utkastets to dommer, og ingen av dem heter sendt",
+test("Kundeservice: utkastets tre dommer, og ingen av dem heter sendt",
   async () => {
     SVAR = fullSvar();
     SISTE = null;
@@ -290,13 +290,18 @@ test("Kundeservice: utkastets to dommer, og ingen av dem heter sendt",
     [...h.querySelectorAll("tbody button")].find(
       (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
     await vent(() => h.textContent.includes(UTKASTENE.utkast[0].tekst));
+    // ARC B (160): «Godkjenn for sending» er et menneskes ja til at
+    // PLATTFORMEN sender — flaten sender fortsatt ingenting.
     const dommer = [...h.querySelectorAll("button")]
       .map((b) => b.textContent)
       .filter((s) => s === t("ui.kundeservice.knapp.forkast")
-                  || s === t("ui.kundeservice.knapp.brukt"));
+                  || s === t("ui.kundeservice.knapp.brukt")
+                  || s === t("ui.kundeservice.knapp.godkjenn"));
     assert.deepEqual(dommer.sort(),
       [t("ui.kundeservice.knapp.brukt"),
-        t("ui.kundeservice.knapp.forkast")].sort());
+        t("ui.kundeservice.knapp.forkast"),
+        t("ui.kundeservice.knapp.godkjenn")].sort());
+    assert.ok(!h.textContent.toLowerCase().includes("send svar"));
     [...h.querySelectorAll("button")].find(
       (b) => b.textContent === t("ui.kundeservice.knapp.brukt")).click();
     await vent(() => SISTE !== null);
