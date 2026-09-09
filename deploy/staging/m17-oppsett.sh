@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# M-44 kampanje (ARC B) — vertsoppsett i ett (M-23-formen, ARC B kampanje PR 6). Kjør som root:
-#   sudo bash deploy/staging/m44-oppsett.sh /root/v_samtykke.hemmelighet
+# M-17 kundeservice (ARC B) — vertsoppsett i ett (M-23-formen, ARC B kundeservice PR 6). Kjør som root:
+#   sudo bash deploy/staging/m17-oppsett.sh /root/v_kundeservice.hemmelighet
 # Hemmeligheten lages med: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 # og legges i en 0600-fil — aldri som argument (den ville stått i ps og historikk).
 # Idempotent: kan kjøres på nytt; steg som alt er gjort hoppes over.
 set -euo pipefail
-HEMFIL="${1:?bruk: sudo bash deploy/staging/m44-oppsett.sh <0600-fil med v_samtykke-hemmeligheten>}"
+HEMFIL="${1:?bruk: sudo bash deploy/staging/m17-oppsett.sh <0600-fil med v_kundeservice-hemmeligheten>}"
 [ -f "$HEMFIL" ] || { echo "finner ikke $HEMFIL"; exit 1; }
 HEMMELIGHET=$(tr -d '
 
  ' < "$HEMFIL")
 [ ${#HEMMELIGHET} -ge 32 ] || { echo "hemmeligheten må være minst 32 tegn"; exit 1; }
 AKTIV=/opt/disponit/aktiv; PY=/opt/disponit/.venv/bin/python; ENVFIL=/etc/disponit/staging.env
-MODUL=m44_kampanje; REL=m44-r1; MILJO=staging; AKTOR=m44-utrulling
+MODUL=m17_kundeservice; REL=m17-r1; MILJO=staging; AKTOR=m17-utrulling
 [ "$(id -u)" = 0 ] || { echo "kjør med sudo"; exit 1; }
 cd "$AKTIV"
 
-echo "== 1/5 v_samtykke i DISPONIT_ATT_NOKLER"
-cp -n "$ENVFIL" "$ENVFIL.bak-m44" 2>/dev/null || true
+echo "== 1/5 v_kundeservice i DISPONIT_ATT_NOKLER"
+cp -n "$ENVFIL" "$ENVFIL.bak-m17" 2>/dev/null || true
 # Hemmeligheten går som MILJØVARIABEL, aldri som argument (CodeRabbit på
 # ARC B PR 6): et argument står i `ps` for alle på verten.
 DISPONIT_HEM="$HEMMELIGHET" python3 - "$ENVFIL" <<'PY'
@@ -32,52 +32,52 @@ for i, l in enumerate(linjer):
         if v[:1] in ("'", '"') and v[-1:] == v[:1]:
             v = v[1:-1]
         d = json.loads(v)
-        if d.get("v_samtykke", {}).get("vs1") == hem:
+        if d.get("v_kundeservice", {}).get("vk1") == hem:
             print("   alt satt"); break
-        d.setdefault("v_samtykke", {})["vs1"] = hem
+        d.setdefault("v_kundeservice", {})["vk1"] = hem
         linjer[i] = pre + "DISPONIT_ATT_NOKLER='" + json.dumps(d, separators=(",", ":")) + "'"
-        print("   lagt til v_samtykke/vs1"); break
+        print("   lagt til v_kundeservice/vk1"); break
 else:
     sys.exit("   FANT IKKE DISPONIT_ATT_NOKLER i " + p)
 open(p, "w", encoding="utf-8").write("\n".join(linjer))
 PY
-if ! python3 -c "import json,sys; d=json.load(open('/etc/disponit/plan/DISPONIT_ATT_NOKLER')); sys.exit(0 if d.get('v_samtykke',{}).get('vs1') else 1)" 2>/dev/null; then
+if ! python3 -c "import json,sys; d=json.load(open('/etc/disponit/plan/DISPONIT_ATT_NOKLER')); sys.exit(0 if d.get('v_kundeservice',{}).get('vk1') else 1)" 2>/dev/null; then
   echo "   materialiserer via opp.sh (tar noen minutter) …"
-  deploy/staging/opp.sh >/tmp/m44-opp.log 2>&1 || { tail -20 /tmp/m44-opp.log; echo "   opp.sh FEILET — se /tmp/m44-opp.log"; exit 1; }
+  deploy/staging/opp.sh >/tmp/m17-opp.log 2>&1 || { tail -20 /tmp/m17-opp.log; echo "   opp.sh FEILET — se /tmp/m17-opp.log"; exit 1; }
 fi
-python3 -c "import json; d=json.load(open('/etc/disponit/plan/DISPONIT_ATT_NOKLER')); print('   plan har v_samtykke:', 'vs1' in d.get('v_samtykke',{}))"
-python3 -c "import json; d=json.load(open('/etc/disponit/api/DISPONIT_ATT_NOKLER')); print('   api har v_samtykke:', 'vs1' in d.get('v_samtykke',{}))"
+python3 -c "import json; d=json.load(open('/etc/disponit/plan/DISPONIT_ATT_NOKLER')); print('   plan har v_kundeservice:', 'vk1' in d.get('v_kundeservice',{}))"
+python3 -c "import json; d=json.load(open('/etc/disponit/api/DISPONIT_ATT_NOKLER')); print('   api har v_kundeservice:', 'vk1' in d.get('v_kundeservice',{}))"
 
 echo "== 2/5 konto, konfig, kvitteringsnøkkel, unit"
-id disponit-m44 >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin disponit-m44
-install -d -m 0750 -o root -g disponit-m44 /etc/disponit/m44
+id disponit-m17 >/dev/null 2>&1 || useradd --system --home /nonexistent --shell /usr/sbin/nologin disponit-m17
+install -d -m 0750 -o root -g disponit-m17 /etc/disponit/m17
 SMTP=$(grep -E '^DISPONIT_SMTP_' /etc/disponit/varsel/smtp.env || true)
 [ -n "$SMTP" ] || { echo "   ingen DISPONIT_SMTP_* i /etc/disponit/varsel/smtp.env — modulen kan ikke sende"; exit 1; }
 { printf '%s\n' "$SMTP"
   echo "DISPONIT_API_URL=https://disponit.com"
-  echo "DISPONIT_KVITTERINGSNOKKEL=/etc/disponit/m44/kvitteringsnokkel.json"
-} > /etc/disponit/m44/konfig
-printf '{"verifikator": "v_samtykke", "nokkel_id": "vs1", "hemmelighet": "%s"}\n' "$HEMMELIGHET" > /etc/disponit/m44/kvitteringsnokkel.json
-chown root:disponit-m44 /etc/disponit/m44/konfig /etc/disponit/m44/kvitteringsnokkel.json
-chmod 0640 /etc/disponit/m44/konfig /etc/disponit/m44/kvitteringsnokkel.json
-cp deploy/staging/disponit-m44.service /etc/systemd/system/disponit-m44.service
+  echo "DISPONIT_KVITTERINGSNOKKEL=/etc/disponit/m17/kvitteringsnokkel.json"
+} > /etc/disponit/m17/konfig
+printf '{"verifikator": "v_kundeservice", "nokkel_id": "vk1", "hemmelighet": "%s"}\n' "$HEMMELIGHET" > /etc/disponit/m17/kvitteringsnokkel.json
+chown root:disponit-m17 /etc/disponit/m17/konfig /etc/disponit/m17/kvitteringsnokkel.json
+chmod 0640 /etc/disponit/m17/konfig /etc/disponit/m17/kvitteringsnokkel.json
+cp deploy/staging/disponit-m17.service /etc/systemd/system/disponit-m17.service
 systemctl daemon-reload
 # Tjenesten leser kvitteringsnøkkelen selv, og /etc/disponit er lukket for andre:
 # gjennomgang (--x) for gruppen, som for m57.
-setfacl -m g:disponit-m44:--x /etc/disponit
-echo "   smtp-variabler i konfig: $(grep -c '^DISPONIT_SMTP_' /etc/disponit/m44/konfig)"
+setfacl -m g:disponit-m17:--x /etc/disponit
+echo "   smtp-variabler i konfig: $(grep -c '^DISPONIT_SMTP_' /etc/disponit/m17/konfig)"
 
 echo "== 3/5 registrering av modulkjeden"
 KONTRAKT=$(sha256sum platform/core/oppdragskontrakt.py | cut -c1-64)
-KVITT=$(sha256sum platform/modules/m44_kampanje/controller.py | cut -c1-64)
-PAYLOAD=$(PYTHONPATH=platform/core "$PY" -c "import json,hashlib,oppdragskontrakt as o; print(hashlib.sha256(json.dumps(sorted(o.OPPDRAGSTYPER['kampanje.send'].felter)).encode()).hexdigest())")
-DIGEST=$(tar -C platform/modules -cf - m44_kampanje | sha256sum | cut -c1-64)
-echo "$KONTRAKT" > /etc/disponit/m44/kontrakt-hash
+KVITT=$(sha256sum platform/modules/m17_kundeservice/controller.py | cut -c1-64)
+PAYLOAD=$(PYTHONPATH=platform/core "$PY" -c "import json,hashlib,oppdragskontrakt as o; print(hashlib.sha256(json.dumps(sorted(o.OPPDRAGSTYPER['kundeservice.svar.send'].felter)).encode()).hexdigest())")
+DIGEST=$(tar -C platform/modules -cf - m17_kundeservice | sha256sum | cut -c1-64)
+echo "$KONTRAKT" > /etc/disponit/m17/kontrakt-hash
 set -a; . "$ENVFIL"; set +a
 if sudo -u postgres psql -d disponit -Atc "SELECT 1 FROM modulrelease WHERE modul_id='$MODUL' AND release_id='$REL'" | grep -q 1; then
   echo "   release $REL finnes alt"
 else
-  "$PY" deploy/staging/registrer-m44-kampanje.py "$REL" "$KONTRAKT" "$DIGEST" "$PAYLOAD" "$KVITT" | sed 's/^/   /'
+  "$PY" deploy/staging/registrer-m17-kundeservice.py "$REL" "$KONTRAKT" "$DIGEST" "$PAYLOAD" "$KVITT" | sed 's/^/   /'
 fi
 
 echo "== 4/5 status og deployment"
@@ -95,7 +95,7 @@ sudo -u postgres psql -d disponit -Atc "SELECT 'deployment: '||modul_id||' '||mi
 sudo -u postgres psql -d disponit -Atc "SELECT 'modulhode: '||status FROM modulhode WHERE modul_id='$MODUL'" | sed 's/^/   /'
 
 echo "== 5/5 onboarding → modultoken → start"
-if [ -s /etc/disponit/m44/DISPONIT_MODULTOKEN ]; then
+if [ -s /etc/disponit/m17/DISPONIT_MODULTOKEN ]; then
   echo "   modultoken finnes alt"
 else
   # `|| true`: under set -e ville et ikke-null-svar drept skriptet FØR
@@ -115,12 +115,12 @@ else
     | curl -s -X POST https://disponit.com/v1/modul/onboarding/innlos -H 'content-type: application/json' -d @-)
   TOK=$(printf '%s' "$SVAR2" | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || true)
   [ -n "$TOK" ] || { echo "   innløsning avvist: $SVAR2"; "$PY" deploy/staging/token-cli.py deaktiver "$DRIFT_ID" >/dev/null 2>&1 || true; exit 1; }
-  printf '%s' "$TOK" > /etc/disponit/m44/DISPONIT_MODULTOKEN
-  chown root:disponit-m44 /etc/disponit/m44/DISPONIT_MODULTOKEN; chmod 0640 /etc/disponit/m44/DISPONIT_MODULTOKEN
+  printf '%s' "$TOK" > /etc/disponit/m17/DISPONIT_MODULTOKEN
+  chown root:disponit-m17 /etc/disponit/m17/DISPONIT_MODULTOKEN; chmod 0640 /etc/disponit/m17/DISPONIT_MODULTOKEN
   echo "   modultoken skrevet (${TOK:0:8}…)"
   "$PY" deploy/staging/token-cli.py deaktiver "$DRIFT_ID" >/dev/null 2>&1 && echo "   drift-token $DRIFT_ID tilbakekalt (engangsbruk)"
 fi
-systemctl enable --now disponit-m44 >/dev/null 2>&1; systemctl restart disponit-m44
+systemctl enable --now disponit-m17 >/dev/null 2>&1; systemctl restart disponit-m17
 sleep 6
-journalctl -u disponit-m44 -n 5 --no-pager | sed 's/^/   /'
+journalctl -u disponit-m17 -n 5 --no-pager | sed 's/^/   /'
 echo "== ferdig"

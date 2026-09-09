@@ -710,6 +710,13 @@ export const lukkHenvendelse = (id, utfall, idem) =>
 export const registrerOnboardingmal = (mal, idem) =>
   _muter("/v1/onboarding/mal", "POST", mal, idem || nyIdempotensnokkel());
 
+// ARC B (163): svaret sendes av PLATTFORMENS eiermodul, innenfor
+// policyen — aldri herfra. Flaten setter bare det kunden ser:
+// avsenderprofilen (navnet svaret går i, svaradressen, signaturen).
+export const settKundeserviceavsender = (profil, idem) =>
+  _muter("/v1/kundeservice/avsender", "POST", profil,
+         idem || nyIdempotensnokkel());
+
 export const settMalsteg = (malId, steg, idem) =>
   _muter(`/v1/onboarding/mal/${encodeURIComponent(malId)}/steg`,
          "POST", { steg }, idem || nyIdempotensnokkel());

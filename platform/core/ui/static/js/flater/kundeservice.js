@@ -34,6 +34,7 @@ import {
   UautorisertFeil, avgjorUtkast, hentJson, henvendelseTilUnntakskoe,
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
   nyIdempotensnokkel,
+  settKundeserviceavsender,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -202,6 +203,75 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
 // og købeslutning er arbeid som ikke krever å lese teksten, og en flate
 // som skjulte hele panelet ville sagt at den som ikke får lese heller
 // ikke får jobbe. Setningen i stedet for teksten er den ærlige formen.
+export function bestillingstekst(b) {
+  const utfall = String(b.utfall || "");
+  const nokkel = utfall.startsWith("feil:")
+    ? "ui.kundeservice.bestilling.utfall.feil"
+    : `ui.kundeservice.bestilling.utfall.${utfall}`;
+  return t("ui.kundeservice.bestilling.linje")
+    .replace("{utfall}", t(nokkel))
+    .replace("{dato}", String(b.bestilt_ts || "").slice(0, 10));
+}
+
+// AVSENDEREN ER DET KUNDEN SER. Uten profil sies det høyt — før det
+// første svaret går ut i tenantens id i stedet for et navn.
+function avsenderSeksjon(a) {
+  const boks = el("section", { class: "kpi-kort" },
+    el("h2", { text: t("ui.kundeservice.avsender.tittel") }));
+  if (!a || !a.avsender_navn) {
+    boks.append(el("p", {}, el("strong", {
+      text: t("ui.kundeservice.avsender.ingen") })));
+    return boks;
+  }
+  boks.append(el("p", {
+    text: t("ui.kundeservice.avsender.navn").replace("{navn}", a.avsender_navn) }));
+  boks.append(el("p", { class: a.svar_til ? "" : "muted",
+    text: a.svar_til
+      ? t("ui.kundeservice.avsender.svar_til").replace("{adresse}", a.svar_til)
+      : t("ui.kundeservice.avsender.uten_svar_til") }));
+  if (a.signatur) {
+    boks.append(el("p", { class: "muted",
+      text: t("ui.kundeservice.avsender.signatur").replace("{signatur}", a.signatur) }));
+  }
+  return boks;
+}
+
+function avsenderSkjema(ctx, last, kvitter, a) {
+  const utfall = el("p", { "aria-live": "polite" });
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const navn = el("input", { id: "ks-avs-navn", name: "avsender_navn",
+    type: "text", required: true, maxlength: 120,
+    value: (a && a.avsender_navn) || "" });
+  const svarTil = el("input", { id: "ks-avs-svar", name: "svar_til",
+    type: "email", maxlength: 254, value: (a && a.svar_til) || "" });
+  const signatur = el("textarea", { id: "ks-avs-signatur", name: "signatur",
+    maxlength: 500, rows: "3" });
+  signatur.value = (a && a.signatur) || "";
+  const knapp = el("button", { type: "submit",
+    text: t("ui.kundeservice.knapp.lagre_avsender") });
+  skjema.append(
+    felt("ks-avs-navn", "ui.kundeservice.skjema.avsender_navn", navn,
+         "ui.kundeservice.skjema.avsender_navn_hjelp"),
+    felt("ks-avs-svar", "ui.kundeservice.skjema.svar_til", svarTil,
+         "ui.kundeservice.skjema.svar_til_hjelp"),
+    felt("ks-avs-signatur", "ui.kundeservice.skjema.signatur", signatur,
+         "ui.kundeservice.skjema.signatur_hjelp"),
+    el("div", { class: "skjema-bunn" }, knapp));
+  skjemaramme(ctx, last, {
+    skjema, knapp, utfall, kvitter,
+    okNokkel: "ui.kundeservice.skjema.avsender_ok",
+    send: (idem) => settKundeserviceavsender({
+      avsender_navn: navn.value.trim(),
+      svar_til: svarTil.value.trim() || null,
+      signatur: signatur.value.trim() || null,
+    }, idem),
+    tilbakestill: () => {},
+  });
+  return el("div", { class: "skjemaboks" },
+    el("h3", { text: t("ui.kundeservice.skjema.avsender_tittel") }),
+    skjema, utfall);
+}
+
 function detaljpanel(ctx, last, kvitter, settApen) {
   const boks = el("div", { class: "skjemaboks" });
   const innhold = el("div", {});
@@ -367,10 +437,16 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       return;
     }
     for (const u of liste) {
+      // ARC B: statusen som ord, og hva plattformen gjorde med et
+      // godkjent utkast (bestilt, i unntakskøen, sendt) — som tekst.
       const kort = el("div", { class: "skjemaboks" },
         el("p", { class: "celle-tekst", text: u.tekst }),
         el("p", { class: "muted",
-          text: `${u.opprettet.slice(0, 10)} · ${u.kilde} · ${u.status}` }));
+          text: `${u.opprettet.slice(0, 10)} · ${u.kilde} · `
+            + t(`ui.kundeservice.utkaststatus.${u.status}`) }));
+      if (u.bestilling) {
+        kort.append(el("p", { class: "muted", text: bestillingstekst(u.bestilling) }));
+      }
       if (skriver && u.status === "foreslatt") {
         for (const [status, nokkel] of [
           ["forkastet", "ui.kundeservice.knapp.forkast"],
@@ -509,7 +585,12 @@ export function visKundeservice(hoved, ctx) {
       } else {
         koseksjon.append(koTabell(koe, ctx, detalj.apne));
       }
-      sett(kropp, oversikt, koseksjon, detalj.node);
+      const deler = [oversikt, koseksjon, avsenderSeksjon(d.avsenderprofil),
+                     detalj.node];
+      if (harScope(ctx, "bestilling:opprett")) {
+        deler.push(avsenderSkjema(ctx, last, kvitter, d.avsenderprofil));
+      }
+      sett(kropp, ...deler);
       // GJENÅPNE PANELET på raden som sto åpen. Finnes den ikke lenger
       // i listen — avsluttet, eller falt utenfor avkortingen — slippes
       // den, framfor å åpne et panel på en rad ingen ser.

@@ -216,6 +216,9 @@ def svar_for(conn, tenant: str) -> dict:
          "godkjent_utkast": bool(r[16])}
         for r in conn.execute("SELECT * FROM m17_koen(%s,%s)",
                               (tenant, MAKS_KOE)).fetchall()]
+    # ARC B (163): avsenderprofilen — navnet plattformen svarer i.
+    a = conn.execute("SELECT * FROM m17_avsenderprofilen(%s)",
+                     (tenant,)).fetchone()
     return {
         "sammendrag": {
             "apne": s[0], "uklassifiserte": s[1], "i_unntakskoe": s[2],
@@ -223,7 +226,10 @@ def svar_for(conn, tenant: str) -> dict:
             "lukkede_siste_30": s[5],
             # LISTEN ER AVKORTET, OG FLATEN SKAL KUNNE SI DET.
             "vist": len(koe)},
-        "koe": koe}
+        "koe": koe,
+        "avsenderprofil": None if a is None else {
+            "avsender_navn": a[0], "svar_til": a[1], "signatur": a[2],
+            "oppdatert": a[3].isoformat()}}
 
 
 def kobilde(tjeneste, request):
@@ -674,6 +680,13 @@ def utkastene_endepunkt(tjeneste, request):
         hid = _sti_uuid(request, "henvendelse_id", rid)
         rader = conn.execute("SELECT * FROM m17_utkastene(%s,%s)",
                              (auth.tenant, hid)).fetchall()
+        # ARC B (162): hva utløseren gjorde med hvert utkast — utfallet,
+        # oppdraget, saken. Aldri adressen, aldri teksten.
+        bestillinger = {
+            str(r[0]): {"utfall": r[1], "oppdrag_id": r[2],
+                        "unntak_id": r[3], "bestilt_ts": r[5].isoformat()}
+            for r in conn.execute("SELECT * FROM m17_svarbestillingene(%s,%s)",
+                                  (auth.tenant, hid)).fetchall()}
         from db import kryptering
         ut = []
         for r in rader:
@@ -684,7 +697,8 @@ def utkastene_endepunkt(tjeneste, request):
                                               auth.tenant, r[3])["t"],
                 "kunnskapsref": list(r[4] or ()), "kilde": r[5],
                 "modell_digest": r[6], "status": r[7],
-                "opprettet": r[8].isoformat(), "opprettet_av": r[9]})
+                "opprettet": r[8].isoformat(), "opprettet_av": r[9],
+                "bestilling": bestillinger.get(str(r[0]))})
         return kanonisk_json({"henvendelse_id": str(hid), "utkast": ut,
                               "request_id": rid},
                              200, {"x-request-id": rid})

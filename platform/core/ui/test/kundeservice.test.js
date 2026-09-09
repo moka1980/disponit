@@ -426,3 +426,80 @@ test("Kundeservice: kvitteringen og panelet overlever tegningen",
     assert.ok(await vent(() => h.querySelector("#ks-handlingstype") !== null),
       "panelet lukket seg etter en klassifisering");
   });
+
+// ---------------------------------------------------------------------
+// ARC B kundeservice (160–164): avsenderen, statusen som ord, plattformens
+// utfall per utkast — flaten sender fortsatt ingenting.
+// ---------------------------------------------------------------------
+
+const AVSENDER = { avsender_navn: "Fjordlys Elektro AS",
+  svar_til: "post@fjordlys.example", signatur: "Fjordlys Elektro AS",
+  oppdatert: "2026-09-09T09:00:00+00:00" };
+
+test("Kundeservice: uten avsenderprofil sies det høyt, med profil vises den",
+  async () => {
+    SVAR = fullSvar();
+    let h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    assert.ok(h.textContent.includes(t("ui.kundeservice.avsender.ingen")));
+    assert.ok(h.querySelector("#ks-avs-navn"), "avsenderskjemaet mangler");
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    SVAR = { ...fullSvar(),
+      "/v1/kundeservice": { ...KOEN, avsenderprofil: AVSENDER } };
+    h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    assert.ok(h.textContent.includes(t("ui.kundeservice.avsender.navn")
+      .replace("{navn}", "Fjordlys Elektro AS")));
+    assert.ok(h.textContent.includes("post@fjordlys.example"));
+    assert.equal(h.querySelector("#ks-avs-navn").value, "Fjordlys Elektro AS");
+    h = nyHoved();
+    visKundeservice(h, ctx(["decisions:read"]));
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    assert.ok(!h.querySelector("#ks-avs-navn"));
+  });
+
+test("Kundeservice: avsenderskjemaet sender navn, svar-til og signatur",
+  async () => {
+    SVAR = fullSvar();
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => !!h.querySelector("#ks-avs-navn"));
+    h.querySelector("#ks-avs-navn").value = "Fjordlys Elektro AS";
+    h.querySelector("#ks-avs-svar").value = "post@fjordlys.example";
+    h.querySelector("#ks-avs-signatur").value = "Fjordlys";
+    SISTE = null;
+    h.querySelector("#ks-avs-navn").closest("form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE && SISTE.sti === "/v1/kundeservice/avsender");
+    assert.deepEqual(SISTE.kropp, { avsender_navn: "Fjordlys Elektro AS",
+      svar_til: "post@fjordlys.example", signatur: "Fjordlys" });
+    assert.ok(SISTE.headers["Idempotency-Key"]);
+  });
+
+test("Kundeservice: statusen som ord og plattformens utfall per utkast",
+  async () => {
+    const utk = { ...UTKASTENE, utkast: [
+      { ...UTKASTENE.utkast[0], status: "godkjent",
+        bestilling: { utfall: "brudd", oppdrag_id: null, unntak_id: 12,
+          bestilt_ts: "2026-09-09T08:00:00+00:00" } }] };
+    SVAR = { ...fullSvar(),
+      [`/v1/kundeservice/henvendelse/${H1}/utkast`]: utk };
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    await vent(() => h.textContent.includes(utk.utkast[0].tekst));
+    assert.ok(h.textContent.includes(t("ui.kundeservice.utkaststatus.godkjent")));
+    assert.ok(h.textContent.includes(
+      t("ui.kundeservice.bestilling.utfall.brudd")));
+    // Et godkjent utkast har ingen dommer igjen å klikke på.
+    const dommer = [...h.querySelectorAll("button")]
+      .filter((b) => b.textContent === t("ui.kundeservice.knapp.godkjenn"));
+    assert.equal(dommer.length, 0);
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });

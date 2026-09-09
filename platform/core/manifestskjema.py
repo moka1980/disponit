@@ -1675,6 +1675,47 @@ KRAVGRENSER["m44-kampanje-v1"] = {
     "punktbinding": {},
 }
 
+M17_SVAR_INVARIANTER: tuple[str, ...] = (
+    # ARC B kundeservice (160–164): plattformen SENDER det godkjente svaret
+    # — innenfor policyen, med godkjenningen og teksten attestert av
+    # registeret. M-23/M-44-formen, svarets dommer.
+    # 1. Adressen og teksten lever bare kryptert i registeret; køen,
+    #    oppdraget, kvitteringen, saken og loggene bærer aldri klartekst.
+    "adresse_eller_tekst_i_klartekst_utenfor_registeret",
+    # 2. Uten policy med `kundeservice.svar.send` bestilles ingenting — og
+    #    ingen beslutning brennes.
+    "bestilling_uten_policy",
+    # 3. Uten et menneskes godkjenning sendes ingenting: foreslått er ikke
+    #    kandidat, og et ugodkjent utkast som bestilles blir en sak.
+    "sending_uten_godkjenning",
+    # 4. Samme utkast, to runder → én bestilling; et rettet utkast er en ny.
+    "dobbel_bestilling_samme_utkast",
+    # 5. Samme oppdrag, to claim/kvitteringer → én e-post.
+    "dobbel_sending_samme_oppdrag",
+    # 6. Et fødselsnummer, kontonummer eller passord i teksten stopper i
+    #    unntakskøen (dlp_sjekk usant) — aldri stille.
+    "personopplysning_i_svaret",
+    # 7. Et beløp, en prosent eller et løfteord stopper i unntakskøen
+    #    (ingen_okonomiske_lofter usant).
+    "okonomisk_lofte_i_svaret",
+    # 8. Lukket / i unntakskøen / uten adresse / uten svarvei: 409 fra
+    #    bestillingsveien, ikke kandidat, `feilet` fra modulen.
+    "svar_uten_mottaker_eller_svarvei",
+    # 9. Kvitteringen når registeret: utkastet `sendt`, henvendelsen lukket
+    #    som besvart, evidensen `svar.sendt`; gjenspill er én evidens.
+    "kvittering_uten_bokforing",
+    # 10. Kill-switch og plattformtilstand stopper uten å konsumere:
+    #     utkastet er kandidat igjen når bryteren er på.
+    "kill_switch_konsumerte_utkast",
+)
+KRAVGRENSER["m17-svar-v1"] = {
+    "invarianter": M17_SVAR_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
@@ -2238,6 +2279,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m35-v1": "artefakt-m35-skjema.json",
     "m23-purring-v1": "artefakt-m23-purring-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
+    "m17-svar-v1": "artefakt-m17-svar-skjema.json",
 }
 
 
@@ -2495,7 +2537,7 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
-                   "m23-purring-v1", "m44-kampanje-v1"):
+                   "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

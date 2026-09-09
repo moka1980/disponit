@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m17svarartefakt-v1.json",
+  "title": "M-17 svarartefakt (m17-svar-v1)",
+  "comment": "ARC B kundeservice, de ti punktene (PR 6). Hvert punkt er et par (forsok, brudd) - null brudd uten minst ett forsok er en port som aldri kjorte. Feltsettet er generert fra manifestskjema.M17_SVAR_INVARIANTER, aldri for haand; grensene staar i KRAVGRENSER.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "funn"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m17-svar-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "commit",
+        "vert",
+        "tenant"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m17_kundeservice"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release": {
+          "type": "string"
+        },
+        "notat": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adresse_eller_tekst_i_klartekst_utenfor_registeret_forsok",
+        "adresse_eller_tekst_i_klartekst_utenfor_registeret_brudd",
+        "bestilling_uten_policy_forsok",
+        "bestilling_uten_policy_brudd",
+        "sending_uten_godkjenning_forsok",
+        "sending_uten_godkjenning_brudd",
+        "dobbel_bestilling_samme_utkast_forsok",
+        "dobbel_bestilling_samme_utkast_brudd",
+        "dobbel_sending_samme_oppdrag_forsok",
+        "dobbel_sending_samme_oppdrag_brudd",
+        "personopplysning_i_svaret_forsok",
+        "personopplysning_i_svaret_brudd",
+        "okonomisk_lofte_i_svaret_forsok",
+        "okonomisk_lofte_i_svaret_brudd",
+        "svar_uten_mottaker_eller_svarvei_forsok",
+        "svar_uten_mottaker_eller_svarvei_brudd",
+        "kvittering_uten_bokforing_forsok",
+        "kvittering_uten_bokforing_brudd",
+        "kill_switch_konsumerte_utkast_forsok",
+        "kill_switch_konsumerte_utkast_brudd",
+        "rundtur_paa_disponit_com"
+      ],
+      "properties": {
+        "adresse_eller_tekst_i_klartekst_utenfor_registeret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "adresse_eller_tekst_i_klartekst_utenfor_registeret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bestilling_uten_policy_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bestilling_uten_policy_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sending_uten_godkjenning_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sending_uten_godkjenning_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dobbel_bestilling_samme_utkast_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dobbel_bestilling_samme_utkast_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dobbel_sending_samme_oppdrag_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dobbel_sending_samme_oppdrag_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "personopplysning_i_svaret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "personopplysning_i_svaret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "okonomisk_lofte_i_svaret_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "okonomisk_lofte_i_svaret_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "svar_uten_mottaker_eller_svarvei_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "svar_uten_mottaker_eller_svarvei_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kvittering_uten_bokforing_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kvittering_uten_bokforing_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kill_switch_konsumerte_utkast_forsok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kill_switch_konsumerte_utkast_brudd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rundtur_paa_disponit_com": {
+          "type": "boolean",
+          "description": "Bevisrunden gikk mot disponit.com med et EKTE oppdrag gjennom modulen (ikke stub-SMTP) - kvitteringen staar i basen."
+        }
+      }
+    },
+    "funn": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alvor",
+          "tekstnokkel"
+        ],
+        "properties": {
+          "alvor": {
+            "enum": [
+              "rodt",
+              "gult"
+            ]
+          },
+          "tekstnokkel": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "detalj": {
+            "type": "object"
+          }
+        }
+      },
+      "description": "Funnene som tekstnokler + parametre (aldri fritekst-PII)."
+    }
+  }
+}
