@@ -172,6 +172,20 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
     # Codex P1-regelen over). Arbeider-/plan-koblingen er PR-B; typen
     # registreres nå fordi kontrakten er identiteten resten (frist,
     # eiermodul, artefakttype) bindes mot.
+    # ARC B (eiervedtak 9/9): purring som selvbetjening. Kroppen bærer én
+    # referanse (fordringen) og ett omfang (trinnet fordringen er moden
+    # for — bestilleren velger ALDRI hvilket, døra flytter ett hakk).
+    # Policyhandlingen `purring.send` har stått i bransjemalen fra første
+    # dag; eiermodulen er M-23 selv (M-6/M-35-formen).
+    "purring.send": Bestillingstype(
+        handling="purring.send",
+        oppdragstype="purring.send",
+        eiermodul="m23_fordring",
+        kravsett=(),
+        omfang=("trinn",),
+        skjemafelt=frozenset({"bestillingstype", "fordring_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "fordring_id",
+                        "omfang")),
     "kontinuitet.ovelse": Bestillingstype(
         handling="kontinuitet.ovelse",
         oppdragstype="kontinuitet.ovelse",
@@ -187,6 +201,9 @@ _INNDATA_REF = re.compile(
     r"-[0-9a-f]{12}$")
 _KILDE_REF = re.compile(
     r"^kilde:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
+    r"-[0-9a-f]{12}$")
+_FORDRING_REF = re.compile(
+    r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"-[0-9a-f]{12}$")
 _PROFIL_REF = re.compile(
     r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
@@ -230,6 +247,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_rekruttering(tenant, bt, data)
     if bt.oppdragstype == "epost.behandling":
         return _normaliser_epost(tenant, bt, data)
+    if bt.oppdragstype == "purring.send":
+        return _normaliser_purring(tenant, bt, data)
     if bt.oppdragstype == "kontinuitet.ovelse":
         # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
         # eies av øvelseslogikken selv.
@@ -264,6 +283,22 @@ def normaliser(tenant: str, data: dict) -> dict:
             "mal_url": f"https://{host}{sti}",
             "kravsett": data["kravsett"], "omfang": omfang,
             "maks_sider": maks}
+
+
+def _normaliser_purring(tenant: str, bt: Bestillingstype,
+                        data: dict) -> dict:
+    """M-23: referanseformen (`fordring:<uuid>`) og omfanget. Trinnet
+    står IKKE i kroppen: det er dørens («neste trinn», 104), og en
+    bestiller som kunne be om trinn 3 ville invitert nettopp det hoppet
+    vakten hindrer."""
+    m = _FORDRING_REF.fullmatch(str(data.get("fordring_ref") or ""))
+    if m is None:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "fordring_id": m.group(0).split(":", 1)[1],
+            "omfang": data["omfang"]}
 
 
 def _normaliser_rekruttering(tenant: str, bt: Bestillingstype,
@@ -761,6 +796,38 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse("inndata_ubrukelig", rid, tenant,
                                        art="sikkerhet")
                 return ("feil", "inndata_ubrukelig")
+        # PURRINGENS MÅLPORT (ARC B, 147): fordringen må finnes hos
+        # tenanten, være åpen, og ha et neste trinn i purreplanen —
+        # målt FØR beslutningen brenner kvote, gjennom M-23s egen dør
+        # (runtime har ingen tabellrettigheter, SP-7). Trinnet og
+        # handlingen døra svarer med er det oppdraget bærer.
+        purring = None
+        if bt.oppdragstype == "purring.send":
+            sett_kontekst(conn, tenant, aktor, rid)
+            prad = conn.execute(
+                "SELECT * FROM m23_fordring_for_purring(%s,%s)",
+                (tenant, norm["fordring_id"])).fetchone()
+            conn.rollback()
+            if prad is None:
+                tjeneste.logg.hendelse("fordring_ukjent", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "fordring_ukjent")
+            (f_status, f_fakturanr, f_rest_ore, f_dogn, _f_trinn,
+             n_trinn, n_navn, n_handling, n_dogn) = prad
+            if f_status != "apen" or n_trinn is None:
+                tjeneste.logg.hendelse(
+                    "fordring_ikke_klar_for_purring", rid, tenant,
+                    art="drift",
+                    grunn=("avsluttet" if f_status != "apen"
+                           else "purreplan_uten_neste_trinn"))
+                return ("feil", "fordring_ikke_klar_for_purring")
+            purring = {"fordring_id": norm["fordring_id"],
+                       "fakturanummer": f_fakturanr,
+                       "rest_ore": int(f_rest_ore),
+                       "dogn_over_forfall": int(f_dogn),
+                       "trinn": int(n_trinn), "trinn_navn": n_navn,
+                       "handling_trinn": n_handling,
+                       "trinn_dogn": int(n_dogn)}
         # Typen må kunne CLAIMES før noen beslutning tas: et TILLAT for et
         # oppdrag ingen modul kan plukke ser vellykket ut mens arbeidet dør
         # stille i køen — det utløper på `utforelsesfrist` uten at noen
@@ -952,6 +1019,22 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "maks_sider": norm["maks_sider"],
                          "dataklasser": ["offentlig"],
                          "dataklasser_kilde": "connector"}
+            elif purring is not None:
+                # BELØPET ER RESTEN, i kroner med to desimaler — det er
+                # det policyens `belop_maks` måler. Frekvensen grupperes
+                # på `faktura_id` (bransjemalen), så samme faktura aldri
+                # purres oftere enn taket sier.
+                rest = purring["rest_ore"]
+                event = {"handling": bt.handling,
+                         "ressurs_id": "fordring:" + purring["fordring_id"],
+                         "faktura_id": purring["fakturanummer"],
+                         "belop": f"{rest // 100}.{rest % 100:02d}",
+                         "valuta": "NOK",
+                         "trinn": purring["trinn"],
+                         "handling_trinn": purring["handling_trinn"],
+                         "omfang": norm["omfang"],
+                         "dataklasser": ["finansiell", "persondata"],
+                         "dataklasser_kilde": "connector"}
             else:
                 event = {"handling": bt.handling,
                          "ressurs_id": "inndata:" + norm["inndata_id"],
@@ -1015,6 +1098,43 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse(
                     "domenekontroll_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
+            # M-23 ATTESTERER SINE EGNE VILKÅR (ARC B). Bransjemalen
+            # krever `forfall_passert_dager` (min 14) og
+            # `ingen_aktiv_tvist` fra `v_fordring` for `purring.send`.
+            # Verdiene er BASENS (døra over): dagene over forfall er
+            # målt, ikke oppgitt; tvist finnes ikke som tilstand i v1,
+            # så attesten sier sant om det registeret vet. Uten nøkkel i
+            # registeret mintes ingenting — beslutningen tar vilkårsveien
+            # (unntakskø), og driftsloggen sier hvorfor.
+            fo_nokler = (tjeneste.nokler or {}).get("v_fordring") or {}
+            if purring is not None and fo_nokler:
+                from policy_validator import attestering
+                nid = sorted(fo_nokler)[0]
+                naa_att = datetime.now(timezone.utc)
+                ressurs = "fordring:" + purring["fordring_id"]
+                event["attestasjoner"] = {}
+                for vilkaar, ekstra in (
+                        ("forfall_passert_dager",
+                         {"verdi": purring["dogn_over_forfall"]}),
+                        ("ingen_aktiv_tvist", {})):
+                    jti_grunnlag = (f"{tenant}|{ressurs}|{kjernenokkel}|"
+                                    f"{vilkaar}")
+                    event["attestasjoner"][vilkaar] = attestering.signer({
+                        "verifikator": "v_fordring",
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": vilkaar, "ressurs_id": ressurs,
+                        "policy_id": policy_id,
+                        "utstedt": naa_att.isoformat(),
+                        "utloper": (naa_att
+                                    + timedelta(hours=24)).isoformat(),
+                        "jti": "fo-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": True, **ekstra,
+                    }, nid, fo_nokler[nid])
+            elif purring is not None:
+                tjeneste.logg.hendelse(
+                    "fordring_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
             from policy_validator.engine import EvaluationContext
             ctx = EvaluationContext(
                 tenant_id=tenant, aktor_rolle="bestiller", autentisert=True,
@@ -1047,6 +1167,26 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
             if hostname is not None:
                 payload = {k: norm[k] for k in ("mal_url", "kravsett",
                                                 "omfang", "maks_sider")}
+            elif purring is not None:
+                # REFERANSER OG TALL — aldri adressen. Utføreren henter
+                # den kryptert fra fordringen når den sender.
+                import oppdragskontrakt
+                payload = oppdragskontrakt.minimer(bt.oppdragstype, {
+                    "fordring_id": purring["fordring_id"],
+                    "fakturanummer": purring["fakturanummer"],
+                    "trinn": purring["trinn"],
+                    "handling_trinn": purring["handling_trinn"],
+                    "rest_ore": purring["rest_ore"],
+                    "omfang": norm["omfang"]})
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       payload)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, payload)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
             else:
                 # Profil-ØYEBLIKKSBILDET bygges SERVER-SIDE fra 061 nå,
                 # under samme transaksjonsvindu som oppdraget fødes i —
@@ -1140,7 +1280,11 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                     " beslutning_loggpost_id=%s", (tenant,
                                                    logg[0])).fetchone()[0])
             else:
-                if hostname is None:
+                # NAVNGITT gren (samme lærdom som målportene over): bare
+                # rekrutteringsformen har en bunt å binde. `hostname is
+                # None` var sant for purringen også, og `norm` har ingen
+                # `inndata_id` der — KeyError etter at kvoten var brent.
+                if bt.oppdragstype == "rekruttering.evaluering":
                     # X1 (#192): bindingen skjer i oppdragets EGEN
                     # fødselstransaksjon — `bind_inndata` krever
                     # fødselsattesten, og nettopp derfor kan vinduet

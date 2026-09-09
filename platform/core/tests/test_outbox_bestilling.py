@@ -1502,7 +1502,8 @@ def test_feltparitet_mellom_skjema_og_intensjonshash():
     # intensjonsfeltene — rekrutteringsformens `inndata_ref` kollapser
     # til `inndata_id`, resten er 1:1.
     from api.bestilling import BESTILLINGSTYPER
-    DEKNING = {"inndata_ref": "inndata_id", "kilde_ref": "kilde_id"}
+    DEKNING = {"inndata_ref": "inndata_id", "kilde_ref": "kilde_id",
+               "fordring_ref": "fordring_id"}
     for navn, bt in BESTILLINGSTYPER.items():
         kilde = {DEKNING.get(f, f) for f in bt.skjemafelt
                  if f != "bestillingstype"}

@@ -346,6 +346,17 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "forhåndsporten, og endelig av bind_inndata i "
         "fødselstransaksjonen. Den FORBIGÅENDE naboen — bunten er holdt "
         "av en samtidig bestilling — er inndata_opptatt (#215).")),
+    Feilvei("fordring_ukjent", 404, ("sikkerhet",), None, notat=(
+        "Bestillingens fordring_ref peker på en fordring tenanten ikke "
+        "har (146/147, ARC B). 404, ikke 400: referanseFORMEN var gyldig, "
+        "målet finnes bare ikke — og som for stillingsprofilen er det "
+        "sikkerhetslogg: noen ba om purring på et krav de ikke eier.")),
+    Feilvei("fordring_ikke_klar_for_purring", 409, ("drift",), None, notat=(
+        "Fordringen finnes, men ingen purring kan bestilles på den nå: "
+        "den er betalt eller ettergitt, eller purreplanen har ikke noe "
+        "trinn etter det den står på. Målt FØR beslutningen brenner "
+        "kvote (rekrutteringsformens økonomi); dørens egen dom ved "
+        "utførelsen står uansett bak.")),
     Feilvei("inndata_opptatt", 409, ("drift",), None, notat=(
         "En annen bestilling holder engangsbunten AKKURAT NÅ (#215). "
         "Forbigående, ingen dom: ingen beslutning er tatt, ingen kvote "
