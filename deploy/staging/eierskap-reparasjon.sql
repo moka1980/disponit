@@ -576,6 +576,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm44_grensene(text)',                                  'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_funnkandidater(text,date)',                       'disponit_kampanje_eier'),
     ('FUNCTION', 'm44_sveip_kampanjer(integer)',                        'disponit_kampanje_eier'),
+    -- 153 (M-44, ARC B): adressen på mottakeren og innholdet på kampanjen.
+    ('FUNCTION', 'm44_sett_kontakt(text,uuid,bytea,bytea,text,text)',   'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_registrer_mottaker(text,uuid,text,text,text,bytea,bytea,text,text)', 'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_sett_innhold(text,uuid,text,text,text)',           'disponit_kampanje_eier'),
+    ('FUNCTION', 'm44_registrer_kampanje(text,uuid,text,text,text,text,date,text,text,text)', 'disponit_kampanje_eier'),
     -- 116 (M-48): motpartsregisterets doerer og
     -- motpartssveipen. KLYNGE 6s ENE UTGAAENDE KANAL:
     -- foretaksregisteret er koblet paa, kredittleverandoeren

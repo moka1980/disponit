@@ -111,6 +111,10 @@ function mottakerrad(m, maks, apneDetalj) {
   const merkecelle = el("td", {},
     el("span", { text: m.aktiv ? t("ui.kampanje.status.aktiv")
                                : t("ui.kampanje.status.inaktiv") }));
+  // 153: adressen finnes (kryptert) eller ikke — i ORD, aldri adressen.
+  merkecelle.append(" ", el("span", { class: "muted",
+    text: m.har_kontakt ? t("ui.kampanje.kontakt.satt")
+                        : t("ui.kampanje.kontakt.mangler") }));
   for (const funn of m.apne_funn || []) {
     if (!MERKE[funn]) continue;
     // MERKET ER TEKST (WCAG 1.4.1).
@@ -158,6 +162,7 @@ function kampanjeTabell(kampanjer, avlys, skriver) {
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.planlagt") }),
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.avmelding") }),
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.mottakere") }),
+    el("th", { scope: "col", text: t("ui.kampanje.kolonne.innhold") }),
     el("th", { scope: "col", text: t("ui.kampanje.kolonne.status") }),
     el("th", { scope: "col",
                text: t("ui.kampanje.kolonne.handling") }))));
@@ -175,6 +180,11 @@ function kampanjeTabell(kampanjer, avlys, skriver) {
                           text: k.avmeldingslenke }));
     rad.append(el("td", { class: "celle-tall",
                           text: String(k.mottakere) }));
+    // 153: innholdet finnes eller mangler — emnet vises når det er satt.
+    rad.append(el("td", { class: "celle-tekst",
+      text: k.har_innhold
+        ? `${t("ui.kampanje.innhold.satt")}${k.emne ? ` · ${k.emne}` : ""}`
+        : t("ui.kampanje.innhold.mangler") }));
     rad.append(el("td", { class: "celle-tekst",
       text: t(k.status === "avlyst" ? "ui.kampanje.kampanje.avlyst"
                                     : "ui.kampanje.kampanje.registrert") }));
@@ -496,6 +506,20 @@ function kampanjeSkjema(ctx, last, kvitter) {
     pattern: "https://.+" });
   const dato = el("input", { id: "kp-k-dato", name: "planlagt_sendt",
     type: "date", required: true });
+  // 153: innholdet — valgfritt nå, påkrevd før kampanjen kan leveres.
+  // Begge eller ingen; halvt innhold svarer serveren 400 på med feltnavn.
+  const emne = el("input", { id: "kp-k-emne", name: "emne",
+    type: "text", maxlength: 200 });
+  const tekst = el("textarea", { id: "kp-k-tekst", name: "tekst",
+    maxlength: 4000, rows: "6" });
+  // Begge eller ingen — også i nettleseren (CodeRabbit): fylles det ene,
+  // kreves det andre, så halvt innhold stopper før serveren sier 400.
+  const kobleInnhold = () => {
+    const noe = !!(emne.value.trim() || tekst.value.trim());
+    emne.required = noe; tekst.required = noe;
+  };
+  emne.addEventListener("input", kobleInnhold);
+  tekst.addEventListener("input", kobleInnhold);
   const knapp = el("button", { type: "submit",
     text: t("ui.kampanje.knapp.ny_kampanje") });
   skjema.append(
@@ -506,6 +530,10 @@ function kampanjeSkjema(ctx, last, kvitter) {
          "ui.kampanje.skjema.avmelding_hjelp"),
     felt("kp-k-dato", "ui.kampanje.skjema.planlagt", dato,
          "ui.kampanje.skjema.planlagt_hjelp"),
+    felt("kp-k-emne", "ui.kampanje.skjema.emne", emne,
+         "ui.kampanje.skjema.emne_hjelp"),
+    felt("kp-k-tekst", "ui.kampanje.skjema.tekst", tekst,
+         "ui.kampanje.skjema.tekst_hjelp"),
     el("div", { class: "skjema-bunn" }, knapp));
   skjemaramme(ctx, last, {
     skjema, knapp, utfall, kvitter,
@@ -513,8 +541,12 @@ function kampanjeSkjema(ctx, last, kvitter) {
     send: (idem) => registrerKampanje({
       ekstern_ref: ref.value, navn: navn.value, formal: formal.value,
       avmeldingslenke: lenke.value, planlagt_sendt: dato.value,
+      ...(emne.value.trim() || tekst.value.trim()
+        ? { emne: emne.value, tekst: tekst.value } : {}),
     }, idem),
-    tilbakestill: () => { ref.value = ""; navn.value = ""; },
+    tilbakestill: () => {
+      ref.value = ""; navn.value = ""; emne.value = ""; tekst.value = "";
+    },
   });
   return el("div", { class: "skjemaboks" },
     el("h3", { text: t("ui.kampanje.skjema.kampanje_tittel") }),

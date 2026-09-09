@@ -216,6 +216,7 @@ def svar_for(conn, tenant: str) -> dict:
     mottakere = [
         {"mottaker_id": str(r[0]), "ekstern_ref": r[1], "navn": r[2],
          "kontakt_maske": r[3], "aktiv": r[4], "tilstand": r[5],
+         "har_kontakt": bool(r[10]),
          "kanal": r[6],
          "siste_samtykke": r[7].isoformat() if r[7] else None,
          "i_planer": r[8], "apne_funn": list(r[9] or ())}
@@ -226,7 +227,7 @@ def svar_for(conn, tenant: str) -> dict:
          "formal": r[3], "avmeldingslenke": r[4],
          "planlagt_sendt": r[5].isoformat(), "status": r[6],
          "mottakere": r[7], "opprettet": r[8].isoformat(),
-         "opprettet_av": r[9]}
+         "opprettet_av": r[9], "har_innhold": bool(r[10]), "emne": r[11]}
         for r in conn.execute("SELECT * FROM m44_kampanjene(%s,%s)",
                               (tenant, MAKS_KAMPANJER)).fetchall()]
     g = conn.execute("SELECT * FROM m44_grensene(%s)",
@@ -327,7 +328,7 @@ def _skriv(tjeneste, request, bygg):
                                        "bestilling:opprett")
         nokkel = _krev_idem(request, rid)
         kropp = _kropp(request)
-        sql, args, svar, felt = bygg(tenant, bid, nokkel, kropp, rid,
+        sql, args, svar, felt = bygg(conn, tenant, bid, nokkel, kropp, rid,
                                      request)
         try:
             ut = conn.execute(sql, args).fetchone()[0]
@@ -364,7 +365,7 @@ def grense_endepunkt(tjeneste, request):
     noe — tenanten eier og fører verdiene — men koblingen til M-1 står
     igjen som et NAVNGITT gap, samme gap som 111–113 navnga.
     """
-    def bygg(tenant, bid, _nokkel, kropp, rid, _request):
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
         maks = _heltall(kropp, "maks_per_periode", rid,
                         *GRENSER["maks_per_periode"])
         periode = _heltall(kropp, "periode_dogn", rid,
@@ -383,13 +384,16 @@ def registrer_mottaker_endepunkt(tjeneste, request):
     masken og den saltede hashen, og kaster adressen. Svaret er masken;
     API-et har ingen vei tilbake til adressen, og logger den ikke.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, _request):
+    def bygg(conn, tenant, bid, nokkel, kropp, rid, _request):
         ref = _tekst(kropp, "ekstern_ref", rid, MAKS_REF)
         navn = _tekst(kropp, "navn", rid, MAKS_NAVN)
         kontakt = _tekst(kropp, "kontakt", rid, MAKS_KONTAKT)
         mid = _utled("mottaker", tenant, nokkel)
-        return ("SELECT m44_registrer_mottaker(%s,%s,%s,%s,%s,%s)",
-                (tenant, mid, ref, navn, kontakt, bid),
+        # 153: adressen lagres KRYPTERT (tenantens DEK) i samme
+        # transaksjon som masken og hashen. Basen ser aldri klartekst.
+        ct, nonce, key_id = _kontakt_kryptert(conn, tenant, kontakt)
+        return ("SELECT m44_registrer_mottaker(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, mid, ref, navn, kontakt, ct, nonce, key_id, bid),
                 {"mottaker_id": str(mid)}, "kontakt_maske")
     return _skriv(tjeneste, request, bygg)
 
@@ -408,7 +412,7 @@ def registrer_samtykke_endepunkt(tjeneste, request):
 
     FORMÅLET LIKESÅ: «samtykke til hva» er ubesvart uten det.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, request):
         mid = _sti_uuid(request, "mottaker_id", rid)
         tilstand = _valg(kropp, "tilstand", rid, TILSTANDER)
         kanal = _valg(kropp, "kanal", rid, KANALER)
@@ -440,17 +444,96 @@ def registrer_kampanje_endepunkt(tjeneste, request):
     kampanjen VAR ment å gå — og det er den datoen frekvenstaket måles
     på. Ingenting sender noe når datoen passerer.
     """
-    def bygg(tenant, bid, nokkel, kropp, rid, _request):
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, _request):
         ref = _tekst(kropp, "ekstern_ref", rid, MAKS_REF)
         navn = _tekst(kropp, "navn", rid, MAKS_NAVN)
         formal = _tekst(kropp, "formal", rid, MAKS_NOTAT)
         lenke = _lenke(kropp, "avmeldingslenke", rid)
         planlagt = _tekst(kropp, "planlagt_sendt", rid, 32)
         kid = _utled("kampanje", tenant, nokkel)
+        # 153: innholdet (emne + tekst) kan følge med fra første stund;
+        # begge eller ingen — kampanjen kan planlegges uten, men aldri
+        # leveres uten.
+        emne, tekst = _innhold(kropp, rid)
+        if emne is not None:
+            return ("SELECT m44_registrer_kampanje("
+                    "%s,%s,%s,%s,%s,%s,%s::date,%s,%s,%s)",
+                    (tenant, kid, ref, navn, formal, lenke, planlagt,
+                     emne, tekst, bid),
+                    {"kampanje_id": str(kid)}, None)
         return ("SELECT m44_registrer_kampanje("
                 "%s,%s,%s,%s,%s,%s,%s::date,%s)",
                 (tenant, kid, ref, navn, formal, lenke, planlagt, bid),
                 {"kampanje_id": str(kid)}, None)
+    return _skriv(tjeneste, request, bygg)
+
+
+_AAD_KONTAKT = b"m44:kontakt"
+MAKS_EMNE = 200
+MAKS_TEKST = 4000
+
+
+def _kontakt_kryptert(conn, tenant: str, kontakt: str):
+    """Adressen → (chiffertekst, nonce, key_id) med tenantens DEK og AAD
+    `m44:kontakt`. Klartekst lever bare her, i forespørselen."""
+    from db import kryptering
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+    ct, nonce = kryptering.krypter(dek, {"e": kontakt.strip()}, tenant,
+                                   key_id, ekstra_aad=_AAD_KONTAKT)
+    return ct, nonce, key_id
+
+
+def _innhold(kropp, rid):
+    """(emne, tekst) eller (None, None) — halvt innhold er en 400 med
+    feltnavn (#425-formen)."""
+    from .policyadmin_http import _Avbrudd, _feil
+    emne, tekst = kropp.get("emne"), kropp.get("tekst")
+    if emne is None and tekst is None:
+        return None, None
+    if not isinstance(emne, str) or not emne.strip() \
+            or len(emne) > MAKS_EMNE:
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj="«emne»: mangler eller er ugyldig (1–200 tegn)"))
+    if not isinstance(tekst, str) or not tekst.strip() \
+            or len(tekst) > MAKS_TEKST:
+        raise _Avbrudd(_feil("request_feilformet", rid,
+            detalj="«tekst»: mangler eller er ugyldig (1–4000 tegn)"))
+    return emne.strip(), tekst.strip()
+
+
+def kontakt_endepunkt(tjeneste, request):
+    """POST /v1/kampanje/mottaker/{mottaker_id}/kontakt (idem).
+
+    ADRESSEN, KRYPTERT (153). Kroppen bærer `kontakt`; svaret og listen
+    bærer bare at den finnes. Kan settes og rettes så lenge mottakeren
+    er aktiv.
+    """
+    def bygg(conn, tenant, bid, _nokkel, kropp, rid, request):
+        mid = _sti_uuid(request, "mottaker_id", rid)
+        kontakt = _tekst(kropp, "kontakt", rid, MAKS_KONTAKT)
+        ct, nonce, key_id = _kontakt_kryptert(conn, tenant, kontakt)
+        return ("SELECT m44_sett_kontakt(%s,%s,%s,%s,%s,%s)",
+                (tenant, mid, ct, nonce, key_id, bid),
+                {"mottaker_id": str(mid)}, "endret")
+    return _skriv(tjeneste, request, bygg)
+
+
+def innhold_endepunkt(tjeneste, request):
+    """POST /v1/kampanje/kampanje/{kampanje_id}/innhold (idem).
+
+    EMNE OG TEKST — tenantens egne ord, ingen persondata. Kan rettes
+    fram til kampanjen er levert.
+    """
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, request):
+        kid = _sti_uuid(request, "kampanje_id", rid)
+        emne, tekst = _innhold(kropp, rid)
+        if emne is None:
+            from .policyadmin_http import _Avbrudd, _feil
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«emne» og «tekst»: begge må være satt"))
+        return ("SELECT m44_sett_innhold(%s,%s,%s,%s,%s)",
+                (tenant, kid, emne, tekst, bid),
+                {"kampanje_id": str(kid)}, "endret")
     return _skriv(tjeneste, request, bygg)
 
 
@@ -461,7 +544,7 @@ def avlys_kampanje_endepunkt(tjeneste, request):
     tatt planen med seg, og mottakerne i den ville forsvunnet fra
     frekvenstellingen.
     """
-    def bygg(tenant, bid, _nokkel, _kropp, rid, request):
+    def bygg(_conn, tenant, bid, _nokkel, _kropp, rid, request):
         kid = _sti_uuid(request, "kampanje_id", rid)
         return ("SELECT m44_avlys_kampanje(%s,%s,%s)",
                 (tenant, kid, bid),
@@ -479,7 +562,7 @@ def legg_i_plan_endepunkt(tjeneste, request):
     tenantens periode. Den som planlegger får vite det med én gang, og
     ikke først når sveipen har gått natta etter.
     """
-    def bygg(tenant, bid, _nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, request):
         kid = _sti_uuid(request, "kampanje_id", rid)
         mid = _kropp_uuid(kropp, "mottaker_id", rid)
         return ("SELECT m44_legg_i_plan(%s,%s,%s,%s)",
@@ -496,7 +579,7 @@ def sett_aktiv_endepunkt(tjeneste, request):
     ville tatt samtykkehistorikken med seg — og den er det eneste som
     kan svare på om vi hadde lov.
     """
-    def bygg(tenant, bid, _nokkel, kropp, rid, request):
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, request):
         from .policyadmin_http import _Avbrudd, _feil
         mid = _sti_uuid(request, "mottaker_id", rid)
         # `aktiv` ER PÅKREVD HER. `_bool` faller tilbake til `false`, og
