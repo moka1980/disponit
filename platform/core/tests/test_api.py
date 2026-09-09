@@ -463,7 +463,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # `unntak` (køkoblingen) og `tenant_nokler` (DEK-en).
                  # Barna først, henvendelsen etter — og henvendelsen FØR
                  # `unntak`, som ryddes lenger ned.
-                 "henvendelsesfunn", "svarutkast", "klassifisering",
+                 "henvendelsesfunn", "svarbestilling", "svarutkast", "klassifisering",
                  "henvendelse",
                  # 103 (M-18): funnene og stegene peker på løpet, løpet
                  # på malen, og malstegene på malen. Barna først, løpet,

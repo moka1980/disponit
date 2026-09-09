@@ -325,9 +325,13 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # sendedagen, samtykket attesteres, policyen avgjør.
     from plan.kampanje import kjor_en_runde as kampanjerunde
     kampanje = kampanjerunde(tjeneste, conn)
+    # M-17 (162): svarutløseren — registeret bestiller når et menneske
+    # har godkjent, policyen avgjør.
+    from plan.kundeservice import kjor_en_runde as svarrunde
+    svar = svarrunde(tjeneste, conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
            "resultater": resultater, "klassifisering": klassifisering,
-           "purring": purring, "kampanje": kampanje}
+           "purring": purring, "kampanje": kampanje, "svar": svar}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)
