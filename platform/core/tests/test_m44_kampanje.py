@@ -275,6 +275,8 @@ def test_invariant_modulen_sendte():
                    if sti.startswith("/v1/kampanje")})
     assert mine == [
         "/v1/kampanje",
+        # 156: avsenderprofilen — navnet eiermodulen leverer i (ARC B).
+        "/v1/kampanje/avsender",
         "/v1/kampanje/grense",
         "/v1/kampanje/kampanje",
         "/v1/kampanje/kampanje/{kampanje_id:uuid}/avlys",
@@ -701,7 +703,7 @@ def test_invariant_frekvensgrense_hardkodet():
                 "MAKS_HISTORIKK", "MAKS_REF", "MAKS_NAVN",
                 "MAKS_KONTAKT", "MAKS_LENKE", "MAKS_NOTAT",
                 # 153: feltlengder for innholdet — ikke frekvens.
-                "MAKS_EMNE", "MAKS_TEKST"), \
+                "MAKS_EMNE", "MAKS_TEKST", "MAKS_AVSENDER"), \
                 f"{fil.name} har grensekonstanten {m.group(1)}"
     from drift import kampanjesveip
     assert kampanjesveip.GRENSE == 500

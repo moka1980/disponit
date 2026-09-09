@@ -197,13 +197,6 @@ def test_avsenderprofilen_valideres(miljo, klient, token, migrator):
     assert rad == ("Fjordlys Elektro AS", None) and n >= 1
 
 
-def test_claim_svaret_barer_utforelse_bare_for_purring():
-    """Statisk: `utforelse` legges på svaret KUN for purring.send —
-    m56/m57-kontrakten er urørt."""
-    from pathlib import Path
-    kode = (Path(__file__).resolve().parents[1] / "api" / "app.py"
-            ).read_text(encoding="utf-8")
-    i = kode.index("utforelse = utforelse_for_sending(")
-    blokk = kode[i - 400:i]
-    assert 'if oppdragstype == "purring.send":' in blokk
-    assert 'if utforelse is not None:\n            svar["utforelse"]' in kode
+# Den statiske porten på claim-veien bor i test_m44_sending_port
+# (`test_claim_svaret_barer_utforelse_for_begge_eiermodulene`) siden
+# ARC B kampanje PR 4: to eiermoduler, én form.

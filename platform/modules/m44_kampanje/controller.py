@@ -1,23 +1,18 @@
-"""Controlleren for m23_fordring (ARC B, PR 4): claim → kontroll → flett
-→ send → signert kvittering. m56-formen, speilet — avviket er at
-ARBEIDET er en e-post, og en e-post er irreversibel.
+"""Controlleren for m44_kampanje (ARC B kampanje, PR 4): claim → kontroll
+→ flett → send → signert kvittering. M-23-controllerens form, speilet —
+mekanikken er delt (`modules.felles.levering`), dommene er kampanjens.
 
-Derfor to ting m56 ikke har:
-  * `utforelse` i claim-svaret: adressen og tallene plattformen
-    dekrypterte for oss (149). Modulen har verken KEK eller base, og
-    payloaden bærer aldri adressen. Mangler feltet, eller bærer det en
-    `hindring`, kvitteres `feilet` uten å sende.
-  * ALDRI TO SENDINGER. Feil som beviselig skjedde FØR serveren tok
-    imot meldingen (`FEIL_FOER_AKSEPT`) kvitteres `sending_avvist`. Alt
-    annet som går galt under sendingen — timeout midt i dialogen, brutt
-    forbindelse etter DATA — kvitteres `sending_uviss`: TERMINALT, så
-    ingen ny claim kan sende den samme purringen én gang til. «Kan alt
-    ha gått ut» er et menneskes dom (M-57-utsenderens lærdom), aldri en
-    retry.
+To ting payloaden aldri bærer, og claim-svaret gir i `utforelse` (156):
+adressen plattformen dekrypterte for oss, og tenantens tekst. Modulen
+har verken KEK eller base. Mangler feltet, eller bærer det en
+`hindring` (kampanjen avlyst, mottakeren deaktivert, samtykket trukket
+siden bestillingen, innhold eller adresse mangler), kvitteres `feilet`
+uten å sende.
 
-Alt som kan hindre en gyldig sending måles FØR e-posten går: kontrakt,
-hindring, frist, fletting. Hvert utfall er et KODET ord til
-plattformen, aldri taushet.
+ALDRI TO SENDINGER: `sending_avvist` bare for feil som beviselig skjedde
+før serveren tok imot meldingen; alt annet er `sending_uviss` — terminalt,
+så ingen ny claim kan levere den samme kampanjen til den samme mottakeren
+én gang til.
 """
 from __future__ import annotations
 
@@ -28,12 +23,12 @@ from ..felles.levering import (FEIL_FOER_AKSEPT, Uteblitt, feilutfall,
                                kontraktsbrudd, kvittert, lever, vindu_apent)
 from . import maler
 
-OPPDRAGSTYPE = "purring.send"
+OPPDRAGSTYPE = "kampanje.send"
 
 
 def http_frist_s() -> float:
-    """Budsjettet per HTTP-kall: kvitteringen prøves LEVERINGSFORSOK
-    ganger innenfor purringens 15-minutters utførelsesfrist."""
+    """Budsjettet per HTTP-kall innenfor kampanjens 15-minutters
+    utførelsesfrist."""
     return 30.0
 
 
@@ -70,90 +65,78 @@ def kjor_en(klient, token: str, sender, signer) -> dict:
         return {"utfall": "avbrutt", "grunn": "claim_uleselig",
                 "kvittering_status": r.status_code}
     payload = claim.get("payload") or {}
-    fid = str(payload.get("fordring_id") or "") if isinstance(payload,
-                                                              dict) else ""
-    # KONVOLUTTEN LESES DEFENSIVT (CodeRabbit på PR 4): et fremmed
-    # claim-svar skal nå den kodede `oppdragstype_ukjent`-kvitteringen,
-    # ikke dø i en KeyError før modulen har sagt ett ord.
+    if not isinstance(payload, dict):
+        payload = {}
+    kid = str(payload.get("kampanje_id") or "")
+    mid = str(payload.get("mottaker_id") or "")
     basis = {
         "oppdrag_id": claim.get("oppdrag_id"), "tenant": claim.get("tenant"),
         "kvittering_jti": claim.get("kvittering_jti"),
         "repair_operation_id": claim.get("repair_operation_id"),
         "owner_claim_id": claim.get("owner_claim_id"),
         "owner_generation": claim.get("owner_generation"),
-        "ressurs_id": f"fordring:{fid}" if fid else "",
+        "ressurs_id": f"kampanje:{kid}:{mid}" if kid and mid else "",
     }
 
     def kvitter(kropp):
         return lever(klient, "/v1/oppdrag/kvittering", signer(kropp), hode,
                      claim.get("kvittering_utloper"), sov=_sov)
 
+    def nei(rk, grunn, **ekstra):
+        # Journalen skal si HVILKET par som ikke ble levert.
+        return feilutfall(rk, grunn, kampanje=kid, mottaker=mid, **ekstra)
+
     if claim.get("oppdragstype") not in (None, OPPDRAGSTYPE):
         rk = kvitter({**basis, "resultat": "feilet",
                       "feilkode": "oppdragstype_ukjent"})
-        return feilutfall(rk, "oppdragstype_ukjent")
+        return nei(rk, "oppdragstype_ukjent")
     brudd = kontraktsbrudd(OPPDRAGSTYPE, payload)
-    if not brudd:
-        try:
-            trinn = int(payload["trinn"])
-            if isinstance(payload["trinn"], bool):
-                raise TypeError("bool")
-        except (KeyError, TypeError, ValueError):
-            brudd = ["trinn"]
     if brudd:
         rk = kvitter({**basis, "resultat": "feilet",
                       "feilkode": "oppdrag_ugyldig"})
-        return feilutfall(rk, f"oppdrag_ugyldig:{brudd}")
+        return nei(rk, f"oppdrag_ugyldig:{brudd}")
     hindring = _hindring(claim)
     if hindring:
         rk = kvitter({**basis, "resultat": "feilet", "feilkode": hindring})
-        return feilutfall(rk, hindring)
+        return nei(rk, hindring)
     if not vindu_apent(claim.get("utforelsesfrist")):
         rk = kvitter({**basis, "resultat": "feilet",
                       "feilkode": "frist_utilstrekkelig"})
-        return feilutfall(rk, "frist_utilstrekkelig")
+        return nei(rk, "frist_utilstrekkelig")
     utf = dict(claim["utforelse"])
-    utf.setdefault("tenant", claim["tenant"])
-    # Trinnet som sendes er OPPDRAGETS (døra valgte det ved bestillingen).
-    # Har fordringen flyttet seg siden, er sendingen ikke lenger den
-    # bestilte: ingen e-post, et kodet nei.
-    if utf.get("neste_trinn") is not None \
-            and int(utf["neste_trinn"]) != trinn:
-        rk = kvitter({**basis, "resultat": "feilet",
-                      "feilkode": "trinn_flyttet"})
-        return feilutfall(rk, "trinn_flyttet")
     try:
-        melding = maler.flett(payload["handling_trinn"],
-                              maler.felter_fra(utf))
+        melding = maler.flett(utf)
     except maler.Flettefeil as e:
         rk = kvitter({**basis, "resultat": "feilet", "feilkode": "malfeil"})
-        return feilutfall(rk, f"malfeil:{e.kode}")
+        return nei(rk, f"malfeil:{e.kode}")
     try:
         sendt = sender(utf["mottaker_epost"], melding["emne"],
                        melding["tekst"],
                        avsender_navn=utf.get("avsender_navn")
-                       or claim["tenant"],
+                       or claim.get("tenant"),
                        svar_til=utf.get("svar_til"))
     except FEIL_FOER_AKSEPT as e:
         rk = kvitter({**basis, "resultat": "feilet",
                       "feilkode": "sending_avvist"})
-        return feilutfall(rk, "sending_avvist", feiltype=type(e).__name__)
+        return nei(rk, "sending_avvist", feiltype=type(e).__name__)
     except Exception as e:                              # noqa: BLE001
-        # UVISST — og derfor TERMINALT: kvitteringen stenger oppdraget
-        # så ingen ny claim sender purringen én gang til.
         rk = kvitter({**basis, "resultat": "feilet",
                       "feilkode": "sending_uviss"})
-        return feilutfall(rk, "sending_uviss", feiltype=type(e).__name__)
+        return nei(rk, "sending_uviss", feiltype=type(e).__name__)
     sendt_ts = datetime.now(timezone.utc).isoformat()
     rk = kvitter({**basis, "resultat": "utfort",
                   "sendt_ts": sendt_ts,
                   "malversjon": melding["malversjon"],
-                  "handling_trinn": payload["handling_trinn"],
-                  "trinn": trinn,
+                  "kampanje_id": kid, "mottaker_id": mid,
+                  "planlagt_sendt": str(payload.get("planlagt_sendt")
+                                        or ""),
                   "mottaker_maske": utf.get("mottaker_maske") or "",
                   "melding_id": (sendt or {}).get("melding_id") or ""})
-    svar = {"kvittering_status": rk.status_code, "trinn": trinn,
-            "handling_trinn": payload["handling_trinn"]}
+    svar = {"kvittering_status": rk.status_code, "kampanje": kid,
+            "mottaker": mid}
     if not kvittert(rk):
         return {"utfall": "ukvittert", **svar}
     return {"utfall": "utfort", **svar}
+
+
+__all__ = ["OPPDRAGSTYPE", "Uteblitt", "http_frist_s", "kjor_en"]
