@@ -85,7 +85,9 @@ PRIORITETER = ("kritisk", "hoy", "normal", "lav")
 TEMAER = ("faktura", "leveranse", "teknisk", "salg", "klage", "annet")
 HANDLINGSTYPER = ("svar_kreves", "til_info", "oppgave", "mote",
                   "nyhetsbrev", "mistenkelig")
-UTKASTSTATUS = ("forkastet", "brukt_manuelt")
+#: ARC B (160): `godkjent` er et menneskes ja til at PLATTFORMEN sender
+#: innenfor policyen. `sendt` er bokføringens ord (PR 5), aldri en dom.
+UTKASTSTATUS = ("forkastet", "brukt_manuelt", "godkjent")
 LUKKEUTFALL = ("besvart", "ikke_aktuell")
 
 #: SP-2-navnerommet.
@@ -95,6 +97,17 @@ _M17_NS = uuidlib.uuid5(uuidlib.NAMESPACE_URL, "disponit:m17:kundeservice")
 #: køpayload kunnet dekodes som en henvendelses-payload og omvendt —
 #: samme dom som `krypter_bytes`' `formaal` (#162).
 _AAD_KOE = b"m17:unntakskoe"
+#: 160: avsenderadressen, kryptert med tenantens DEK. Klartekst lever i
+#: forespørselen og i claim-svaret til eiermodulen — aldri i basen.
+_AAD_AVSENDER = b"m17:avsender"
+
+
+def _avsendermaske(adresse: str) -> str:
+    """`k****@domene` av den normaliserte adressen (M-44s form)."""
+    norm = adresse.strip().lower()
+    if "@" in norm and norm.index("@") > 0:
+        return norm[0] + "****" + norm[norm.index("@"):]
+    return norm[:1] + "****" + norm[-2:]
 
 
 def _utled(art: str, tenant: str, nokkel: str) -> uuidlib.UUID:
@@ -196,7 +209,10 @@ def svar_for(conn, tenant: str) -> dict:
          "alder_dogn": r[5], "prioritet": r[6], "tema": r[7],
          "handlingstype": r[8], "klassifisert_av": r[9],
          "i_unntakskoe": r[10], "antall_utkast": r[11],
-         "brukt_utkast": r[12], "apne_funn": list(r[13] or ())}
+         "brukt_utkast": r[12], "apne_funn": list(r[13] or ()),
+         # 160: adressen finnes eller mangler — masken, aldri adressen.
+         "har_avsender": bool(r[14]), "avsender_maske": r[15],
+         "godkjent_utkast": bool(r[16])}
         for r in conn.execute("SELECT * FROM m17_koen(%s,%s)",
                               (tenant, MAKS_KOE)).fetchall()]
     return {
@@ -287,12 +303,50 @@ def ta_imot_endepunkt(tjeneste, request):
         e_ct, e_n = _krypter(dek, key_id, tenant, emne)
         k_ct, k_n = _krypter(dek, key_id, tenant, tekst)
         hid = _utled("henvendelse", tenant, nokkel)
+        # 160: for e-post lagres adressen OGSÅ kryptert (AAD m17:avsender)
+        # med en maske — det er den plattformen svarer til (ARC B).
+        # Hashen består: den er gjenkjenningen på tvers av henvendelser.
+        if kanal == "epost" and "@" in avsender:
+            a_ct, a_n = _krypter(dek, key_id, tenant, avsender.strip(),
+                                 aad=_AAD_AVSENDER)
+            return ("SELECT * FROM m17_ta_imot(%s,%s,%s,%s,%s::timestamptz,"
+                    "                          %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tenant, hid, kanal, ref, mottatt,
+                     _avsenderhash(avsender), e_ct, e_n, k_ct, k_n, key_id,
+                     bid, _avsendermaske(avsender), a_ct, a_n),
+                    {"henvendelse_id": str(hid)}, "henvendelse_id")
         return ("SELECT * FROM m17_ta_imot(%s,%s,%s,%s,%s::timestamptz,"
                 "                          %s,%s,%s,%s,%s,%s,%s)",
                 (tenant, hid, kanal, ref, mottatt,
                  _avsenderhash(avsender), e_ct, e_n, k_ct, k_n, key_id,
                  bid),
                 {"henvendelse_id": str(hid)}, "henvendelse_id")
+    return _skriv(tjeneste, request, bygg)
+
+
+def avsender_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/henvendelse/{henvendelse_id}/avsender
+    (bestilling:opprett, idem).
+
+    ADRESSEN, KRYPTERT (160), på en henvendelse som alt finnes — kanalen
+    var skjema/telefon, eller inntaket kom uten adresse. Kroppen bærer
+    `avsender`; svaret og køen bærer bare masken. Kan settes og rettes
+    så lenge henvendelsen er åpen.
+    """
+    def bygg(conn, tenant, bid, _nokkel, kropp, rid, request):
+        from .policyadmin_http import _Avbrudd, _feil
+        hid = _sti_uuid(request, "henvendelse_id", rid)
+        avsender = _tekst(kropp, "avsender", rid, MAKS_AVSENDER)
+        if "@" not in avsender or avsender.index("@") == 0:
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj="«avsender»: ikke en e-postadresse"))
+        key_id, dek = _dek(conn, tenant)
+        ct, nonce = _krypter(dek, key_id, tenant, avsender.strip(),
+                             aad=_AAD_AVSENDER)
+        maske = _avsendermaske(avsender)
+        return ("SELECT m17_sett_avsender(%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, hid, maske, ct, nonce, key_id, bid),
+                {"henvendelse_id": str(hid), "avsender_maske": maske})
     return _skriv(tjeneste, request, bygg)
 
 

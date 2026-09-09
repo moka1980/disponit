@@ -18,12 +18,12 @@
 // flaten ikke skal trekke to datoer fra hverandre eller telle en
 // avkortet liste (M-16-regelen).
 //
-// DET FINNES INGEN «SEND»-KNAPP, og fraværet er dommen: katalogen lover
-// automatiske svar, v1 lagrer et utkast. Undertittelen sier det, og de
-// eneste to dommene et utkast kan få heter `forkastet` og
-// `brukt_manuelt`. «Merk som brukt» er sporet etter at et MENNESKE
-// sendte noe — og det er nettopp det sporet som gjør at en henvendelse
-// i det hele tatt kan lukkes som «besvart».
+// DET FINNES INGEN «SEND»-KNAPP, og fraværet er dommen: flaten sender
+// ingenting. Utkastet får tre dommer: `forkastet`, `brukt_manuelt` (et
+// MENNESKE sendte selv — sporet som lar henvendelsen lukkes som
+// «besvart») og, fra ARC B (160), `godkjent`: et menneskes ja til at
+// PLATTFORMEN sender svaret innenfor policyen. Selve sendingen er
+// eiermodulens, aldri flatens.
 //
 // TABELLEN ER EKTE (m16-formen): <caption>, th[scope=col] på kolonnene
 // og th[scope=row] på cellen som navngir raden. Wrapperen `.tablewrap`
@@ -374,7 +374,8 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       if (skriver && u.status === "foreslatt") {
         for (const [status, nokkel] of [
           ["forkastet", "ui.kundeservice.knapp.forkast"],
-          ["brukt_manuelt", "ui.kundeservice.knapp.brukt"]]) {
+          ["brukt_manuelt", "ui.kundeservice.knapp.brukt"],
+          ["godkjent", "ui.kundeservice.knapp.godkjenn"]]) {
           const b = el("button", { type: "button", text: t(nokkel) });
           b.addEventListener("click", async () => {
             b.disabled = true;
@@ -407,9 +408,14 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       gjeldende = h;
       settApen(h.henvendelse_id);
       sett(utfall);
+      // 160: adressen finnes eller mangler — masken, aldri adressen.
       merkelinje.textContent = `${h.ekstern_ref} · `
         + `${t(`ui.kundeservice.kanal.${h.kanal}`)} · `
-        + `${alderTekst(h.alder_dogn)}`;
+        + `${alderTekst(h.alder_dogn)} · `
+        + (h.har_avsender
+          ? t("ui.kundeservice.avsender.satt")
+            .replace("{maske}", h.avsender_maske || "")
+          : t("ui.kundeservice.avsender.mangler"));
       if (h.prioritet) {
         prioritet.value = h.prioritet;
         tema.value = h.tema;
