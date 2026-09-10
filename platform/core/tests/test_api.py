@@ -491,6 +491,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  # 106 (M-14): funnene og kontrollene peker på fakturaen.
                  # Barna først, fakturaen, så satsene og tersklene, som
                  # står fritt.
+                 "bokforingsbestilling",
                  "fakturafunn", "fakturakontroll", "inngaaende_faktura",
                  "mvasats", "fakturaterskel",
                  # 107 (M-25): funnene, arbeidet og milepælene peker på
