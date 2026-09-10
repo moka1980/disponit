@@ -402,6 +402,9 @@ const BASISRUTER = [
   // De fem skriveveiene er gatet både inne på flaten og i `RUTESCOPE`
   // på `bestilling:opprett`. Ingen av dem genererer et tilbud.
   { nokkel: "prisbok", scope: "okonomi:read", modulflate: 26 },
+  // 169 (M-26, ARC B tilbud): tilbudsregisteret ved siden av boka — samme
+  // leseklasse som boka; skrivingen (opprett, dom) bak bestilling:opprett.
+  { nokkel: "tilbud", scope: "okonomi:read", modulflate: 26 },
   // M-27 (109): lagerregisteret. MODULFLATE bak `okonomi:read` — en
   // beholdning er bundet kapital, og det er samme leseklasse som de
   // fem foregående registrene.

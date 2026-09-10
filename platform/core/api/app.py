@@ -1244,6 +1244,23 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.avsender_endepunkt(tjeneste, request)
 
+    # M-26 (169, ARC B tilbud PR 1): tilbudsregisteret ved siden av boka.
+    def tilbud_bilde(request: Request) -> Response:
+        from . import tilbud as tilbudmodul
+        return tilbudmodul.bilde(tjeneste, request)
+
+    def tilbud_detalj(request: Request) -> Response:
+        from . import tilbud as tilbudmodul
+        return tilbudmodul.detalj_endepunkt(tjeneste, request)
+
+    def tilbud_lag(request: Request) -> Response:
+        from . import tilbud as tilbudmodul
+        return tilbudmodul.lag_endepunkt(tjeneste, request)
+
+    def tilbud_dom(request: Request) -> Response:
+        from . import tilbud as tilbudmodul
+        return tilbudmodul.dom_endepunkt(tjeneste, request)
+
     def kundeservice_avsenderprofil(request: Request) -> Response:
         from . import kundeservice as ksmodul
         return ksmodul.avsenderprofil_endepunkt(tjeneste, request)
@@ -3632,6 +3649,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_klassifiser, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
               kundeservice_avsender, methods=["POST"]),
+        Route("/v1/tilbud", tilbud_bilde, methods=["GET"]),
+        Route("/v1/tilbud", tilbud_lag, methods=["POST"]),
+        Route("/v1/tilbud/{tilbud_id:uuid}", tilbud_detalj, methods=["GET"]),
+        Route("/v1/tilbud/{tilbud_id:uuid}/dom", tilbud_dom, methods=["POST"]),
         Route("/v1/kundeservice/avsender", kundeservice_avsenderprofil,
               methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
@@ -5079,6 +5100,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/avsender"):      "bestilling:opprett",
+    # 169 (M-26, ARC B tilbud): tilbudsregisteret — lesingen bærer
+    # okonomi:read som prisboka, skrivingen bestilling:opprett.
+    ("GET",  "/v1/tilbud"):                       "okonomi:read",
+    ("GET",  "/v1/tilbud/{tilbud_id:uuid}"):      "okonomi:read",
+    ("POST", "/v1/tilbud"):                       "bestilling:opprett",
+    ("POST", "/v1/tilbud/{tilbud_id:uuid}/dom"):  "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny"):

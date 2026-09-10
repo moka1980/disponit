@@ -900,6 +900,16 @@ export const avsluttProsjekt = (prosjektId, begrunnelse, idem) =>
 // OG `settKlausul` SENDER INGEN HASH. Den regnes i basen, av teksten
 // selv — en hash flaten oppga ville vært en påstand om innholdet, ikke
 // en måling av det.
+// M-26 (169, ARC B tilbud): tilbudsregisteret ved siden av boka. Døra
+// slår opp prisen — flaten sender produkt, antall og en valgfri LAVERE
+// enhetspris. Dommen er godkjent/forkastet; «sendt» er plattformens.
+export const lagTilbud = (tilbud, idem) =>
+  _muter("/v1/tilbud", "POST", tilbud, idem || nyIdempotensnokkel());
+
+export const avgjorTilbud = (tilbudId, status, idem) =>
+  _muter(`/v1/tilbud/${encodeURIComponent(tilbudId)}/dom`, "POST",
+         { status }, idem || nyIdempotensnokkel());
+
 export const settPrisbokterskler = (terskler, idem) =>
   _muter("/v1/prisbok/terskler", "POST", terskler,
          idem || nyIdempotensnokkel());
