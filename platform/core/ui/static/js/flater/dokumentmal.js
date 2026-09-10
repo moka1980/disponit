@@ -35,7 +35,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   UautorisertFeil, forkastMalversjon, fyllMal, hentJson,
-  nyIdempotensnokkel,
+  nyIdempotensnokkel, opprettMalversjon,
   opprettMalfamilie, publiserMalversjon, trekkTilbakeMalversjon,
 } from "../api.js";
 import { Tidspunkt } from "../komponenter.js";
@@ -293,6 +293,197 @@ function versjonstabell(familie) {
   return el("div", { class: "tablewrap" }, tabell);
 }
 
+
+// ---------------------------------------------------------------------
+// Versjonseditoren (PR 2 av eiers malfunn 10/9). API-et har alltid tatt
+// HELE utkastet i ett kall — komponentene OG feltdeklarasjonene — fordi
+// en versjon som kunne eksistere halvferdig mellom to HTTP-kall ville
+// vært en mal noen kunne publisere med et hull i. Editoren speiler den
+// formen: du bygger hele lista, og sender den én gang.
+//
+// FELTNØKKELEN ER ET MASKINNAVN, ikke en overskrift: den bindes mot
+// utfyllingens JSONB-nøkler, og basen krever `^[a-z][a-z0-9_.]{0,62}$`.
+// Flaten sier det FØR innsending, i stedet for å la døra svare på et
+// språk ingen skrev.
+// ---------------------------------------------------------------------
+
+const NOKKELMONSTER = /^[a-z][a-z0-9_.]{0,62}$/;
+
+function feltrad(id, fjern) {
+  const nokkel = el("input", { id: `${id}-nokkel`, type: "text",
+    required: true, maxlength: 63, "data-rolle": "nokkel" });
+  const type = el("select", { id: `${id}-type`, "data-rolle": "felttype" });
+  for (const v of ["tekst", "tall", "dato", "belop"]) {
+    type.append(el("option", { value: v, text: t(`ui.dokumentmal.felttype.${v}`) }));
+  }
+  const paakrevd = el("input", { id: `${id}-paakrevd`, type: "checkbox",
+    "data-rolle": "paakrevd" });
+  paakrevd.checked = true;
+  const beskrivelse = el("input", { id: `${id}-beskrivelse`, type: "text",
+    required: true, maxlength: 500, "data-rolle": "beskrivelse" });
+  return el("div", { class: "mal-rad kv-skjema-rutenett", "data-type": "felt" },
+    el("div", { class: "felt" },
+      el("label", { for: `${id}-nokkel`, text: t("ui.dokumentmal.editor.nokkel") }),
+      nokkel,
+      el("p", { class: "muted", text: t("ui.dokumentmal.editor.nokkel_hjelp") })),
+    el("div", { class: "felt" },
+      el("label", { for: `${id}-type`, text: t("ui.dokumentmal.editor.felttype") }), type),
+    el("div", { class: "felt" },
+      el("label", { for: `${id}-paakrevd`, text: t("ui.dokumentmal.editor.paakrevd") }),
+      paakrevd),
+    el("div", { class: "felt" },
+      el("label", { for: `${id}-beskrivelse`,
+        text: t("ui.dokumentmal.editor.beskrivelse") }), beskrivelse),
+    fjern);
+}
+
+function tekstrad(id, type, fjern) {
+  const innhold = el("textarea", { id: `${id}-innhold`, rows: 3,
+    required: true, maxlength: 8000, "data-rolle": "innhold" });
+  const deler = [
+    el("div", { class: "felt" },
+      el("label", { for: `${id}-innhold`,
+        text: t(`ui.dokumentmal.editor.${type}_innhold`) }), innhold)];
+  if (type === "klausul") {
+    const laast = el("input", { id: `${id}-laast`, type: "checkbox",
+      "data-rolle": "laast" });
+    deler.push(el("div", { class: "felt" },
+      el("label", { for: `${id}-laast`, text: t("ui.dokumentmal.editor.laast") }),
+      laast,
+      el("p", { class: "muted", text: t("ui.dokumentmal.editor.laast_hjelp") })));
+  }
+  deler.push(fjern);
+  return el("div", { class: "mal-rad kv-skjema-rutenett", "data-type": type },
+    ...deler);
+}
+
+function versjonseditor(familie, ctx, last) {
+  const boks = el("div", { class: "skjemaboks" });
+  const rader = el("div", {});
+  const utfall = el("p", { "aria-live": "polite" });
+  const knapp = el("button", { type: "submit",
+    text: t("ui.dokumentmal.editor.lag") });
+  let teller = 0;
+
+  const leggTil = (type) => {
+    teller += 1;
+    const id = `mal-${familie.familie_id}-r${teller}`;
+    const fjern = el("button", { type: "button",
+      text: t("ui.dokumentmal.editor.fjern") });
+    const rad = type === "felt" ? feltrad(id, fjern) : tekstrad(id, type, fjern);
+    fjern.addEventListener("click", () => {
+      rad.remove();
+      // Tomt er en TILSTAND, ikke en feil: knappen sier fortsatt hva den
+      // ville gjort, og døra ville uansett nektet en mal uten innhold.
+      knapp.disabled = !rader.querySelector(".mal-rad");
+    });
+    rader.append(rad);
+    knapp.disabled = false;
+    rad.querySelector("input, textarea, select").focus();
+  };
+
+  const legger = el("div", { class: "knapperad" });
+  for (const type of ["tekst", "felt", "klausul"]) {
+    const b = el("button", { type: "button",
+      text: t(`ui.dokumentmal.editor.legg_til_${type}`) });
+    b.addEventListener("click", () => leggTil(type));
+    legger.append(b);
+  }
+
+  // BYGGER KROPPEN AV RADENE, i rekkefølge. Feltdeklarasjonen utledes av
+  // felt-radene: samme nøkkel to steder i malen er ÉN deklarasjon, og
+  // det er nettopp det basens primærnøkkel (tenant, versjon, nøkkel)
+  // sier. Uenige deklarasjoner av samme nøkkel er en feil flaten fanger
+  // her, ikke en tilfeldighet døra avgjør.
+  const bygg = () => {
+    const komponenter = [];
+    const felt = [];
+    const sett_ = new Map();
+    for (const rad of rader.querySelectorAll(".mal-rad")) {
+      const type = rad.getAttribute("data-type");
+      const les = (rolle) => {
+        const n = rad.querySelector(`[data-rolle=${rolle}]`);
+        return n ? (n.type === "checkbox" ? n.checked : n.value.trim()) : null;
+      };
+      if (type === "felt") {
+        const nokkel = les("nokkel");
+        if (!NOKKELMONSTER.test(nokkel)) {
+          throw new Error(t("ui.dokumentmal.editor.feil_nokkel")
+            .replace("{nokkel}", nokkel || "—"));
+        }
+        const beskrivelse = les("beskrivelse");
+        if (!beskrivelse) throw new Error(t("ui.dokumentmal.editor.feil_beskrivelse"));
+        const dekl = { feltnokkel: nokkel, paakrevd: les("paakrevd"),
+          felttype: les("felttype"), beskrivelse };
+        const fra_for = sett_.get(nokkel);
+        if (fra_for) {
+          if (fra_for.felttype !== dekl.felttype
+              || fra_for.paakrevd !== dekl.paakrevd
+              || fra_for.beskrivelse !== dekl.beskrivelse) {
+            throw new Error(t("ui.dokumentmal.editor.feil_ulik_deklarasjon")
+              .replace("{nokkel}", nokkel));
+          }
+        } else {
+          sett_.set(nokkel, dekl);
+          felt.push(dekl);
+        }
+        komponenter.push({ komponenttype: "felt", feltnokkel: nokkel });
+        continue;
+      }
+      const innhold = les("innhold");
+      if (!innhold) throw new Error(t("ui.dokumentmal.editor.feil_tomt"));
+      const k = { komponenttype: type, innhold };
+      if (type === "klausul") k.laast = les("laast");
+      komponenter.push(k);
+    }
+    if (!komponenter.length) throw new Error(t("ui.dokumentmal.editor.feil_ingen"));
+    return { komponenter, felt };
+  };
+
+  const skjema = el("form", { class: "kv-skjema" });
+  let idem = null;
+  skjema.addEventListener("input", () => { idem = null; });
+  skjema.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (knapp.disabled) return;
+    let kropp;
+    try {
+      kropp = bygg();
+    } catch (e) {
+      sett(utfall, el("span", { role: "alert", text: e.message }));
+      return;
+    }
+    knapp.disabled = true;
+    if (!idem) idem = nyIdempotensnokkel();
+    try {
+      await opprettMalversjon(familie.familie_id, kropp.komponenter,
+                              kropp.felt, idem);
+    } catch (e) {
+      knapp.disabled = false;
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      if (e && e.status >= 400 && e.status < 500) idem = null;
+      sett(utfall, el("span", { role: "alert",
+        text: e && e.status === 409
+          ? t("ui.dokumentmal.skjema.tilstand_nei")
+          : t("ui.dokumentmal.skjema.feil") }));
+      return;
+    }
+    idem = null;
+    knapp.disabled = false;
+    sett(rader);
+    knapp.disabled = true;
+    sett(utfall, el("span", { text: t("ui.dokumentmal.editor.ok") }));
+    last();
+  });
+  knapp.disabled = true;
+  skjema.append(rader, legger, el("div", { class: "skjema-bunn" }, knapp),
+                utfall);
+  boks.append(el("h3", { text: t("ui.dokumentmal.editor.tittel") }),
+    el("p", { class: "muted", text: t("ui.dokumentmal.editor.forklaring") }),
+    skjema);
+  return boks;
+}
+
 function familieSeksjon(familie, ctx, last) {
   const kanSkrive = harScope(ctx, SKRIVESCOPE);
   const art = el("article", { class: "kpi-kort" },
@@ -306,6 +497,7 @@ function familieSeksjon(familie, ctx, last) {
   if (!familie.versjoner.length) {
     art.append(el("p", { class: "muted",
       text: t("ui.dokumentmal.versjoner.ingen") }));
+    if (kanSkrive) art.append(versjonseditor(familie, ctx, last));
     return art;
   }
   art.append(versjonstabell(familie));
@@ -318,6 +510,7 @@ function familieSeksjon(familie, ctx, last) {
     vart.append(utfyllingsSeksjon(v, ctx));
     art.append(vart);
   }
+  if (kanSkrive) art.append(versjonseditor(familie, ctx, last));
   return art;
 }
 
@@ -364,8 +557,6 @@ function nyFamilieSkjema(ctx, last) {
   });
   boks.append(el("h2", { text: t("ui.dokumentmal.ny_familie.tittel") }),
     skjema,
-    // Den ærlige v1-setningen, ikke en knapp som ikke holder.
-    el("p", { class: "muted", text: t("ui.dokumentmal.ny_versjon.v1notat") }),
     utfall);
   return boks;
 }

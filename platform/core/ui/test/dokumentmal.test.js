@@ -131,6 +131,7 @@ function nullstill() {
       UTFYLLING,
     [`/v1/dokumentmal/versjon/${VERSJON_UTKAST.versjon_id}/forkast`]:
       { versjon_id: VERSJON_UTKAST.versjon_id, versjonsnr: 1 },
+    "/v1/dokumentmal/versjoner": { versjon_id: "ny-versjon", versjonsnr: 3 },
   };
 }
 
@@ -352,4 +353,101 @@ test("Dokumentmal: forkasting spør først, og poster så mot forkast-ruten",
     await vent(() => SISTE_POST !== null);
     assert.ok(SISTE_POST.sti.endsWith("/forkast"), SISTE_POST.sti);
   });
+
+// ---------------------------------------------------------------------------
+// Versjonseditoren: hele malen bygges i flaten og sendes i ETT kall.
+// ---------------------------------------------------------------------------
+
+function editorFor(h) {
+  // Editoren står i familieseksjonen, etter versjonene.
+  return [...h.querySelectorAll("form")].find(
+    (f) => f.querySelector("button[type=submit]")
+      && f.querySelector("button[type=submit]").textContent
+         === t("ui.dokumentmal.editor.lag"));
+}
+
+async function byggMal(h) {
+  const skjema = editorFor(h);
+  const legg = (nokkel) => [...skjema.querySelectorAll("button")].find(
+    (b) => b.textContent === t(`ui.dokumentmal.editor.legg_til_${nokkel}`)).click();
+  legg("tekst");
+  skjema.querySelector('[data-type=tekst] [data-rolle=innhold]').value =
+    "Avtale mellom partene.";
+  legg("felt");
+  const feltrad = skjema.querySelector("[data-type=felt]");
+  feltrad.querySelector("[data-rolle=nokkel]").value = "kunde_navn";
+  feltrad.querySelector("[data-rolle=felttype]").value = "tekst";
+  feltrad.querySelector("[data-rolle=beskrivelse]").value = "Kundens navn";
+  legg("klausul");
+  const kl = skjema.querySelector("[data-type=klausul]");
+  kl.querySelector("[data-rolle=innhold]").value = "Betaling innen 14 dager.";
+  kl.querySelector("[data-rolle=laast]").checked = true;
+  return skjema;
+}
+
+test("Dokumentmal: editoren bygger hele malen og sender den i ett kall",
+  async () => {
+    nullstill();
+    const h = nyHoved();
+    visDokumentmal(h, ctx(["decisions:read", "bestilling:opprett"]));
+    await vent(() => h.querySelectorAll("table").length >= 1);
+    const skjema = await byggMal(h);
+    SISTE_POST = null;
+    skjema.requestSubmit();
+    await vent(() => SISTE_POST !== null);
+    assert.equal(SISTE_POST.sti, "/v1/dokumentmal/versjoner");
+    assert.deepEqual(SISTE_POST.kropp.komponenter, [
+      { komponenttype: "tekst", innhold: "Avtale mellom partene." },
+      { komponenttype: "felt", feltnokkel: "kunde_navn" },
+      { komponenttype: "klausul", innhold: "Betaling innen 14 dager.",
+        laast: true },
+    ]);
+    assert.deepEqual(SISTE_POST.kropp.felt, [
+      { feltnokkel: "kunde_navn", paakrevd: true, felttype: "tekst",
+        beskrivelse: "Kundens navn" },
+    ]);
+    // Vent til `last()` har tegnet ferdig (CodeRabbit): et axe-skann midt
+    // i en omtegning måler en halv side.
+    await vent(() => h.textContent.includes(t("ui.dokumentmal.editor.ok")));
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Dokumentmal: editoren sier fra om feltnøkkelen FØR døra gjør det",
+  async () => {
+    nullstill();
+    const h = nyHoved();
+    visDokumentmal(h, ctx(["decisions:read", "bestilling:opprett"]));
+    await vent(() => h.querySelectorAll("table").length >= 1);
+    const skjema = editorFor(h);
+    [...skjema.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.dokumentmal.editor.legg_til_felt")).click();
+    const rad = skjema.querySelector("[data-type=felt]");
+    rad.querySelector("[data-rolle=nokkel]").value = "Kunde Navn";  // ulovlig
+    rad.querySelector("[data-rolle=beskrivelse]").value = "Kundens navn";
+    SISTE_POST = null;
+    skjema.requestSubmit();
+    await vent(() => skjema.querySelector("[role=alert]"));
+    assert.equal(SISTE_POST, null, "ugyldig nøkkel ble sendt til døra");
+    assert.ok(skjema.textContent.includes("Kunde Navn"));
+    // Samme nøkkel to steder med ULIK deklarasjon er én feil, ikke to felt.
+    rad.querySelector("[data-rolle=nokkel]").value = "kunde_navn";
+    [...skjema.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.dokumentmal.editor.legg_til_felt")).click();
+    const rad2 = [...skjema.querySelectorAll("[data-type=felt]")][1];
+    rad2.querySelector("[data-rolle=nokkel]").value = "kunde_navn";
+    rad2.querySelector("[data-rolle=beskrivelse]").value = "Noe annet";
+    skjema.requestSubmit();
+    await vent(() => skjema.textContent.includes(
+      t("ui.dokumentmal.editor.feil_ulik_deklarasjon").replace("{nokkel}", "kunde_navn")));
+    assert.equal(SISTE_POST, null);
+  });
+
+test("Dokumentmal: en lesende økt ser ingen editor", async () => {
+  nullstill();
+  const h = nyHoved();
+  visDokumentmal(h, ctx(["decisions:read"]));
+  await vent(() => h.querySelectorAll("table").length >= 1);
+  assert.equal(editorFor(h), undefined);
+});
 
