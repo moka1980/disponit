@@ -48,6 +48,9 @@ UNIT_UNNTAK: dict[str, str] = {
     "disponit-m17.service":
         "krever useradd, modultoken og SMTP-konfig; enables først når"
         " modulen er registrert og onboardet (ARC B kundeservice, PR 4)",
+    "disponit-m14.service":
+        "krever useradd og modultoken; enables først når modulen er"
+        " registrert og onboardet (ARC B bokføring, PR 3)",
 }
 
 #: `LoadCredential`-navn `opp.sh` med VILJE ikke skriver, og hvorfor.

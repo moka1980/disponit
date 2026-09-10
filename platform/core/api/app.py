@@ -6419,6 +6419,12 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 utforelse = utforelse_for_sending(
                     conn, tenant, (minimert or {}).get("henvendelse_id"),
                     (minimert or {}).get("utkast_id"))
+            # M-14 (165, ARC B bokføring PR 3): bilaget fakturaen skal bli
+            # — registerets tall, lest her, og tilstanden spurt en gang til.
+            elif oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):
+                from .bokforing import utforelse_for_bokforing
+                utforelse = utforelse_for_bokforing(
+                    conn, tenant, (minimert or {}).get("faktura_id"))
 
             # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
             # claimen. Feiler utstedelsen, finnes heller ingen claim —
