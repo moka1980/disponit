@@ -6787,5 +6787,18 @@
   "ui.tilbud.avsender.signatur": "Signatur (valgfritt)",
   "ui.tilbud.avsender.lagre": "Lagre",
   "ui.tilbud.avsender.ok": "Avsenderen er lagret.",
-  "ui.tilbud.feil.prisbok": "Prisboka kunne ikke lastes — nytt tilbud kan ikke opprettes akkurat nå."
+  "ui.tilbud.feil.prisbok": "Prisboka kunne ikke lastes — nytt tilbud kan ikke opprettes akkurat nå.",
+  "ui.epost.meldinger.tittel": "Meldinger i {postboks}",
+  "ui.epost.meldinger.caption": "Innkommende meldinger hentet fra {postboks}, nyeste først",
+  "ui.epost.meldinger.ingen": "Ingen meldinger er hentet ennå. Plattformen henter hvert femte minutt.",
+  "ui.epost.meldinger.kolonne.mottatt": "Mottatt",
+  "ui.epost.meldinger.kolonne.fra": "Fra",
+  "ui.epost.meldinger.kolonne.emne": "Emne",
+  "ui.epost.meldinger.kolonne.slettes": "Slettes",
+  "ui.epost.meldinger.apne": "Åpne",
+  "ui.epost.meldinger.reapet": "(slettet etter fristen — bare tidspunktet består)",
+  "ui.epost.meldinger.uten_emne": "(uten emne)",
+  "ui.epost.meldinger.vedlegg": "(vedlegg)",
+  "ui.epost.meldinger.avkortet": "Lista er avkortet — de nyeste vises.",
+  "ui.epost.meldinger.feilet": "Meldingene for {postboks} kunne ikke hentes akkurat nå."
 }

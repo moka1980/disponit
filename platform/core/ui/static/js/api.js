@@ -371,6 +371,11 @@ export const startEpostKilde = (postboks, idempotensnokkel) =>
   _muter("/v1/epost/kilder/start", "POST", { postboks }, idempotensnokkel);
 export const deaktiverEpostKilde = (kildeId) =>
   _muter(`/v1/epost/kilder/${kildeId}/deaktiver`, "POST", {});
+// M-6 PR-D a: meldingene innhenteren la i registeret — lesende.
+export const hentEpostMeldinger = (kildeId) =>
+  hentJson(`/v1/epost/meldinger?kilde=${encodeURIComponent(kildeId)}`);
+export const hentEpostMelding = (meldingId) =>
+  hentJson(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}`);
 export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 

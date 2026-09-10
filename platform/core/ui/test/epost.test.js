@@ -208,3 +208,67 @@ test("Epost: 403 → ingen-tilgang-tilstand på flaten (aldri innlogging)",
   await vent(() => c2._ua === true);
   assert.equal(c2._ua, true, "401 skal sende til innlogging");
 });
+
+// ---------------------------------------------------------------------------
+// M-6 PR-D a: meldingene innhenteren la i registeret — lesende.
+// ---------------------------------------------------------------------------
+const K1 = KILDER.kilder[0].kilde_id;
+const M1 = "7a1b2c3d-0000-4000-8000-000000000011";
+const MELDINGER = { meldinger: [
+  { melding_id: M1, kilde_id: K1, mottatt_ts: "2026-09-10T12:00:00+00:00",
+    retning: "inn", har_vedlegg: true, trad_id: "c-1",
+    slettes_ts: "2026-12-09T12:00:00+00:00", reapet: false,
+    fra: "per@nordvik.example", fra_navn: "Per Nordvik",
+    emne: "Befaring elbillader", forhandsvisning: "Hei, kan dere komme" },
+  { melding_id: "7a1b2c3d-0000-4000-8000-000000000012", kilde_id: K1,
+    mottatt_ts: "2026-06-01T08:00:00+00:00", retning: "inn", har_vedlegg: false,
+    trad_id: null, slettes_ts: "2026-08-30T08:00:00+00:00", reapet: true,
+    fra: null, fra_navn: null, emne: null, forhandsvisning: null },
+], vist: 2, avkortet: true };
+const MELDING = { ...MELDINGER.meldinger[0], til: ["post@acme.example"],
+  kropp: "Hei, kan dere komme på befaring neste uke?\nHilsen Per", kropp_type: "text" };
+
+test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, reapet som reapet, ingen svar-knapp", async () => {
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  KALL.length = 0;
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  const tekst = h.textContent;
+  assert.ok(tekst.includes("Befaring elbillader"));
+  assert.ok(tekst.includes("Per Nordvik <per@nordvik.example>"));
+  assert.ok(tekst.includes(t("ui.epost.meldinger.reapet")));
+  assert.ok(tekst.includes(t("ui.epost.meldinger.avkortet")));
+  assert.ok(tekst.includes(t("ui.epost.meldinger.vedlegg")));
+  // Én meldingsliste: den deaktiverte kilden hentes ikke.
+  assert.equal(KALL.filter((k) => k.url.startsWith("/v1/epost/meldinger?")).length, 1);
+  assert.ok(KALL.some((k) => k.url === `/v1/epost/meldinger?kilde=${K1}`));
+  for (const b of h.querySelectorAll("button")) {
+    assert.ok(!/svar|send|videresend|slett/i.test(b.textContent), b.textContent);
+  }
+  const knapper = [...h.querySelectorAll("table")[1].querySelectorAll("button")];
+  assert.equal(knapper.length, 2);
+  assert.ok(knapper[1].disabled, "reapet melding kan ikke åpnes");
+  knapper[0].click();
+  await vent(() => h.querySelector(".epost-kropp"));
+  assert.ok(h.querySelector(".epost-kropp").textContent.includes("Hilsen Per"));
+  assert.ok(h.textContent.includes("post@acme.example"));
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Epost: ingen meldinger ennå sies, og en meldingsliste som feiler stopper ikke kildetabellen", async () => {
+  SVAR = { "/v1/epost/kilder": KILDER,
+           "/v1/epost/meldinger": { meldinger: [], vist: 0, avkortet: false } };
+  let h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.textContent.includes(t("ui.epost.meldinger.ingen")));
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": 500 };
+  h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelector("[role=alert]"));
+  assert.ok(h.querySelectorAll("table").length >= 1);
+  assert.ok(h.textContent.includes(t("ui.epost.meldinger.feilet").replace("{postboks}", "post@acme.example")));
+});
+

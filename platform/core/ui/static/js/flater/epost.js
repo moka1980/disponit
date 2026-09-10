@@ -13,6 +13,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
+         hentEpostMeldinger, hentEpostMelding,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -35,6 +36,72 @@ function statusTekst(status) {
   const kjent = { aktiv: 1, feilet: 1, deaktivert: 1 };
   return kjent[status]
     ? t(`ui.epost.status.${status}`) : t("ui.epost.status.ukjent");
+}
+
+// M-6 PR-D a: meldingene innhenteren (175) la i registeret — LESENDE.
+// Ingen svar-, videresend- eller slett-knapp: v1 viser. Avsender og
+// emne er dekryptert av serveren for denne økten; en reapet melding
+// vises som reapet (tidspunkt består, teksten er borte).
+function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding) {
+  const boks = el("section", {},
+    el("h3", { text: t("ui.epost.meldinger.tittel")
+      .replace("{postboks}", kilde.postboks) }));
+  if (!meldinger.length) {
+    boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.ingen") }));
+    return boks;
+  }
+  const tabell = el("table", { class: "kpi-tabell" },
+    el("caption", { text: t("ui.epost.meldinger.caption")
+      .replace("{postboks}", kilde.postboks) }));
+  tabell.append(el("thead", {}, el("tr", {},
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.mottatt") }),
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.fra") }),
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.emne") }),
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.slettes") }),
+    el("th", { scope: "col", text: t("ui.epost.kolonne.handling") }))));
+  const tbody = el("tbody");
+  for (const m of meldinger) {
+    const emne = m.reapet ? t("ui.epost.meldinger.reapet")
+      : (m.emne || t("ui.epost.meldinger.uten_emne"));
+    const fra = m.reapet ? "—" : (m.fra_navn ? `${m.fra_navn} <${m.fra}>` : (m.fra || "—"));
+    const knapp = el("button", { type: "button", text: t("ui.epost.meldinger.apne") });
+    knapp.disabled = !!m.reapet;
+    knapp.addEventListener("click", () => apneMelding(m));
+    tbody.append(el("tr", {},
+      el("th", { scope: "row" }, Tidspunkt(m.mottatt_ts, {})),
+      el("td", { text: fra }),
+      el("td", { text: emne + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") }),
+      el("td", {}, Tidspunkt(m.slettes_ts, {})),
+      el("td", {}, knapp)));
+  }
+  tabell.append(tbody);
+  boks.append(tabell);
+  if (avkortet) {
+    boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.avkortet") }));
+  }
+  return boks;
+}
+
+function meldingspanel() {
+  const boks = el("div", { class: "skjemaboks" });
+  boks.hidden = true;
+  return {
+    node: boks,
+    vis(m) {
+      const til = (m.til || []).join(", ");
+      sett(boks,
+        el("h3", { text: m.emne || t("ui.epost.meldinger.uten_emne") }),
+        el("p", { class: "muted", text: `${m.fra_navn ? m.fra_navn + " " : ""}<${m.fra || "—"}>`
+          + (til ? ` → ${til}` : "") }),
+        el("p", { class: "muted" }, Tidspunkt(m.mottatt_ts, {})),
+        el("pre", { class: "epost-kropp", text: m.kropp || "" }));
+      boks.hidden = false;
+    },
+    feil(tekst) {
+      sett(boks, el("p", { role: "alert", text: tekst }));
+      boks.hidden = false;
+    },
+  };
 }
 
 function kildetabell(kilder, kanAdministrere, paaDeaktiver) {
@@ -99,13 +166,54 @@ export function visEpost(hoved, ctx) {
   let idemnokkel = nyIdempotensnokkel();
 
   const tegn = () => medStatus(hoved, ctx,
-    () => hentEpostKilder(),
+    async () => {
+      const d = await hentEpostKilder();
+      // Meldingene per AKTIV kilde (og feilet — det som alt er hentet,
+      // står). En liste som ikke kan hentes stopper ikke kildetabellen:
+      // den sies per kilde.
+      const meldinger = {};
+      for (const k of d.kilder || []) {
+        if (k.status === "deaktivert") continue;
+        try { meldinger[k.kilde_id] = await hentEpostMeldinger(k.kilde_id); }
+        catch (e) {
+          if (e instanceof UautorisertFeil) throw e;
+          meldinger[k.kilde_id] = null;
+        }
+      }
+      return { ...d, meldinger };
+    },
     (d) => {
       const kilder = d.kilder || [];
+      const panel = meldingspanel();
+      // Bare det SISTE valget får tegne panelet (CodeRabbit): to raske
+      // klikk er to svar i lufta, og et sent svar for det første skal
+      // ikke overskrive det andre — verken som innhold eller som feil.
+      let valgt = null;
+      const apneMelding = (m) => {
+        valgt = m.melding_id;
+        hentEpostMelding(m.melding_id)
+          .then((full) => { if (eierSkjermen() && valgt === m.melding_id) panel.vis(full); })
+          .catch((e) => {
+            if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+            if (valgt === m.melding_id) panel.feil(t("ui.epost.feilet"));
+          });
+      };
       const deler = [
         ...flateHode(t("ui.epost.tittel"), t("ui.epost.undertittel")),
         kildetabell(kilder, kanAdministrere, bekreftDeaktiver),
       ];
+      for (const k of kilder) {
+        if (k.status === "deaktivert") continue;
+        const svar = (d.meldinger || {})[k.kilde_id];
+        if (svar === null) {
+          deler.push(el("p", { role: "alert", text: t("ui.epost.meldinger.feilet")
+            .replace("{postboks}", k.postboks) }));
+          continue;
+        }
+        deler.push(meldingsliste(ctx, k, (svar && svar.meldinger) || [],
+                                 !!(svar && svar.avkortet), apneMelding));
+      }
+      deler.push(panel.node);
       if (kanAdministrere) deler.push(koblingsseksjon());
       sett(hoved, ...deler);
     });
