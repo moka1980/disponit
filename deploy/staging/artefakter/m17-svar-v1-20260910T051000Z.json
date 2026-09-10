@@ -1,0 +1,80 @@
+{
+  "krav_id": "m17-svar-v1",
+  "ts": "2026-09-10T05:10:00Z",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m17_kundeservice",
+    "commit": "82581b8eb3d201aaac0643bd1a6cab83c8ab182d",
+    "vert": "disponit-srv (disponit.com, miljo staging)",
+    "tenant": "disponit",
+    "release": "m17-r1",
+    "notat": "Fjordlys Elektro AS 9/9-10/9: PR 1-6 (#448-#453) merget og deployet (migr 160-164); vertsteget m17-oppsett.sh via wrapper som lagde v_kundeservice-hemmeligheten paa verten; disponit-m17 oppe, m17-r1 claiming, modulhode aktiv. Policy tjenestebedrift-no 0.6.0 (0.5.0 + kundeservice-svar.yaml: kundeservice.svar.send auto, unntakskoe ved brudd, 3/dag per henvendelse_id, agent; v_kundeservice) laget som utkast u-289b1b27eb8abd31 via API med engangs-token (tilbakekalt), aktivert av eier med fire oeyne 10/9 ~05:00Z. Rigg: avsenderprofil Fjordlys Elektro AS; seks henvendelser ks-m17-1..6 med eiers adresse: H1 e-post rent utkast godkjent, H2 foedselsnummer i utkastet godkjent, H3 '20 % rabatt ... kompensasjon' godkjent, H4 kanal skjema godkjent, H5 e-post utkast bare foreslaatt, H6 e-post godkjent deretter lukket ikke_aktuell. FOER policy: tre timer-runder (04:57, 05:02, 05:07Z) plukket 3 (H1-H3), uten_policy 3, resultater [] (punkt 2); H4/H5/H6 aldri kandidater (punkt 3+8). Manuell bestilling H4 -> 409 svar_ikke_klart_for_sending (kanal_uten_svarvei), H6 -> 409 (lukket), foer kvote (punkt 8). ETTER aktivering 05:08Z: kill-switch AV -> svar_utloser_av, 0 rader; PAA -> runde plukket 3: H1 tillat oppdrag 106 (bokfoert), H2 brudd sak 126 (attestasjon_negativ dlp_sjekk), H3 brudd sak 127 (attestasjon_negativ ingen_okonomiske_lofter). Modulen: oppdrag_behandlet utfort, kvittering 200, EN gang (punkt 5). Bokfoering: utkast H1 'sendt', henvendelsen lukket 'besvart' 05:08:15Z, revisjonslogg svar.sendt 1, oppdrag 106 utfort (punkt 9). Manuell bestilling H5 (foreslaatt) -> brudd sak 128 rolle_ikke_tillatt (bestiller) (punkt 3). Runde 2 (manuell) og timer-runden etter: ingen kandidater (runden logger bare naar den plukker), svarbestilling-rader uendret 3 (punkt 4). Klartekst: eiers adresse og utkastteksten finnes ikke i koen (GET /v1/kundeservice: maske e****@gmail.com), ikke i journalene til disponit-api/-plan/-m17 siste 2 t, ikke i svarbestilling/oppdrag/revisjonslogg (punkt 1). E-posten fra husets SMTP i navnet Fjordlys Elektro AS til eiers postkasse: 'Re: Befaring elbillader' med signaturen — eier bekreftet 10/9 ~05:20Z (eiers ord: 'Den kom')."
+  },
+  "maalt": {
+    "adresse_eller_tekst_i_klartekst_utenfor_registeret_forsok": 9,
+    "adresse_eller_tekst_i_klartekst_utenfor_registeret_brudd": 0,
+    "bestilling_uten_policy_forsok": 4,
+    "bestilling_uten_policy_brudd": 0,
+    "sending_uten_godkjenning_forsok": 2,
+    "sending_uten_godkjenning_brudd": 0,
+    "dobbel_bestilling_samme_utkast_forsok": 2,
+    "dobbel_bestilling_samme_utkast_brudd": 0,
+    "dobbel_sending_samme_oppdrag_forsok": 1,
+    "dobbel_sending_samme_oppdrag_brudd": 0,
+    "personopplysning_i_svaret_forsok": 1,
+    "personopplysning_i_svaret_brudd": 0,
+    "okonomisk_lofte_i_svaret_forsok": 1,
+    "okonomisk_lofte_i_svaret_brudd": 0,
+    "svar_uten_mottaker_eller_svarvei_forsok": 4,
+    "svar_uten_mottaker_eller_svarvei_brudd": 0,
+    "kvittering_uten_bokforing_forsok": 1,
+    "kvittering_uten_bokforing_brudd": 0,
+    "kill_switch_konsumerte_utkast_forsok": 1,
+    "kill_switch_konsumerte_utkast_brudd": 0,
+    "rundtur_paa_disponit_com": true
+  },
+  "funn": [
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m17.svar.punkt_maalt_kun_i_port",
+      "detalj": {
+        "punkter": [
+          "dobbel_sending_samme_oppdrag",
+          "svar_uten_mottaker_eller_svarvei"
+        ],
+        "tilstand": "kvittering to ganger (idempotent) og modulens 'feilet' for en mottaker uten adresse/svarvei er maalt av portene; live er de maalt som EN oppdrag_behandlet/kvittering 200 for oppdrag 106, og som 409 foer kvote + ikke-kandidat for H4/H6",
+        "port": "test_m17_bokforing_port.py, test_m17_controller.py, test_m17_sending_port.py"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m17.svar.ugodkjent_bestilling_felles_paa_rollen",
+      "detalj": {
+        "punkt": "sending_uten_godkjenning",
+        "tilstand": "menneskelig bestilling av et foreslaatt utkast ble sak 128 med rolle_ikke_tillatt (handlingen er bare for agent) — rollegjerdet faller FOER svar_godkjent-attestasjonen maales; at attestasjonen alene feller er maalt i test_bestilling_svar_port (M-23-presedens)",
+        "sak": 128
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m17.svar.m37_verifikator_mangler",
+      "detalj": {
+        "tilstand": "brudd-saker gaar manuell i M-37 (ingen v_kundeservice/v_dlp-verifikatormodul i fase 1)",
+        "saker": [
+          126,
+          127,
+          128
+        ]
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m17.svar.runden_logger_bare_ved_kandidater",
+      "detalj": {
+        "punkt": "dobbel_bestilling_samme_utkast",
+        "tilstand": "plan.kundeservice skriver svar_runde bare naar den plukket noe (samme form som kampanje- og purringsrunden); en runde uten kandidater er stille i journalen, saa punkt 4 er maalt paa svarbestilling-tellingen (3 -> 3 over en manuell og en timer-runde), ikke paa en logglinje",
+        "oppfolging": "en stille runde boer kunne leses: logg plukket=0 i alle tre rundene (felles oppfoelging M-23/M-44/M-17)"
+      }
+    }
+  ]
+}
