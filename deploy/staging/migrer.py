@@ -579,6 +579,11 @@ GRANT UPDATE (auth_kryptert, nonce, key_id, status)
     ON epost_kilde TO {rolle};
 GRANT SELECT ON epost_melding, epost_klassifisering,
     epost_utkast, epost_oppfolging, epost_vedlegg TO {rolle};
+-- 176: menneskets sletting av en hentet melding — døra er claimer-eid
+-- (den har UPDATE på payload-lagrene), runtime får bare kalle den.
+SET LOCAL ROLE disponit_m37_claimer;
+GRANT EXECUTE ON FUNCTION m6_slett_melding(TEXT, UUID, TEXT) TO {rolle};
+RESET ROLE;
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.

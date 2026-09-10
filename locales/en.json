@@ -6800,5 +6800,9 @@
   "ui.epost.meldinger.uten_emne": "(no subject)",
   "ui.epost.meldinger.vedlegg": "(attachment)",
   "ui.epost.meldinger.avkortet": "The list is truncated — the newest are shown.",
-  "ui.epost.meldinger.feilet": "The messages for {postboks} could not be loaded right now."
+  "ui.epost.meldinger.feilet": "The messages for {postboks} could not be loaded right now.",
+  "ui.epost.meldinger.slett": "Delete",
+  "ui.epost.meldinger.slett_tittel": "Delete this message now?",
+  "ui.epost.meldinger.slett_tekst": "The text and the address are removed immediately, instead of when the retention period ends. The timestamp remains as a record that the message existed. This cannot be undone.",
+  "ui.epost.meldinger.slettet": "The message has been deleted."
 }

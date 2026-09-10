@@ -3333,6 +3333,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_melding(request: Request) -> Response:
         return epostmeldingmodul.detalj_endepunkt(tjeneste, request)
 
+    def epost_melding_slett(request: Request) -> Response:
+        return epostmeldingmodul.slett_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -4414,6 +4417,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/epost/meldinger", epost_meldinger, methods=["GET"]),
         Route("/v1/epost/meldinger/{melding_id:uuid}", epost_melding,
               methods=["GET"]),
+        Route("/v1/epost/meldinger/{melding_id:uuid}/slett",
+              epost_melding_slett, methods=["POST"]),
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
@@ -6009,6 +6014,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "epost:kilde:administrer",
     ("GET",  "/v1/epost/meldinger"):         "epost:read",
     ("GET",  "/v1/epost/meldinger/{melding_id:uuid}"): "epost:read",
+    ("POST", "/v1/epost/meldinger/{melding_id:uuid}/slett"):
+        "epost:kilde:administrer",
     ("POST", "/v1/oidc/start"):              None,
     ("GET",  "/v1/oidc/callback"):           None,
     ("GET",  "/v1/sesjon"):                  None,

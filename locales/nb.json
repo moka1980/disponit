@@ -6800,5 +6800,9 @@
   "ui.epost.meldinger.uten_emne": "(uten emne)",
   "ui.epost.meldinger.vedlegg": "(vedlegg)",
   "ui.epost.meldinger.avkortet": "Lista er avkortet — de nyeste vises.",
-  "ui.epost.meldinger.feilet": "Meldingene for {postboks} kunne ikke hentes akkurat nå."
+  "ui.epost.meldinger.feilet": "Meldingene for {postboks} kunne ikke hentes akkurat nå.",
+  "ui.epost.meldinger.slett": "Slett",
+  "ui.epost.meldinger.slett_tittel": "Slette meldingen nå?",
+  "ui.epost.meldinger.slett_tekst": "Teksten og adressen fjernes med én gang, i stedet for når oppbevaringsfristen løper ut. Tidspunktet står igjen som spor på at meldingen fantes. Dette kan ikke angres.",
+  "ui.epost.meldinger.slettet": "Meldingen er slettet."
 }

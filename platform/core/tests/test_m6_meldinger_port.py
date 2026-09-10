@@ -102,10 +102,12 @@ def test_flaten_dekrypterer_for_okten_og_bare_for_tenanten(migrator, miljo,
 def test_rutene_er_lesende_med_epost_read(klient, migrator, miljo, token):
     from api.app import RUTESCOPE
     ruter = {(m, s) for m, s in RUTESCOPE if s.startswith("/v1/epost/meldinger")}
+    # Én skrivevei finnes, og den FJERNER (176) — alt annet er lesing.
     assert ruter == {("GET", "/v1/epost/meldinger"),
-                     ("GET", "/v1/epost/meldinger/{melding_id:uuid}")}
+                     ("GET", "/v1/epost/meldinger/{melding_id:uuid}"),
+                     ("POST", "/v1/epost/meldinger/{melding_id:uuid}/slett")}
     assert all(sc == "epost:read" for (m, s), sc in RUTESCOPE.items()
-               if s.startswith("/v1/epost/meldinger"))
+               if s.startswith("/v1/epost/meldinger") and m == "GET")
     tok, _ = token(rolle="leser", scopes=("okonomi:read",))
     r = klient.get("/v1/epost/meldinger",
                    headers={"authorization": f"Bearer {tok}"})
@@ -113,5 +115,8 @@ def test_rutene_er_lesende_med_epost_read(klient, migrator, miljo, token):
     from pathlib import Path
     kilde = (Path(__file__).resolve().parents[1] / "api" / "epost_meldinger.py"
              ).read_text(encoding="utf-8")
-    for forbudt in ("INSERT", "UPDATE", "DELETE", "smtplib", "sendMail"):
+    # Modulen skriver aldri direkte i lagrene: slettingen går gjennom
+    # døra (176), som gjør reaperens overgang under sin egen vakt.
+    for forbudt in ("INSERT", "UPDATE ", "DELETE", "smtplib", "sendMail"):
         assert forbudt not in kilde, forbudt
+    assert "m6_slett_melding" in kilde

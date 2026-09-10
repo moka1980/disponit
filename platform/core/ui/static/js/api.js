@@ -376,6 +376,11 @@ export const hentEpostMeldinger = (kildeId) =>
   hentJson(`/v1/epost/meldinger?kilde=${encodeURIComponent(kildeId)}`);
 export const hentEpostMelding = (meldingId) =>
   hentJson(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}`);
+// 176: sletting NÅ, før retensjonsfristen — teksten og adressen fjernes,
+// sporet består.
+export const slettEpostMelding = (meldingId, idem) =>
+  _muter(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}/slett`,
+         "POST", {}, idem || nyIdempotensnokkel());
 export const leggTilDomene = (hostname) =>
   _muter("/v1/domener", "POST", { hostname });
 
