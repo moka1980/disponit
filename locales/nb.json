@@ -6767,5 +6767,6 @@
   "ui.tilbud.skjema.dom_ok": "Tilbudet er avgjort.",
   "ui.tilbud.skjema.opprett_ok": "Tilbudet er opprettet med prisene fra boka.",
   "ui.tilbud.feil.tilstand": "Registeret sa nei: et produkt uten pris på datoen, en pris over boka, eller et tilbud som alt er avgjort.",
-  "ui.tilbud.feil.generell": "Handlingen feilet."
+  "ui.tilbud.feil.generell": "Handlingen feilet.",
+  "ui.tilbud.status.sendt": "Sendt"
 }

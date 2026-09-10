@@ -168,13 +168,13 @@ def detalj_endepunkt(tjeneste, request):
 
     def _fn(conn, auth, rid):
         tid = _sti_uuid(request, "tilbud_id", rid)
-        hode = conn.execute("SELECT * FROM m26_tilbudene(%s,%s)",
-                            (auth.tenant, 1000)).fetchall()
-        mine = [_rad_til_tilbud(r) for r in hode if str(r[0]) == str(tid)]
+        hode = conn.execute("SELECT * FROM m26_tilbudshodet(%s,%s)",
+                            (auth.tenant, tid)).fetchone()
         rad = conn.execute("SELECT * FROM m26_tilbudet(%s,%s)",
                            (auth.tenant, tid)).fetchone()
-        if rad is None or not mine:
+        if rad is None or hode is None:
             return _feil("ikke_funnet", rid, 404)
+        mine = [_rad_til_tilbud(hode)]
         b = conn.execute("SELECT * FROM m26_tilbudsbestillingen(%s,%s)",
                          (auth.tenant, tid)).fetchone()
         svar = {**mine[0], "innledning": rad[0], "linjer": rad[1],
@@ -335,3 +335,63 @@ def utforelse_for_sending(conn, tenant: str, tilbud_id) -> dict:
             "innledning": innledning, "linjer": linjer,
             "klausuler": klausuler, "avsender_navn": p_navn,
             "svar_til": p_svar_til, "signatur": p_sign}
+
+
+def bokfor_tilbud_sendt(conn, tenant: str, oppdrag_id: int,
+                        kvittering: dict, aktor: str) -> dict:
+    """Kvitteringens vei tilbake til registeret (173). -> {bokfort} eller
+    {avvik: <grunn>} — aldri et unntak ut: kalleren har alt et sendt
+    tilbud å stå inne for.
+
+    RESSURSEN MÅ VÆRE OPPDRAGETS: kvitteringen er signert av modulen, men
+    modulen kunne navngi et annet tilbud enn det oppdraget gjaldt.
+    Payloaden dekrypteres her, som ved claim, og sammenlignes FØR noe
+    bokføres.
+    """
+    from datetime import datetime
+
+    ressurs = str(kvittering.get("ressurs_id") or "")
+    if not ressurs.startswith("tilbud:"):
+        return {"avvik": "ressurs_id_ikke_tilbud"}
+    try:
+        tid = uuidlib.UUID(ressurs.split(":", 1)[1])
+    except ValueError:
+        return {"avvik": "kvittering_uten_gyldig_ressurs"}
+    from db import kryptering
+    orad = conn.execute(
+        "SELECT payload_kryptert, key_id, nonce FROM oppdrag"
+        " WHERE tenant=%s AND id=%s", (tenant, int(oppdrag_id))).fetchone()
+    if orad is None:
+        return {"avvik": "oppdrag_ukjent"}
+    nok = conn.execute(
+        "SELECT wrapped_dek FROM tenant_nokler WHERE tenant=%s"
+        " AND key_id=%s", (tenant, orad[1])).fetchone()
+    try:
+        dek = kryptering._pakk_ut((orad[1], nok[0]), tenant)[1]
+        payload = kryptering.dekrypter(dek, bytes(orad[0]), bytes(orad[2]),
+                                       tenant, orad[1])
+    except Exception:                                   # noqa: BLE001
+        return {"avvik": "oppdrag_uleselig"}
+    if str(payload.get("tilbud_id") or "") != str(tid):
+        return {"avvik": "ressurs_avvik"}
+    raa = kvittering.get("sendt_ts")
+    try:
+        sendt = (datetime.fromisoformat(str(raa).replace("Z", "+00:00"))
+                 if raa else None)
+        if sendt is not None and sendt.tzinfo is None:
+            sendt = None
+    except ValueError:
+        sendt = None
+    try:
+        with conn.transaction():
+            rad = conn.execute(
+                "SELECT m26_tilbud_sendt(%s,%s,%s,%s,%s,%s,%s)",
+                (tenant, tid, int(oppdrag_id), sendt,
+                 str(kvittering.get("malversjon") or "")[:64] or None,
+                 str(kvittering.get("mottaker_maske") or "")[:254] or None,
+                 aktor)).fetchone()
+    except psycopg.Error as e:
+        return {"avvik": f"dor_nektet:{type(e).__name__}"}
+    if rad is None:
+        return {"avvik": "dor_uten_svar"}
+    return {"bokfort": bool(rad[0])}

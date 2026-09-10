@@ -6767,5 +6767,6 @@
   "ui.tilbud.skjema.dom_ok": "The quote has been decided.",
   "ui.tilbud.skjema.opprett_ok": "The quote was created with the prices from the book.",
   "ui.tilbud.feil.tilstand": "The register said no: a product without a price on the date, a price above the book, or a quote already decided.",
-  "ui.tilbud.feil.generell": "The action failed."
+  "ui.tilbud.feil.generell": "The action failed.",
+  "ui.tilbud.status.sendt": "Sent"
 }

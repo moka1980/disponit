@@ -8519,6 +8519,18 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             tjeneste.logg.hendelse("faktura_bokforing_avvist", rid, tenant,
                                    art="drift", oppdrag_id=oppdrag_id,
                                    grunn=bokfort["avvik"])
+    # M-26 (173, ARC B tilbud PR 5): TILBUDET ER SENDT → REGISTERET:
+    # status `sendt`, evidens. Samme grep — aldri et nei til en e-post
+    # som alt er ute; avviket i driftsloggen.
+    elif vellykket and oppdragstype == "tilbud.generer":
+        from .tilbud import bokfor_tilbud_sendt
+        with conn.transaction():
+            bokfort = bokfor_tilbud_sendt(conn, tenant, oppdrag_id,
+                                          kvittering, auth.aktor)
+        if bokfort.get("avvik"):
+            tjeneste.logg.hendelse("tilbud_bokforing_avvist", rid, tenant,
+                                   art="drift", oppdrag_id=oppdrag_id,
+                                   grunn=bokfort["avvik"])
     # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
     # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
     # lukkingen falt evalueringen til reaperens forlatt-frist målt fra
