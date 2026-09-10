@@ -891,7 +891,8 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     // Å ÅPNE MENYEN ER Å BE OM Å SE DEN. Uten dette hoppet ville
     // brukeren stått igjen nederst på siden med menyen åpnet langt over
     // seg — og på en telefon er «langt over» utenfor skjermen.
-    if (apen) venstre.scrollIntoView({ block: "start" });
+    if (apen && venstre.scrollIntoView)
+      venstre.scrollIntoView({ block: "start" });
   });
 
   // «MER» BÆRER DET BUNNEN IKKE HAR PLASS TIL — og ingenting annet: en

@@ -269,11 +269,6 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION m6_send_svaret(TEXT, UUID,'
             ' TEXT) TO disponit';
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles
-               WHERE rolname = 'disponit_plan_arbeider') THEN
-        EXECUTE 'GRANT EXECUTE ON FUNCTION m6_for_svar(TEXT, UUID)'
-            ' TO disponit_plan_arbeider';
-    END IF;
 END $$;
 
 RESET ROLE;

@@ -14,7 +14,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
-         skrivSvarutkast, avgjorSvarutkast, sendSvaret,
+         skrivSvarutkast, avgjorSvarutkast, settSvarIKo,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -192,7 +192,7 @@ function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
           const send = el("button", { type: "button",
             text: t("ui.epost.svar.knapp.send") });
           send.addEventListener("click",
-            () => paaEndring(() => sendSvaret(u.utkast_id)));
+            () => paaEndring(() => settSvarIKo(u.utkast_id)));
           rad2.append(send);
         }
         const forkast = el("button", { class: "knapp fare", type: "button",
