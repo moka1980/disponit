@@ -228,7 +228,8 @@ def test_faktaene_regnes_av_registeret(klient, migrator, token):
 def test_rutene_er_tilbudets_egne_og_prisboka_er_uroert():
     from api.app import RUTESCOPE
     mine = sorted(sti for _m, sti in RUTESCOPE if sti.startswith("/v1/tilbud"))
-    assert mine == ["/v1/tilbud", "/v1/tilbud", "/v1/tilbud/{tilbud_id:uuid}",
+    assert mine == ["/v1/tilbud", "/v1/tilbud", "/v1/tilbud/avsender",
+                    "/v1/tilbud/{tilbud_id:uuid}",
                     "/v1/tilbud/{tilbud_id:uuid}/dom"], mine
     assert dict(RUTESCOPE)[("GET", "/v1/tilbud")] == "okonomi:read"
     assert dict(RUTESCOPE)[("POST", "/v1/tilbud")] == "bestilling:opprett"

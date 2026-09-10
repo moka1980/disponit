@@ -221,7 +221,9 @@ def test_claim_svaret_barer_utforelse_for_eiermodulene():
     assert 'if oppdragstype == "purring.send":' in blokk
     assert 'elif oppdragstype == "kampanje.send":' in blokk
     assert 'elif oppdragstype == "kundeservice.svar.send":' in kode
-    assert kode.count("utforelse = utforelse_for_sending(") == 3
+    # M-26 (ARC B tilbud): den fjerde sendingen.
+    assert 'elif oppdragstype == "tilbud.generer":' in kode
+    assert kode.count("utforelse = utforelse_for_sending(") == 4
     # M-14 (ARC B bokføring): bilaget, ikke en sending — egen funksjon.
     assert 'elif oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):' \
         in kode

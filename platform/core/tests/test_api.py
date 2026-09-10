@@ -505,6 +505,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  "prosjekt", "prosjektterskel",
                  # 108 (M-26): funnene og prisene peker på produktet.
                  # Klausulene står fritt.
+                 "tilbudsavsender",
                  "tilbudsbestilling", "tilbudsklausul", "tilbudslinje", "tilbud",
                  "prisbokfunn", "pris", "produkt", "klausul",
                  "prisbokterskel",
