@@ -137,3 +137,30 @@ def test_artefaktskjemaet_er_generert_fra_invariantene():
     assert valider_artefaktformat(art, "m17-svar-v1") == []
     assert valider_artefaktformat({**art, "maalt": {**m, "x": 1}},
                                   "m17-svar-v1")
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 9/9–10/9 mot disponit.com: artefaktet er innsjekket,
+    har skjemaets form og passerer `m17-svar-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M17_SVAR_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / "deploy/staging/artefakter/m17-svar-v1-20260910T051000Z.json"
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m17-svar-v1") == []
+    assert _sjekk_grenser("m17-svar-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M17_SVAR_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    assert "m17.svar.punkt_maalt_kun_i_port" in nokler
+    assert "m17.svar.ugodkjent_bestilling_felles_paa_rollen" in nokler
+    assert "m17.svar.m37_verifikator_mangler" in nokler
+    assert "m17.svar.runden_logger_bare_ved_kandidater" in nokler
+    # Plassholderen skal være byttet ut med eiers ord før innsjekk.
+    assert "PLASSHOLDER" not in art["oppsett"]["notat"]
