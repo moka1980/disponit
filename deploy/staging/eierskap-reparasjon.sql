@@ -514,6 +514,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm26_sett_avsenderprofil(text,text,text,text,text)',      'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_avsenderprofilen(text)',                            'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_for_sending(text,uuid)',                            'disponit_prisbok_eier'),
+    -- 173 (M-26, ARC B): kvitteringen når registeret.
+    ('FUNCTION', 'm26_tilbud_sendt(text,uuid,bigint,timestamp with time zone,text,text,text)', 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_tilbudshodet(text,uuid)',                           'disponit_prisbok_eier'),
     -- 109 (M-27): lagerregisterets doerer og lagersveipen.
     ('FUNCTION', 'm27_evidens(text,uuid,text,text,jsonb)',              'disponit_beholdning_eier'),
     ('FUNCTION', 'm27_sett_terskler(text,integer,integer,integer,text)', 'disponit_beholdning_eier'),
