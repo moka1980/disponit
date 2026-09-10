@@ -2,11 +2,14 @@
 // prisboka. Et tilbud er en avskrift av boka på en dato, mot én kunde,
 // med standardklausulene bundet. Flaten regner ingen pris: linjene viser
 // tallene DØRA satte (listepris, enhetspris, sum). Adressen vises aldri —
-// bare masken. Ingen «send»-knapp: sendingen er plattformens arm (PR 2–5).
+// bare masken. Ingen «send»-knapp: sendingen er plattformens arm (PR 2–5),
+// og flaten VISER hva armen gjorde (174) — bestillingen og sendingen som
+// tekst — pluss avsenderprofilen tilbudet går ut i (172).
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
   UautorisertFeil, avgjorTilbud, hentJson, lagTilbud, nyIdempotensnokkel,
+  settTilbudsavsender,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -39,6 +42,40 @@ export function faktaTekst(tilbud) {
   return deler.join(" · ");
 }
 
+function tidTekst(iso) {
+  // Lokal dato og klokkeslett: ISO-strengen bærer et tidssoneoffset.
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+export function plattformtekst(x) {
+  // Plattformens arm i ord (174): bestillingen først, så sendingen. Ingen
+  // rad = ingenting har skjedd, og det sies rett ut.
+  const deler = [];
+  const b = x.bestilling;
+  if (b) {
+    let utfall;
+    if (b.utfall && b.utfall.startsWith("feil:")) {
+      utfall = t("ui.tilbud.plattform.utfall.feil").replace("{kode}", b.utfall.slice(5));
+    } else {
+      utfall = t(`ui.tilbud.plattform.utfall.${b.utfall}`)
+        .replace("{oppdrag}", b.oppdrag_id == null ? "—" : String(b.oppdrag_id))
+        .replace("{sak}", b.unntak_id == null ? "—" : String(b.unntak_id));
+    }
+    deler.push(`${t("ui.tilbud.plattform.bestilt").replace("{tid}", tidTekst(b.bestilt_ts))}: ${utfall}`);
+  }
+  const s = x.sending;
+  if (s) {
+    deler.push(t("ui.tilbud.plattform.sendt")
+      .replace("{tid}", tidTekst(s.sendt_ts))
+      .replace("{oppdrag}", s.oppdrag_id == null ? "—" : String(s.oppdrag_id))
+      .replace("{mal}", s.malversjon || "—"));
+  }
+  return deler.length ? deler.join(" · ") : t("ui.tilbud.plattform.ingen");
+}
+
 function tilbudsrad(x, apneDetalj) {
   const rad = el("tr", {});
   rad.append(el("th", { scope: "row", class: "celle-tekst", text: x.kunde_navn }));
@@ -48,6 +85,7 @@ function tilbudsrad(x, apneDetalj) {
   rad.append(el("td", { class: "celle-tall", text: belopTekst(x.sum_ore) }));
   rad.append(el("td", { text: t(`ui.tilbud.status.${x.status}`) }));
   rad.append(el("td", {}, el("span", { text: faktaTekst(x) })));
+  rad.append(el("td", {}, el("span", { text: plattformtekst(x) })));
   const knapp = el("button", { type: "button", text: t("ui.tilbud.knapp.apne") });
   knapp.addEventListener("click", () => apneDetalj(x));
   rad.append(el("td", {}, knapp));
@@ -58,7 +96,7 @@ function tilbudTabell(liste, apneDetalj) {
   const tabell = el("table", { class: "tabell" });
   const hode = el("tr", {});
   for (const k of ["kunde", "adresse", "dato", "gyldig_til", "sum", "status",
-                   "fakta", "handling"]) {
+                   "fakta", "plattform", "handling"]) {
     hode.append(el("th", { scope: "col", text: t(`ui.tilbud.kolonne.${k}`) }));
   }
   tabell.append(el("thead", {}, hode));
@@ -147,7 +185,8 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       settApen(x.tilbud_id);
       sett(utfall); sett(linjer); sett(klausuler);
       merkelinje.textContent = `${x.kunde_navn} · ${x.kunde_maske} · `
-        + `${belopTekst(x.sum_ore)} ${x.valuta} · ${faktaTekst(x)}`;
+        + `${belopTekst(x.sum_ore)} ${x.valuta} · ${faktaTekst(x)} · `
+        + plattformtekst(x);
       dKnapp.disabled = x.status !== "utkast";
       innhold.hidden = false;
       let d;
@@ -158,6 +197,11 @@ function detaljpanel(ctx, last, kvitter, settApen) {
         sett(utfall, el("span", { role: "alert", text: t("ui.tilbud.feil.generell") }));
         return;
       }
+      // Detaljen er ferskere enn lista (CodeRabbit): en sending som kom
+      // etter at lista ble hentet, står i d — ikke i x.
+      merkelinje.textContent = `${x.kunde_navn} · ${x.kunde_maske} · `
+        + `${belopTekst(x.sum_ore)} ${x.valuta} · ${faktaTekst(x)} · `
+        + plattformtekst({ ...x, ...d });
       if (d.innledning) linjer.append(el("p", { text: d.innledning }));
       const tab = el("table", { class: "tabell" });
       const hode = el("tr", {});
@@ -257,9 +301,48 @@ function nyttSkjema(ctx, last, kvitter, produkter) {
     el("h2", { text: t("ui.tilbud.skjema.tittel") }), skjema);
 }
 
+function avsenderseksjon(ctx, last, kvitter, profil) {
+  // Avsenderprofilen (172): navnet, svar-til og signaturen tilbudet går ut
+  // i. Tenantens — og uten den kan plattformen ikke sende.
+  const seksjon = el("section", { class: "kpi-kort" },
+    el("h2", { text: t("ui.tilbud.avsender.tittel") }));
+  seksjon.append(el("p", { class: "muted",
+    text: profil ? t("ui.tilbud.avsender.satt").replace("{navn}", profil.avsender_navn)
+                 : t("ui.tilbud.avsender.ingen") }));
+  if (!harScope(ctx, "bestilling:opprett")) return seksjon;
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const navn = el("input", { id: "tb-avs-navn", name: "avsender_navn", type: "text",
+                             required: true, maxlength: 200,
+                             value: profil ? profil.avsender_navn : "" });
+  const svarTil = el("input", { id: "tb-avs-svar", name: "svar_til", type: "email",
+                                maxlength: 254, value: (profil && profil.svar_til) || "" });
+  const signatur = el("textarea", { id: "tb-avs-sign", name: "signatur", rows: 3,
+                                    maxlength: 2000 });
+  if (profil && profil.signatur) signatur.value = profil.signatur;
+  const utfall = el("p", { "aria-live": "polite" });
+  const knapp = el("button", { type: "submit", text: t("ui.tilbud.avsender.lagre") });
+  skjema.append(
+    felt("tb-avs-navn", "ui.tilbud.avsender.navn", navn, "ui.tilbud.avsender.hjelp"),
+    felt("tb-avs-svar", "ui.tilbud.avsender.svar_til", svarTil),
+    felt("tb-avs-sign", "ui.tilbud.avsender.signatur", signatur),
+    el("div", { class: "skjema-bunn" }, knapp), utfall);
+  skjemaramme(ctx, last, {
+    skjema, knapp, utfall, kvitter, okNokkel: "ui.tilbud.avsender.ok",
+    send: (idem) => {
+      const kropp = { avsender_navn: navn.value };
+      if (svarTil.value.trim()) kropp.svar_til = svarTil.value.trim();
+      if (signatur.value.trim()) kropp.signatur = signatur.value;
+      return settTilbudsavsender(kropp, idem);
+    },
+  });
+  seksjon.append(skjema);
+  return seksjon;
+}
+
 function sammendrag(s) {
   const dl = el("dl", { class: "kpi-liste" });
   for (const [k, v] of [["utkast", s.utkast], ["godkjente", s.godkjente],
+                        ["sendte", s.sendte],
                         ["sum_godkjent", belopTekst(s.sum_godkjent_ore)],
                         ["vist", s.vist]]) {
     dl.append(el("dt", { text: t(`ui.tilbud.oversikt.${k}`) }),
@@ -281,11 +364,17 @@ export function visTilbud(hoved, ctx) {
     async () => {
       const d = await hentJson("/v1/tilbud");
       let produkter = [];
+      let prisbokFeil = false;
       if (harScope(ctx, "bestilling:opprett")) {
         try { produkter = (await hentJson("/v1/prisbok")).produkter || []; }
-        catch (e) { if (e instanceof UautorisertFeil) throw e; }
+        catch (e) {
+          if (e instanceof UautorisertFeil) throw e;
+          // Boka kunne ikke lastes: skjemaet får ingen produkter, og det
+          // SIES (CodeRabbit) — ikke et tomt valg som ser ut som en tom bok.
+          prisbokFeil = true;
+        }
       }
-      return { ...d, produkter };
+      return { ...d, produkter, prisbokFeil };
     },
     (d) => {
       sett(hoved, ...hode(), kvittering, kropp);
@@ -300,9 +389,14 @@ export function visTilbud(hoved, ctx) {
       } else {
         seksjon.append(tilbudTabell(liste, detalj.apne));
       }
-      const deler = [oversikt, seksjon, detalj.node];
+      const deler = [oversikt, avsenderseksjon(ctx, last, kvitter, d.avsenderprofil),
+                     seksjon, detalj.node];
       if (harScope(ctx, "bestilling:opprett")) {
-        deler.push(nyttSkjema(ctx, last, kvitter, d.produkter || []));
+        if (d.prisbokFeil) {
+          deler.push(el("p", { role: "alert", text: t("ui.tilbud.feil.prisbok") }));
+        } else {
+          deler.push(nyttSkjema(ctx, last, kvitter, d.produkter || []));
+        }
       }
       sett(kropp, ...deler);
       if (apenRad) {

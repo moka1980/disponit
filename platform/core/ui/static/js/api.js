@@ -906,6 +906,11 @@ export const avsluttProsjekt = (prosjektId, begrunnelse, idem) =>
 export const lagTilbud = (tilbud, idem) =>
   _muter("/v1/tilbud", "POST", tilbud, idem || nyIdempotensnokkel());
 
+// 172 (ARC B tilbud PR 4/6): avsenderprofilen tilbudet sendes i —
+// tenantens, ikke tilbudets.
+export const settTilbudsavsender = (profil, idem) =>
+  _muter("/v1/tilbud/avsender", "POST", profil, idem || nyIdempotensnokkel());
+
 export const avgjorTilbud = (tilbudId, status, idem) =>
   _muter(`/v1/tilbud/${encodeURIComponent(tilbudId)}/dom`, "POST",
          { status }, idem || nyIdempotensnokkel());
