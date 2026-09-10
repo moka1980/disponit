@@ -196,6 +196,17 @@ def test_invariant_modulen_signerte_attestasjon():
     MÅLT PÅ IMPORTENE (AST, så en import inne i en funksjon ikke slipper
     unna), PÅ KODEN og PÅ DATAMODELLEN.
 
+    ARC B BOKFØRING (165, 10/9): fullmakten er tatt — MEN IKKE AV
+    MODULEN. Treffraten er målt (Fjordlys 8/9), og bestillingsveien
+    (`api/bestilling.py`, API-ets tillit, 161-formen) minter
+    `dublettsjekk` og `mva_validert` som `v_regnskap` og
+    `leverandor_i_register` som `v_register` av det registerets
+    KONTROLLRADER sier — et `avvik` er en usann attestasjon, altså en
+    sak. Registerets egne filer (106, `api/faktura.py`, sveipen, flaten)
+    signerer fortsatt ingenting, og det er det denne porten måler:
+    modulen definerer ikke sin egen troverdighet, plattformen leser av
+    det den målte.
+
     MUTASJONEN SOM DREPER DENNE: `from policy_validator import
     attestering` i `api/faktura.py`.
     """

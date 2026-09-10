@@ -203,6 +203,28 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
                               "utkast_ref", "omfang"}),
         intensjonsfelt=("tenant", "bestillingstype", "henvendelse_id",
                         "utkast_id", "omfang")),
+    # ARC B bokføring (165): bransjemalens to bokføringshandlinger — den
+    # lille (auto, ≤ 25 000) og den store (auto_med_vilkaar, ≤ 100 000).
+    # Kroppen er ÉN referanse og ett omfang: beløpet, leverandøren og
+    # kontrollene er registerets, aldri bestillerens.
+    "faktura.bokfor": Bestillingstype(
+        handling="faktura.bokfor",
+        oppdragstype="faktura.bokfor",
+        eiermodul="m14_fakturakontroll",
+        kravsett=(),
+        omfang=("bilag",),
+        skjemafelt=frozenset({"bestillingstype", "faktura_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "faktura_id",
+                        "omfang")),
+    "faktura.bokfor_stor": Bestillingstype(
+        handling="faktura.bokfor_stor",
+        oppdragstype="faktura.bokfor_stor",
+        eiermodul="m14_fakturakontroll",
+        kravsett=(),
+        omfang=("bilag",),
+        skjemafelt=frozenset({"bestillingstype", "faktura_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "faktura_id",
+                        "omfang")),
     "purring.send": Bestillingstype(
         handling="purring.send",
         oppdragstype="purring.send",
@@ -235,6 +257,7 @@ _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _KAMPANJE_REF = re.compile(r"^kampanje:" + _UUID + "$")
 _MOTTAKER_REF = re.compile(r"^mottaker:" + _UUID + "$")
 _HENVENDELSE_REF = re.compile(r"^henvendelse:" + _UUID + "$")
+_FAKTURA_REF = re.compile(r"^faktura:" + _UUID + "$")
 _UTKAST_REF = re.compile(r"^utkast:" + _UUID + "$")
 _FORDRING_REF = re.compile(
     r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
@@ -287,6 +310,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_kampanje(tenant, bt, data)
     if bt.oppdragstype == "kundeservice.svar.send":
         return _normaliser_svar(tenant, bt, data)
+    if bt.oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):
+        return _normaliser_bokforing(tenant, bt, data)
     if bt.oppdragstype == "kontinuitet.ovelse":
         # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
         # eies av øvelseslogikken selv.
@@ -351,6 +376,21 @@ def _normaliser_svar(tenant: str, bt: Bestillingstype, data: dict) -> dict:
     return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
             "henvendelse_id": h.group(0).split(":", 1)[1],
             "utkast_id": u.group(0).split(":", 1)[1],
+            "omfang": data["omfang"]}
+
+
+def _normaliser_bokforing(tenant: str, bt: Bestillingstype,
+                          data: dict) -> dict:
+    """M-14 (ARC B): én referanse (`faktura:<uuid>`) og omfanget. Beløp,
+    leverandør og kontroller står IKKE i kroppen — de er registerets, og
+    en bestiller som kunne oppgi beløpet ville valgt sin egen grense."""
+    m = _FAKTURA_REF.fullmatch(str(data.get("faktura_ref") or ""))
+    if m is None:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "faktura_id": m.group(0).split(":", 1)[1],
             "omfang": data["omfang"]}
 
 
@@ -962,6 +1002,46 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
         # brenner kvote. Godkjenningen og teksten er policyens vilkår,
         # attestert under.
         kundesvar = None
+        bokforing = None
+        # ARC B bokføring (165): fakturaen må finnes, være åpen for
+        # bokføring (ikke avvist), i policyens valuta, og — ligger den
+        # over tenantens egen beløpsgrense — ha den manuelle kontrollen
+        # 106 krever der. Registerets tilstand, målt FØR beslutningen
+        # brenner kvote. Kontrollutfallene er policyens vilkår, attestert
+        # under av det døra målte.
+        if bt.oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):
+            sett_kontekst(conn, tenant, aktor, rid)
+            frad = conn.execute(
+                "SELECT * FROM m14_for_bokforing(%s,%s)",
+                (tenant, norm["faktura_id"])).fetchone()
+            conn.rollback()
+            if frad is None:
+                tjeneste.logg.hendelse("faktura_ukjent", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "faktura_ukjent")
+            (f_status, f_lev, f_nummer, _f_netto, _f_mva, f_brutto,
+             f_valuta, f_utstedt, f_forfall, f_dublett_ok, f_mva_ok,
+             f_lev_ok, f_over, f_manuell_ok, f_apne) = frad
+            hindring = (
+                "avvist" if f_status == "avvist"
+                else "alt_bokfort" if f_status == "bokfort"
+                else "manuell_kontroll_mangler"
+                if (f_over and not f_manuell_ok) else None)
+            if hindring is not None:
+                tjeneste.logg.hendelse("faktura_ikke_klar_for_bokforing",
+                                       rid, tenant, art="drift",
+                                       grunn=hindring)
+                return ("feil", "faktura_ikke_klar_for_bokforing")
+            bokforing = {"faktura_id": norm["faktura_id"],
+                         "fakturanummer": f_nummer,
+                         "leverandor_ref": f_lev,
+                         "brutto_ore": int(f_brutto), "valuta": f_valuta,
+                         "utstedt": str(f_utstedt),
+                         "forfall": str(f_forfall),
+                         "dublett_ok": bool(f_dublett_ok),
+                         "mva_ok": bool(f_mva_ok),
+                         "leverandor_ok": bool(f_lev_ok),
+                         "apne_funn": int(f_apne)}
         if bt.oppdragstype == "kundeservice.svar.send":
             sett_kontekst(conn, tenant, aktor, rid)
             srad = conn.execute(
@@ -1224,6 +1304,23 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "omfang": norm["omfang"],
                          "dataklasser": ["intern", "persondata"],
                          "dataklasser_kilde": "connector"}
+            elif bokforing is not None:
+                # BELØPET ER BRUTTO, i kroner med to desimaler — det er
+                # det bransjemalens `belop_maks` (25 000 / 100 000) måler.
+                # Frekvensen grupperes på `faktura_id`: én faktura
+                # bokføres én gang.
+                bb = bokforing["brutto_ore"]
+                event = {"handling": bt.handling,
+                         "ressurs_id": "faktura:" + bokforing["faktura_id"],
+                         "faktura_id": bokforing["faktura_id"],
+                         "fakturanummer": bokforing["fakturanummer"],
+                         "leverandor_ref": bokforing["leverandor_ref"],
+                         "brutto_ore": bb,
+                         "belop": f"{bb // 100}.{bb % 100:02d}",
+                         "valuta": bokforing["valuta"],
+                         "omfang": norm["omfang"],
+                         "dataklasser": ["finansiell"],
+                         "dataklasser_kilde": "connector"}
             elif purring is not None:
                 # BELØPET ER RESTEN, i kroner med to desimaler — det er
                 # det policyens `belop_maks` måler. Frekvensen grupperes
@@ -1425,6 +1522,46 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse(
                     "svar_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
+            # ARC B bokføring (165): attestasjonene er registerets egne
+            # kontrollrader — `dublettsjekk` og `mva_validert` som
+            # `v_regnskap`, `leverandor_i_register` som `v_register`.
+            # Et `avvik` er en USANN attestasjon (sak), aldri en stille
+            # bokføring; mangler nøklene, mintes ingenting og motoren
+            # svarer `attestasjon_mangler`.
+            rg_nokler = (tjeneste.nokler or {}).get("v_regnskap") or {}
+            rr_nokler = (tjeneste.nokler or {}).get("v_register") or {}
+            if bokforing is not None and rg_nokler and rr_nokler:
+                from policy_validator import attestering
+                naa_att = datetime.now(timezone.utc)
+                ressurs = event["ressurs_id"]
+                event["attestasjoner"] = {}
+                for verif, nokler, vilkaar, resultat in (
+                        ("v_regnskap", rg_nokler, "dublettsjekk",
+                         bokforing["dublett_ok"]),
+                        ("v_regnskap", rg_nokler, "mva_validert",
+                         bokforing["mva_ok"]),
+                        ("v_register", rr_nokler, "leverandor_i_register",
+                         bokforing["leverandor_ok"])):
+                    nid = sorted(nokler)[0]
+                    jti_grunnlag = (f"{tenant}|{ressurs}|{kjernenokkel}|"
+                                    f"{vilkaar}")
+                    event["attestasjoner"][vilkaar] = attestering.signer({
+                        "verifikator": verif,
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": vilkaar, "ressurs_id": ressurs,
+                        "policy_id": policy_id,
+                        "utstedt": naa_att.isoformat(),
+                        "utloper": (naa_att
+                                    + timedelta(hours=24)).isoformat(),
+                        "jti": "fb-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": bool(resultat),
+                        "verdi": "ok" if resultat else "avvik",
+                    }, nid, nokler[nid])
+            elif bokforing is not None:
+                tjeneste.logg.hendelse(
+                    "bokforing_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
             from policy_validator.engine import EvaluationContext
             # ROLLEN FØLGER AKTØREN (ARC B, PR 3). Et menneske og planen
             # bestiller som `bestiller`; den automatiserte utløseren
@@ -1487,6 +1624,25 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 payload = oppdragskontrakt.minimer(bt.oppdragstype, {
                     "henvendelse_id": kundesvar["henvendelse_id"],
                     "utkast_id": kundesvar["utkast_id"],
+                    "omfang": norm["omfang"]})
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       payload)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, payload)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
+            elif bokforing is not None:
+                # ARC B bokføring (165): referansen og det bilaget trenger
+                # — beløpet er registerets, aldri bestillerens.
+                import oppdragskontrakt
+                payload = oppdragskontrakt.minimer(bt.oppdragstype, {
+                    "faktura_id": bokforing["faktura_id"],
+                    "fakturanummer": bokforing["fakturanummer"],
+                    "leverandor_ref": bokforing["leverandor_ref"],
+                    "brutto_ore": bokforing["brutto_ore"],
                     "omfang": norm["omfang"]})
                 if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
                                                        payload)

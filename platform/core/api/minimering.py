@@ -45,6 +45,11 @@ PER_HANDLING: dict[str, tuple[str, ...]] = {
                       "omfang"),
     # ARC B kundeservice (161/164): referansene, aldri adressen eller teksten.
     "kundeservice.svar.send": ("henvendelse_id", "utkast_id", "omfang"),
+    # ARC B bokføring (165): referansen og det bilaget trenger — aldri mer.
+    "faktura.bokfor": ("faktura_id", "fakturanummer", "leverandor_ref",
+                       "brutto_ore", "omfang"),
+    "faktura.bokfor_stor": ("faktura_id", "fakturanummer", "leverandor_ref",
+                            "brutto_ore", "omfang"),
 }
 
 #: Kildereferansen er allerede ugjennomsiktig og slippes gjennom som den er.

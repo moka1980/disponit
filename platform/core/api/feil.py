@@ -365,6 +365,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
                   " ikke i planen, er deaktivert, mangler adresse, eller"
                   " kampanjen mangler innhold — registerets tilstand,"
                   " ikke policyens dom."),
+    Feilvei("faktura_ukjent", 404, ("sikkerhet",), None,
+            notat="ARC B bokføring: bestillingen peker på en faktura"
+                  " tenanten ikke har — målt FØR beslutningen."),
+    Feilvei("faktura_ikke_klar_for_bokforing", 409, ("drift",), None,
+            notat="ARC B bokføring: fakturaen er avvist eller alt bokført,"
+                  " eller ligger over tenantens beløpsgrense uten den"
+                  " manuelle kontrollen 106 krever — registerets tilstand,"
+                  " målt FØR beslutningen brenner kvote."),
     Feilvei("henvendelse_ukjent", 404, ("sikkerhet",), None,
             notat="ARC B kundeservice: bestillingen peker på en henvendelse"
                   " eller et utkast tenanten ikke har — målt FØR"
