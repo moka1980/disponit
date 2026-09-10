@@ -337,10 +337,14 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # har godkjent, policyen avgjør.
     from plan.tilbud import kjor_en_runde as tilbudsrunde
     tilbud = tilbudsrunde(tjeneste, conn)
+    # M-6 (175): innhenteren — postboksene leses inn i registeret. Ingen
+    # bestilling, ingen policyport her: dette er inntak, ikke handling.
+    from plan.epost import kjor_en_runde as epostrunde
+    epost = epostrunde(tjeneste, conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
            "resultater": resultater, "klassifisering": klassifisering,
            "purring": purring, "kampanje": kampanje, "svar": svar,
-           "bokforing": bokforing, "tilbud": tilbud}
+           "bokforing": bokforing, "tilbud": tilbud, "epost": epost}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)

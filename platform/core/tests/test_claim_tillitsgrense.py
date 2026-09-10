@@ -233,6 +233,9 @@ def test_execute_settet_er_kallsettet(migrator):
     listen i migrer.py kan ikke vokse eller ruste i det stille."""
     kilder = [ROT / "platform" / "core" / "plan" / "klassifiser.py",
               ROT / "platform" / "core" / "plan" / "materialiser.py",
+              # M-6 inntak (175): innhenteren kaller den claimer-eide
+              # kandidatdøra.
+              ROT / "platform" / "core" / "plan" / "epost.py",
               ROT / "platform" / "core" / "api" / "bestilling.py"]
     kalt = set()
     for fil in kilder:

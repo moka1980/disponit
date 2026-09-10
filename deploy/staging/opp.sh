@@ -1757,6 +1757,13 @@ skriv_cred api DISPONIT_M365_CLIENT_SECRET "${DISPONIT_M365_CLIENT_SECRET:-}"
 skriv_cred api DISPONIT_M365_REDIRECT_URI  "${DISPONIT_M365_REDIRECT_URI:-}"
 skriv_cred api DISPONIT_M365_TENANT        "${DISPONIT_M365_TENANT:-}"
 skriv_cred api DISPONIT_M365_ALLOWLIST     "${DISPONIT_M365_ALLOWLIST:-}"
+# M-6 inntak (175): innhenteren er planarbeideren og veksler refresh →
+# access selv, så den trenger klient-id, hemmelighet, tenant og allowlist
+# — ikke redirect-URI-en (den er samtykkerundens, og den bor i API-et).
+skriv_cred plan DISPONIT_M365_CLIENT_ID     "${DISPONIT_M365_CLIENT_ID:-}"
+skriv_cred plan DISPONIT_M365_CLIENT_SECRET "${DISPONIT_M365_CLIENT_SECRET:-}"
+skriv_cred plan DISPONIT_M365_TENANT        "${DISPONIT_M365_TENANT:-}"
+skriv_cred plan DISPONIT_M365_ALLOWLIST     "${DISPONIT_M365_ALLOWLIST:-}"
 # PR-045 (Codex P1): MILJØET prosessen kjører i. `platform/core/miljo` er den
 # ene tolkningen av variabelen, og TO ting leser den: hvilke policystatuser som
 # får binde en beslutning (`api.policyregister.tillatte_statuser`), og om

@@ -898,11 +898,25 @@ def test_kjoreren_speiler_088_rettighetene():
             " nonce, key_id)\n    ON epost_kilde TO {rolle};") in kjorer
     assert ("GRANT UPDATE (auth_kryptert, nonce, key_id, status)\n"
             "    ON epost_kilde TO {rolle};") in kjorer
+    # PR-C a (175, M-6 inntak): innhenterens skrivevei er født — hos
+    # PLANARBEIDEREN (PLAN_RETTIGHETER), aldri hos web-API-rollen. Porten
+    # måler derfor runtime-blokka for seg: den er fortsatt uten INSERT på
+    # payload-lagrene og uten credential-trioen.
+    runtime = kjorer.split("PLAN_RETTIGHETER = ")[0]
     for tabell in ("epost_melding", "epost_klassifisering",
                    "epost_utkast", "epost_vedlegg", "epost_oppfolging"):
-        assert f"INSERT ON {tabell}" not in kjorer, \
-            f"runtime har fått INSERT på {tabell} før noen skrivevei" \
-            " finnes"
+        assert f"INSERT ON {tabell}" not in runtime, \
+            f"runtime har fått INSERT på {tabell} — skriveveien er" \
+            " innhenterens"
+    plan = kjorer.split("PLAN_RETTIGHETER = ")[1].split(
+        "DRIFTSTATUS_RETTIGHETER = ")[0]
+    assert "GRANT INSERT ON epost_melding TO {rolle};" in plan
+    assert "auth_kryptert, nonce, key_id, opprettet)\n    ON epost_kilde" \
+        " TO {rolle};" in plan
+    for tabell in ("epost_klassifisering", "epost_utkast", "epost_vedlegg",
+                   "epost_oppfolging"):
+        assert f"INSERT ON {tabell}" not in plan, \
+            f"innhenteren har fått INSERT på {tabell} uten en født vei"
 
 
 # ---------------------------------------------------------------------------
