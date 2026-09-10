@@ -105,3 +105,34 @@ def test_artefaktskjemaet_er_generert_fra_invariantene():
     assert valider_artefaktformat(art, "m6-inntak-v1") == []
     assert valider_artefaktformat({**art, "maalt": {**m, "x": 1}},
                                   "m6-inntak-v1")
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 10/9 mot disponit.com: artefaktet er innsjekket, har
+    skjemaets form og passerer `m6-inntak-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M6_INNTAK_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / ("deploy/staging/artefakter/"
+                 "m6-inntak-v1-20260910T164000Z.json")
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m6-inntak-v1") == []
+    assert _sjekk_grenser("m6-inntak-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M6_INNTAK_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte. `flatefunn_etter_runden` er den ærligste: grensen
+    # måler inntaket, ikke om det som ble hentet er til å lese.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    for n in ("m6.inntak.punkt_maalt_kun_i_port",
+              "m6.inntak.flatefunn_etter_runden",
+              "m6.inntak.bare_innboksen",
+              "m6.inntak.ingen_klassifisering",
+              "m6.inntak.runden_logger_bare_ved_kandidater"):
+        assert n in nokler, n
+    assert art["oppsett"]["modul"] == "m06_epost"
+

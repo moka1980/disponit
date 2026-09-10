@@ -1,0 +1,83 @@
+{
+  "krav_id": "m6-inntak-v1",
+  "ts": "2026-09-10T16:40:00Z",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m06_epost",
+    "commit": "215b74ed6e4e4b8b1d9c8e2a5f7c9d3b4a6e8f01",
+    "vert": "disponit-srv (disponit.com, miljo staging)",
+    "tenant": "disponit",
+    "release": "ingen (innhenteren er planarbeideren)",
+    "notat": "Fjordlys Elektro AS / disponit 10/9: PR 1-3 (#469, #470, #472) merget og deployet (migr 175-176). INGEN VERTSSTEG utover deployen: opp.sh materialiserer M365-verdiene ogsaa for planarbeideren, og innhenteren ER planarbeideren - ingen ny hemmelighet, rolle eller unit. Ingen policyendring: inntaket bestiller ingenting og fatter ingen beslutning. Kilden `eliassi.mokhtar@outlook.com` sto AKTIV med sist_hentet=aldri og 0 meldinger foer deployen. FOERSTE TIMERRUNDE ETTER DEPLOY (16:34:02Z) hentet 16 meldinger fra innboksen; delta-cursoren ble satt. MAALT 16:36Z: kill-switch AV -> `epost_inntak_av`, 16 meldinger uendret, sist_hentet uendret; PAA -> runden plukket 1 kilde, sett=0 nye=0 (delta-cursoren staar), 16 uendret. Klartekst i meldingsradene: 0 rader matcher en e-postadresse (kropp, avsender og emne ligger AES-GCM-kryptert med tenant-DEK; avsender_hash og emne_hash er 64 hex, 16 av 16). Persondata i planloggen siste 3 min: 0. Runde to: 16 -> 16, ingen nye rader (088 port 1, ON CONFLICT DO NOTHING paa leverandoerens melding-id). Credentials: `auth_kryptert` inneholder ingen adresse i klartekst. Slettefrist: 90 doegn paa alle. FLATEN: GET /v1/epost/meldinger ga 16 rader med avsender, emne, mottatt og slettefrist, dekryptert for oekten under RLS; detaljen ga kroppen. Eier bekreftet at meldingene vises i #/epost. PUNKT 9 MAALT AV EIER SELV: hun slettet en melding fra flaten 16:36:52Z (revisjonsloggen: kilde m06_epost, handling epost.melding_slettet, aktoer token:sesjon:...). Raden bestaar med mottatt_ts og hasher, kropp/nonce/key_id er NULL, og teksten er borte. FIRE FLATEFUNN FRA EIER RETT ETTER RUNDEN, alle rettet i #475 (main 813d0c0f, deployet): teksten sa «slettet etter tidsfristen» paa en melding hun nettopp slettet selv; slettede rader laa som stoey i innboksen; «Aapne» aapnet panelet NEDERST paa siden uten fokus (og med to kilder ville en delt panel-node havnet under feil kilde - CodeRabbit); handlingsknappene sto stablet. I tillegg: Graph gir tekstversjonen av HTML-poster med adressen etter hver lenke og «[alt] <url>» for bilder, som gjorde visningen uleselig - `lesbarTekst` renser i VISNINGEN, originalen ligger urort i registeret og bak en bryter."
+  },
+  "maalt": {
+    "innhenting_duplikatmelding_forsok": 1,
+    "persondata_i_klartekst_i_basen_forsok": 1,
+    "kilde_credentials_ukryptert_forsok": 1,
+    "logg_med_persondata_forsok": 1,
+    "kill_switch_konsumerte_kilder_forsok": 1,
+    "deaktivert_kilde_hentet_forsok": 1,
+    "autfeil_uten_feilet_kilde_forsok": 1,
+    "forbigaende_feil_konsumerte_kilden_forsok": 1,
+    "slettet_melding_med_tekst_forsok": 1,
+    "modul_sendevei_finnes_forsok": 1,
+    "innhenting_duplikatmelding_brudd": 0,
+    "persondata_i_klartekst_i_basen_brudd": 0,
+    "kilde_credentials_ukryptert_brudd": 0,
+    "logg_med_persondata_brudd": 0,
+    "kill_switch_konsumerte_kilder_brudd": 0,
+    "deaktivert_kilde_hentet_brudd": 0,
+    "autfeil_uten_feilet_kilde_brudd": 0,
+    "forbigaende_feil_konsumerte_kilden_brudd": 0,
+    "slettet_melding_med_tekst_brudd": 0,
+    "modul_sendevei_finnes_brudd": 0,
+    "rundtur_paa_disponit_com": true
+  },
+  "funn": [
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m6.inntak.punkt_maalt_kun_i_port",
+      "detalj": {
+        "punkter": [
+          "deaktivert_kilde_hentet",
+          "autfeil_uten_feilet_kilde",
+          "forbigaende_feil_konsumerte_kilden"
+        ],
+        "tilstand": "tenanten har EN kilde, og den er aktiv og virker: en deaktivert kilde, en autentiseringsfeil og en 5xx fra Graph kan ikke rigges live uten aa oedelegge eiers egen tilkobling. Alle tre maales i test_m6_inntak_port med rigget Graph",
+        "port": "test_m6_inntak_port.py"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m6.inntak.flatefunn_etter_runden",
+      "detalj": {
+        "tilstand": "fire funn fra eier minutter etter at inntaket gikk live - feil slettetekst, slettede rader som stoey, panel nederst uten fokus, stablede knapper - pluss at HTML-posters tekstversjon var uleselig. Ingen av dem var maalt av grensens ti punkter: punktene maaler INNTAKET (idempotens, kryptering, logg, kill-switch), ikke om det som ble hentet er til aa lese",
+        "oppfolging": "rettet i #475; en lesbarhetsinvariant hoerer hjemme i en flategrense, ikke i inntakets"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m6.inntak.bare_innboksen",
+      "detalj": {
+        "tilstand": "delta-spoerringen gaar mot mailFolders/inbox: sendte og arkiverte mapper hentes ikke, og vedleggsinnhold lastes ikke ned (skannstatus ikke_hentet)",
+        "oppfolging": "utvidelse er en kontraktsendring, ikke et kallargument"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m6.inntak.ingen_klassifisering",
+      "detalj": {
+        "tilstand": "epost_klassifisering og epost_utkast staar tomme: modellveien (088s PR-C-halvdel) er ikke bygget, og m06_epost-manifestets sjekklistepunkter staar fortsatt nei",
+        "oppfolging": "m6-v1s punktbinding er fortsatt tom med vilje"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m6.inntak.runden_logger_bare_ved_kandidater",
+      "detalj": {
+        "tilstand": "plan.epost skriver epost_inntak_runde bare naar den plukket en kilde - samme form som de fem utloeserne",
+        "oppfolging": "felles oppfoelging M-23/M-44/M-17/M-14/M-26/M-6: logg plukket=0"
+      }
+    }
+  ]
+}

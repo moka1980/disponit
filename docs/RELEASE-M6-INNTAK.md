@@ -69,3 +69,37 @@ etter skjemaet `artefakt-m6-inntak-skjema.json` (generert fra
   står fortsatt `nei`.
 * **Ingen sending.** v1 er lesende. Dommen 31/8 krever minst fire ukers
   foreslå-drift med `feil_mottaker=0` før v2 spesifiseres.
+
+## Gjennomført 10/9-2026 på disponit-srv
+
+Alle tre PR-ene (#469, #470, #472) ble merget og deployet 10/9
+(migrasjoner 175–176). Ingen vertssteg utover deployen, ingen ny
+hemmelighet, ingen policyendring.
+
+**Første timerrunde etter deploy hentet 16 meldinger** fra
+`eliassi.mokhtar@outlook.com`, som sto aktiv med «sist hentet: aldri».
+Bevisrunden (§3) gikk 16:36Z; artefaktet er
+`deploy/staging/artefakter/m6-inntak-v1-20260910T164000Z.json`.
+
+Kort: kill-switch av → ingenting hentet og hentemerkene urørt; på →
+runden fant kilden og hentet null nye, fordi delta-cursoren sto; null
+rader med en adresse i klartekst; 16 av 16 med gyldige hasher; null
+persondata i planloggen; runde to ga ingen nye rader; credentials er
+ciphertext; frist 90 døgn. Flaten viste de 16 meldingene med avsender,
+emne og slettefrist, dekryptert for økten.
+
+**Punkt 9 ble målt av eier selv**: hun slettet en melding fra flaten
+16:36:52Z, og raden består med tidspunkt og hasher mens teksten er
+borte.
+
+Fire flatefunn kom fra eier minuttene etter, alle rettet i #475:
+slettemeldingen sa «etter tidsfristen» om noe hun nettopp slettet selv;
+slettede rader lå som støy i innboksen; «Åpne» åpnet panelet nederst på
+siden uten fokus; knappene sto stablet. I tillegg var tekstversjonen av
+HTML-poster uleselig, og `lesbarTekst` renser den nå i visningen mens
+originalen står urørt i registeret.
+
+**Lærdommen** står i artefaktets funn: grensens ti punkter måler
+INNTAKET — idempotens, kryptering, logg, kill-switch — ikke om det som
+ble hentet er til å lese. Den invarianten hører hjemme i en flategrense.
+
