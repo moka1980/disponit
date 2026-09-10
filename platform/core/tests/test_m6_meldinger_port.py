@@ -32,8 +32,11 @@ def _kilde_med_melding(m, *, reapet=False):
     ct, nonce = kryptering.krypter(dek, {"refresh_token": "r"}, TENANT, key_id)
     kid = m.execute(
         "INSERT INTO epost_kilde (tenant, leverandor, postboks, auth_kryptert,"
-        " nonce, key_id) VALUES (%s,'m365',%s,%s,%s,%s) RETURNING kilde_id",
-        (TENANT, f"pb-{secrets.token_hex(4)}@example.org", ct, nonce, key_id)
+        " nonce, key_id, scope) VALUES (%s,'m365',%s,%s,%s,%s,%s)"
+        " RETURNING kilde_id",
+        (TENANT, f"pb-{secrets.token_hex(4)}@example.org", ct, nonce, key_id,
+         "https://graph.microsoft.com/Mail.Read"
+         " https://graph.microsoft.com/Mail.Send offline_access")
     ).fetchone()[0]
     payload = {"fra": ADRESSE, "fra_navn": "Per", "til": ["post@x.example"],
                "emne": EMNE, "forhandsvisning": KROPP[:20], "kropp": KROPP,

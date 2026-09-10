@@ -7,7 +7,7 @@ lageret; sendingen er en egen vei gjennom policyporten (PR 3–5).
   1. Utkastet skrives kryptert (basen ser aldri svaret i klartekst),
      fødes `foreslatt`, og detaljen bærer det tilbake med teksten
      dekryptert for økten.
-  2. Dommen: `godkjent` og `forkastet` bærer aktør og tidspunkt;
+  2. Dommen: `godkjent`/`sendes` og `forkastet` bærer aktør og tidspunkt;
      gjenspill er et stille ja; `godkjent → forkastet` er lov (angre),
      men `forkastet` er terminal.
   3. «sendt» er ALDRI en dom et menneske setter — verken over HTTP eller
@@ -164,4 +164,99 @@ def test_scopet_er_utkastets_ikke_kildens(migrator, miljo, klient, token):
     r = _post(klient, kun_kilde, f"/v1/epost/meldinger/{mid}/svarutkast",
               {"tekst": SVAR})
     assert r.status_code == 403, r.text
+
+
+@pg
+@dekker("epost_ulovlig_tilstand")
+def test_mennesket_sender_selv_uten_policyport(migrator, miljo, klient, token):
+    """EIERVEDTAK 10/9, andre runde: menneskets eget svar er INGEN
+    agenthandling. Første utgave la sendingen gjennom policyporten med
+    en egen handling og fire øyne — mønsteret fra M-17, der PLATTFORMEN
+    finner på teksten. Her skriver mennesket den selv, og målet er at
+    kunden skal lese og svare på ett sted uten å åpne Outlook.
+
+    `sendes` er en KØ, ikke en dom: nøkkelen til postboksen ligger hos
+    bakgrunnsprosessen (088), så web-API-et setter utkastet i kø og
+    sender det aldri selv.
+    """
+    import psycopg
+
+    from db.pg import koble
+    _, mid = _kilde_med_melding(migrator)
+    tok = _adm(token)
+    uid = _post(klient, tok, f"/v1/epost/meldinger/{mid}/svarutkast",
+                {"tekst": SVAR}).json()["utkast_id"]
+    # INGEN oppdragstype og ingen policyhandling for dette.
+    from oppdragskontrakt import OPPDRAGSTYPER
+    assert not [n for n in OPPDRAGSTYPER if n.startswith("epost.svar")], \
+        "menneskets egen sending ble en agenthandling igjen"
+    r = _post(klient, tok, f"/v1/epost/utkast/{uid}/send", {})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "sendes"
+    d = _detalj(klient, tok, mid)
+    u = [x for x in d["utkast"] if x["utkast_id"] == uid][0]
+    assert u["status"] == "sendes" and u["avgjort_av"] and u["avgjort_ts"]
+    assert u["sendt_ts"] is None, "web-API-et sendte selv"
+    # Gjenspill: stille ja.
+    assert _post(klient, tok, f"/v1/epost/utkast/{uid}/send",
+                 {}).json()["status"] == "sendes"
+    # Evidensen sier at et menneske ba om det.
+    _sett_kontekst(migrator, TENANT)
+    ev = migrator.execute(
+        "SELECT count(*) FROM revisjonslogg WHERE tenant=%s"
+        " AND kilde='m06_epost' AND handling='epost.svar_bestilt'",
+        (TENANT,)).fetchone()[0]
+    migrator.rollback()
+    assert ev >= 1
+    # Et forkastet utkast kan ikke sendes, og døra sier hvorfor.
+    uid2 = _post(klient, tok, f"/v1/epost/meldinger/{mid}/svarutkast",
+                 {"tekst": SVAR}).json()["utkast_id"]
+    _post(klient, tok, f"/v1/epost/utkast/{uid2}/dom", {"status": "forkastet"})
+    assert _post(klient, tok, f"/v1/epost/utkast/{uid2}/send",
+                 {}).status_code == 409
+    rt = koble(DSN)
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.Error) as e:
+            rt.execute("SELECT m6_send_svaret(%s,%s,'x')", (TENANT, uid2))
+        assert "forkastet" in str(e.value) or "bare et utkast" in str(e.value)
+        rt.rollback()
+    finally:
+        rt.close()
+
+
+@pg
+def test_en_postboks_uten_sendetilgang_sender_ikke(migrator, miljo, klient,
+                                                    token):
+    """Samtykket avgjør (178): mangler `Mail.Send`, stopper døra svaret
+    FØR det står i kø — ikke med en 403 fra Graph fem minutter senere."""
+    import psycopg
+
+    from db.pg import koble
+    kid, mid = _kilde_med_melding(migrator)
+    tok = _adm(token)
+    uid = _post(klient, tok, f"/v1/epost/meldinger/{mid}/svarutkast",
+                {"tekst": SVAR}).json()["utkast_id"]
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute("UPDATE epost_kilde SET scope=%s WHERE tenant=%s"
+                     " AND kilde_id=%s",
+                     ("https://graph.microsoft.com/Mail.Read offline_access",
+                      TENANT, kid))
+    migrator.commit()
+    r = _post(klient, tok, f"/v1/epost/utkast/{uid}/send", {})
+    assert r.status_code == 409, r.text
+    rt = koble(DSN)
+    try:
+        _sett_kontekst(rt, TENANT)
+        with pytest.raises(psycopg.Error) as e:
+            rt.execute("SELECT m6_send_svaret(%s,%s,'x')", (TENANT, uid))
+        assert "sendetilgang" in str(e.value), str(e.value)
+        rt.rollback()
+    finally:
+        rt.close()
+    _sett_kontekst(migrator, TENANT)
+    assert migrator.execute(
+        "SELECT status FROM epost_utkast WHERE tenant=%s AND utkast_id=%s",
+        (TENANT, uid)).fetchone()[0] == "foreslatt"
+    migrator.rollback()
 

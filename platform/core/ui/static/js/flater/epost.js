@@ -14,7 +14,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
-         skrivSvarutkast, avgjorSvarutkast,
+         skrivSvarutkast, avgjorSvarutkast, sendSvaret,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -178,18 +178,40 @@ function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
           + (u.avgjort_av || "") }));
       rad.append(el("pre", { class: "epost-kropp",
         text: u.tekst || t("ui.epost.svar.uten_tekst") }));
-      if (kanAdministrere && u.status === "foreslatt") {
+      // SEND er menneskets egen handling — ingen godkjenningsrunde med
+      // seg selv (eiervedtak 10/9, andre runde). Forkasting står ved
+      // siden av, for det man ombestemte seg om.
+      if (kanAdministrere && ["foreslatt", "godkjent", "feilet"]
+          .includes(u.status)) {
         const rad2 = el("div", { class: "knapperad" });
-        for (const [nokkel, status] of [["godkjenn", "godkjent"],
-                                        ["forkast", "forkastet"]]) {
-          const b = el("button", { type: "button",
-            text: t(`ui.epost.svar.knapp.${nokkel}`) });
-          if (status === "forkastet") b.classList.add("fare");
-          b.addEventListener("click", () => paaEndring(
-            () => avgjorSvarutkast(u.utkast_id, status)));
-          rad2.append(b);
+        // Send-knappen finnes bare når postboksen KAN sende
+        // (CodeRabbit): en knapp som alltid feiler er en løgn om hva
+        // systemet kan. Forkasting står uansett — et utkast man ikke
+        // vil ha, skal kunne ryddes bort.
+        if (!kilde || kilde.kan_svare !== false) {
+          const send = el("button", { type: "button",
+            text: t("ui.epost.svar.knapp.send") });
+          send.addEventListener("click",
+            () => paaEndring(() => sendSvaret(u.utkast_id)));
+          rad2.append(send);
         }
+        const forkast = el("button", { class: "knapp fare", type: "button",
+          text: t("ui.epost.svar.knapp.forkast") });
+        forkast.addEventListener("click", () => paaEndring(
+          () => avgjorSvarutkast(u.utkast_id, "forkastet")));
+        rad2.append(forkast);
         rad.append(rad2);
+      }
+      if (u.status === "sendes") {
+        // VENTETIDEN SIES (eiers merknad): fem minutter er ikke lenge,
+        // men en side som ser ferdig ut mens ingenting har skjedd, er
+        // verre enn å vente.
+        rad.append(el("p", { class: "muted", role: "status",
+          text: t("ui.epost.svar.i_koe") }));
+      }
+      if (u.status === "feilet" && u.feilgrunn) {
+        rad.append(el("p", { role: "alert",
+          text: t("ui.epost.svar.feilet_grunn").replace("{grunn}", u.feilgrunn) }));
       }
       liste.append(rad);
     }
@@ -206,6 +228,7 @@ function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
   const skjema = el("form", { class: "kv-skjema" },
     el("label", { for: id, text: t("ui.epost.svar.tittel") }), felt,
     el("p", { class: "muted", text: t("ui.epost.svar.forklaring") }),
+    el("p", { class: "muted", text: t("ui.epost.svar.ventetid") }),
     el("div", { class: "skjema-bunn" }, knapp));
   skjema.addEventListener("submit", (ev) => {
     ev.preventDefault();

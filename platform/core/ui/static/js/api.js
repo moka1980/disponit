@@ -383,6 +383,13 @@ export const hentEpostMelding = (meldingId) =>
 export const skrivSvarutkast = (meldingId, tekst, idem) =>
   _muter(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}/svarutkast`,
          "POST", { tekst }, idem || nyIdempotensnokkel());
+// Menneskets egen sending: utkastet settes i kø hos bakgrunnsprosessen,
+// som har nøkkelen til postboksen. Ingen policyport — teksten er
+// menneskets egen (eiervedtak 10/9).
+export const sendSvaret = (utkastId, idem) =>
+  _muter(`/v1/epost/utkast/${encodeURIComponent(utkastId)}/send`, "POST",
+         {}, idem || nyIdempotensnokkel());
+
 export const avgjorSvarutkast = (utkastId, status, idem) =>
   _muter(`/v1/epost/utkast/${encodeURIComponent(utkastId)}/dom`, "POST",
          { status }, idem || nyIdempotensnokkel());

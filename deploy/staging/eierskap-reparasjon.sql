@@ -55,6 +55,9 @@ INSERT INTO _design VALUES
     -- 179 (M-6): mennesket skriver svaret og avgjør det.
     ('FUNCTION', 'm6_skriv_svarutkast(text,uuid,bytea,bytea,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm6_avgjor_utkast(text,uuid,text,text)',             'disponit_m37_claimer'),
+    -- 180 (M-6): menneskets egen sending — kø, ikke agenthandling.
+    ('FUNCTION', 'm6_for_svar(text,uuid)',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_send_svaret(text,uuid,text)',                   'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
     -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.

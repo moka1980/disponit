@@ -177,5 +177,6 @@
   "176_m6_slett_melding.sql": "308c645e2fbd1e634f224f56e1c5a06ee7e7ee927f3f840e45de6411e52f5e44",
   "177_m5_forkast_malversjon.sql": "ba8b072566342e36c63b351137f2e12e1d1e226e3a424227f0945df9f4bc2a7c",
   "178_m6_kildescope.sql": "62dd5494e46dc4ddb33dceb324e5cd7009efbdb3230c9a1ff026f32cdcf65111",
-  "179_m6_svarutkast.sql": "7314990c52a0433923d40e7069afb0d264d6dbdef22eefa44f5c46513bf5d070"
+  "179_m6_svarutkast.sql": "7314990c52a0433923d40e7069afb0d264d6dbdef22eefa44f5c46513bf5d070",
+  "180_m6_for_svar.sql": "f81a1e8a32db3c2edb51712911f5d6863a7f75a846aee1477c8ac09a82c49ad9"
 }
