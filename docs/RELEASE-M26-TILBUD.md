@@ -74,3 +74,33 @@ Artefaktet skrives som `deploy/staging/artefakter/m26-tilbud-v1-<ts>.json`
 etter skjemaet `artefakt-m26-tilbud-skjema.json` (generert fra
 `M26_TILBUD_INVARIANTER`), og porten `test_bevisartefaktet_passerer_grensen`
 (PR 7) holder det innsjekket.
+
+## Gjennomført 10/9-2026 på disponit-srv
+
+Alle seks PR-ene (#462–#467) ble merget og deployet 10/9 (migrasjoner
+169–174). Vertssteget `m26-oppsett.sh` gikk i ett (v_prisbok/k1 fra
+`DISPONIT_ATT_NOKLER`, husets SMTP, `disponit-m26` oppe, `m26-r1`
+claiming, modulhode aktiv, drift-token tilbakekalt). Policy 0.7.0
+(utkast via API med engangs-token, tilbakekalt; eier + én til attesterte)
+bærer `tilbud.generer` med `persondata`.
+
+Bevisrunden (§7) gikk 14:43–14:45Z; artefaktet er
+`deploy/staging/artefakter/m26-tilbud-v1-20260910T144500Z.json` og
+porten `test_bevisartefaktet_passerer_grensen` holder det innsjekket.
+Kort: kill-switch av → ingenting; på → T1 tillatt (oppdrag 110) og sendt
+av modulen 2 s senere, T2 (rabatt) sak 130, T4 (173 400) sak 131; T3
+(utkast) og T5 (utløpt) aldri kandidater, manuelt → 409; dom «sendt» →
+400; runde 2 etter BET-14 v2 → T6 sak 132, ingen dobbel bestilling;
+flaten viser status, bestilling og sending per tilbud; kundens adresse
+står ingen steder utenfor registeret.
+
+Gule funn (i artefaktet): saker 130–132 går manuell i M-37 (ingen
+v_prisbok-verifikatormodul); en klausulendring gjør ALLE usendte tilbud
+til «klausul endret» (produktvalg: skal `gyldig_fra` skjerme eldre
+tilbud?); punkt 1 og 7 er målt i portene, ikke live; runden logger bare
+når den plukket noe; tenantens egen svar-til-adresse står i lista
+(presisering av «aldri adressen»); eiers bekreftelse av at e-posten kom
+fram var ikke mottatt da artefaktet ble skrevet (`epost_bekreftelse_ventes`,
+fjernes når den kommer). CodeRabbits stående merknad om usignerte
+bevisartefakter gjelder også her (felles oppfølging, som for M-14).
+

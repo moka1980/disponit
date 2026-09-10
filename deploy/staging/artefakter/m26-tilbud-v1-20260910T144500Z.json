@@ -1,0 +1,95 @@
+{
+  "krav_id": "m26-tilbud-v1",
+  "ts": "2026-09-10T14:45:00Z",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m26_prisbok",
+    "commit": "4efec2d3ffde868890a69e468786996caeb31527",
+    "vert": "disponit-srv (disponit.com, miljo staging)",
+    "tenant": "disponit",
+    "release": "m26-r1",
+    "notat": "Fjordlys Elektro AS 10/9: PR 1-6 (#462-#467) merget og deployet (migr 169-174). Vertsteget m26-oppsett.sh (14:43Z): v_prisbok/k1 kopiert fra ATT_NOKLER (ingen ny hemmelighet), husets SMTP i konfig, disponit-m26 oppe, m26-r1 claiming, modulhode aktiv, drift-token tilbakekalt. POLICY 0.7.0 (utkast u-328bebef0d2bfec4 laget via API med et engangs-token (policyforvalter, tilbakekalt samme time; id i tokenregisteret) - fordi editoren ikke kan bytte en handling; eier + en til attesterte, fire oeyne): tilbud.generer med persondata i dataklassene, ellers bransjemalens (belop_maks 150 000, frekvens 2/30 d, v_prisbok). Rigg (prisbok: KAB-PFXP-3x2.5 12,50/m, VP-SPLIT-6 28 900,00, rabattgrense 150 promille, BET-14 v1 standard): avsenderprofil Fjordlys Elektro AS; T1 KAB 40 m + VP 1 = 29 400,00 godkjent; T2 KAB 40 m aa 10,00 (20 % under boka) godkjent; T3 utkast; T4 VP x 6 = 173 400,00 godkjent; T5 datert 1/8 gyldig til 31/8 godkjent; TIME-MONT uten pris -> 409 tilbud_ulovlig_tilstand (kan ikke staa i et tilbud). Manuelle bestillinger: T3 -> 409 tilbud_ikke_klart_for_sending; T5 -> 409; dom {sendt} -> 400 request_feilformet. Kill-switch AV -> tilbud_utloser_av, 0 rader; PAA (14:44:05Z) -> runden plukket 3: T1 tillat oppdrag 110; T2 brudd sak 130 (regelkonflikt: priser_fra_prisbok usann); T4 brudd sak 131 (over_grense). T3/T5 aldri kandidater. Modulen: oppdrag_behandlet utfort, kvittering 200, EN gang, 2 s etter bestillingen; T1 sendt (sendt_oppdrag_id 110, mal tilbud-v1), evidens tilbud.sendt 1, 0 treff paa adressen i revisjonsloggen. Runde 2 (14:44:40Z) etter T6 godkjent + BET-14 v2: plukket 1 -> T6 brudd sak 132 (regelkonflikt: laste_klausuler_uendret usann); tilbudsbestilling 3 -> 4 (T1/T2/T4 ikke bestilt paa nytt). GET /v1/tilbud viser status sendt, bestilling (tillat 110 / brudd 130-132) og sending (110) per tilbud, sammendrag sendte 1; kundens adresse staar ikke i lista, i detaljen eller i unntakskoeen (bare masken). E-posten gikk til eiers adresse fra husets SMTP i navnet Fjordlys Elektro AS (Tilbud fra Fjordlys Elektro AS: 29400,00 NOK)."
+  },
+  "maalt": {
+    "tilbud_uten_policy_forsok": 1,
+    "tilbud_uten_godkjenning_forsok": 1,
+    "priser_utenfor_boka_forsok": 1,
+    "klausul_erstattet_forsok": 1,
+    "belop_over_policyens_tak_forsok": 1,
+    "dobbel_bestilling_samme_tilbud_forsok": 1,
+    "dobbel_sending_samme_oppdrag_forsok": 1,
+    "utlopt_eller_uten_linjer_forsok": 1,
+    "kvittering_uten_bokforing_forsok": 1,
+    "kill_switch_konsumerte_tilbud_forsok": 1,
+    "tilbud_uten_policy_brudd": 0,
+    "tilbud_uten_godkjenning_brudd": 0,
+    "priser_utenfor_boka_brudd": 0,
+    "klausul_erstattet_brudd": 0,
+    "belop_over_policyens_tak_brudd": 0,
+    "dobbel_bestilling_samme_tilbud_brudd": 0,
+    "dobbel_sending_samme_oppdrag_brudd": 0,
+    "utlopt_eller_uten_linjer_brudd": 0,
+    "kvittering_uten_bokforing_brudd": 0,
+    "kill_switch_konsumerte_tilbud_brudd": 0,
+    "rundtur_paa_disponit_com": true
+  },
+  "funn": [
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.punkt_maalt_kun_i_port",
+      "detalj": {
+        "punkter": [
+          "tilbud_uten_policy",
+          "dobbel_sending_samme_oppdrag"
+        ],
+        "tilstand": "riggen ble satt ETTER at 0.7.0 var aktiv (uten-policy kan ikke rigges uten aa endre tenantens policy); kvittering-to-ganger maales av test_m26_bokforing_port/test_m26_controller; live er punkt 7 maalt som EN kvittering per oppdrag og EN evidens; en kvittering for et annet tilbud enn oppdragets (punkt 9) maales i test_m26_bokforing_port",
+        "port": "test_m26_tilbudsutloser_port.py, test_m26_bokforing_port.py, test_m26_controller.py"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.m37_verifikator_mangler",
+      "detalj": {
+        "tilstand": "brudd-saker gaar manuell i M-37 (ingen v_prisbok-verifikatormodul i fase 1)",
+        "saker": [
+          130,
+          131,
+          132
+        ]
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.klausulbytte_treffer_alle_ubundne",
+      "detalj": {
+        "punkt": "klausul_erstattet",
+        "tilstand": "BET-14 v2 gjorde ALLE godkjente, usendte tilbud (T2, T4, T5, T6) til klausul-endret, siden faktumet regnes mot nyeste versjon - etter design (et tilbud siterer boka slik den var), men en klausulendring stopper dermed alt som venter til det er laget paa nytt",
+        "oppfolging": "produktvalg: skal en klausulendring bare gjelde tilbud datert etter endringen (gyldig_fra)?"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.avsenderprofil_svar_til_i_lista",
+      "detalj": {
+        "tilstand": "GET /v1/tilbud baerer tenantens egen svar_til-adresse i avsenderprofilen (tenantens data, satt av tenanten) - kundens adresse staar aldri der; presisering av 'aldri adressen'"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.runden_logger_bare_ved_kandidater",
+      "detalj": {
+        "punkt": "dobbel_bestilling_samme_tilbud",
+        "tilstand": "plan.tilbud skriver tilbud_runde bare naar den plukket noe; punkt 6 er maalt paa tilbudsbestilling-tellingen (3 -> 4 med T6 som eneste nye)",
+        "oppfolging": "felles oppfoelging M-23/M-44/M-17/M-14/M-26: logg plukket=0"
+      }
+    },
+    {
+      "alvor": "gult",
+      "tekstnokkel": "m26.tilbud.epost_bekreftelse_ventes",
+      "detalj": {
+        "tilstand": "kvitteringen sier utfort og SMTP aksepterte; eiers bekreftelse av at e-posten kom fram er ikke mottatt ved skrivetidspunktet",
+        "oppfolging": "fjernes fra artefaktet naar eier bekrefter"
+      }
+    }
+  ]
+}

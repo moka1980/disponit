@@ -181,3 +181,33 @@ def test_artefaktskjemaet_er_generert_fra_invariantene():
     assert valider_artefaktformat(art, "m26-tilbud-v1") == []
     assert valider_artefaktformat({**art, "maalt": {**m, "x": 1}},
                                   "m26-tilbud-v1")
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 10/9 mot disponit.com: artefaktet er innsjekket, har
+    skjemaets form og passerer `m26-tilbud-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M26_TILBUD_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / ("deploy/staging/artefakter/"
+                 "m26-tilbud-v1-20260910T144500Z.json")
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m26-tilbud-v1") == []
+    assert _sjekk_grenser("m26-tilbud-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M26_TILBUD_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    for n in ("m26.tilbud.punkt_maalt_kun_i_port",
+              "m26.tilbud.m37_verifikator_mangler",
+              "m26.tilbud.klausulbytte_treffer_alle_ubundne",
+              "m26.tilbud.avsenderprofil_svar_til_i_lista",
+              "m26.tilbud.runden_logger_bare_ved_kandidater"):
+        assert n in nokler, n
+    assert art["oppsett"]["modul"] == "m26_prisbok"
+
