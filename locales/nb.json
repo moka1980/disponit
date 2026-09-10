@@ -6840,5 +6840,6 @@
   "ui.epost.meldinger.mottatt_kort": "mottatt",
   "ui.epost.meldinger.bare_slettede": "Alle meldingene som er hentet, er slettet. Sporet står nedenfor.",
   "ui.epost.meldinger.vis_raa": "Vis meldingen slik den kom",
-  "ui.epost.meldinger.tom_kropp": "Meldingen har ingen lesbar tekst — bare lenker og bilder."
+  "ui.epost.meldinger.tom_kropp": "Meldingen har ingen lesbar tekst — bare lenker og bilder.",
+  "ui.epost.meldinger.vis_lesbar": "Vis lesevennlig"
 }

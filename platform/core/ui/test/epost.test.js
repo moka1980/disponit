@@ -383,10 +383,22 @@ test("Epost: lesevisningen fjerner adressestøyen, og originalen ligger bak en b
   assert.ok(panel.querySelector(".epost-kropp").textContent
     .includes("Din OneDrive er klar"));
   assert.ok(!panel.querySelector(".epost-kropp").textContent.includes("https://"));
-  // Originalen er ikke borte — den ligger bak bryteren.
-  const raaBryter = panel.querySelector("details");
-  assert.ok(raaBryter && raaBryter.textContent.includes(t("ui.epost.meldinger.vis_raa")));
-  assert.ok(raaBryter.querySelector(".epost-kropp").textContent.includes("https://"));
+  // Originalen er ikke borte — bryteren VEKSLER til den, og tilbake.
+  // Én tekst på skjermen om gangen (eiers merknad: «da blir det duplikat
+  // visning»).
+  assert.equal(panel.querySelectorAll(".epost-kropp").length, 1);
+  const bytt = [...panel.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.meldinger.vis_raa"));
+  assert.ok(bytt, "bryteren mangler");
+  assert.equal(bytt.getAttribute("aria-pressed"), "false");
+  bytt.click();
+  assert.equal(panel.querySelectorAll(".epost-kropp").length, 1);
+  assert.ok(panel.querySelector(".epost-kropp").textContent.includes("https://"));
+  assert.equal(bytt.textContent, t("ui.epost.meldinger.vis_lesbar"));
+  assert.equal(bytt.getAttribute("aria-pressed"), "true");
+  bytt.click();
+  assert.ok(!panel.querySelector(".epost-kropp").textContent.includes("https://"));
+  assert.equal(bytt.textContent, t("ui.epost.meldinger.vis_raa"));
 });
 
 test("Epost: med to aktive kilder får hver liste sitt eget panel", async () => {

@@ -175,19 +175,31 @@ function meldingspanel() {
       const til = (m.til || []).join(", ");
       const raa = m.kropp || "";
       const ren = lesbarTekst(raa);
+      const kropp = el("pre", { class: "epost-kropp",
+        text: ren || t("ui.epost.meldinger.tom_kropp") });
       const deler = [
         el("h3", { text: m.emne || t("ui.epost.meldinger.uten_emne") }),
         el("p", { class: "muted", text: `${m.fra_navn ? m.fra_navn + " " : ""}<${m.fra || "—"}>`
           + (til ? ` → ${til}` : "") }),
         el("p", { class: "muted" }, Tidspunkt(m.mottatt_ts, {})),
-        el("pre", { class: "epost-kropp",
-          text: ren || t("ui.epost.meldinger.tom_kropp") })];
-      // Bare når rensingen faktisk tok noe: en ren tekstpost skal ikke
-      // få en bryter som lover en annen versjon enn den man ser.
+        kropp];
+      // BRYTEREN VEKSLER, den legger ikke til (eiers merknad 10/9: «da
+      // blir det duplikat visning»). Én melding, én tekst på skjermen —
+      // knappen bytter hvilken av de to man ser.
       if (ren !== raa.trim()) {
-        deler.push(el("details", {},
-          el("summary", { text: t("ui.epost.meldinger.vis_raa") }),
-          el("pre", { class: "epost-kropp", text: raa })));
+        let raatt = false;
+        const bytt = el("button", { type: "button",
+          text: t("ui.epost.meldinger.vis_raa") });
+        bytt.addEventListener("click", () => {
+          raatt = !raatt;
+          kropp.textContent = raatt
+            ? raa : (ren || t("ui.epost.meldinger.tom_kropp"));
+          bytt.textContent = t(raatt ? "ui.epost.meldinger.vis_lesbar"
+                                     : "ui.epost.meldinger.vis_raa");
+          bytt.setAttribute("aria-pressed", String(raatt));
+        });
+        bytt.setAttribute("aria-pressed", "false");
+        deler.splice(3, 0, el("div", { class: "knapperad" }, bytt));
       }
       sett(boks, ...deler);
       boks.hidden = false;
