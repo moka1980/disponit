@@ -378,6 +378,15 @@ export const hentEpostMelding = (meldingId) =>
   hentJson(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}`);
 // 176: sletting NÅ, før retensjonsfristen — teksten og adressen fjernes,
 // sporet består.
+// 179: svarutkastet — mennesket skriver og avgjør. Sendingen er en egen
+// vei gjennom policyporten; et godkjent utkast er en TILSTAND.
+export const skrivSvarutkast = (meldingId, tekst, idem) =>
+  _muter(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}/svarutkast`,
+         "POST", { tekst }, idem || nyIdempotensnokkel());
+export const avgjorSvarutkast = (utkastId, status, idem) =>
+  _muter(`/v1/epost/utkast/${encodeURIComponent(utkastId)}/dom`, "POST",
+         { status }, idem || nyIdempotensnokkel());
+
 export const slettEpostMelding = (meldingId, idem) =>
   _muter(`/v1/epost/meldinger/${encodeURIComponent(meldingId)}/slett`,
          "POST", {}, idem || nyIdempotensnokkel());

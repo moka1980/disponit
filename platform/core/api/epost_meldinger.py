@@ -77,6 +77,141 @@ _SELECT = ("SELECT melding_id, kilde_id, mottatt_ts, retning, har_vedlegg,"
            " kropp_kryptert, nonce, key_id, slettet_ts FROM epost_melding")
 
 
+# ---------------------------------------------------------------------
+# Svarutkastet (179): mennesket skriver, mennesket godkjenner.
+#
+# Teksten krypteres HER med tenantens DEK, som meldingskroppen — basen
+# ser aldri et svar i klartekst. Sendingen er en egen vei (PR 3–5): et
+# godkjent utkast er en TILSTAND, ikke en handling, og ingenting går ut
+# før policyporten har sagt ja.
+# ---------------------------------------------------------------------
+
+MAKS_SVAR = 32 * 1024
+
+
+def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/epost/meldinger/{melding_id}/svarutkast
+    (epost:utkast:behandle, idem): svaret et menneske skrev."""
+    from db import kryptering
+    from db.pg import sett_kontekst
+
+    from .app import _rid
+    from .epost_kilde import _modul_inaktiv
+    from .policyadmin_http import _feil, _kropp, _med_conn, _ok_lagret
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    mid = request.path_params["melding_id"]
+
+    def kjor(conn):
+        import psycopg
+
+        from . import kjerne
+        from .app import _autentiser
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid,
+                               "epost:utkast:behandle")
+        except kjerne.Feilsvar as f:
+            return _feil(f.kode, rid)
+        kropp = _kropp(request)
+        tekst = kropp.get("tekst")
+        if not isinstance(tekst, str) or not tekst.strip():
+            return _feil("request_feilformet", rid, 400,
+                         detalj="tekst mangler")
+        if len(tekst) > MAKS_SVAR:
+            return _feil("request_feilformet", rid, 400, detalj="tekst er lang")
+        conn.rollback()
+        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, auth.tenant)
+        ct, nonce = kryptering.krypter(dek, {"tekst": tekst}, auth.tenant,
+                                       key_id)
+        try:
+            with conn.transaction():
+                uid = conn.execute(
+                    "SELECT m6_skriv_svarutkast(%s,%s,%s,%s,%s,%s)",
+                    (auth.tenant, mid, ct, nonce, key_id,
+                     auth.aktor)).fetchone()[0]
+        except psycopg.Error:
+            return _feil("ikke_funnet", rid, 404)
+        return _ok_lagret(conn, {"utkast_id": str(uid), "status": "foreslatt"},
+                          rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def avgjor_utkast_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/epost/utkast/{utkast_id}/dom
+    (epost:utkast:behandle, idem): menneskets ja eller nei.
+
+    `sendt` er IKKE en dom her — den er kvitteringens vei tilbake når
+    plattformen faktisk har sendt (PR 6), og døra nekter den."""
+    from db.pg import sett_kontekst
+
+    from .app import _rid
+    from .epost_kilde import _modul_inaktiv
+    from .policyadmin_http import _feil, _kropp, _med_conn, _ok_lagret
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    uid = request.path_params["utkast_id"]
+
+    def kjor(conn):
+        import psycopg
+
+        from . import kjerne
+        from .app import _autentiser
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid,
+                               "epost:utkast:behandle")
+        except kjerne.Feilsvar as f:
+            return _feil(f.kode, rid)
+        status = (_kropp(request) or {}).get("status")
+        if status not in ("godkjent", "forkastet", "brukt_manuelt"):
+            return _feil("request_feilformet", rid, 400, detalj="status")
+        conn.rollback()
+        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        try:
+            with conn.transaction():
+                ny = conn.execute("SELECT m6_avgjor_utkast(%s,%s,%s,%s)",
+                                  (auth.tenant, uid, status,
+                                   auth.aktor)).fetchone()[0]
+        except psycopg.errors.ForeignKeyViolation:
+            return _feil("ikke_funnet", rid, 404)
+        except psycopg.Error:
+            # Vaktens nei er en TILSTANDSDOM: et utkast som alt er sendt
+            # eller forkastet, kan ikke avgjøres på nytt.
+            return _feil("epost_ulovlig_tilstand", rid, 409)
+        return _ok_lagret(conn, {"utkast_id": str(uid), "status": ny}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def utkast_for(conn, tenant: str, melding_id) -> list:
+    """Utkastene under én melding, nyeste først. Teksten dekrypteres for
+    økten; en reapet rad bærer ingen."""
+    from db import kryptering
+    ut = []
+    for r in conn.execute(
+            "SELECT utkast_id, status, opprettet, avgjort_ts, avgjort_av,"
+            " tekst_kryptert, nonce, key_id, slettet_ts FROM epost_utkast"
+            " WHERE tenant=%s AND melding_id=%s"
+            " ORDER BY opprettet DESC, utkast_id",
+            (tenant, melding_id)).fetchall():
+        tekst = None
+        if r[5] is not None and r[8] is None:
+            dek = kryptering.hent_dek(conn, tenant, r[7])
+            tekst = kryptering.dekrypter(dek, bytes(r[5]), bytes(r[6]),
+                                         tenant, r[7]).get("tekst")
+        ut.append({"utkast_id": str(r[0]), "status": r[1],
+                   "opprettet": r[2].isoformat(),
+                   "avgjort_ts": r[3].isoformat() if r[3] else None,
+                   "avgjort_av": r[4], "tekst": tekst,
+                   "slettet": r[8] is not None})
+    return ut
+
+
 def liste_endepunkt(tjeneste, request: Request) -> Response:
     from .app import _rid
     from .epost_kilde import _leseauth_epost, _modul_inaktiv
@@ -172,6 +307,9 @@ def detalj_endepunkt(tjeneste, request: Request) -> Response:
                          (tenant, mid)).fetchone()
         if r is None:
             return _feil("ikke_funnet", rid, 404)
-        return _ok(_rad(conn, tenant, r, med_kropp=True), rid)
+        ut = _rad(conn, tenant, r, med_kropp=True)
+        # Svarutkastene hører til meldingen, og detaljen er der de leses.
+        ut["utkast"] = utkast_for(conn, tenant, mid)
+        return _ok(ut, rid)
 
     return _med_conn(tjeneste, rid, kjor)

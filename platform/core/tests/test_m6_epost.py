@@ -550,8 +550,13 @@ def test_port4f_reaperen_kalles_fra_driftsveien(migrator):
 @pg
 def test_utkastets_tekst_er_append_only_men_dommen_felles(migrator):
     """Planens vakt: regenerering er en NY rad — teksten kan aldri
-    endres. Flatens dom (foreslått → forkastet | brukt_manuelt) er den
-    ENE lovlige overgangen utenom reap, og den felles én gang."""
+    endres. Dommen er en egen, målt overgang, og den felles én gang.
+
+    179 utvidet settet (foreslått → godkjent | forkastet | brukt_manuelt,
+    godkjent → forkastet | sendt) og krever nå at en dom bærer AKTØR og
+    TIDSPUNKT: en godkjenning ingen kan spores til, er ikke en
+    godkjenning. Testen rigger derfor overgangen komplett — en rigg som
+    setter status alene, er en tilstand produktet ikke kan nå."""
     from db import kryptering
     kid, key_id, dek = _kilde(migrator)
     mid = _melding(migrator, kid, key_id, dek)
@@ -570,14 +575,24 @@ def test_utkastets_tekst_er_append_only_men_dommen_felles(migrator):
             (ct, nonce, TENANT, uid))
     migrator.rollback()
     _sett_kontekst(migrator, TENANT)
-    migrator.execute(
-        "UPDATE epost_utkast SET status='forkastet'"
-        " WHERE tenant=%s AND utkast_id=%s", (TENANT, uid))
-    migrator.commit()
-    _sett_kontekst(migrator, TENANT)
+    # En dom UTEN aktør og tidspunkt avvises (179).
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         migrator.execute(
-            "UPDATE epost_utkast SET status='brukt_manuelt'"
+            "UPDATE epost_utkast SET status='forkastet'"
+            " WHERE tenant=%s AND utkast_id=%s", (TENANT, uid))
+    migrator.rollback()
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "UPDATE epost_utkast SET status='forkastet', avgjort_ts=now(),"
+        " avgjort_av='test' WHERE tenant=%s AND utkast_id=%s",
+        (TENANT, uid))
+    migrator.commit()
+    _sett_kontekst(migrator, TENANT)
+    # `forkastet` er terminal — også mot `brukt_manuelt`.
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        migrator.execute(
+            "UPDATE epost_utkast SET status='brukt_manuelt',"
+            " avgjort_ts=now(), avgjort_av='test'"
             " WHERE tenant=%s AND utkast_id=%s", (TENANT, uid))
     migrator.rollback()
     # ... og et utkast fødes foreslått, aldri ferdig dømt.

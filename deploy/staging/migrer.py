@@ -583,6 +583,9 @@ GRANT SELECT ON epost_melding, epost_klassifisering,
 -- (den har UPDATE på payload-lagrene), runtime får bare kalle den.
 SET LOCAL ROLE disponit_m37_claimer;
 GRANT EXECUTE ON FUNCTION m6_slett_melding(TEXT, UUID, TEXT) TO {rolle};
+-- 179: mennesket skriver svarutkastet og avgjør det.
+GRANT EXECUTE ON FUNCTION m6_skriv_svarutkast(TEXT, UUID, BYTEA, BYTEA, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_avgjor_utkast(TEXT, UUID, TEXT, TEXT) TO {rolle};
 RESET ROLE;
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med

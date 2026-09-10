@@ -376,6 +376,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
             notat="ARC B tilbud (169): dørens egne nei — et produkt uten"
                   " pris på tilbudsdatoen, en enhetspris over boka, et"
                   " avgjort tilbud som avgjøres igjen."),
+    Feilvei("epost_ulovlig_tilstand", 409, ("avvis",), None,
+            notat="M-6 (179): utkastets vakt sa nei — et svar som alt er"
+                  " sendt eller forkastet kan ikke avgjøres på nytt, og"
+                  " «sendt» er kvitteringens vei, aldri en dom. Avvis,"
+                  " ikke drift: tilstanden endrer seg ikke av å prøve"
+                  " igjen."),
     Feilvei("faktura_ukjent", 404, ("sikkerhet",), None,
             notat="ARC B bokføring: bestillingen peker på en faktura"
                   " tenanten ikke har — målt FØR beslutningen."),

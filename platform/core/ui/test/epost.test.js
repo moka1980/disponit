@@ -452,3 +452,60 @@ test("Epost: en postboks uten sendetilgang sier det FØR noen skriver et svar", 
     t("ui.epost.kilde.mangler_sendetilgang").split("{postboks}")[1].slice(0, 30)));
 });
 
+// ---------------------------------------------------------------------------
+// Svarutkastet (179): mennesket skriver og godkjenner, flaten sender ikke.
+// ---------------------------------------------------------------------------
+
+test("Epost: et svar skrives som utkast og godkjennes — flaten sender ingenting", async () => {
+  const medUtkast = { ...MELDING, utkast: [
+    { utkast_id: "u-1", status: "foreslatt", opprettet: "2026-09-10T12:00:00+00:00",
+      avgjort_ts: null, avgjort_av: null, tekst: "Vi kommer torsdag.", slettet: false }] };
+  SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+           "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: medUtkast,
+           [`/v1/epost/meldinger/${M1}/svarutkast`]: { utkast_id: "u-2", status: "foreslatt" },
+           "/v1/epost/utkast/u-1/dom": { utkast_id: "u-1", status: "godkjent" } };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector("textarea"));
+  const panel = h.querySelector(".skjemaboks");
+  assert.ok(panel.textContent.includes("Vi kommer torsdag."));
+  assert.ok(panel.textContent.includes(t("ui.epost.svar.status.foreslatt")));
+  // Godkjenning går til dom-ruten, ikke til noen sendevei.
+  KALL.length = 0;
+  [...panel.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.svar.knapp.godkjenn")).click();
+  await vent(() => KALL.some((k) => k.url === "/v1/epost/utkast/u-1/dom"));
+  assert.equal(KALL.find((k) => k.url === "/v1/epost/utkast/u-1/dom").kropp.status,
+               "godkjent");
+  assert.ok(!KALL.some((k) => /send/i.test(k.url) && !k.url.includes("svarutkast")),
+    "flaten kalte en sendevei");
+  // Nytt utkast lagres, ikke sendes.
+  KALL.length = 0;
+  const felt = panel.querySelector("textarea");
+  felt.value = "Takk for beskjeden.";
+  felt.closest("form").requestSubmit();
+  await vent(() => KALL.some((k) => k.url.endsWith("/svarutkast")));
+  const kall = KALL.find((k) => k.url.endsWith("/svarutkast"));
+  assert.equal(kall.metode, "POST");
+  assert.equal(kall.kropp.tekst, "Takk for beskjeden.");
+  for (const b of panel.querySelectorAll("button")) {
+    assert.ok(!/^send/i.test(b.textContent.trim()), b.textContent);
+  }
+});
+
+test("Epost: uten sendetilgang finnes ikke svarfeltet, bare forklaringen", async () => {
+  SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: false }] },
+           "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: { ...MELDING, utkast: [] } };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".skjemaboks").textContent
+    .includes(t("ui.epost.svar.uten_tilgang")));
+  assert.equal(h.querySelector(".skjemaboks textarea"), null);
+});
+
