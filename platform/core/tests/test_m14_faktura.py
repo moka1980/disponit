@@ -238,6 +238,15 @@ def test_invariant_modulen_bokforte():
     Målt på DATAMODELLEN og på RUTENE: 106 har ingen hovedbok, ingen
     kontoplan og ingen status som heter `bokfort`, og `app.py`
     registrerer nøyaktig sju fakturaruter — ingen av dem er en bokføring.
+
+    ARC B BOKFØRING (167, 10/9): statusen `bokfort` FINNES nå — men ikke
+    i 106, ikke i skjemaets domsett (`AVGJORELSER` er fortsatt
+    kontrollert/avvist) og ikke som en rute. Den settes av ÉN dør,
+    `m14_faktura_bokfort`, kalt av kvitteringskroken når eiermodulens
+    signerte kvittering kommer, og den registrerer bilaget i M-13s
+    bilagsregister (101) — huset har fortsatt ingen hovedbok, og
+    registeret bokfører fortsatt ingenting selv. Det er det denne porten
+    måler: bokføringen er plattformens arm, ikke registerets hånd.
     """
     kode = _bare_kode(MIGRASJON).lower()
     for ord_ in ("'bokfort'", "hovedbok", "kontoplan", "kontonummer",

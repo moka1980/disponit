@@ -464,6 +464,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm14_bokforingskandidater(integer)',                   'disponit_faktura_eier'),
     ('FUNCTION', 'm14_bokfor_bokforingsbestilling(text,uuid,text,text,text,bigint,bigint,text,jsonb)', 'disponit_faktura_eier'),
     ('FUNCTION', 'm14_bokforingsbestillingen(text,uuid)',               'disponit_faktura_eier'),
+    -- 167 (M-14, ARC B): kvitteringen når registeret — bilaget i M-13, fakturaen bokført.
+    ('FUNCTION', 'm14_faktura_bokfort(text,uuid,bigint,text,text,bigint,text,date,date,timestamp with time zone,text,text)', 'disponit_faktura_eier'),
     -- 107 (M-25): prosjektregisterets doerer og prosjektsveipen.
     ('FUNCTION', 'm25_evidens(text,uuid,text,text,jsonb)',              'disponit_prosjekt_eier'),
     ('FUNCTION', 'm25_sett_terskler(text,integer,integer,integer,text)', 'disponit_prosjekt_eier'),
