@@ -510,6 +510,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm26_tilbudskandidater(integer)',                        'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_bokfor_tilbudsbestilling(text,uuid,text,text,bigint,bigint,text,jsonb)', 'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_tilbudsbestillingen(text,uuid)',                    'disponit_prisbok_eier'),
+    -- 172 (M-26, ARC B): claim-veiens dør og tenantens avsenderprofil.
+    ('FUNCTION', 'm26_sett_avsenderprofil(text,text,text,text,text)',      'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_avsenderprofilen(text)',                            'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_for_sending(text,uuid)',                            'disponit_prisbok_eier'),
     -- 109 (M-27): lagerregisterets doerer og lagersveipen.
     ('FUNCTION', 'm27_evidens(text,uuid,text,text,jsonb)',              'disponit_beholdning_eier'),
     ('FUNCTION', 'm27_sett_terskler(text,integer,integer,integer,text)', 'disponit_beholdning_eier'),

@@ -1261,6 +1261,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import tilbud as tilbudmodul
         return tilbudmodul.dom_endepunkt(tjeneste, request)
 
+    def tilbud_avsenderprofil(request: Request) -> Response:
+        from . import tilbud as tilbudmodul
+        return tilbudmodul.avsenderprofil_endepunkt(tjeneste, request)
+
     def kundeservice_avsenderprofil(request: Request) -> Response:
         from . import kundeservice as ksmodul
         return ksmodul.avsenderprofil_endepunkt(tjeneste, request)
@@ -3653,6 +3657,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/tilbud", tilbud_lag, methods=["POST"]),
         Route("/v1/tilbud/{tilbud_id:uuid}", tilbud_detalj, methods=["GET"]),
         Route("/v1/tilbud/{tilbud_id:uuid}/dom", tilbud_dom, methods=["POST"]),
+        Route("/v1/tilbud/avsender", tilbud_avsenderprofil, methods=["POST"]),
         Route("/v1/kundeservice/avsender", kundeservice_avsenderprofil,
               methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
@@ -5106,6 +5111,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/tilbud/{tilbud_id:uuid}"):      "okonomi:read",
     ("POST", "/v1/tilbud"):                       "bestilling:opprett",
     ("POST", "/v1/tilbud/{tilbud_id:uuid}/dom"):  "bestilling:opprett",
+    ("POST", "/v1/tilbud/avsender"):              "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny"):
@@ -6452,6 +6458,12 @@ def _oppdrag_claim(tjeneste: Tjeneste, request: Request) -> Response:
                 from .bokforing import utforelse_for_bokforing
                 utforelse = utforelse_for_bokforing(
                     conn, tenant, (minimert or {}).get("faktura_id"))
+            # M-26 (172, ARC B tilbud PR 4): adressen, linjene og den
+            # bundne klausulteksten — og tilstanden spurt en gang til.
+            elif oppdragstype == "tilbud.generer":
+                from .tilbud import utforelse_for_sending
+                utforelse = utforelse_for_sending(
+                    conn, tenant, (minimert or {}).get("tilbud_id"))
 
             # Kvitteringskapabiliteten utstedes i SAMME transaksjon som
             # claimen. Feiler utstedelsen, finnes heller ingen claim —

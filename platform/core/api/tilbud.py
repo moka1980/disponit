@@ -139,7 +139,8 @@ def svar_for(conn, tenant: str) -> dict:
     registeret. Aldri adressen — bare masken."""
     rader = [_rad_til_tilbud(r) for r in conn.execute(
         "SELECT * FROM m26_tilbudene(%s,%s)", (tenant, MAKS_TILBUD)).fetchall()]
-    return {"sammendrag": {
+    return {"avsenderprofil": avsenderprofil_for(conn, tenant),
+            "sammendrag": {
                 "vist": len(rader),
                 "utkast": sum(1 for t in rader if t["status"] == "utkast"),
                 "godkjente": sum(1 for t in rader if t["status"] == "godkjent"),
@@ -149,7 +150,7 @@ def svar_for(conn, tenant: str) -> dict:
 
 
 def bilde(tjeneste, request):
-    """GET /v1/tilbud (okonomi:read)."""
+    """GET /v1/tilbud (okonomi:read) — lista og avsenderprofilen."""
     from .lesing import _les, kanonisk_json
 
     def _fn(conn, auth, rid):
@@ -174,8 +175,13 @@ def detalj_endepunkt(tjeneste, request):
                            (auth.tenant, tid)).fetchone()
         if rad is None or not mine:
             return _feil("ikke_funnet", rid, 404)
+        b = conn.execute("SELECT * FROM m26_tilbudsbestillingen(%s,%s)",
+                         (auth.tenant, tid)).fetchone()
         svar = {**mine[0], "innledning": rad[0], "linjer": rad[1],
-                "klausuler": rad[2], "request_id": rid}
+                "klausuler": rad[2], "request_id": rid,
+                "bestilling": ({"utfall": b[0], "oppdrag_id": b[1],
+                                "unntak_id": b[2], "bestilt_ts": b[4].isoformat()}
+                               if b else None)}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "okonomi:read", _fn)
 
@@ -255,3 +261,77 @@ def dom_endepunkt(tjeneste, request):
                 lambda rad: {"tilbud_id": str(tid), "status": status,
                              "ny": bool(rad[0])})
     return _skriv(tjeneste, request, bygg)
+
+
+MAKS_AVSENDERNAVN = 120
+MAKS_SIGNATUR = 500
+
+
+def avsenderprofil_endepunkt(tjeneste, request):
+    """POST /v1/tilbud/avsender (bestilling:opprett, idem): navnet
+    tilbudet sendes i, svar-til og signatur. Tenantens, ikke tilbudets."""
+    from .policyadmin_http import _Avbrudd, _feil
+
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
+        navn = _tekst(kropp, "avsender_navn", rid, MAKS_AVSENDERNAVN)
+        svar_til = _valgfri_tekst(kropp, "svar_til", rid, 254)
+        if svar_til is not None and not _EPOST.fullmatch(svar_til.strip()):
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                                 detalj="svar_til er ikke en adresse"))
+        signatur = _valgfri_tekst(kropp, "signatur", rid, MAKS_SIGNATUR)
+        return ("SELECT m26_sett_avsenderprofil(%s,%s,%s,%s,%s)",
+                (tenant, navn, svar_til, signatur, bid),
+                lambda rad: {"avsender_navn": navn.strip(),
+                             "svar_til": svar_til, "signatur": signatur,
+                             "ny": bool(rad[0])})
+    return _skriv(tjeneste, request, bygg)
+
+
+def avsenderprofil_for(conn, tenant: str):
+    rad = conn.execute("SELECT * FROM m26_avsenderprofilen(%s)",
+                       (tenant,)).fetchone()
+    if rad is None:
+        return None
+    return {"avsender_navn": rad[0], "svar_til": rad[1], "signatur": rad[2],
+            "oppdatert": rad[3].isoformat()}
+
+
+def utforelse_for_sending(conn, tenant: str, tilbud_id) -> dict:
+    """Det claim-veien gir tilbudsmodulen ved siden av payloaden (172).
+
+    ADRESSEN DEKRYPTERES HER, i API-ets tillit, med tenantens DEK — og
+    lever bare i claim-svaret, aldri i oppdraget. Linjene og
+    klausulteksten er den bundne versjonen (det tilbudet siterte). En
+    `hindring` betyr at modulen skal kvittere `feilet` uten å sende.
+    """
+    if not tilbud_id:
+        return {"hindring": "tilbud_ukjent"}
+    rad = conn.execute("SELECT f.*, current_date FROM m26_for_sending(%s,%s) f",
+                       (tenant, tilbud_id)).fetchone()
+    if rad is None:
+        return {"hindring": "tilbud_ukjent"}
+    (status, gyldig, navn, maske, ct, nonce, key_id, sum_ore, valuta, dato,
+     innledning, linjer, klausuler, p_navn, p_svar_til, p_sign, i_dag) = rad
+    if status != "godkjent":
+        return {"hindring": "tilbud_ikke_godkjent"}
+    if gyldig < i_dag:
+        return {"hindring": "tilbud_utlopt"}
+    if not linjer:
+        return {"hindring": "tilbud_uten_linjer"}
+    from db import kryptering
+    try:
+        dek = kryptering.hent_dek(conn, tenant, key_id)
+        adresse = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant,
+                                       key_id, ekstra_aad=_AAD_KUNDE)["e"]
+    except psycopg.Error:
+        raise
+    except Exception:                                   # noqa: BLE001
+        return {"hindring": "mottaker_uleselig"}
+    if not isinstance(adresse, str) or not _EPOST.fullmatch(adresse):
+        return {"hindring": "mottaker_uleselig"}
+    return {"mottaker_epost": adresse, "mottaker_maske": maske,
+            "kunde_navn": navn, "sum_ore": int(sum_ore), "valuta": valuta,
+            "tilbudsdato": str(dato), "gyldig_til": str(gyldig),
+            "innledning": innledning, "linjer": linjer,
+            "klausuler": klausuler, "avsender_navn": p_navn,
+            "svar_til": p_svar_til, "signatur": p_sign}
