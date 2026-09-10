@@ -27,7 +27,10 @@ from ..felles.levering import (feilutfall, kontraktsbrudd, kvittert, lever,
                                vindu_apent)
 from . import bilag as bilagsform
 
-OPPDRAGSTYPER = ("faktura.bokfor", "faktura.bokfor_stor")
+#: ÉN oppdragstype for begge bokføringshandlingene: registeret nekter
+#: to typer der den ene er strengprefiks av den andre, og arbeidet er det
+#: samme. Handlingen (liten/stor) står på oppdraget, ikke i typen.
+OPPDRAGSTYPER = ("faktura.bokfor",)
 
 
 def http_frist_s() -> float:

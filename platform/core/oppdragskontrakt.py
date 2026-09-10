@@ -412,26 +412,23 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         beskrivelse="M-44: levering av én kampanje til én mottaker"),
     # ARC B kundeservice (161): ett godkjent utkast til én henvendelse.
     # Payloaden er referanser — aldri adressen, aldri teksten.
+    # ÉN oppdragstype for BEGGE bokføringshandlingene (M-23s form med
+    # `purring.send.inkassovarsel`): registerets `registrer_oppdragstype`
+    # nekter to typer der den ene er strengprefiks av den andre
+    # (`faktura.bokfor` / `faktura.bokfor_stor`), og arbeidet ER det samme
+    # — policyens grense er det eneste som skiller dem. Oppdraget bærer
+    # handlingen i `handling`, typen i `oppdragstype`.
     "faktura.bokfor": Oppdragstype(
         navn="faktura.bokfor",
-        handlingsprefikser=("faktura.bokfor",),
+        handlingsprefikser=("faktura.bokfor", "faktura.bokfor_stor"),
         felter=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
                           "brutto_ore", "omfang"}),
         paakrevde=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
                              "brutto_ore", "omfang"}),
         eiermodul="m14_fakturakontroll",
-        beskrivelse=("M-14: bokfør én kontrollert inngående faktura under "
-                     "bransjemalens lille grense som ett bilag")),
-    "faktura.bokfor_stor": Oppdragstype(
-        navn="faktura.bokfor_stor",
-        handlingsprefikser=("faktura.bokfor_stor",),
-        felter=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
-                          "brutto_ore", "omfang"}),
-        paakrevde=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
-                             "brutto_ore", "omfang"}),
-        eiermodul="m14_fakturakontroll",
-        beskrivelse=("M-14: bokfør én kontrollert inngående faktura over "
-                     "den lille og under den store grensen som ett bilag")),
+        beskrivelse=("M-14: bokfør én kontrollert inngående faktura som ett "
+                     "bilag — den lille (faktura.bokfor) eller den store "
+                     "(faktura.bokfor_stor) grensen er policyens")),
     "kundeservice.svar.send": Oppdragstype(
         navn="kundeservice.svar.send",
         handlingsprefikser=("kundeservice.svar.send",),
@@ -1014,7 +1011,6 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     "kampanje.send": {"omfang": ("mottaker",)},
     "kundeservice.svar.send": {"omfang": ("svar",)},
     "faktura.bokfor": {"omfang": ("bilag",)},
-    "faktura.bokfor_stor": {"omfang": ("bilag",)},
     "purring.send": {"omfang": ("trinn",),
                      "handling_trinn": ("paaminnelse", "purring",
                                         "inkassovarsel")},
@@ -1087,8 +1083,6 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt"),
     "kundeservice.svar.send": ("henvendelse_id", "utkast_id"),
     "faktura.bokfor": ("faktura_id", "fakturanummer", "leverandor_ref"),
-    "faktura.bokfor_stor": ("faktura_id", "fakturanummer",
-                            "leverandor_ref"),
     "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
@@ -1143,7 +1137,6 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kampanje.send": ("omfang", {"mottaker": 15 * 60}),
     "kundeservice.svar.send": ("omfang", {"svar": 15 * 60}),
     "faktura.bokfor": ("omfang", {"bilag": 15 * 60}),
-    "faktura.bokfor_stor": ("omfang", {"bilag": 15 * 60}),
     "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
