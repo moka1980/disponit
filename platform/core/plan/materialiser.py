@@ -333,10 +333,14 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # kontrollene er rene, policyens grenser velger handlingen.
     from plan.faktura import kjor_en_runde as bokforingsrunde
     bokforing = bokforingsrunde(tjeneste, conn)
+    # M-26 (171): tilbudsutløseren — registeret bestiller når et menneske
+    # har godkjent, policyen avgjør.
+    from plan.tilbud import kjor_en_runde as tilbudsrunde
+    tilbud = tilbudsrunde(tjeneste, conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
            "resultater": resultater, "klassifisering": klassifisering,
            "purring": purring, "kampanje": kampanje, "svar": svar,
-           "bokforing": bokforing}
+           "bokforing": bokforing, "tilbud": tilbud}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)

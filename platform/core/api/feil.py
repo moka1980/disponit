@@ -372,7 +372,7 @@ FEILVEIER: tuple[Feilvei, ...] = (
             notat="ARC B tilbud (170): tilbudet er ikke godkjent, er"
                   " utløpt eller uten linjer — registerets tilstand, målt"
                   " FØR beslutningen brenner kvote."),
-    Feilvei("tilbud_ulovlig_tilstand", 409, ("drift",), None,
+    Feilvei("tilbud_ulovlig_tilstand", 409, ("avvis",), None,
             notat="ARC B tilbud (169): dørens egne nei — et produkt uten"
                   " pris på tilbudsdatoen, en enhetspris over boka, et"
                   " avgjort tilbud som avgjøres igjen."),

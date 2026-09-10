@@ -164,6 +164,7 @@ def test_samme_nokkel_gir_samme_tilbud(klient, migrator, token):
     assert r1.status_code == 200 and r2.status_code == 200, (r1.text, r2.text)
     assert r1.json()["tilbud_id"] == r2.json()["tilbud_id"]
     assert r1.json()["ny"] is True
+    assert r2.json()["ny"] is False
 
 
 @pg
