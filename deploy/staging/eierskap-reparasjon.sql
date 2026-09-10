@@ -47,6 +47,8 @@ INSERT INTO _design VALUES
     ('TABLE',    'kvitteringskapabiliteter',       'disponit_m37_claimer'),
     ('FUNCTION', 'arkiver_policyversjon(text,text,text)',            'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kapabilitet(text,text)',                      'disponit_m37_claimer'),
+    -- 175 (M-6 inntak): kryss-tenant-kandidatdøra for innhenteren, claimer-eid som reaperen.
+    ('FUNCTION', 'm6_hentekandidater(integer)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
     -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.

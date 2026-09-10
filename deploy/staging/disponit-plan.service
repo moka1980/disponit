@@ -36,6 +36,13 @@ LoadCredential=DISPONIT_MILJO:/etc/disponit/plan/DISPONIT_MILJO
 # hindre: API-et nekter å starte, mens den planlagte veien fortsetter å
 # beslutte på en semantikk ingen har verifisert, uten et menneske til stede.
 LoadCredential=DISPONIT_SEMANTIKK_MILJO:/etc/disponit/plan/DISPONIT_SEMANTIKK_MILJO
+# M-6 inntak (175): innhenteren veksler refresh → access selv. Tomme
+# filer = trygg default (som i API-uniten): uten klient-id finnes ingen
+# innhenting, og runden logger kildene som feilet på token.
+LoadCredential=DISPONIT_M365_CLIENT_ID:/etc/disponit/plan/DISPONIT_M365_CLIENT_ID
+LoadCredential=DISPONIT_M365_CLIENT_SECRET:/etc/disponit/plan/DISPONIT_M365_CLIENT_SECRET
+LoadCredential=DISPONIT_M365_TENANT:/etc/disponit/plan/DISPONIT_M365_TENANT
+LoadCredential=DISPONIT_M365_ALLOWLIST:/etc/disponit/plan/DISPONIT_M365_ALLOWLIST
 EnvironmentFile=-/etc/disponit/plan/konfig
 ExecStart=/opt/disponit/.venv/bin/python -m plan.materialiser
 TimeoutStartSec=10min

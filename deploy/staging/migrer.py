@@ -1288,6 +1288,17 @@ GRANT SELECT ON oppdragstype_register, modulkontrakt, modulhode,
                 moduldeployment, modulregister_hendelse TO {rolle};
 GRANT SELECT ON malautorisasjonsvilkar TO {rolle};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
+-- M-6 inntak (175): innhenteren ER planarbeideren. Trioen + hentemerkene
+-- å lese, hentemerkene og driftstilstanden å skrive, meldingene å føde —
+-- alt under `tenant_isolasjon` (innhenteren setter tenant per kilde).
+-- Web-API-rollen har fortsatt IKKE trioen (speilporten i test_m6_epost).
+GRANT SELECT (tenant, kilde_id, leverandor, postboks, status, sist_hentet_ts,
+    delta_token, auth_kryptert, nonce, key_id, opprettet)
+    ON epost_kilde TO {rolle};
+GRANT UPDATE (status, sist_hentet_ts, delta_token) ON epost_kilde TO {rolle};
+GRANT INSERT ON epost_melding TO {rolle};
+GRANT SELECT (tenant, melding_id, kilde_id, leverandor_melding_id, mottatt_ts,
+    slettet_ts) ON epost_melding TO {rolle};
 -- Plan-familiens definere (claimer-eide) — nøyaktig kallsettet fra
 -- plan/materialiser.py + plan/klassifiser.py + utfor_bestilling-stien;
 -- den statiske porten i test_claim_tillitsgrense måler at settet her og
@@ -1298,6 +1309,8 @@ GRANT EXECUTE ON FUNCTION terminaliser_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID, 
 GRANT EXECUTE ON FUNCTION frigi_planvindu(TEXT, UUID, TIMESTAMPTZ, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO {rolle};
+-- M-6 inntak (175): kryss-tenant-kandidatdøra, claimer-eid som reaperen.
+GRANT EXECUTE ON FUNCTION m6_hentekandidater(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO {rolle};
