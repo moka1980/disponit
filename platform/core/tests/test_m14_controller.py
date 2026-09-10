@@ -120,8 +120,9 @@ def test_gyldig_claim_kvitterer_bilaget_som_registeret_ga_det():
     assert kv["belop_ore"] == 2312500 and kv["motpart"] == "lev-nordkabel"
     assert kv["utstedt"] == "2026-09-01" and kv["forfall"] == "2026-10-01"
     assert kv["malversjon"] == "bilag-v1" and kv["bokfort_ts"]
-    # Den store bokføringen er samme arbeid.
-    k2 = _Klient(oppdragstype="faktura.bokfor_stor")
+    # Den store bokføringen er samme arbeid — og samme oppdragstype
+    # (`handling` på oppdraget skiller dem).
+    k2 = _Klient(oppdragstype="faktura.bokfor")
     assert _kjor(k2)["utfall"] == "utfort"
 
 

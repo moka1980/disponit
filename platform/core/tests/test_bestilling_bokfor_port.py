@@ -47,18 +47,23 @@ def test_bestillingstypene_er_deklarert_og_lukket():
     from api.bestilling import BESTILLINGSTYPER, Bestillingsfeil, normaliser
     from oppdragskontrakt import (FELTVERDIER, OPPDRAGSTYPER,
                                   UTFORELSESFRIST_VALG, type_for_handling)
+    # ÉN oppdragstype, to handlinger: registerets `registrer_oppdragstype`
+    # nekter strengprefiks-overlapp (funnet ved å kjøre vertsteget).
     for navn in ("faktura.bokfor", "faktura.bokfor_stor"):
         bt = BESTILLINGSTYPER[navn]
         assert bt.eiermodul == MODUL and bt.omfang == ("bilag",)
+        assert bt.oppdragstype == "faktura.bokfor" and bt.handling == navn
         assert bt.skjemafelt == frozenset({"bestillingstype", "faktura_ref",
                                            "omfang"})
-        ot = OPPDRAGSTYPER[navn]
-        assert ot.paakrevde == frozenset({"faktura_id", "fakturanummer",
-                                          "leverandor_ref", "brutto_ore",
-                                          "omfang"})
-        assert type_for_handling(navn).navn == navn
-        assert FELTVERDIER[navn]["omfang"] == ("bilag",)
-        assert UTFORELSESFRIST_VALG[navn] == ("omfang", {"bilag": 15 * 60})
+        assert type_for_handling(navn).navn == "faktura.bokfor"
+    assert "faktura.bokfor_stor" not in OPPDRAGSTYPER
+    ot = OPPDRAGSTYPER["faktura.bokfor"]
+    assert ot.paakrevde == frozenset({"faktura_id", "fakturanummer",
+                                      "leverandor_ref", "brutto_ore",
+                                      "omfang"})
+    assert FELTVERDIER["faktura.bokfor"]["omfang"] == ("bilag",)
+    assert UTFORELSESFRIST_VALG["faktura.bokfor"] == ("omfang",
+                                                      {"bilag": 15 * 60})
     fid = str(uuid.uuid4())
     n = normaliser(TENANT, {"bestillingstype": "faktura.bokfor",
                             "faktura_ref": f"faktura:{fid}",
@@ -110,13 +115,15 @@ def _sikre_m14_claimbar(m):
     khash = m.execute(
         "SELECT kontrakt_hash FROM modulkontrakt"
         f" WHERE modul_id='{MODUL}' AND kontraktversjon=1").fetchone()[0]
-    for ot in ("faktura.bokfor", "faktura.bokfor_stor"):
-        if m.execute("SELECT 1 FROM oppdragstype_register"
-                     " WHERE oppdragstype=%s", (ot,)).fetchone() is None:
-            m.execute(
-                "INSERT INTO oppdragstype_register (oppdragstype,eiermodul,"
-                "kontraktversjon,kontrakt_hash) VALUES (%s,%s,1,%s)",
-                (ot, MODUL, khash))
+    # Typen registreres gjennom den HERDEDE funksjonen, som vertsteget
+    # gjør — en rå INSERT så ikke at registeret nekter prefiks-overlapp
+    # mellom to typer (`faktura.bokfor` / `faktura.bokfor_stor`).
+    if m.execute("SELECT 1 FROM oppdragstype_register"
+                 " WHERE oppdragstype='faktura.bokfor'").fetchone() is None:
+        m.execute("SET ROLE disponit_modules_admin")
+        m.execute("SELECT registrer_oppdragstype('faktura.bokfor', %s, 1,"
+                  " %s, 'test')", (MODUL, khash))
+        m.execute("RESET ROLE")
     if m.execute(
             f"SELECT 1 FROM moduldeployment WHERE modul_id='{MODUL}'"
             " AND miljo=%s AND livslop='claiming'", (mv,)).fetchone() is None:

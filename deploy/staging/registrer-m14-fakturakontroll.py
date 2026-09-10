@@ -20,8 +20,10 @@ her fra `manifest.yaml` på disk (kanonisk projeksjon); de andre TAS
 IMOT. Radene er immutable — en feilformet hash stopper FØR skriving.
 Ingen artefakttype: bokføringen produserer ingen rapport, kvitteringen ER
 evidensen (bokfort_ts, malversjon, bilagsnummer, beløp, motpart).
-TO oppdragstyper registreres på samme kontrakt: den lille og den store
-bokføringen er samme arbeid med policyens to grenser.
+ÉN oppdragstype bærer BEGGE handlingene (`faktura.bokfor` og
+`faktura.bokfor_stor`): registeret nekter to typer der den ene er
+strengprefiks av den andre, og arbeidet er det samme — policyens grense
+er det eneste som skiller dem (M-23s form med inkassovarselet).
 """
 from __future__ import annotations
 
@@ -38,7 +40,8 @@ sys.path.insert(0, str(REPO / "platform"))
 import psycopg  # noqa: E402
 
 MODUL = "m14_fakturakontroll"
-OPPDRAGSTYPER = ("faktura.bokfor", "faktura.bokfor_stor")
+OPPDRAGSTYPER = ("faktura.bokfor",)
+HANDLINGER = ("faktura.bokfor", "faktura.bokfor_stor")
 MANIFEST = Path("platform/modules/m14_fakturakontroll/manifest.yaml")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -67,11 +70,12 @@ def main() -> int:
     _hex64("payload_skjema_hash", payload_hash)
     _hex64("kvittering_skjema_hash", kvittering_hash)
     import oppdragskontrakt
-    for ot in OPPDRAGSTYPER:
-        t = oppdragskontrakt.OPPDRAGSTYPER[ot]
-        if t.eiermodul != MODUL:
-            raise SystemExit(f"{ot} eies av {t.eiermodul!r}, ikke {MODUL}"
-                             " — kontrakten og registreringen er uenige")
+    for h in HANDLINGER:
+        t = oppdragskontrakt.type_for_handling(h)
+        if t is None or t.navn not in OPPDRAGSTYPER or t.eiermodul != MODUL:
+            raise SystemExit(f"{h} hører ikke til {OPPDRAGSTYPER} under"
+                             f" {MODUL} — kontrakten og registreringen er"
+                             " uenige")
     dsn = os.environ["DISPONIT_MIGRATOR_URL"]
     m_hash = manifest_hash()
     with psycopg.connect(dsn) as c:

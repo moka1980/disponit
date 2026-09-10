@@ -218,7 +218,7 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
                         "omfang")),
     "faktura.bokfor_stor": Bestillingstype(
         handling="faktura.bokfor_stor",
-        oppdragstype="faktura.bokfor_stor",
+        oppdragstype="faktura.bokfor",
         eiermodul="m14_fakturakontroll",
         kravsett=(),
         omfang=("bilag",),
