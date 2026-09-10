@@ -25,8 +25,8 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
-  alderTekst, belopTekst, kontrollTekst, oreTilFelt, promilleTilFelt,
-  satsTekst, tilOre, tilPromille, visFaktura,
+  alderTekst, belopTekst, bokforingstekst, kontrollTekst, oreTilFelt,
+  promilleTilFelt, satsTekst, tilOre, tilPromille, visFaktura,
 } from "../static/js/flater/faktura.js";
 
 settI18nForTest(NB, "nb");
@@ -265,17 +265,27 @@ test("Faktura: flaten har ingen bokføringsknapp og ingen signering",
     // for `faktura_godkjent` — og bruker den attestasjonen til å la
     // `faktura.bokfor` gå automatisk. Fraværet er dommen, og her måles
     // det på KILDEN. De andre halvdelene står i `test_m14_faktura.py`.
+    // ARC B (165–168): bokføringen FINNES nå — som plattformens arm
+    // (utløser, eiermodul, kvitteringskrok), aldri som flatens knapp.
+    // Flaten VISER hva armen gjorde (`bokforingstekst`); den kaller
+    // ingen bokføring. Ordene «bokføring»/«bokført» er derfor lov som
+    // TEKST; en knapp, et API-kall eller en signering er det ikke.
     const kilde = readFileSync(
       join(HER, "..", "static", "js", "flater", "faktura.js"), "utf8");
     const uten = kilde.replace(/^\s*\/\/.*$/gm, "");
-    for (const ord of ["bokfor", "attester", "signer", "hovedbok",
-                       "kontoplan", "godkjennFaktura"]) {
+    for (const ord of ["bokforFaktura", "attester", "signer", "hovedbok",
+                       "kontoplan", "godkjennFaktura", "/bokfor",
+                       "bestillBokforing"]) {
       assert.ok(!uten.toLowerCase().includes(ord.toLowerCase()),
-        `flaten bærer «${ord}» — v1 bokfører og attesterer ingenting`);
+        `flaten bærer «${ord}» — flaten bokfører og attesterer ingenting`);
     }
+    // Ingen knapp med bokføring i navnet, og ingen `send`/`fetch` av en
+    // bokføring: det eneste stedet ordet står er i tekst-nøklene.
+    assert.ok(!/text: t\("ui\.faktura\.knapp\.bokf/.test(uten));
     const api = readFileSync(
       join(HER, "..", "static", "js", "api.js"), "utf8");
     assert.ok(!/export const bokforFaktura/.test(api));
+    assert.ok(!/\/v1\/faktura\/[^"]*bokfor/.test(api));
   });
 
 // ---------------------------------------------------------------------
@@ -393,6 +403,61 @@ test("Faktura: detaljpanelet viser kontrollene med avviket i kroner",
     assert.ok(!punkter[1].includes("0,00"));
     assert.ok(punkter[1].includes(t("ui.faktura.utfall.ok")));
     assert.ok(h.textContent.includes("Nordisk Drift AS · F-1001"));
+  });
+
+test("Faktura: bokføringen vises som tekst — bestillingen og bilaget",
+  async () => {
+    // ARC B (168): en bokført faktura viser status «Bokført», og
+    // detaljpanelet sier hva plattformens arm gjorde — uten en knapp.
+    const F4 = "44444444-4444-4444-4444-444444444444";
+    const bokfort = {
+      faktura_id: F4, leverandor_ref: "Nordkabel Engros AS",
+      fakturanummer: "NK-2026-4471", netto_ore: 1850000, mva_ore: 462500,
+      brutto_ore: 2312500, sats_kode: "hoy", valuta: "NOK",
+      utstedt: "2026-09-01", forfall: "2026-10-01",
+      mottatt: "2026-09-08", status: "bokfort", dogn_siden_mottatt: 2,
+      kontroller: 4, avvik: 0, apne_funn: [],
+      bestilling: { handling: "faktura.bokfor", utfall: "tillat",
+                    oppdrag_id: 107, unntak_id: null,
+                    bestilt_ts: "2026-09-10T08:00:00+00:00" },
+      bokforing: { bilagsnummer: "LF-NK-2026-4471",
+                   bokfort_ts: "2026-09-10T08:01:00+00:00",
+                   oppdrag_id: 107 },
+    };
+    const over = { ...BILDE.fakturaer[1], faktura_id: F2,
+      bestilling: { handling: "ingen", utfall: "menneske_kreves",
+                    oppdrag_id: null, unntak_id: null,
+                    bestilt_ts: "2026-09-10T08:00:00+00:00" },
+      bokforing: null };
+    SVAR = { ...fullSvar(),
+      "/v1/faktura": { ...BILDE, fakturaer: [bokfort, over,
+                                             BILDE.fakturaer[2]] },
+      [`/v1/faktura/${F4}/kontroller`]: { kontroller: [],
+                                          request_id: "r-b" } };
+    const h = nyHoved();
+    visFaktura(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 4);
+    const rader = [...h.querySelectorAll("table")[1]
+      .querySelectorAll("tbody tr")];
+    assert.ok(rader[0].textContent.includes(t("ui.faktura.status.bokfort")));
+    rader[0].querySelector("button").click();
+    await vent(() => h.textContent.includes("LF-NK-2026-4471"));
+    assert.ok(h.textContent.includes(
+      t("ui.faktura.bokforing.handling.faktura.bokfor")));
+    assert.ok(h.textContent.includes("107"));
+    // Ingen knapp bærer bokføringen — bare tekst.
+    for (const b of h.querySelectorAll("button")) {
+      assert.ok(!/bokf/i.test(b.textContent), b.textContent);
+    }
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    // Over policyens tak sies rett ut.
+    rader[1].querySelector("button").click();
+    await vent(() => h.textContent.includes(
+      t("ui.faktura.bokforing.utfall.menneske_kreves")));
+    // …og en urørt faktura sier at ingenting har skjedd.
+    assert.equal(bokforingstekst(BILDE.fakturaer[2]),
+                 t("ui.faktura.bokforing.ingen"));
   });
 
 test("Faktura: en avgjort faktura tar ikke imot noe", async () => {

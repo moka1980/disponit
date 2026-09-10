@@ -6,7 +6,12 @@ av dem rører en tabell direkte — hver gjør nøyaktig ett kall mot en
 ingen tabellrettigheter i det hele tatt (SP-7).
 
 MODULEN BOKFØRER INGENTING OG ATTESTERER INGENTING. Det er v1-dommen, og
-den er klyngens nye: `bransjemal-tjenestebedrift.yaml` navngir modulen
+den står: ARC B (165–168) la bokføringen som PLATTFORMENS ARM rundt
+registeret — bestillingsvei, utløser, eiermodul og kvitteringskrok bor i
+`api/bestilling.py`, `plan/faktura.py` og `api/bokforing.py`, aldri
+her. Det denne fila fikk er én lesedør til (168): flaten VISER hva
+armen gjorde per faktura (bestillingens utfall, bilaget) — den utløser
+ingenting. Dommen var klyngens nye: `bransjemal-tjenestebedrift.yaml` navngir modulen
 som verifikatoren `v_regnskap`, betrodd for `dublettsjekk`,
 `mva_validert` og `faktura_godkjent` — og bruker de tre til å slippe
 `faktura.bokfor` gjennom som `modus: auto`. En attestasjon er nettopp
@@ -182,6 +187,23 @@ def svar_for(conn, tenant: str) -> dict:
          "avvik": r[14], "apne_funn": list(r[15] or ())}
         for r in conn.execute("SELECT * FROM m14_fakturaene(%s,%s)",
                               (tenant, MAKS_FAKTURAER)).fetchall()]
+    # ARC B (168): hva plattformens arm gjorde per faktura — utløserens
+    # bestilling og bilaget. Én dør for de viste fakturaene, lagt på radene.
+    bilde = {
+        str(r[0]): {
+            "bokforing": ({"bilagsnummer": r[1],
+                           "bokfort_ts": r[2].isoformat(),
+                           "oppdrag_id": r[3]} if r[1] else None),
+            "bestilling": ({"handling": r[4], "utfall": r[5],
+                            "oppdrag_id": r[6], "unntak_id": r[7],
+                            "bestilt_ts": r[8].isoformat()}
+                           if r[5] else None)}
+        for r in conn.execute(
+            "SELECT * FROM m14_bokforingsbildet(%s,%s::uuid[])",
+            (tenant, [f["faktura_id"] for f in fakturaer])).fetchall()}
+    for f in fakturaer:
+        f.update(bilde.get(f["faktura_id"],
+                           {"bokforing": None, "bestilling": None}))
     satser = [
         {"sats_kode": r[0], "promille": r[1],
          "gyldig_fra": r[2].isoformat(),
