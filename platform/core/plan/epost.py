@@ -204,6 +204,138 @@ def _log(hendelse: str, **felt) -> None:
           flush=True)
 
 
+# ---------------------------------------------------------------------
+# UTSENDINGEN (181): svaret et menneske skrev og trykket send på.
+#
+# Her, og ikke i web-API-et, fordi nøkkelen til postboksen ligger her
+# (088). Prisen er inntil fem minutter, og flaten sier det.
+#
+# Graphs `reply` svarer AVSENDEREN i den opprinnelige tråden: vi sender
+# aldri en adresse, og kan derfor heller ikke sende til feil. Emnet blir
+# «Re: …» hos Microsoft, og meldingen havner i kundens «Sendt».
+# ---------------------------------------------------------------------
+
+
+def sendekandidater(conn, grense: int = 20) -> list:
+    conn.rollback()
+    rader = conn.execute("SELECT * FROM m6_sendekandidater(%s)",
+                         (grense,)).fetchall()
+    conn.rollback()
+    return rader
+
+
+def graph_post(access: str, url: str, kropp: dict) -> None:
+    """POST mot Graph over ssrf-transporten. Kaster GraphFeil."""
+    import json as _json
+
+    from api import ssrf
+    from api.epost_kilde import hent_konfig
+    if not url.startswith(GRAPH + "/"):
+        raise GraphFeil(0, "url utenfor graph")
+    konfig = hent_konfig()
+    klient = ssrf.lag_klient(konfig.allowlist if konfig else ())
+    try:
+        r = klient.post(url, content=_json.dumps(kropp).encode("utf-8"),
+                        headers={"authorization": f"Bearer {access}",
+                                 "content-type": "application/json"})
+        ssrf.les_begrenset(r)
+        if r.status_code not in (200, 202, 204):
+            raise GraphFeil(r.status_code)
+    except ssrf.SsrfAvvist as e:
+        raise GraphFeil(0, type(e).__name__) from e
+    except OSError as e:
+        raise GraphFeil(0, type(e).__name__) from e
+    finally:
+        klient.close()
+
+
+def send_ett(conn, rad, *, poster=graph_post, veksler=None) -> dict:
+    """Ett svar ut. `poster`/`veksler` er testsnittene."""
+    from api.epost_kilde import KildeFeil, hent_access_token
+    from db import kryptering
+    from db.pg import sett_kontekst
+    tenant, utkast_id, _melding_id, kilde_id = rad
+    uid = str(utkast_id)
+    rid = f"svar-{uid[:8]}"
+    ut = {"utkast": uid[:8]}
+
+    def feilet(grunn):
+        sett_kontekst(conn, tenant, AKTOR, rid)
+        conn.execute("SELECT m6_svar_feilet(%s,%s,%s,%s)",
+                     (tenant, utkast_id, grunn, AKTOR))
+        conn.commit()
+        ut["feilet"] = grunn
+        _log("epost_svar_feilet", **ut)
+        return ut
+
+    sett_kontekst(conn, tenant, AKTOR, rid)
+    rader = conn.execute("SELECT * FROM m6_for_utsending(%s,%s)",
+                         (tenant, utkast_id)).fetchone()
+    if rader is None:
+        conn.rollback()
+        return feilet("utkast_borte")
+    status, lev_id, ct, nonce, key_id = rader[0], rader[1], rader[2], \
+        rader[3], rader[4]
+    if status != "sendes":
+        conn.rollback()
+        ut["hoppet"] = status            # noen andre rakk den først
+        return ut
+    if not lev_id or ct is None:
+        conn.rollback()
+        return feilet("uten_tekst_eller_traad")
+    try:
+        dek = kryptering.hent_dek(conn, tenant, key_id)
+        tekst = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant,
+                                     key_id)["tekst"]
+    except Exception:                                   # noqa: BLE001
+        conn.rollback()
+        return feilet("uleselig_utkast")
+    try:
+        access = hent_access_token(conn, tenant, kilde_id, veksler=veksler)
+    except KildeFeil:
+        conn.rollback()
+        return feilet("token_avvist")
+    conn.rollback()
+    try:
+        # `reply` legger svaret i TRÅDEN og sender til avsenderen. Vi
+        # oppgir aldri en mottaker: den er Microsofts egen, fra den
+        # opprinnelige meldingen.
+        poster(access,
+               f"{GRAPH}/me/messages/{lev_id}/reply",
+               {"comment": tekst})
+    except GraphFeil as e:
+        conn.rollback()
+        if e.status in (401, 403):
+            return feilet("sendetilgang_avvist")
+        if e.status and 500 <= e.status < 600:
+            # DRIFT, ikke en dom: utkastet står i kø og prøves igjen.
+            ut["forbigaende"] = f"graph_{e.status}"
+            _log("epost_svar_forbigaende", **ut)
+            return ut
+        return feilet(f"graph_{e.status or 0}")
+    sett_kontekst(conn, tenant, AKTOR, rid)
+    ny = conn.execute("SELECT m6_svar_sendt(%s,%s,%s)",
+                      (tenant, utkast_id, AKTOR)).fetchone()[0]
+    conn.commit()
+    ut["sendt"] = bool(ny)
+    return ut
+
+
+def send_runde(tjeneste, conn, *, poster=graph_post, veksler=None) -> dict:
+    """Køen ut, én runde. Kill-switchen er inntakets: en bryter som
+    stopper HELE M-6 er lettere å huske enn to."""
+    if er_av():
+        return {"av": True, "plukket": 0, "resultater": []}
+    rader = sendekandidater(conn)
+    if not rader:
+        return {"plukket": 0, "resultater": []}
+    resultater = [send_ett(conn, r, poster=poster, veksler=veksler)
+                  for r in rader]
+    res = {"plukket": len(rader), "resultater": resultater}
+    _log("epost_svar_runde", **res)
+    return res
+
+
 def kjor_en_runde(tjeneste, conn, *, graf=graph_get, veksler=None) -> dict:
     if er_av():
         _log("epost_inntak_av")
@@ -216,4 +348,7 @@ def kjor_en_runde(tjeneste, conn, *, graf=graph_get, veksler=None) -> dict:
            "ms": int((time.monotonic() - start) * 1000)}
     if rader:
         _log("epost_inntak_runde", **res)
+    # SVARENE UT i samme runde: køen er menneskets, og den skal ikke
+    # vente på neste tick fordi inntaket ikke fant noe.
+    res["sending"] = send_runde(tjeneste, conn, veksler=veksler)
     return res

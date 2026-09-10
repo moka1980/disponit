@@ -1307,6 +1307,8 @@ GRANT SELECT (tenant, kilde_id, leverandor, postboks, status, sist_hentet_ts,
     ON epost_kilde TO {rolle};
 GRANT UPDATE (status, sist_hentet_ts, delta_token) ON epost_kilde TO {rolle};
 GRANT INSERT ON epost_melding TO {rolle};
+-- 181: utkastets sendetilstand skrives av prosessen som faktisk sendte.
+GRANT SELECT ON epost_utkast TO {rolle};
 GRANT SELECT (tenant, melding_id, kilde_id, leverandor_melding_id, mottatt_ts,
     slettet_ts) ON epost_melding TO {rolle};
 -- Plan-familiens definere (claimer-eide) — nøyaktig kallsettet fra
@@ -1321,6 +1323,11 @@ GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO {rolle};
 -- M-6 inntak (175): kryss-tenant-kandidatdøra, claimer-eid som reaperen.
 GRANT EXECUTE ON FUNCTION m6_hentekandidater(INT) TO {rolle};
+-- 181: utsendingen — køen, det den trenger, og hva som skjedde.
+GRANT EXECUTE ON FUNCTION m6_sendekandidater(INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_for_utsending(TEXT, UUID) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_svar_sendt(TEXT, UUID, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_svar_feilet(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO {rolle};

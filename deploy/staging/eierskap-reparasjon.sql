@@ -58,6 +58,11 @@ INSERT INTO _design VALUES
     -- 180 (M-6): menneskets egen sending — kø, ikke agenthandling.
     ('FUNCTION', 'm6_for_svar(text,uuid)',                           'disponit_m37_claimer'),
     ('FUNCTION', 'm6_send_svaret(text,uuid,text)',                   'disponit_m37_claimer'),
+    -- 181 (M-6): utsendingen — køen, det den trenger, og hva som skjedde.
+    ('FUNCTION', 'm6_sendekandidater(integer)',                      'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_for_utsending(text,uuid)',                      'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_svar_sendt(text,uuid,text)',                    'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_svar_feilet(text,uuid,text,text)',              'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
     -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.
