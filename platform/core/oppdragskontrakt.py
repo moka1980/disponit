@@ -412,6 +412,26 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         beskrivelse="M-44: levering av én kampanje til én mottaker"),
     # ARC B kundeservice (161): ett godkjent utkast til én henvendelse.
     # Payloaden er referanser — aldri adressen, aldri teksten.
+    "faktura.bokfor": Oppdragstype(
+        navn="faktura.bokfor",
+        handlingsprefikser=("faktura.bokfor",),
+        felter=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
+                          "brutto_ore", "omfang"}),
+        paakrevde=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
+                             "brutto_ore", "omfang"}),
+        eiermodul="m14_fakturakontroll",
+        beskrivelse=("M-14: bokfør én kontrollert inngående faktura under "
+                     "bransjemalens lille grense som ett bilag")),
+    "faktura.bokfor_stor": Oppdragstype(
+        navn="faktura.bokfor_stor",
+        handlingsprefikser=("faktura.bokfor_stor",),
+        felter=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
+                          "brutto_ore", "omfang"}),
+        paakrevde=frozenset({"faktura_id", "fakturanummer", "leverandor_ref",
+                             "brutto_ore", "omfang"}),
+        eiermodul="m14_fakturakontroll",
+        beskrivelse=("M-14: bokfør én kontrollert inngående faktura over "
+                     "den lille og under den store grensen som ett bilag")),
     "kundeservice.svar.send": Oppdragstype(
         navn="kundeservice.svar.send",
         handlingsprefikser=("kundeservice.svar.send",),
@@ -993,6 +1013,8 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     # automatisk (eiervedtaket 8/9), og en payload som bærer den er feil.
     "kampanje.send": {"omfang": ("mottaker",)},
     "kundeservice.svar.send": {"omfang": ("svar",)},
+    "faktura.bokfor": {"omfang": ("bilag",)},
+    "faktura.bokfor_stor": {"omfang": ("bilag",)},
     "purring.send": {"omfang": ("trinn",),
                      "handling_trinn": ("paaminnelse", "purring",
                                         "inkassovarsel")},
@@ -1064,6 +1086,9 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     "epost.behandling": ("kilde_id",),
     "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt"),
     "kundeservice.svar.send": ("henvendelse_id", "utkast_id"),
+    "faktura.bokfor": ("faktura_id", "fakturanummer", "leverandor_ref"),
+    "faktura.bokfor_stor": ("faktura_id", "fakturanummer",
+                            "leverandor_ref"),
     "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
@@ -1117,6 +1142,8 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     # god margin, og ligger godt innenfor leasetaket (037).
     "kampanje.send": ("omfang", {"mottaker": 15 * 60}),
     "kundeservice.svar.send": ("omfang", {"svar": 15 * 60}),
+    "faktura.bokfor": ("omfang", {"bilag": 15 * 60}),
+    "faktura.bokfor_stor": ("omfang", {"bilag": 15 * 60}),
     "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring

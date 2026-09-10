@@ -43,7 +43,8 @@ NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40},
           "v_dlp": {"k1": "p" * 40},
           # 038/aksept: plattformens egen domenekontroll-verifikator —
           # bestillingsveien signerer domenekontroll_verifisert med den.
-          "v_domenekontroll": {"k1": "d" * 40}}
+          "v_domenekontroll": {"k1": "d" * 40},
+          "v_register": {"k1": "r" * 40}}
 #: MAC-signeringsregister for menneskelige godkjenningskonvolutter (PR-012):
 #: nøyaktig én `signerer`, hemmelighet >= 32 tegn.
 MAC_NOKLER = {"mk1": {"rolle": "signerer", "hemmelighet": "m" * 40}}
