@@ -140,6 +140,59 @@ def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
     return _med_conn(tjeneste, rid, kjor)
 
 
+def send_svaret_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/epost/utkast/{utkast_id}/send (epost:utkast:behandle, idem).
+
+    MENNESKETS EGEN SENDING, ikke en agenthandling: teksten er skrevet av
+    et menneske, og den går ut fra kundens egen postboks. Derfor ingen
+    policyport og ingen godkjenningsrunde med seg selv — eiervedtak 10/9,
+    andre runde.
+
+    Sendingen SELV skjer ikke her: nøkkelen til postboksen er med vilje
+    utenfor web-API-ets rekkevidde (088), så et innbrudd her ikke gir
+    noen retten til å sende i kundens navn. Dette setter utkastet i kø;
+    bakgrunnsprosessen med nøkkelen sender det."""
+    from db.pg import sett_kontekst
+
+    from .app import _rid
+    from .epost_kilde import _modul_inaktiv
+    from .policyadmin_http import _feil, _med_conn, _ok_lagret
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    uid = request.path_params["utkast_id"]
+
+    def kjor(conn):
+        import psycopg
+
+        from . import kjerne
+        from .app import _autentiser
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid,
+                               "epost:utkast:behandle")
+        except kjerne.Feilsvar as f:
+            return _feil(f.kode, rid)
+        conn.rollback()
+        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        try:
+            with conn.transaction():
+                ny = conn.execute("SELECT m6_send_svaret(%s,%s,%s)",
+                                  (auth.tenant, uid, auth.aktor)).fetchone()[0]
+        except psycopg.errors.ForeignKeyViolation:
+            return _feil("ikke_funnet", rid, 404)
+        except psycopg.errors.IntegrityConstraintViolation:
+            # BARE dørens egen dom blir 409 (CodeRabbit): alt sendt,
+            # forkastet, eller en postboks uten sendetilgang. En brutt
+            # tilkobling eller en serialiseringsfeil er DRIFT, og skal
+            # ikke se ut som at svaret ikke kunne sendes — den boblet
+            # videre til rammens vanlige feilvei.
+            return _feil("epost_ulovlig_tilstand", rid, 409)
+        return _ok_lagret(conn, {"utkast_id": str(uid), "status": ny}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def avgjor_utkast_endepunkt(tjeneste, request: Request) -> Response:
     """POST /v1/epost/utkast/{utkast_id}/dom
     (epost:utkast:behandle, idem): menneskets ja eller nei.
@@ -179,9 +232,11 @@ def avgjor_utkast_endepunkt(tjeneste, request: Request) -> Response:
                                    auth.aktor)).fetchone()[0]
         except psycopg.errors.ForeignKeyViolation:
             return _feil("ikke_funnet", rid, 404)
-        except psycopg.Error:
+        except (psycopg.errors.IntegrityConstraintViolation,
+                psycopg.errors.InsufficientPrivilege):
             # Vaktens nei er en TILSTANDSDOM: et utkast som alt er sendt
-            # eller forkastet, kan ikke avgjøres på nytt.
+            # eller forkastet, kan ikke avgjøres på nytt. Alt annet er
+            # drift og boblet videre (CodeRabbit).
             return _feil("epost_ulovlig_tilstand", rid, 409)
         return _ok_lagret(conn, {"utkast_id": str(uid), "status": ny}, rid)
 
@@ -195,7 +250,8 @@ def utkast_for(conn, tenant: str, melding_id) -> list:
     ut = []
     for r in conn.execute(
             "SELECT utkast_id, status, opprettet, avgjort_ts, avgjort_av,"
-            " tekst_kryptert, nonce, key_id, slettet_ts FROM epost_utkast"
+            " tekst_kryptert, nonce, key_id, slettet_ts, sendt_ts,"
+            " feilgrunn FROM epost_utkast"
             " WHERE tenant=%s AND melding_id=%s"
             " ORDER BY opprettet DESC, utkast_id",
             (tenant, melding_id)).fetchall():
@@ -208,7 +264,9 @@ def utkast_for(conn, tenant: str, melding_id) -> list:
                    "opprettet": r[2].isoformat(),
                    "avgjort_ts": r[3].isoformat() if r[3] else None,
                    "avgjort_av": r[4], "tekst": tekst,
-                   "slettet": r[8] is not None})
+                   "slettet": r[8] is not None,
+                   "sendt_ts": r[9].isoformat() if r[9] else None,
+                   "feilgrunn": r[10]})
     return ut
 
 

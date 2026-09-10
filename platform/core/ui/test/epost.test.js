@@ -456,7 +456,7 @@ test("Epost: en postboks uten sendetilgang sier det FØR noen skriver et svar", 
 // Svarutkastet (179): mennesket skriver og godkjenner, flaten sender ikke.
 // ---------------------------------------------------------------------------
 
-test("Epost: et svar skrives som utkast og godkjennes — flaten sender ingenting", async () => {
+test("Epost: et svar skrives som utkast og sendes — men flaten snakker aldri med Microsoft", async () => {
   const medUtkast = { ...MELDING, utkast: [
     { utkast_id: "u-1", status: "foreslatt", opprettet: "2026-09-10T12:00:00+00:00",
       avgjort_ts: null, avgjort_av: null, tekst: "Vi kommer torsdag.", slettet: false }] };
@@ -464,7 +464,8 @@ test("Epost: et svar skrives som utkast og godkjennes — flaten sender ingentin
            "/v1/epost/meldinger": MELDINGER,
            [`/v1/epost/meldinger/${M1}`]: medUtkast,
            [`/v1/epost/meldinger/${M1}/svarutkast`]: { utkast_id: "u-2", status: "foreslatt" },
-           "/v1/epost/utkast/u-1/dom": { utkast_id: "u-1", status: "godkjent" } };
+           "/v1/epost/utkast/u-1/send": { utkast_id: "u-1", status: "sendes" },
+           "/v1/epost/utkast/u-1/dom": { utkast_id: "u-1", status: "forkastet" } };
   const h = nyHoved();
   visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
@@ -473,15 +474,26 @@ test("Epost: et svar skrives som utkast og godkjennes — flaten sender ingentin
   const panel = h.querySelector(".skjemaboks");
   assert.ok(panel.textContent.includes("Vi kommer torsdag."));
   assert.ok(panel.textContent.includes(t("ui.epost.svar.status.foreslatt")));
-  // Godkjenning går til dom-ruten, ikke til noen sendevei.
+  // SEND går til send-ruten. Flaten sender ikke selv: den setter
+  // utkastet i kø hos bakgrunnsprosessen, som har nøkkelen.
   KALL.length = 0;
   [...panel.querySelectorAll("button")].find(
-    (b) => b.textContent === t("ui.epost.svar.knapp.godkjenn")).click();
-  await vent(() => KALL.some((k) => k.url === "/v1/epost/utkast/u-1/dom"));
-  assert.equal(KALL.find((k) => k.url === "/v1/epost/utkast/u-1/dom").kropp.status,
-               "godkjent");
-  assert.ok(!KALL.some((k) => /send/i.test(k.url) && !k.url.includes("svarutkast")),
-    "flaten kalte en sendevei");
+    (b) => b.textContent === t("ui.epost.svar.knapp.send")).click();
+  await vent(() => KALL.some((k) => k.url === "/v1/epost/utkast/u-1/send"));
+  assert.equal(KALL.find((k) => k.url === "/v1/epost/utkast/u-1/send").metode,
+               "POST");
+  // Ventetiden står i skjemaet, så ingen tror det gikk ut i samme sekund.
+  assert.ok(panel.textContent.includes(t("ui.epost.svar.ventetid")));
+  // Etter sendingen tegnes meldingen på nytt: raden sier «i kø», og
+  // send-knappen er borte (CodeRabbit).
+  SVAR[`/v1/epost/meldinger/${M1}`] = { ...medUtkast, utkast: [
+    { ...medUtkast.utkast[0], status: "sendes",
+      avgjort_ts: "2026-09-10T12:01:00+00:00", avgjort_av: "bruker:a" }] };
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".skjemaboks").textContent
+    .includes(t("ui.epost.svar.i_koe")));
+  assert.ok(![...h.querySelector(".skjemaboks").querySelectorAll("button")]
+    .some((b) => b.textContent === t("ui.epost.svar.knapp.send")));
   // Nytt utkast lagres, ikke sendes.
   KALL.length = 0;
   const felt = panel.querySelector("textarea");
@@ -491,9 +503,12 @@ test("Epost: et svar skrives som utkast og godkjennes — flaten sender ingentin
   const kall = KALL.find((k) => k.url.endsWith("/svarutkast"));
   assert.equal(kall.metode, "POST");
   assert.equal(kall.kropp.tekst, "Takk for beskjeden.");
-  for (const b of panel.querySelectorAll("button")) {
-    assert.ok(!/^send/i.test(b.textContent.trim()), b.textContent);
-  }
+  // Send-knappen SKAL finnes (eiervedtak 10/9) — det som ikke skal
+  // finnes, er en flate som snakker med Microsoft. Alle kall går til
+  // vårt eget API.
+  assert.ok(KALL.every((k) => k.url.startsWith("/v1/")),
+    "flaten kalte noe utenfor plattformen");
+  assert.ok(!KALL.some((k) => /graph\.microsoft|outlook\.office/i.test(k.url)));
 });
 
 test("Epost: uten sendetilgang finnes ikke svarfeltet, bare forklaringen", async () => {
@@ -507,5 +522,26 @@ test("Epost: uten sendetilgang finnes ikke svarfeltet, bare forklaringen", async
   await vent(() => h.querySelector(".skjemaboks").textContent
     .includes(t("ui.epost.svar.uten_tilgang")));
   assert.equal(h.querySelector(".skjemaboks textarea"), null);
+});
+
+test("Epost: et utkast i kø sier at det sendes innen fem minutter", async () => {
+  const iKo = { ...MELDING, utkast: [
+    { utkast_id: "u-3", status: "sendes", opprettet: "2026-09-10T12:00:00+00:00",
+      avgjort_ts: "2026-09-10T12:01:00+00:00", avgjort_av: "bruker:a",
+      tekst: "Vi kommer torsdag.", slettet: false, sendt_ts: null,
+      feilgrunn: null }] };
+  SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+           "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: iKo };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".skjemaboks").textContent
+    .includes(t("ui.epost.svar.i_koe")));
+  const panel = h.querySelector(".skjemaboks");
+  // Et utkast som alt er i kø, har ingen send-knapp igjen.
+  assert.ok(![...panel.querySelectorAll("button")].some(
+    (b) => b.textContent === t("ui.epost.svar.knapp.send")));
 });
 
