@@ -45,7 +45,7 @@ NOKLER = {"v_fordring": {"k1": "x" * 40}, "v_regnskap": {"k1": "y" * 40},
           # bestillingsveien signerer domenekontroll_verifisert med den.
           "v_domenekontroll": {"k1": "d" * 40},
           "v_register": {"k1": "r" * 40},
-          "v_prisbok": {"k1": "p" * 40}}
+          "v_prisbok": {"k1": "b" * 40}}
 #: MAC-signeringsregister for menneskelige godkjenningskonvolutter (PR-012):
 #: nøyaktig én `signerer`, hemmelighet >= 32 tegn.
 MAC_NOKLER = {"mk1": {"rolle": "signerer", "hemmelighet": "m" * 40}}
@@ -505,7 +505,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  "prosjekt", "prosjektterskel",
                  # 108 (M-26): funnene og prisene peker på produktet.
                  # Klausulene står fritt.
-                 "tilbudsklausul", "tilbudslinje", "tilbud",
+                 "tilbudsbestilling", "tilbudsklausul", "tilbudslinje", "tilbud",
                  "prisbokfunn", "pris", "produkt", "klausul",
                  "prisbokterskel",
                  # 109 (M-27): funnene, bevegelsene og punktene peker på
