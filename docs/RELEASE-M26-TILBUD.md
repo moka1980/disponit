@@ -100,7 +100,7 @@ til «klausul endret» (produktvalg: skal `gyldig_fra` skjerme eldre
 tilbud?); punkt 1 og 7 er målt i portene, ikke live; runden logger bare
 når den plukket noe; tenantens egen svar-til-adresse står i lista
 (presisering av «aldri adressen»); eiers bekreftelse av at e-posten kom
-fram var ikke mottatt da artefaktet ble skrevet (`epost_bekreftelse_ventes`,
-fjernes når den kommer). CodeRabbits stående merknad om usignerte
+fram kom 10/9 ~19:30Z («Tilbud eposten har kommet») — funnet
+`epost_bekreftelse_ventes` er fjernet fra artefaktet. CodeRabbits stående merknad om usignerte
 bevisartefakter gjelder også her (felles oppfølging, som for M-14).
 
