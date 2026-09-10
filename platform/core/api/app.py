@@ -3324,6 +3324,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_kilde_deaktiver(request: Request) -> Response:
         return epostkildemodul.deaktiver_endepunkt(tjeneste, request)
 
+    # M-6 PR-D a: meldingsflaten — det innhenteren (175) hentet.
+    from . import epost_meldinger as epostmeldingmodul
+
+    def epost_meldinger(request: Request) -> Response:
+        return epostmeldingmodul.liste_endepunkt(tjeneste, request)
+
+    def epost_melding(request: Request) -> Response:
+        return epostmeldingmodul.detalj_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -4402,6 +4411,9 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/epost/kilder/{kilde_id:uuid}/deaktiver",
               epost_kilde_deaktiver, methods=["POST"]),
+        Route("/v1/epost/meldinger", epost_meldinger, methods=["GET"]),
+        Route("/v1/epost/meldinger/{melding_id:uuid}", epost_melding,
+              methods=["GET"]),
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
@@ -5995,6 +6007,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/epost/kilder/callback"):   None,
     ("POST", "/v1/epost/kilder/{kilde_id:uuid}/deaktiver"):
         "epost:kilde:administrer",
+    ("GET",  "/v1/epost/meldinger"):         "epost:read",
+    ("GET",  "/v1/epost/meldinger/{melding_id:uuid}"): "epost:read",
     ("POST", "/v1/oidc/start"):              None,
     ("GET",  "/v1/oidc/callback"):           None,
     ("GET",  "/v1/sesjon"):                  None,

@@ -6787,5 +6787,18 @@
   "ui.tilbud.avsender.signatur": "Signature (optional)",
   "ui.tilbud.avsender.lagre": "Save",
   "ui.tilbud.avsender.ok": "Sender saved.",
-  "ui.tilbud.feil.prisbok": "The price book could not be loaded — a new quote cannot be created right now."
+  "ui.tilbud.feil.prisbok": "The price book could not be loaded — a new quote cannot be created right now.",
+  "ui.epost.meldinger.tittel": "Messages in {postboks}",
+  "ui.epost.meldinger.caption": "Incoming messages fetched from {postboks}, newest first",
+  "ui.epost.meldinger.ingen": "No messages have been fetched yet. The platform fetches every five minutes.",
+  "ui.epost.meldinger.kolonne.mottatt": "Received",
+  "ui.epost.meldinger.kolonne.fra": "From",
+  "ui.epost.meldinger.kolonne.emne": "Subject",
+  "ui.epost.meldinger.kolonne.slettes": "Deleted on",
+  "ui.epost.meldinger.apne": "Open",
+  "ui.epost.meldinger.reapet": "(deleted after the retention period — only the timestamp remains)",
+  "ui.epost.meldinger.uten_emne": "(no subject)",
+  "ui.epost.meldinger.vedlegg": "(attachment)",
+  "ui.epost.meldinger.avkortet": "The list is truncated — the newest are shown.",
+  "ui.epost.meldinger.feilet": "The messages for {postboks} could not be loaded right now."
 }

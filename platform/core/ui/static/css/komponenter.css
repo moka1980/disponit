@@ -258,6 +258,11 @@ input[type="range"] { accent-color: var(--info); }
 }
 /* Skjemaboksen (116 flater): et skjema er en handling, og den står på sin
    egen, litt dypere flate med overskrift og knapperad nederst. */
+/* M-6 meldingskroppen (PR-D a): tekst som tekst — bryt linjene, aldri
+   sidescroll, aldri HTML-tolkning. */
+.epost-kropp { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit;
+  max-height: 60vh; overflow-y: auto; }
+
 .skjemaboks, .skjema {
   display: grid; gap: var(--sp-3);
   background: var(--paper); border: 1px solid var(--line);
