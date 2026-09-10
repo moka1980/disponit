@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
-import { belopTekst, faktaTekst, tilOre, visTilbud } from "../static/js/flater/tilbud.js";
+import { belopTekst, faktaTekst, plattformtekst, tilOre, visTilbud } from "../static/js/flater/tilbud.js";
 
 settI18nForTest(NB, "nb");
 const HER = dirname(fileURLToPath(import.meta.url));
@@ -28,14 +28,21 @@ const LISTE = {
       status: "godkjent", antall_linjer: 2, priser_fra_boka: true,
       klausuler_uendret: true, avgjort_ts: "2026-09-10T10:00:00+00:00",
       avgjort_av: "bruker:a", opprettet: "2026-09-10T09:00:00+00:00",
-      opprettet_av: "bruker:a" },
+      opprettet_av: "bruker:a",
+      bestilling: { utfall: "tillat", oppdrag_id: 110, unntak_id: null,
+                    bestilt_ts: "2026-09-10T10:05:00+00:00" },
+      sending: { sendt_ts: "2026-09-10T10:06:00+00:00", oppdrag_id: 110,
+                 malversjon: "tilbud-v1" } },
     { tilbud_id: T2, kunde_navn: "Fjord Support AS", kunde_ref: "K-9",
       kunde_maske: "p****@fjord.example", tilbudsdato: "2026-09-09",
       gyldig_til: "2026-10-01", valuta: "NOK", sum_ore: 12500,
       status: "utkast", antall_linjer: 1, priser_fra_boka: false,
       klausuler_uendret: false, avgjort_ts: null, avgjort_av: null,
-      opprettet: "2026-09-09T09:00:00+00:00", opprettet_av: "bruker:b" },
+      opprettet: "2026-09-09T09:00:00+00:00", opprettet_av: "bruker:b",
+      bestilling: null, sending: null },
   ],
+  avsenderprofil: { avsender_navn: "Fjordlys Elektro AS", svar_til: null,
+                    signatur: null, oppdatert: "2026-09-10T08:00:00+00:00" },
   request_id: "r-a",
 };
 const DETALJ = { ...LISTE.tilbud[0], innledning: "Takk for befaringen.",
@@ -153,3 +160,83 @@ test("Tilbud: flaten har ingen sending og ingen prisregning", () => {
     assert.ok(!kilde.includes(ord), `flaten bærer «${ord}»`);
   }
 });
+
+test("Tilbud: plattformens arm står som tekst — bestillingen og sendingen, aldri en knapp", async () => {
+  const x = LISTE.tilbud[0];
+  const tekst = plattformtekst(x);
+  assert.ok(tekst.includes("110"));
+  assert.ok(tekst.includes("tilbud-v1"));
+  assert.ok(tekst.includes(t("ui.tilbud.plattform.utfall.tillat").split(" ")[0]));
+  assert.equal(plattformtekst(LISTE.tilbud[1]), t("ui.tilbud.plattform.ingen"));
+  const brudd = plattformtekst({ bestilling: { utfall: "brudd", oppdrag_id: null,
+    unntak_id: 131, bestilt_ts: "2026-09-10T10:05:00+00:00" }, sending: null });
+  assert.ok(brudd.includes("131"));
+  const feil = plattformtekst({ bestilling: { utfall: "feil:tilbud_utlopt", oppdrag_id: null,
+    unntak_id: null, bestilt_ts: "2026-09-10T10:05:00+00:00" }, sending: null });
+  assert.ok(feil.includes("tilbud_utlopt"));
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visTilbud(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 1);
+  assert.ok(h.textContent.includes(t("ui.tilbud.avsender.satt").replace("{navn}", "Fjordlys Elektro AS")));
+  assert.ok(h.textContent.includes("tilbud-v1"));
+  assert.ok(h.textContent.includes(t("ui.tilbud.plattform.ingen")));
+  for (const b of h.querySelectorAll("button")) {
+    assert.ok(!/send/i.test(b.textContent), b.textContent);
+  }
+  const brudd2 = await alvorligeBrudd(h);
+  assert.equal(brudd2.length, 0, beskrivBrudd(brudd2));
+});
+
+test("Tilbud: avsenderprofilen lagres via sin egen rute — uten adressen til noen kunde", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visTilbud(h, ctx());
+  await vent(() => h.querySelector("#tb-avs-navn"));
+  assert.equal(h.querySelector("#tb-avs-navn").value, "Fjordlys Elektro AS");
+  h.querySelector("#tb-avs-navn").value = "Fjordlys Elektro AS, Tromsø";
+  h.querySelector("#tb-avs-svar").value = "post@fjordlys.example";
+  h.querySelector("#tb-avs-sign").value = "Med vennlig hilsen";
+  h.querySelector("#tb-avs-navn").closest("form").requestSubmit();
+  await vent(() => SISTE && SISTE.sti === "/v1/tilbud/avsender");
+  assert.deepEqual(SISTE.kropp, { avsender_navn: "Fjordlys Elektro AS, Tromsø",
+    svar_til: "post@fjordlys.example", signatur: "Med vennlig hilsen" });
+  assert.ok(SISTE.headers["Idempotency-Key"] || SISTE.headers["idempotency-key"]);
+});
+
+test("Tilbud: en lesende økt ser avsenderen, men kan ikke endre den", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visTilbud(h, ctx(["okonomi:read"]));
+  await vent(() => h.querySelectorAll("table").length >= 1);
+  assert.ok(h.textContent.includes("Fjordlys Elektro AS"));
+  assert.equal(h.querySelector("#tb-avs-navn"), null);
+});
+
+test("Tilbud: når boka ikke kan lastes, sies det — skjemaet vises ikke", async () => {
+  SVAR = { "/v1/tilbud": LISTE, [`/v1/tilbud/${T1}`]: DETALJ };   // ingen /v1/prisbok → 404
+  const h = nyHoved();
+  visTilbud(h, ctx());
+  await vent(() => h.querySelector("[role=alert]"));
+  assert.ok(h.textContent.includes(t("ui.tilbud.feil.prisbok")));
+  assert.equal(h.querySelector("#tb-navn"), null);
+});
+
+test("Tilbud: detaljen er ferskere enn lista — en sending som kom etterpå vises", async () => {
+  const detalj2 = { ...LISTE.tilbud[1], innledning: null, linjer: [], klausuler: [],
+    bestilling: { utfall: "tillat", oppdrag_id: 111, unntak_id: null,
+                  bestilt_ts: "2026-09-10T11:00:00+00:00" },
+    sending: { sendt_ts: "2026-09-10T11:01:00+00:00", oppdrag_id: 111,
+               malversjon: "tilbud-v1" }, request_id: "r-d" };
+  SVAR = { ...fullSvar(), [`/v1/tilbud/${T2}`]: detalj2 };
+  const h = nyHoved();
+  visTilbud(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 1);
+  const rader = [...h.querySelectorAll("table")[0].querySelectorAll("tbody tr")];
+  assert.ok(rader[1].textContent.includes(t("ui.tilbud.plattform.ingen")));
+  rader[1].querySelector("button").click();
+  await vent(() => h.textContent.includes("111"));
+  const merke = h.querySelector(".skjemaboks p.muted");
+  assert.ok(merke.textContent.includes("111") && merke.textContent.includes("tilbud-v1"), merke.textContent);
+});
+

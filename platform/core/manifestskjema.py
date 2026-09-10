@@ -1760,6 +1760,51 @@ KRAVGRENSER["m14-bokforing-v1"] = {
     "punktbinding": {},
 }
 
+M26_TILBUD_INVARIANTER: tuple[str, ...] = (
+    # ARC B tilbud (169–174): plattformen SENDER det godkjente tilbudet —
+    # innenfor policyen, med registerets to fakta (priser fra boka,
+    # klausulene uendret) attestert av v_prisbok. Andre av bransjemalens
+    # fem aldri-fyrte auto-handlinger. M-23/M-44/M-17/M-14-formen,
+    # tilbudets dommer: registeret regner, mennesket godkjenner,
+    # plattformen sender, kvitteringen bokfører.
+    # 1. Uten policy med `tilbud.generer` bestilles ingenting — og ingen
+    #    beslutning brennes.
+    "tilbud_uten_policy",
+    # 2. Bare et GODKJENT tilbud er kandidat: utkast og forkastet aldri;
+    #    manuell bestilling av et utkast → 409 før kvote; `sendt` er
+    #    aldri en dom et menneske kan sette.
+    "tilbud_uten_godkjenning",
+    # 3. En linje under rabattgrensen → `priser_fra_prisbok` usann → sak.
+    "priser_utenfor_boka",
+    # 4. En klausul erstattet etter binding → `laste_klausuler_uendret`
+    #    usann → sak.
+    "klausul_erstattet",
+    # 5. Summen er policyens: over `belop_maks` → `belop_over_grense`.
+    "belop_over_policyens_tak",
+    # 6. Samme tilbud, to runder → én bestilling.
+    "dobbel_bestilling_samme_tilbud",
+    # 7. Samme oppdrag, to kvitteringer → én sending, én evidens.
+    "dobbel_sending_samme_oppdrag",
+    # 8. Utløpt eller uten linjer: 409 fra bestillingsveien, ikke
+    #    kandidat, `feilet` fra modulen — også utløpt MELLOM bestilling
+    #    og claim.
+    "utlopt_eller_uten_linjer",
+    # 9. Kvitteringen når registeret: tilbudet `sendt` med oppdraget og
+    #    malen, evidensen `tilbud.sendt` UTEN adresse; en kvittering for
+    #    et annet tilbud enn oppdragets bokføres ikke.
+    "kvittering_uten_bokforing",
+    # 10. Kill-switch og plattformtilstand stopper uten å konsumere:
+    #     tilbudet er kandidat igjen når bryteren er på.
+    "kill_switch_konsumerte_tilbud",
+)
+KRAVGRENSER["m26-tilbud-v1"] = {
+    "invarianter": M26_TILBUD_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
@@ -2325,6 +2370,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
+    "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
 }
 
 
@@ -2583,7 +2629,7 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
                    "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1",
-                   "m14-bokforing-v1"):
+                   "m14-bokforing-v1", "m26-tilbud-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

@@ -134,16 +134,38 @@ def _rad_til_tilbud(r) -> dict:
             "opprettet_av": r[15]}
 
 
+def _bildet(conn, tenant: str, ids: list) -> dict:
+    """Plattformens arm per tilbud (174): utløserens bestilling og
+    sendingen — null der ingenting har skjedd. TEKST i flaten, aldri en
+    knapp."""
+    ut = {}
+    for r in conn.execute(
+            "SELECT * FROM m26_tilbudsbildet(%s,%s::uuid[])",
+            (tenant, [str(i) for i in ids])).fetchall():
+        ut[str(r[0])] = {
+            "bestilling": ({"utfall": r[1], "oppdrag_id": r[2],
+                            "unntak_id": r[3], "bestilt_ts": r[4].isoformat()}
+                           if r[1] else None),
+            "sending": ({"sendt_ts": r[5].isoformat(), "oppdrag_id": r[6],
+                         "malversjon": r[7]} if r[5] else None)}
+    return ut
+
+
 def svar_for(conn, tenant: str) -> dict:
     """Tilbudsflatens tilstand: lista med de to faktaene regnet av
-    registeret. Aldri adressen — bare masken."""
+    registeret, og hva plattformens arm gjorde (174). Aldri adressen —
+    bare masken."""
     rader = [_rad_til_tilbud(r) for r in conn.execute(
         "SELECT * FROM m26_tilbudene(%s,%s)", (tenant, MAKS_TILBUD)).fetchall()]
+    bilde = _bildet(conn, tenant, [t["tilbud_id"] for t in rader])
+    for t in rader:
+        t.update(bilde.get(t["tilbud_id"], {"bestilling": None, "sending": None}))
     return {"avsenderprofil": avsenderprofil_for(conn, tenant),
             "sammendrag": {
                 "vist": len(rader),
                 "utkast": sum(1 for t in rader if t["status"] == "utkast"),
                 "godkjente": sum(1 for t in rader if t["status"] == "godkjent"),
+                "sendte": sum(1 for t in rader if t["status"] == "sendt"),
                 "sum_godkjent_ore": sum(t["sum_ore"] for t in rader
                                         if t["status"] == "godkjent")},
             "tilbud": rader}
@@ -175,13 +197,10 @@ def detalj_endepunkt(tjeneste, request):
         if rad is None or hode is None:
             return _feil("ikke_funnet", rid, 404)
         mine = [_rad_til_tilbud(hode)]
-        b = conn.execute("SELECT * FROM m26_tilbudsbestillingen(%s,%s)",
-                         (auth.tenant, tid)).fetchone()
         svar = {**mine[0], "innledning": rad[0], "linjer": rad[1],
                 "klausuler": rad[2], "request_id": rid,
-                "bestilling": ({"utfall": b[0], "oppdrag_id": b[1],
-                                "unntak_id": b[2], "bestilt_ts": b[4].isoformat()}
-                               if b else None)}
+                **_bildet(conn, auth.tenant, [tid]).get(
+                    str(tid), {"bestilling": None, "sending": None})}
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "okonomi:read", _fn)
 

@@ -171,5 +171,6 @@
   "170_m26_for_tilbud.sql": "cd112a98068e59e1ede9fbb39a989c7686db895d57a2efc2fab94d350aaad2be",
   "171_m26_tilbudsutloser.sql": "57a0be5d128a8bf3daf86271ed90b55d2abb56d23f570662bd33c2fb1aaf144d",
   "172_m26_sending.sql": "057e59468d60d1eca4c9e4d197042c41ca0275d0449d5939405ab0e240d182e0",
-  "173_m26_tilbud_sendt.sql": "1a53e220aac53c596595eadaae89d85f1aa25be1c6f496e472bfea6b90b484fc"
+  "173_m26_tilbud_sendt.sql": "1a53e220aac53c596595eadaae89d85f1aa25be1c6f496e472bfea6b90b484fc",
+  "174_m26_tilbudsbildet.sql": "66ed0756a3676119d70493d88ec88b494c70dc416b8077bba0be1fc41593aaca"
 }
