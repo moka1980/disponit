@@ -1,0 +1,43 @@
+# m14_fakturakontroll-arbeideren: claimer faktura.bokfor(_stor)-oppdrag over API-et med
+# modultokenet fra onboarding (035), bygger bilaget av claim-svaret (165),
+# og kvitterer signert. INGEN SMTP: v1-koblingen er husets bilagsregister
+# (M-13), og bokføringen skjer når kvitteringen når registeret.
+#
+# TILLITSSNITTET (m56/m57-formen): prosessen har modultoken og
+# kvitteringsnøkkel — men INGEN DB-tilgang, ingen KEK, ingen
+# tenant-nøkler. Bilagets tall kommer i claim-svaret og lever bare i
+# minnet så lenge kvitteringen varer.
+#
+# Enables FØRST når modulen er registrert (registrer-m14-fakturakontroll.py) og
+# onboardet — før det ville claim svart 403 og uniten bare pollet seg varm.
+#
+# Installasjon: kopier til /etc/systemd/system/, opprett bruker
+# disponit-m14, fyll /etc/disponit/m14/{konfig,DISPONIT_MODULTOKEN,
+# kvitteringsnokkel.json} (0600), daemon-reload. `konfig` bærer
+# DISPONIT_API_URL og DISPONIT_KVITTERINGSNOKKEL.
+[Unit]
+Description=Disponit M-14 bokføringsarbeider (m14_fakturakontroll)
+After=network-online.target disponit-api.service
+Wants=network-online.target
+
+[Service]
+User=disponit-m14
+Group=disponit-m14
+WorkingDirectory=/opt/disponit/aktiv/platform
+Environment=PYTHONPATH=/opt/disponit/aktiv/platform/core:/opt/disponit/aktiv/platform
+EnvironmentFile=-/etc/disponit/m14/konfig
+LoadCredential=DISPONIT_MODULTOKEN:/etc/disponit/m14/DISPONIT_MODULTOKEN
+RuntimeDirectory=disponit-m14
+Environment=XDG_RUNTIME_DIR=/run/disponit-m14
+ExecStart=/opt/disponit/.venv/bin/python -m drift.m14_arbeider
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/disponit
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

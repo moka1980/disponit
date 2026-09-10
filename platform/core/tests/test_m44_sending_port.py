@@ -211,8 +211,8 @@ def test_avsenderprofilen_valideres(miljo, klient, token, migrator):
 
 def test_claim_svaret_barer_utforelse_for_eiermodulene():
     """Statisk: `utforelse` legges på svaret for purring.send,
-    kampanje.send og kundeservice.svar.send — og bare dem;
-    m56/m57-kontrakten er urørt."""
+    kampanje.send, kundeservice.svar.send og faktura.bokfor(_stor) — og
+    bare dem; m56/m57-kontrakten er urørt."""
     from pathlib import Path
     kode = (Path(__file__).resolve().parents[1] / "api" / "app.py"
             ).read_text(encoding="utf-8")
@@ -222,4 +222,8 @@ def test_claim_svaret_barer_utforelse_for_eiermodulene():
     assert 'elif oppdragstype == "kampanje.send":' in blokk
     assert 'elif oppdragstype == "kundeservice.svar.send":' in kode
     assert kode.count("utforelse = utforelse_for_sending(") == 3
+    # M-14 (ARC B bokføring): bilaget, ikke en sending — egen funksjon.
+    assert 'elif oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):' \
+        in kode
+    assert kode.count("utforelse = utforelse_for_bokforing(") == 1
     assert 'if utforelse is not None:\n            svar["utforelse"]' in kode
