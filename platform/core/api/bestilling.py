@@ -225,6 +225,18 @@ BESTILLINGSTYPER: dict[str, Bestillingstype] = {
         skjemafelt=frozenset({"bestillingstype", "faktura_ref", "omfang"}),
         intensjonsfelt=("tenant", "bestillingstype", "faktura_id",
                         "omfang")),
+    # ARC B tilbud (170): bransjemalens `tilbud.generer` — ett godkjent
+    # tilbud til én kunde. Kroppen er ÉN referanse og ett omfang: summen,
+    # prisene og klausulene er registerets.
+    "tilbud.generer": Bestillingstype(
+        handling="tilbud.generer",
+        oppdragstype="tilbud.generer",
+        eiermodul="m26_prisbok",
+        kravsett=(),
+        omfang=("tilbud",),
+        skjemafelt=frozenset({"bestillingstype", "tilbud_ref", "omfang"}),
+        intensjonsfelt=("tenant", "bestillingstype", "tilbud_id",
+                        "omfang")),
     "purring.send": Bestillingstype(
         handling="purring.send",
         oppdragstype="purring.send",
@@ -258,6 +270,7 @@ _KAMPANJE_REF = re.compile(r"^kampanje:" + _UUID + "$")
 _MOTTAKER_REF = re.compile(r"^mottaker:" + _UUID + "$")
 _HENVENDELSE_REF = re.compile(r"^henvendelse:" + _UUID + "$")
 _FAKTURA_REF = re.compile(r"^faktura:" + _UUID + "$")
+_TILBUD_REF = re.compile(r"^tilbud:" + _UUID + "$")
 _UTKAST_REF = re.compile(r"^utkast:" + _UUID + "$")
 _FORDRING_REF = re.compile(
     r"^fordring:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
@@ -312,6 +325,8 @@ def normaliser(tenant: str, data: dict) -> dict:
         return _normaliser_svar(tenant, bt, data)
     if bt.oppdragstype in ("faktura.bokfor", "faktura.bokfor_stor"):
         return _normaliser_bokforing(tenant, bt, data)
+    if bt.oppdragstype == "tilbud.generer":
+        return _normaliser_tilbud(tenant, bt, data)
     if bt.oppdragstype == "kontinuitet.ovelse":
         # 089 (M-35): lukket kropp med ett valg — omfanget. Alt annet
         # eies av øvelseslogikken selv.
@@ -376,6 +391,19 @@ def _normaliser_svar(tenant: str, bt: Bestillingstype, data: dict) -> dict:
     return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
             "henvendelse_id": h.group(0).split(":", 1)[1],
             "utkast_id": u.group(0).split(":", 1)[1],
+            "omfang": data["omfang"]}
+
+
+def _normaliser_tilbud(tenant: str, bt: Bestillingstype, data: dict) -> dict:
+    """M-26 (ARC B): én referanse (`tilbud:<uuid>`) og omfanget. Summen,
+    prisene og adressen står IKKE i kroppen — de er registerets."""
+    m = _TILBUD_REF.fullmatch(str(data.get("tilbud_ref") or ""))
+    if m is None:
+        raise Bestillingsfeil("request_feilformet")
+    if data.get("omfang") not in bt.omfang:
+        raise Bestillingsfeil("request_feilformet")
+    return {"tenant": tenant, "bestillingstype": data["bestillingstype"],
+            "tilbud_id": m.group(0).split(":", 1)[1],
             "omfang": data["omfang"]}
 
 
@@ -1003,6 +1031,36 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
         # attestert under.
         kundesvar = None
         bokforing = None
+        tilbud = None
+        # ARC B tilbud (170): tilbudet må finnes, være GODKJENT av et
+        # menneske og fortsatt gyldig — registerets tilstand, målt FØR
+        # beslutningen brenner kvote. Prisene og klausulene er policyens
+        # vilkår, attestert under av det døra målte.
+        if bt.oppdragstype == "tilbud.generer":
+            sett_kontekst(conn, tenant, aktor, rid)
+            trad = conn.execute(
+                "SELECT f.*, current_date FROM m26_for_tilbud(%s,%s) f",
+                (tenant, norm["tilbud_id"])).fetchone()
+            conn.rollback()
+            if trad is None:
+                tjeneste.logg.hendelse("tilbud_ukjent", rid, tenant,
+                                       art="sikkerhet")
+                return ("feil", "tilbud_ukjent")
+            (t_status, t_maske, t_sum, t_valuta, t_dato, t_gyldig, t_linjer,
+             t_priser, t_klausuler, i_dag) = trad
+            hindring = (
+                "ikke_godkjent" if t_status != "godkjent"
+                else "utlopt" if t_gyldig < i_dag
+                else "uten_linjer" if not t_linjer else None)
+            if hindring is not None:
+                tjeneste.logg.hendelse("tilbud_ikke_klart_for_sending", rid,
+                                       tenant, art="drift", grunn=hindring)
+                return ("feil", "tilbud_ikke_klart_for_sending")
+            tilbud = {"tilbud_id": norm["tilbud_id"], "sum_ore": int(t_sum),
+                      "valuta": t_valuta, "tilbudsdato": str(t_dato),
+                      "gyldig_til": str(t_gyldig),
+                      "priser_fra_boka": bool(t_priser),
+                      "klausuler_uendret": bool(t_klausuler)}
         # ARC B bokføring (165): fakturaen må finnes, være åpen for
         # bokføring (ikke avvist), i policyens valuta, og — ligger den
         # over tenantens egen beløpsgrense — ha den manuelle kontrollen
@@ -1304,6 +1362,22 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                          "omfang": norm["omfang"],
                          "dataklasser": ["intern", "persondata"],
                          "dataklasser_kilde": "connector"}
+            elif tilbud is not None:
+                # BELØPET ER TILBUDETS SUM, i kroner med to desimaler — det
+                # policyens `belop_maks` (150 000) måler. Frekvensen
+                # grupperes på `tilbud_id`. PERSONDATA: tilbudet sendes til
+                # kundens adresse — handlingen sier det om seg selv.
+                ts = tilbud["sum_ore"]
+                event = {"handling": bt.handling,
+                         "ressurs_id": "tilbud:" + tilbud["tilbud_id"],
+                         "tilbud_id": tilbud["tilbud_id"],
+                         "sum_ore": ts,
+                         "belop": f"{ts // 100}.{ts % 100:02d}",
+                         "valuta": tilbud["valuta"],
+                         "gyldig_til": tilbud["gyldig_til"],
+                         "omfang": norm["omfang"],
+                         "dataklasser": ["finansiell", "persondata"],
+                         "dataklasser_kilde": "connector"}
             elif bokforing is not None:
                 # BELØPET ER BRUTTO, i kroner med to desimaler — det er
                 # det bransjemalens `belop_maks` (25 000 / 100 000) måler.
@@ -1562,6 +1636,39 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 tjeneste.logg.hendelse(
                     "bokforing_attestasjon_utilgjengelig", rid, tenant,
                     art="drift")
+            # ARC B tilbud (170): attestasjonene er registerets egne fakta
+            # — `priser_fra_prisbok` og `laste_klausuler_uendret`, begge som
+            # `v_prisbok`. Et nei er en USANN attestasjon (sak).
+            pb_nokler = (tjeneste.nokler or {}).get("v_prisbok") or {}
+            if tilbud is not None and pb_nokler:
+                from policy_validator import attestering
+                naa_att = datetime.now(timezone.utc)
+                ressurs = event["ressurs_id"]
+                event["attestasjoner"] = {}
+                for vilkaar, resultat in (
+                        ("priser_fra_prisbok", tilbud["priser_fra_boka"]),
+                        ("laste_klausuler_uendret",
+                         tilbud["klausuler_uendret"])):
+                    nid = sorted(pb_nokler)[0]
+                    jti_grunnlag = (f"{tenant}|{ressurs}|{kjernenokkel}|"
+                                    f"{vilkaar}")
+                    event["attestasjoner"][vilkaar] = attestering.signer({
+                        "verifikator": "v_prisbok",
+                        "tenant_id": tenant, "handling": bt.handling,
+                        "vilkaar": vilkaar, "ressurs_id": ressurs,
+                        "policy_id": policy_id,
+                        "utstedt": naa_att.isoformat(),
+                        "utloper": (naa_att
+                                    + timedelta(hours=24)).isoformat(),
+                        "jti": "tb-" + hashlib.sha256(
+                            jti_grunnlag.encode("utf-8")).hexdigest()[:32],
+                        "resultat": bool(resultat),
+                        "verdi": "ok" if resultat else "avvik",
+                    }, nid, pb_nokler[nid])
+            elif tilbud is not None:
+                tjeneste.logg.hendelse(
+                    "tilbud_attestasjon_utilgjengelig", rid, tenant,
+                    art="drift")
             from policy_validator.engine import EvaluationContext
             # ROLLEN FØLGER AKTØREN (ARC B, PR 3). Et menneske og planen
             # bestiller som `bestiller`; den automatiserte utløseren
@@ -1624,6 +1731,24 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 payload = oppdragskontrakt.minimer(bt.oppdragstype, {
                     "henvendelse_id": kundesvar["henvendelse_id"],
                     "utkast_id": kundesvar["utkast_id"],
+                    "omfang": norm["omfang"]})
+                if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
+                                                       payload)
+                        or oppdragskontrakt.bryter_feltkontrakten(
+                            bt.oppdragstype, payload)):
+                    conn.rollback()
+                    tjeneste.logg.hendelse("intern_feil", rid, tenant,
+                                           art="drift",
+                                           grunn="payloadkontrakt_brutt")
+                    return ("feil", "intern_feil")
+            elif tilbud is not None:
+                # ARC B tilbud (170): referansen og summen — prisene,
+                # klausulene og adressen henter utføreren i claim-svaret.
+                import oppdragskontrakt
+                payload = oppdragskontrakt.minimer(bt.oppdragstype, {
+                    "tilbud_id": tilbud["tilbud_id"],
+                    "sum_ore": tilbud["sum_ore"],
+                    "gyldig_til": tilbud["gyldig_til"],
                     "omfang": norm["omfang"]})
                 if (oppdragskontrakt.mangler_paakrevde(bt.oppdragstype,
                                                        payload)

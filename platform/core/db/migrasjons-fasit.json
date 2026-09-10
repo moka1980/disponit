@@ -167,5 +167,6 @@
   "166_m14_bokforingsutloser.sql": "3e12d095b592777c1269f07a237e6f53aa666eb3ce5e532002b1d06dcedc6800",
   "167_m14_faktura_bokfort.sql": "6cfa4090a5c7f776d9141486aa0321953d6227508aa9d86f973ea9b85332a6d5",
   "168_m14_bokforingsbildet.sql": "dcf6513f1f186b9cb8be2a046b58c248735d7ff336bf2a2ff99be4f81284501c",
-  "169_m26_tilbudsregister.sql": "13f5c99c28ff1af5bd2ae279d301c709536139db971e001c51e5605d6eecef54"
+  "169_m26_tilbudsregister.sql": "13f5c99c28ff1af5bd2ae279d301c709536139db971e001c51e5605d6eecef54",
+  "170_m26_for_tilbud.sql": "cd112a98068e59e1ede9fbb39a989c7686db895d57a2efc2fab94d350aaad2be"
 }

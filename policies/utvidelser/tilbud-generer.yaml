@@ -1,0 +1,31 @@
+# Utvidelse for tenanter på tjenestebedrift-malen (ARC B tilbud, PR 2):
+# `tilbud.generer` slik bransjemalen bærer den — MED `persondata` i
+# dataklassene. Malen (byte-bundet til M-02) tillater offentlig/intern/
+# finansiell; men å SENDE tilbudet til kundens adresse er behandling av
+# en personopplysning, akkurat som purring.send og kampanje.send sier om
+# seg selv. En handling som sender e-post uten å si det er en handling
+# som lyver om hva den gjør. Limes inn i et policyutkast; erstatter
+# malens `tilbud.generer` (samme id, samme vilkår, samme grense).
+verifikatorer:
+  v_prisbok:
+    beskrivelse: >-
+      Prisboka (M-26): at tilbudet siterte boka på tilbudsdatoen
+      (innenfor tenantens rabattgrense) og at de bundne klausulene er
+      uendret — regnet av registeret, attestert av plattformen.
+    betrodd_for: [priser_fra_prisbok, laste_klausuler_uendret]
+handlinger:
+  - id: tilbud.generer
+    modul: M-26
+    modus: auto
+    ved_brudd: unntakskø
+    tillatt_for: [agent]
+    dataklasser_tillatt: [offentlig, intern, finansiell, persondata]
+    grenser:
+      belop_maks: "150000.00"
+      valuta: [NOK]
+      frekvens: {maks: 2, periode_antall: 30, periode_enhet: dager,
+                 grupperingsnokkel: tilbud_id}
+    vilkaar:
+      - {navn: priser_fra_prisbok, verifikator: v_prisbok}
+      - {navn: laste_klausuler_uendret, verifikator: v_prisbok}
+    reversering: {type: direkte}
