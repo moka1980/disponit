@@ -13,7 +13,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
-         hentEpostMeldinger, hentEpostMelding,
+         hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -42,7 +42,8 @@ function statusTekst(status) {
 // Ingen svar-, videresend- eller slett-knapp: v1 viser. Avsender og
 // emne er dekryptert av serveren for denne økten; en reapet melding
 // vises som reapet (tidspunkt består, teksten er borte).
-function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding) {
+function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding,
+                      kanAdministrere, paaSlett) {
   const boks = el("section", {},
     el("h3", { text: t("ui.epost.meldinger.tittel")
       .replace("{postboks}", kilde.postboks) }));
@@ -67,12 +68,22 @@ function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding) {
     const knapp = el("button", { type: "button", text: t("ui.epost.meldinger.apne") });
     knapp.disabled = !!m.reapet;
     knapp.addEventListener("click", () => apneMelding(m));
+    const handlinger = [knapp];
+    // Slettingen er forvaltning (`epost:kilde:administrer`) og enveis:
+    // bak en bekreftelse, som kildedeaktiveringen. En melding som alt
+    // er borte har ingenting å slette.
+    if (kanAdministrere && !m.reapet) {
+      const slett = el("button", { class: "knapp fare", type: "button",
+        text: t("ui.epost.meldinger.slett") });
+      slett.addEventListener("click", () => paaSlett(m));
+      handlinger.push(slett);
+    }
     tbody.append(el("tr", {},
       el("th", { scope: "row" }, Tidspunkt(m.mottatt_ts, {})),
       el("td", { text: fra }),
       el("td", { text: emne + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") }),
       el("td", {}, Tidspunkt(m.slettes_ts, {})),
-      el("td", {}, knapp)));
+      el("td", {}, ...handlinger)));
   }
   tabell.append(tbody);
   boks.append(tabell);
@@ -211,7 +222,8 @@ export function visEpost(hoved, ctx) {
           continue;
         }
         deler.push(meldingsliste(ctx, k, (svar && svar.meldinger) || [],
-                                 !!(svar && svar.avkortet), apneMelding));
+                                 !!(svar && svar.avkortet), apneMelding,
+                                 kanAdministrere, bekreftSlett));
       }
       deler.push(panel.node);
       if (kanAdministrere) deler.push(koblingsseksjon());
@@ -265,6 +277,32 @@ export function visEpost(hoved, ctx) {
           (e instanceof ApiFeil && e.kode === "m365_ikke_konfigurert")
             ? t("ui.epost.ikke_konfigurert") : t("ui.epost.feilet");
         meldLive(feilfelt.textContent);
+      });
+  }
+
+  // Slettingen av en melding er også enveis, og den fjerner noe eier
+  // kanskje ville beholdt til fristen: teksten beskriver tilstanden
+  // ETTERPÅ, som for kildedeaktiveringen.
+  function bekreftSlett(m) {
+    Bekreftelsesdialog({
+      tittel: t("ui.epost.meldinger.slett_tittel"),
+      tekst: t("ui.epost.meldinger.slett_tekst"),
+      primarTekst: t("ui.epost.meldinger.slett"),
+      farlig: true,
+      rolle: "alertdialog",
+      paaPrimar: () => slettMelding(m),
+    });
+  }
+
+  function slettMelding(m) {
+    slettEpostMelding(m.melding_id)
+      .then(() => {
+        meldLive(t("ui.epost.meldinger.slettet"));
+        if (eierSkjermen()) tegn();
+      })
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        meldLive(t("ui.epost.feilet"));
       });
   }
 

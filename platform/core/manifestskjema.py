@@ -1805,6 +1805,46 @@ KRAVGRENSER["m26-tilbud-v1"] = {
     "punktbinding": {},
 }
 
+M6_INNTAK_INVARIANTER: tuple[str, ...] = (
+    # M-6 inntak (175, modul 6 i ARC B-rekka): innhenteren i planrunden
+    # leser postboksen inn i registeret — kun lesende, ingen modellvei.
+    # `m6-v1` (planens §7) står urørt: dens sjekklistepunkter er
+    # staging-målinger som ikke finnes ennå; dette er INNTAKETS egne ti
+    # punkter, i ARC B-formen (M-23/M-44/M-17/M-14/M-26).
+    # 1. Samme leverandørmelding sett to ganger er ÉN rad.
+    "innhenting_duplikatmelding",
+    # 2. Basen ser aldri klartekst: kropp, avsender og emne er
+    #    ciphertext/hasher i `epost_melding`.
+    "persondata_i_klartekst_i_basen",
+    # 3. Credentials (refresh-tokenet) er alltid ciphertext.
+    "kilde_credentials_ukryptert",
+    # 4. Loggen bærer aldri adresse, emne, tekst eller token.
+    "logg_med_persondata",
+    # 5. Kill-switch stopper uten å konsumere: kilden er kandidat igjen.
+    "kill_switch_konsumerte_kilder",
+    # 6. En deaktivert (eller feilet) kilde hentes aldri.
+    "deaktivert_kilde_hentet",
+    # 7. En autentiseringsfeil setter kilden `feilet` — ingen rader, og
+    #    veien tilbake er en ny samtykkerunde.
+    "autfeil_uten_feilet_kilde",
+    # 8. En forbigående feil (5xx) rører ingenting: ingen rader, ingen
+    #    hentemerker, kilden står `aktiv`.
+    "forbigaende_feil_konsumerte_kilden",
+    # 9. En slettet melding — enten fristen tok den, eller et menneske
+    #    slettet den nå (176) — har ingen tekst igjen: tidspunktet og
+    #    hashene består, i basen og i flaten.
+    "slettet_melding_med_tekst",
+    # 10. Ingen sendevei, ingen skrivevei fra flaten: modulen VISER.
+    "modul_sendevei_finnes",
+)
+KRAVGRENSER["m6-inntak-v1"] = {
+    "invarianter": M6_INNTAK_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
@@ -2371,6 +2411,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
+    "m6-inntak-v1": "artefakt-m6-inntak-skjema.json",
 }
 
 
@@ -2629,7 +2670,7 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
                    "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1",
-                   "m14-bokforing-v1", "m26-tilbud-v1"):
+                   "m14-bokforing-v1", "m26-tilbud-v1", "m6-inntak-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

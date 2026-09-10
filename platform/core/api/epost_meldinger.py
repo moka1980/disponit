@@ -9,9 +9,15 @@ To ruter, begge lesende:
   klarteksten (088). En reapet melding vises som reapet: hasher og
   tidspunkt består, teksten er borte, og det sies.
 * GET /v1/epost/meldinger/{melding_id} — kroppen.
+* POST /v1/epost/meldinger/{melding_id}/slett — sletter NÅ, før fristen
+  (176). Én skrivevei, og den fjerner: teksten og adressen tømmes i alle
+  lagrene samtidig, tidspunktet og hashene består som revisjonsspor, og
+  handlingen bokføres. `epost:kilde:administrer` — M-6s forvaltnings-
+  scope; en lesende økt kan se, ikke slette.
 
-Ingen skrivevei, ingen sendevei, ingen modellvei (dommen 31/8): flaten
-VISER. Lista er avkortet (`MAKS_MELDINGER`) og sier det.
+Ingen sendevei, ingen modellvei (dommen 31/8): flaten VISER, og det ene
+den kan gjøre med en melding, er å fjerne den. Lista er avkortet
+(`MAKS_MELDINGER`) og sier det.
 """
 from __future__ import annotations
 
@@ -98,6 +104,48 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
         return _ok({"meldinger": [_rad(conn, tenant, r, med_kropp=False)
                                   for r in rader],
                     "vist": len(rader), "avkortet": avkortet}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def slett_endepunkt(tjeneste, request: Request) -> Response:
+    """POST /v1/epost/meldinger/{melding_id}/slett
+    (epost:kilde:administrer, idem): retensjonen gjort NÅ, av et
+    menneske. Idempotent — en melding som alt er slettet svarer 200 med
+    `ny: false`, aldri en feil."""
+    from db.pg import sett_kontekst
+
+    from .app import _rid
+    from .epost_kilde import _modul_inaktiv
+    from .policyadmin_http import _feil, _med_conn, _ok_lagret
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+    mid = request.path_params["melding_id"]
+
+    def kjor(conn):
+        import psycopg
+
+        from . import kjerne
+        from .app import _autentiser
+        try:
+            auth = _autentiser(tjeneste, request, conn, rid,
+                               "epost:kilde:administrer")
+        except kjerne.Feilsvar as f:
+            return _feil(f.kode, rid)
+        conn.rollback()
+        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        try:
+            with conn.transaction():
+                ny = conn.execute("SELECT m6_slett_melding(%s,%s,%s)",
+                                  (auth.tenant, mid, auth.aktor)).fetchone()[0]
+        except psycopg.Error:
+            return _feil("ikke_funnet", rid, 404)
+        # `_ok_lagret` COMMITTER: uten det ville poolen rullet tilbake
+        # slettingen mens svaret sa at den skjedde.
+        return _ok_lagret(conn, {"melding_id": str(mid), "slettet": True,
+                                 "ny": bool(ny)}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

@@ -49,6 +49,9 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'bruk_kapabilitet(text,text)',                      'disponit_m37_claimer'),
     -- 175 (M-6 inntak): kryss-tenant-kandidatdøra for innhenteren, claimer-eid som reaperen.
     ('FUNCTION', 'm6_hentekandidater(integer)',                      'disponit_m37_claimer'),
+    -- 176 (M-6): menneskets sletting av en hentet melding, og evidensen.
+    ('FUNCTION', 'm6_evidens(text,uuid,text,text,jsonb)',            'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_slett_melding(text,uuid,text)',                 'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
     -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.

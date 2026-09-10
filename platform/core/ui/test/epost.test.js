@@ -272,3 +272,34 @@ test("Epost: ingen meldinger ennå sies, og en meldingsliste som feiler stopper 
   assert.ok(h.textContent.includes(t("ui.epost.meldinger.feilet").replace("{postboks}", "post@acme.example")));
 });
 
+test("Epost: en administrator kan slette en hentet melding — bak bekreftelse, og en leser kan ikke", async () => {
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING,
+           [`/v1/epost/meldinger/${M1}/slett`]: { melding_id: M1, slettet: true, ny: true } };
+  // Leser: ingen slett-knapp i det hele tatt.
+  let h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  assert.ok(![...h.querySelectorAll("button")].some(
+    (b) => b.textContent === t("ui.epost.meldinger.slett")));
+  // Administrator: knappen finnes, men bare på meldinger som ikke er slettet.
+  h = nyHoved();
+  KALL.length = 0;
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  const slettknapper = [...h.querySelectorAll("button")].filter(
+    (b) => b.textContent === t("ui.epost.meldinger.slett"));
+  assert.equal(slettknapper.length, 1, "reapet melding skal ikke ha slett-knapp");
+  slettknapper[0].click();
+  await vent(() => document.querySelector("[role=alertdialog]"));
+  const dialog = document.querySelector("[role=alertdialog]");
+  assert.ok(dialog.textContent.includes(t("ui.epost.meldinger.slett_tekst")));
+  const bekreft = [...dialog.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.meldinger.slett"));
+  bekreft.click();
+  await vent(() => KALL.some((k) => k.url === `/v1/epost/meldinger/${M1}/slett`));
+  const kall = KALL.find((k) => k.url === `/v1/epost/meldinger/${M1}/slett`);
+  assert.equal(kall.metode, "POST");
+  assert.ok(kall.headers["Idempotency-Key"] || kall.headers["idempotency-key"]);
+});
+
