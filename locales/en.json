@@ -6703,5 +6703,18 @@
   "vindu_enhet.dager": "days",
   "vindu_enhet.minutter": "minutes",
   "vindu_enhet.timer": "hours",
-  "vindu_enhet.uker": "weeks"
+  "vindu_enhet.uker": "weeks",
+  "ui.faktura.status.bokfort": "Posted",
+  "ui.faktura.bokforing.tittel": "Posting",
+  "ui.faktura.bokforing.ingen": "The platform has not ordered a posting of this invoice yet.",
+  "ui.faktura.bokforing.bestilt": "Ordered {handling} {tid}",
+  "ui.faktura.bokforing.utfall.tillat": "allowed — task {oppdrag}",
+  "ui.faktura.bokforing.utfall.brudd": "stopped — case {sak} in the exception queue",
+  "ui.faktura.bokforing.utfall.stopp": "stopped by the policy — case {sak}",
+  "ui.faktura.bokforing.utfall.menneske_kreves": "above the policy ceiling — a person decides",
+  "ui.faktura.bokforing.utfall.feil": "refused by the platform ({kode})",
+  "ui.faktura.bokforing.bilag": "Voucher {nummer} in the reconciliation register, posted {tid}",
+  "ui.faktura.bokforing.handling.faktura.bokfor": "small posting",
+  "ui.faktura.bokforing.handling.faktura.bokfor_stor": "large posting",
+  "ui.faktura.bokforing.handling.ingen": "no action"
 }

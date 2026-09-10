@@ -1716,6 +1716,50 @@ KRAVGRENSER["m17-svar-v1"] = {
     "punktbinding": {},
 }
 
+M14_BOKFORING_INVARIANTER: tuple[str, ...] = (
+    # ARC B bokføring (165–168): plattformen BOKFØRER den kontrollerte
+    # fakturaen — innenfor policyen, med registerets kontrollrader
+    # attestert, som et bilag i M-13. Bransjemalens to handlinger fyrer
+    # for første gang siden M-1. M-23/M-44/M-17-formen, bilagets dommer.
+    # 1. Uten policy med `faktura.bokfor(_stor)` bestilles ingenting —
+    #    og ingen beslutning brennes.
+    "bokforing_uten_policy",
+    # 2. En kontroll med avvik (mva, dublett, leverandør) bokføres aldri
+    #    stille: ikke kandidat, og bestilt likevel → attestasjon negativ
+    #    → sak.
+    "bokforing_med_kontrollavvik",
+    # 3. Beløpet er policyens: over den lille grensen som `faktura.bokfor`
+    #    → `belop_over_grense`; over begge → `menneske_kreves`, ingen
+    #    beslutning.
+    "bokforing_over_belopsgrense",
+    # 4. Samme faktura, to runder → én bestilling.
+    "dobbel_bestilling_samme_faktura",
+    # 5. Samme oppdrag, to kvitteringer → ett bilag, én evidens.
+    "dobbel_bokforing_samme_oppdrag",
+    # 6. Bilaget er en avskrift: et bilag som avviker fra fakturaens tall
+    #    bokføres ikke; et claim-svar om en annen faktura bokføres ikke.
+    "bilag_avviker_fra_fakturaen",
+    # 7. Over tenantens egen beløpsgrense uten manuell kontroll: 409 fra
+    #    bestillingsveien, ikke kandidat, `feilet` fra modulen.
+    "bokforing_uten_manuell_kontroll_over_grensen",
+    # 8. Avvist eller alt bokført: 409, ikke kandidat, `feilet` fra
+    #    modulen; `bokfort` er aldri en dom et menneske kan sette.
+    "bokforing_av_avvist_eller_bokfort",
+    # 9. Kvitteringen når registeret: fakturaen `bokfort` med bilagets
+    #    identitet, bilaget i M-13, evidensen `faktura.bokfort`.
+    "kvittering_uten_bokforing",
+    # 10. Kill-switch og plattformtilstand stopper uten å konsumere:
+    #     fakturaen er kandidat igjen når bryteren er på.
+    "kill_switch_konsumerte_fakturaer",
+)
+KRAVGRENSER["m14-bokforing-v1"] = {
+    "invarianter": M14_BOKFORING_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
 
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
@@ -2280,6 +2324,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m23-purring-v1": "artefakt-m23-purring-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
+    "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
 }
 
 
@@ -2537,7 +2582,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id in ("m3-v1", "m4-v1", "m5-v1", "m9-v1", "m21-v1",
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
-                   "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1"):
+                   "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1",
+                   "m14-bokforing-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")

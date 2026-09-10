@@ -129,6 +129,45 @@ export function promilleTilFelt(promille) {
   return `${neg ? "-" : ""}${Math.trunc(a / 10)}.${a % 10}`;
 }
 
+function tidTekst(iso) {
+  // Lokal dato og klokkeslett (CodeRabbit): ISO-strengen bærer et
+  // tidssoneoffset, og å kutte det ville vist UTC som om det var her.
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { dateStyle: "short",
+                                       timeStyle: "short" });
+}
+
+export function bokforingstekst(f) {
+  // Plattformens arm i ord (168): bestillingen først, så bilaget. Ingen
+  // rad = ingenting har skjedd, og det sies rett ut.
+  const deler = [];
+  const b = f.bestilling;
+  if (b) {
+    const handling = t(`ui.faktura.bokforing.handling.${b.handling}`);
+    const tid = tidTekst(b.bestilt_ts);
+    let utfall;
+    if (b.utfall && b.utfall.startsWith("feil:")) {
+      utfall = t("ui.faktura.bokforing.utfall.feil")
+        .replace("{kode}", b.utfall.slice(5));
+    } else {
+      utfall = t(`ui.faktura.bokforing.utfall.${b.utfall}`)
+        .replace("{oppdrag}", b.oppdrag_id == null ? "—" : String(b.oppdrag_id))
+        .replace("{sak}", b.unntak_id == null ? "—" : String(b.unntak_id));
+    }
+    deler.push(`${t("ui.faktura.bokforing.bestilt")
+      .replace("{handling}", handling).replace("{tid}", tid)}: ${utfall}`);
+  }
+  const k = f.bokforing;
+  if (k) {
+    deler.push(t("ui.faktura.bokforing.bilag")
+      .replace("{nummer}", k.bilagsnummer)
+      .replace("{tid}", tidTekst(k.bokfort_ts)));
+  }
+  return deler.length ? deler.join(" · ") : t("ui.faktura.bokforing.ingen");
+}
+
 function fakturarad(f, ctx, apneDetalj) {
   const rad = el("tr", {});
   // LEVERANDØREN NAVNGIR raden.
@@ -317,6 +356,10 @@ function detaljpanel(ctx, last, kvitter, settApen) {
 
   const merkelinje = el("p", { class: "muted" });
   const historikk = el("div", {});
+  // ARC B (168): hva plattformens arm gjorde — bestillingen og bilaget.
+  // TEKST, ikke en knapp: flaten utløser ingenting, den viser det som
+  // skjedde. Fraværet av en knapp er fortsatt dommen.
+  const bokforingslinje = el("p", { class: "muted" });
 
   // --- manuell kontroll ---
   const kSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
@@ -375,7 +418,8 @@ function detaljpanel(ctx, last, kvitter, settApen) {
 
   const skriver = harScope(ctx, "bestilling:opprett");
   innhold.append(el("h3", { text: t("ui.faktura.detalj.tittel") }),
-    merkelinje, historikk);
+    merkelinje, historikk,
+    el("h4", { text: t("ui.faktura.bokforing.tittel") }), bokforingslinje);
   if (skriver) {
     innhold.append(
       el("h4", { text: t("ui.faktura.skjema.kontroll_tittel") }), kSkjema,
@@ -394,6 +438,7 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       merkelinje.textContent = `${f.leverandor_ref} · ${f.fakturanummer}`
         + ` · ${belopTekst(f.netto_ore)} + ${belopTekst(f.mva_ore)}`
         + ` = ${belopTekst(f.brutto_ore)} · ${f.valuta}`;
+      bokforingslinje.textContent = bokforingstekst(f);
       // EN AVGJORT FAKTURA TAR IKKE IMOT NOE.
       const apen = f.status === "mottatt";
       kKnapp.disabled = !apen;

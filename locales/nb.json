@@ -6703,5 +6703,18 @@
   "vindu_enhet.dager": "dager",
   "vindu_enhet.minutter": "minutter",
   "vindu_enhet.timer": "timer",
-  "vindu_enhet.uker": "uker"
+  "vindu_enhet.uker": "uker",
+  "ui.faktura.status.bokfort": "Bokført",
+  "ui.faktura.bokforing.tittel": "Bokføringen",
+  "ui.faktura.bokforing.ingen": "Plattformen har ikke bestilt bokføring av denne fakturaen ennå.",
+  "ui.faktura.bokforing.bestilt": "Bestilt {handling} {tid}",
+  "ui.faktura.bokforing.utfall.tillat": "tillatt — oppdrag {oppdrag}",
+  "ui.faktura.bokforing.utfall.brudd": "stoppet — sak {sak} i unntakskøen",
+  "ui.faktura.bokforing.utfall.stopp": "stoppet av policyen — sak {sak}",
+  "ui.faktura.bokforing.utfall.menneske_kreves": "over policyens tak — et menneske avgjør",
+  "ui.faktura.bokforing.utfall.feil": "avvist av plattformen ({kode})",
+  "ui.faktura.bokforing.bilag": "Bilag {nummer} i avstemmingsregisteret, bokført {tid}",
+  "ui.faktura.bokforing.handling.faktura.bokfor": "liten bokføring",
+  "ui.faktura.bokforing.handling.faktura.bokfor_stor": "stor bokføring",
+  "ui.faktura.bokforing.handling.ingen": "ingen handling"
 }
