@@ -181,17 +181,29 @@ def test_feilgrunnen_er_en_kode(migrator, miljo, klient, token):
 
     from db.pg import koble
     _, _, uid, _ = _i_ko(klient, migrator, token)
-    rt = koble(DSN)
+    # Døra kalles av PLANARBEIDEREN — det er den som får svaret fra
+    # leverandøren og må gjøre det om til en kode. Web-API-rollen har
+    # den ikke, og skal ikke ha den: forespørselsveien vet ingenting om
+    # hvordan sendingen gikk.
+    pa = koble(PLAN_DSN)
     try:
-        _sett_kontekst(rt, TENANT)
+        _sett_kontekst(pa, TENANT)
         with pytest.raises(psycopg.Error) as e:
-            rt.execute("SELECT m6_svar_feilet(%s,%s,%s,'x')",
+            pa.execute("SELECT m6_svar_feilet(%s,%s,%s,'x')",
                        (TENANT, uid,
                         "550 5.7.1 Rejected for kari@kunde.example"))
         assert "KODE" in str(e.value), str(e.value)
-        rt.rollback()
+        pa.rollback()
+        # Positiv kontroll: en KODE går gjennom samme dør. Uten denne
+        # ville porten vært grønn også om alt ble avvist. Konteksten
+        # settes på nytt — `set_config(..., true)` er transaksjonslokal,
+        # og rollbacken over kastet den.
+        _sett_kontekst(pa, TENANT)
+        pa.execute("SELECT m6_svar_feilet(%s,%s,'graph_550','x')",
+                   (TENANT, uid))
+        pa.rollback()
     finally:
-        rt.close()
+        pa.close()
 
 
 def test_utsendingen_bruker_reply_og_aldri_en_egen_mottaker():
