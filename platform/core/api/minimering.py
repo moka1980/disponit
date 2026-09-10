@@ -50,6 +50,8 @@ PER_HANDLING: dict[str, tuple[str, ...]] = {
                        "brutto_ore", "omfang"),
     "faktura.bokfor_stor": ("faktura_id", "fakturanummer", "leverandor_ref",
                             "brutto_ore", "omfang"),
+    # ARC B tilbud (170): referansen og summen — aldri adressen.
+    "tilbud.generer": ("tilbud_id", "sum_ore", "gyldig_til", "omfang"),
 }
 
 #: Kildereferansen er allerede ugjennomsiktig og slippes gjennom som den er.

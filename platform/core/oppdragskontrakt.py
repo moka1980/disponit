@@ -429,6 +429,14 @@ OPPDRAGSTYPER: dict[str, Oppdragstype] = {
         beskrivelse=("M-14: bokfør én kontrollert inngående faktura som ett "
                      "bilag — den lille (faktura.bokfor) eller den store "
                      "(faktura.bokfor_stor) grensen er policyens")),
+    "tilbud.generer": Oppdragstype(
+        navn="tilbud.generer",
+        handlingsprefikser=("tilbud.generer",),
+        felter=frozenset({"tilbud_id", "sum_ore", "gyldig_til", "omfang"}),
+        paakrevde=frozenset({"tilbud_id", "sum_ore", "gyldig_til", "omfang"}),
+        eiermodul="m26_prisbok",
+        beskrivelse=("M-26: send ett godkjent tilbud, sitert fra boka, til "
+                     "kundens adresse")),
     "kundeservice.svar.send": Oppdragstype(
         navn="kundeservice.svar.send",
         handlingsprefikser=("kundeservice.svar.send",),
@@ -1011,6 +1019,7 @@ FELTVERDIER: dict[str, dict[str, tuple]] = {
     "kampanje.send": {"omfang": ("mottaker",)},
     "kundeservice.svar.send": {"omfang": ("svar",)},
     "faktura.bokfor": {"omfang": ("bilag",)},
+    "tilbud.generer": {"omfang": ("tilbud",)},
     "purring.send": {"omfang": ("trinn",),
                      "handling_trinn": ("paaminnelse", "purring",
                                         "inkassovarsel")},
@@ -1083,6 +1092,7 @@ FELTSTRENGER: dict[str, tuple[str, ...]] = {
     "kampanje.send": ("kampanje_id", "mottaker_id", "planlagt_sendt"),
     "kundeservice.svar.send": ("henvendelse_id", "utkast_id"),
     "faktura.bokfor": ("faktura_id", "fakturanummer", "leverandor_ref"),
+    "tilbud.generer": ("tilbud_id", "gyldig_til"),
     "purring.send": ("fordring_id", "fakturanummer", "handling_trinn"),
 }
 
@@ -1137,6 +1147,7 @@ UTFORELSESFRIST_VALG: dict[str, tuple[str, dict[object, int]]] = {
     "kampanje.send": ("omfang", {"mottaker": 15 * 60}),
     "kundeservice.svar.send": ("omfang", {"svar": 15 * 60}),
     "faktura.bokfor": ("omfang", {"bilag": 15 * 60}),
+    "tilbud.generer": ("omfang", {"tilbud": 15 * 60}),
     "purring.send": ("omfang", {"trinn": 15 * 60}),
     # M-57 (klarsignalet §4): 240 min for evalueringen — 5000 søknader
     # med porsjonsvis parsing. Tallet REVERIFISERES mot målt prøvekjøring
