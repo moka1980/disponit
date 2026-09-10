@@ -6804,5 +6804,10 @@
   "ui.epost.meldinger.slett": "Slett",
   "ui.epost.meldinger.slett_tittel": "Slette meldingen nå?",
   "ui.epost.meldinger.slett_tekst": "Teksten og adressen fjernes med én gang, i stedet for når oppbevaringsfristen løper ut. Tidspunktet står igjen som spor på at meldingen fantes. Dette kan ikke angres.",
-  "ui.epost.meldinger.slettet": "Meldingen er slettet."
+  "ui.epost.meldinger.slettet": "Meldingen er slettet.",
+  "ui.dokumentmal.status.forkastet": "Forkastet",
+  "ui.dokumentmal.knapp.forkast": "Forkast utkastet",
+  "ui.dokumentmal.forkast.tittel": "Forkaste utkastet?",
+  "ui.dokumentmal.forkast.tekst": "Utkastet blir stående i historikken som forkastet, og kan ikke publiseres eller hentes tilbake. Versjonsnummeret er brukt opp, så neste utkast får det neste nummeret. Innholdet i en allerede publisert versjon berøres ikke.",
+  "ui.dokumentmal.forkast.ok": "Utkastet er forkastet."
 }

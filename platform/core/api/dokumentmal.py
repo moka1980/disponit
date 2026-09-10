@@ -392,6 +392,15 @@ def trekk_tilbake_endepunkt(tjeneste, request):
     return _overgang(tjeneste, request, "m5_trekk_tilbake_malversjon")
 
 
+def forkast_endepunkt(tjeneste, request):
+    """POST /v1/dokumentmal/versjon/{versjon_id}/forkast (177).
+
+    Den tredje overgangen, og den eneste som fjerner noe fra veien: et
+    UTKAST som aldri kom i kraft. Døra nekter alt annet — en publisert
+    mal trekkes tilbake, den forkastes ikke."""
+    return _overgang(tjeneste, request, "m5_forkast_malversjon")
+
+
 # ---------------------------------------------------------------------
 # Utfyllingen — den bærende veien
 # ---------------------------------------------------------------------

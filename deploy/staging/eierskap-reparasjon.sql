@@ -140,6 +140,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm5_opprett_malversjon(text,uuid,jsonb,jsonb,text,uuid)', 'disponit_mal_eier'),
     ('FUNCTION', 'm5_publiser_malversjon(text,uuid,text)', 'disponit_mal_eier'),
     ('FUNCTION', 'm5_trekk_tilbake_malversjon(text,uuid,text)', 'disponit_mal_eier'),
+    -- 177: den tredje overgangen — et utkast som aldri kom i kraft.
+    ('FUNCTION', 'm5_forkast_malversjon(text,uuid,text)',      'disponit_mal_eier'),
     ('FUNCTION', 'm5_fyll_mal(text,uuid,jsonb)', 'disponit_mal_eier'),
     -- 082 (M-8): kapabilitetstabellen og de to offentlige doerene eies
     -- av authenticator (004-presedensen — konstanttiden bor i defineren,

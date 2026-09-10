@@ -713,6 +713,8 @@ GRANT EXECUTE ON FUNCTION m5_opprett_malfamilie(TEXT, TEXT, TEXT, TEXT, UUID) TO
 GRANT EXECUTE ON FUNCTION m5_opprett_malversjon(TEXT, UUID, JSONB, JSONB, TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m5_publiser_malversjon(TEXT, UUID, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m5_trekk_tilbake_malversjon(TEXT, UUID, TEXT) TO {rolle};
+-- 177: den tredje overgangen — et utkast som aldri kom i kraft.
+GRANT EXECUTE ON FUNCTION m5_forkast_malversjon(TEXT, UUID, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m5_fyll_mal(TEXT, UUID, JSONB) TO {rolle};
 RESET ROLE;
 -- 035: modul-onboarding og modultokener. Hele denne veien er

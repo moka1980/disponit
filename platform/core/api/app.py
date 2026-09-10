@@ -1127,6 +1127,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import dokumentmal as dokumentmalmodul
         return dokumentmalmodul.trekk_tilbake_endepunkt(tjeneste, request)
 
+    def dokumentmal_forkast(request: Request) -> Response:
+        from . import dokumentmal as dokumentmalmodul
+        return dokumentmalmodul.forkast_endepunkt(tjeneste, request)
+
     # Utfyllingen RETURNERER. Den lagrer ikke, sender ikke, publiserer
     # ikke — og `m5_fyll_mal` er STABLE, så basen håndhever det.
     def dokumentmal_utfylling(request: Request) -> Response:
@@ -3584,6 +3588,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/dokumentmal/versjon/{versjon_id:str}/publiser",
               dokumentmal_publiser, methods=["POST"]),
+        Route("/v1/dokumentmal/versjon/{versjon_id:str}/forkast",
+              dokumentmal_forkast, methods=["POST"]),
         Route("/v1/dokumentmal/versjon/{versjon_id:str}/trekk-tilbake",
               dokumentmal_trekk_tilbake, methods=["POST"]),
         Route("/v1/dokumentmal/versjon/{versjon_id:str}/utfylling",
@@ -4990,6 +4996,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/dokumentmal/familier"):    "bestilling:opprett",
     ("POST", "/v1/dokumentmal/versjoner"):   "bestilling:opprett",
     ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/publiser"):
+        "bestilling:opprett",
+    ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/forkast"):
         "bestilling:opprett",
     ("POST", "/v1/dokumentmal/versjon/{versjon_id:str}/trekk-tilbake"):
         "bestilling:opprett",

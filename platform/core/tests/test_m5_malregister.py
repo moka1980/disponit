@@ -940,6 +940,9 @@ def test_port9f_eieren_har_kolonnegrant_ikke_tabellgrant(migrator):
         "   AND privilege_type='UPDATE'").fetchall()}
     migrator.rollback()
     assert kolonner == {"status", "publisert_ts", "publisert_av",
+                        # 177: den tredje overgangen skriver sine to
+                        # egne kolonner, og ingen andre.
+                        "forkastet_ts", "forkastet_av",
                         "tilbaketrukket_ts", "tilbaketrukket_av"}, kolonner
 
     for tabell in ("malkomponent", "malfelt", "malfamilie"):
