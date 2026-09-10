@@ -365,6 +365,10 @@ FEILVEIER: tuple[Feilvei, ...] = (
                   " ikke i planen, er deaktivert, mangler adresse, eller"
                   " kampanjen mangler innhold — registerets tilstand,"
                   " ikke policyens dom."),
+    Feilvei("tilbud_ulovlig_tilstand", 409, ("drift",), None,
+            notat="ARC B tilbud (169): dørens egne nei — et produkt uten"
+                  " pris på tilbudsdatoen, en enhetspris over boka, et"
+                  " avgjort tilbud som avgjøres igjen."),
     Feilvei("faktura_ukjent", 404, ("sikkerhet",), None,
             notat="ARC B bokføring: bestillingen peker på en faktura"
                   " tenanten ikke har — målt FØR beslutningen."),

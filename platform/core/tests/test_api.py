@@ -300,6 +300,10 @@ APPEND_ONLY_TRIGGERE = (
     # 108 (M-26): alle fem vaktene nekter DELETE. `pris` og `klausul`
     # gjør det ubetinget: en versjon ERSTATTES, den slettes aldri —
     # «hva sto her da» er hele spørsmålet boka finnes for å svare på.
+    # 169 (M-26, ARC B tilbud): tilbudet og radene er append-only.
+    ("tilbudsklausul", "m26_tilbudsklausul_vakt"),
+    ("tilbudslinje", "m26_tilbudslinje_vakt"),
+    ("tilbud", "m26_tilbud_vakt"),
     ("prisbokfunn", "m26_funn_vakt"),
     ("pris", "m26_pris_vakt"),
     ("klausul", "m26_klausul_vakt"),
@@ -500,6 +504,7 @@ RYDDETABELLER = ("begrepsfunn", "begrep",
                  "prosjekt", "prosjektterskel",
                  # 108 (M-26): funnene og prisene peker på produktet.
                  # Klausulene står fritt.
+                 "tilbudsklausul", "tilbudslinje", "tilbud",
                  "prisbokfunn", "pris", "produkt", "klausul",
                  "prisbokterskel",
                  # 109 (M-27): funnene, bevegelsene og punktene peker på

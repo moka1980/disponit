@@ -499,6 +499,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm26_tersklene(text)',                                  'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_funnkandidater(text,date)',                        'disponit_prisbok_eier'),
     ('FUNCTION', 'm26_sveip_prisbok(integer)',                           'disponit_prisbok_eier'),
+    -- 169 (M-26, ARC B): tilbudsregisteret ved siden av boka.
+    ('FUNCTION', 'm26_lag_tilbud(text,uuid,text,text,text,text,bytea,bytea,text,date,date,text,jsonb,text)', 'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_avgjor_tilbud(text,uuid,text,text)',                'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_tilbudene(text,integer)',                           'disponit_prisbok_eier'),
+    ('FUNCTION', 'm26_tilbudet(text,uuid)',                               'disponit_prisbok_eier'),
     -- 109 (M-27): lagerregisterets doerer og lagersveipen.
     ('FUNCTION', 'm27_evidens(text,uuid,text,text,jsonb)',              'disponit_beholdning_eier'),
     ('FUNCTION', 'm27_sett_terskler(text,integer,integer,integer,text)', 'disponit_beholdning_eier'),

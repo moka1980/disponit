@@ -42,6 +42,7 @@ import { visLeverandor } from "./flater/leverandor.js";
 import { visFaktura } from "./flater/faktura.js";
 import { visProsjekt } from "./flater/prosjekt.js";
 import { visPrisbok } from "./flater/prisbok.js";
+import { visTilbud } from "./flater/tilbud.js";
 import { visLager } from "./flater/lager.js";
 import { visKontovakt } from "./flater/kontovakt.js";
 import { visAdresse } from "./flater/adresse.js";
@@ -146,6 +147,7 @@ const FLATER = {
   faktura: visFaktura,
   prosjekt: visProsjekt,
   prisbok: visPrisbok,
+  tilbud: visTilbud,
   lager: visLager,
   kontovakt: visKontovakt,
   adresse: visAdresse,
