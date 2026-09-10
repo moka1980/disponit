@@ -1846,6 +1846,65 @@ KRAVGRENSER["m6-inntak-v1"] = {
 }
 
 
+#: M-6 svar (178-181, svararmen): mennesket leser meldingen i disponit
+#: og svarer fra SIN EGEN postboks uten å åpne Outlook. EIERVEDTAKET
+#: 10/9 (andre runde) er selve premisset for grensen: dette er INGEN
+#: agenthandling. Første utkast la sendingen gjennom policyporten med
+#: fire øyne — mønsteret fra M-17, der PLATTFORMEN finner på teksten.
+#: Her skriver mennesket den selv, og da er policyporten feil verktøy:
+#: den er bygget for å holde agenten i bånd, ikke brukeren.
+#:
+#: Grensen måler derfor noe annet enn M-17s: ikke at agenten ble holdt
+#: igjen, men at plattformen ALDRI ble en avsender på egne vegne — den
+#: bærer menneskets egen tekst inn i menneskets egen tråd, og ikke ett
+#: skritt lenger. Parformen er m57s: (forsok, brudd) per punkt.
+M6_SVAR_INVARIANTER: tuple[str, ...] = (
+    # 1. Basen ser aldri svaret: utkastteksten er ciphertext, som
+    #    kroppen den svarer på (179, 058-formen).
+    "utkast_i_klartekst_i_basen",
+    # 2. Hver dom bærer sin egen aktør og sitt eget tidspunkt — en
+    #    angring er en NY dom, ikke en viskelær.
+    "dom_uten_aktor_eller_tidspunkt",
+    # 3. `sendt` er kvitteringens vei, aldri en dom noen kan avgi:
+    #    utkastdøra avviser den (179).
+    "sendt_satt_av_en_dom",
+    # 4. Et svar på en slettet melding finnes ikke — hverken å skrive
+    #    eller å sende (176 tok teksten; tråden er borte).
+    "utkast_til_slettet_melding",
+    # 5. Utkastveien har sitt EGET scope (`epost:utkast:behandle`, 088)
+    #    — kildeforvaltningens scope åpner den ikke.
+    "utkastvei_uten_eget_scope",
+    # 6. EIERVEDTAKET, målt: sendingen ble ALDRI en agenthandling. Ingen
+    #    oppdragstype `epost.svar*`, ingen policyport, ingen fire øyne.
+    "sendingen_ble_en_agenthandling",
+    # 7. Samtykket avgjør (178): en postboks uten `Mail.Send` i sitt
+    #    eget scope stopper svaret i døra — vårt ønske teller ikke.
+    "sendt_uten_samtykkets_sendescope",
+    # 8. Bakgrunnsprosessen sender BARE det som står i kø (`sendes`).
+    #    Et foreslått eller forkastet utkast går aldri ut.
+    "sendt_noe_som_ikke_sto_i_ko",
+    # 9. Utsendingsveien har ingen mottaker å ta feil av: den svarer i
+    #    tråden (Graph `reply`) og har ingen egen adresse.
+    "utsending_med_egen_mottaker",
+    # 10. Feilgrunnen er en KODE, aldri leverandørens tekst — den kan
+    #     bære en adresse, og da hadde persondata lekket til loggen.
+    "feilgrunn_med_persondata",
+    # 11. En forbigående feil (5xx) konsumerer ikke køen: raden står
+    #     igjen som `sendes` og prøves på nytt. Bare en dom (401/403)
+    #     terminerer.
+    "forbigaende_feil_konsumerte_koen",
+)
+KRAVGRENSER["m6-svar-v1"] = {
+    "invarianter": M6_SVAR_INVARIANTER,
+    "maks_brudd": 0,
+    "min_forsok": 1,
+    # Ja-punktet: eieren svarte fra disponit.com på en melding i sin
+    # EGEN postboks, og svaret kom fram i tråden. Alt annet er nei.
+    "krav_ja": ("rundtur_paa_disponit_com",),
+    "punktbinding": {},
+}
+
+
 # ---------------------------------------------------------------------
 # KLYNGE 6 — «de fem som finner noe, og ikke handler på det»
 # (docs/KLYNGE6-FUNDAMENT.md). Registrert FØR koden, §0-regelen.
@@ -2412,6 +2471,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
     "m6-inntak-v1": "artefakt-m6-inntak-skjema.json",
+    "m6-svar-v1": "artefakt-m6-svar-skjema.json",
 }
 
 
@@ -2670,7 +2730,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                    "m12-v1", "m22-v1", "m30-v1", "m34-v1",
                    "m13-v1", "m17-v1", "m18-v1", "m23-v1", "m24-v1",
                    "m23-purring-v1", "m44-kampanje-v1", "m17-svar-v1",
-                   "m14-bokforing-v1", "m26-tilbud-v1", "m6-inntak-v1"):
+                   "m14-bokforing-v1", "m26-tilbud-v1", "m6-inntak-v1",
+                   "m6-svar-v1"):
         return feil + _grenser_m6(grense, art)
 
     m = art.get("maalt")
