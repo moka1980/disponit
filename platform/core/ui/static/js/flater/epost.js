@@ -42,14 +42,27 @@ function statusTekst(status) {
 // Ingen svar-, videresend- eller slett-knapp: v1 viser. Avsender og
 // emne er dekryptert av serveren for denne økten; en reapet melding
 // vises som reapet (tidspunkt består, teksten er borte).
-function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding,
+function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
                       kanAdministrere, paaSlett) {
+  // ETT PANEL PER LISTE (CodeRabbit): en DOM-node kan bare stå ett sted,
+  // så et delt panel ville havnet under den SISTE kilden — og en melding
+  // åpnet i den første ville dukket opp et helt annet sted på siden.
+  const panel = meldingspanel();
   const boks = el("section", {},
     el("h3", { text: t("ui.epost.meldinger.tittel")
       .replace("{postboks}", kilde.postboks) }));
-  if (!meldinger.length) {
+  // SLETTEDE MELDINGER ER SPOR, IKKE INNBOKS. Raden består i registeret
+  // — det er hele poenget med at slettingen kan bevises — men en tom rad
+  // eier selv fjernet, hører ikke hjemme i lista over det som ligger der.
+  // Bryteren under viser dem, for den som vil se hva som er borte.
+  const meldinger = alle.filter((m) => !m.reapet);
+  const slettede = alle.filter((m) => m.reapet);
+  if (!meldinger.length && !slettede.length) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.ingen") }));
     return boks;
+  }
+  if (!meldinger.length) {
+    boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.bare_slettede") }));
   }
   const tabell = el("table", { class: "kpi-tabell" },
     el("caption", { text: t("ui.epost.meldinger.caption")
@@ -62,50 +75,121 @@ function meldingsliste(ctx, kilde, meldinger, avkortet, apneMelding,
     el("th", { scope: "col", text: t("ui.epost.kolonne.handling") }))));
   const tbody = el("tbody");
   for (const m of meldinger) {
-    const emne = m.reapet ? t("ui.epost.meldinger.reapet")
-      : (m.emne || t("ui.epost.meldinger.uten_emne"));
-    const fra = m.reapet ? "—" : (m.fra_navn ? `${m.fra_navn} <${m.fra}>` : (m.fra || "—"));
     const knapp = el("button", { type: "button", text: t("ui.epost.meldinger.apne") });
-    knapp.disabled = !!m.reapet;
-    knapp.addEventListener("click", () => apneMelding(m));
-    const handlinger = [knapp];
+    knapp.addEventListener("click", () => hentDetalj(m, panel));
+    // ÉN RAD, IKKE EN STABEL: handlingene hører sammen og står ved siden
+    // av hverandre (eiers merknad 10/9).
+    const handlinger = el("div", { class: "knapperad" }, knapp);
     // Slettingen er forvaltning (`epost:kilde:administrer`) og enveis:
-    // bak en bekreftelse, som kildedeaktiveringen. En melding som alt
-    // er borte har ingenting å slette.
-    if (kanAdministrere && !m.reapet) {
+    // bak en bekreftelse, som kildedeaktiveringen.
+    if (kanAdministrere) {
       const slett = el("button", { class: "knapp fare", type: "button",
         text: t("ui.epost.meldinger.slett") });
       slett.addEventListener("click", () => paaSlett(m));
-      handlinger.push(slett);
+      handlinger.append(slett);
     }
     tbody.append(el("tr", {},
       el("th", { scope: "row" }, Tidspunkt(m.mottatt_ts, {})),
-      el("td", { text: fra }),
-      el("td", { text: emne + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") }),
+      el("td", { text: m.fra_navn ? `${m.fra_navn} <${m.fra}>` : (m.fra || "—") }),
+      el("td", { text: (m.emne || t("ui.epost.meldinger.uten_emne"))
+        + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") }),
       el("td", {}, Tidspunkt(m.slettes_ts, {})),
-      el("td", {}, ...handlinger)));
+      el("td", {}, handlinger)));
   }
   tabell.append(tbody);
-  boks.append(tabell);
+  if (meldinger.length) boks.append(tabell);
   if (avkortet) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.avkortet") }));
   }
+  // PANELET STÅR HER, rett under lista det hører til — ikke nederst på
+  // siden, der en åpnet melding ser ut som ingenting (eiers merknad).
+  boks.append(panel.node);
+  if (slettede.length) boks.append(slettetliste(slettede));
   return boks;
+}
+
+function slettetliste(slettede) {
+  // Sporet, sammenklappet: hva som er borte, når og av hvem — aldri hva
+  // det inneholdt, for det er nettopp det slettingen fjernet.
+  const detaljer = el("details", {},
+    el("summary", { text: t("ui.epost.meldinger.slettede_vis")
+      .replace("{n}", String(slettede.length)) }));
+  const liste = el("ul", {});
+  for (const m of slettede) {
+    const nokkel = m.slettet_for_fristen
+      ? "ui.epost.meldinger.slettet_av_menneske"
+      : "ui.epost.meldinger.slettet_av_fristen";
+    const rad = el("li", {});
+    rad.append(el("span", { text: t(nokkel) + " " }));
+    rad.append(Tidspunkt(m.slettet_ts || m.slettes_ts, {}));
+    rad.append(el("span", { text: " · " + t("ui.epost.meldinger.mottatt_kort") + " " }));
+    rad.append(Tidspunkt(m.mottatt_ts, {}));
+    liste.append(rad);
+  }
+  detaljer.append(liste);
+  return detaljer;
+}
+
+
+// LESEVISNINGEN (eiers merknad 10/9: «ikke brukervennlig»).
+//
+// Graph gir oss tekstversjonen av en HTML-post, og den er en maskinell
+// nedkonvertering: hver lenke slepper adressen sin etter seg, hvert
+// bilde blir «[alt-tekst] <url>», og en nyhetsbrevmal blir sider med
+// URL-er rundt én setning. Vi kan ikke rendre HTML-en — den ville vært
+// fremmed markup i vår egen flate — men vi kan la være å vise
+// maskinstøyen som om den var innhold.
+//
+// ORIGINALEN RØRES ALDRI: den ligger kryptert i registeret, og panelet
+// har den bak en bryter. Rensingen er en VISNING, ikke en redigering.
+export function lesbarTekst(raa) {
+  if (!raa) return "";
+  const ut = [];
+  for (const linje of String(raa).split(/\r?\n/)) {
+    let l = linje;
+    // Bilder: «[En skjerm som viser …] <https://…>» og «[https://…]».
+    l = l.replace(/\[[^\]]*\]\s*<https?:\/\/[^>]*>/g, "");
+    l = l.replace(/\[\s*https?:\/\/[^\]]*\]/g, "");
+    // Lenker: «Les mer <https://…>» → «Les mer». Adressen kan uansett
+    // ikke klikkes i en tekstvisning.
+    l = l.replace(/\s*<https?:\/\/[^>]*>/g, "");
+    // En linje som BARE er en adresse, sier ingenting alene.
+    if (/^\s*https?:\/\/\S+\s*$/.test(l)) continue;
+    ut.push(l.trimEnd());
+  }
+  // Malenes luft: tre tomme linjer på rad blir én.
+  return ut.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function meldingspanel() {
   const boks = el("div", { class: "skjemaboks" });
   boks.hidden = true;
+  boks.tabIndex = -1;
   return {
     node: boks,
+    fokuser() {
+      boks.focus();
+      if (boks.scrollIntoView) boks.scrollIntoView({ block: "nearest" });
+    },
     vis(m) {
       const til = (m.til || []).join(", ");
-      sett(boks,
+      const raa = m.kropp || "";
+      const ren = lesbarTekst(raa);
+      const deler = [
         el("h3", { text: m.emne || t("ui.epost.meldinger.uten_emne") }),
         el("p", { class: "muted", text: `${m.fra_navn ? m.fra_navn + " " : ""}<${m.fra || "—"}>`
           + (til ? ` → ${til}` : "") }),
         el("p", { class: "muted" }, Tidspunkt(m.mottatt_ts, {})),
-        el("pre", { class: "epost-kropp", text: m.kropp || "" }));
+        el("pre", { class: "epost-kropp",
+          text: ren || t("ui.epost.meldinger.tom_kropp") })];
+      // Bare når rensingen faktisk tok noe: en ren tekstpost skal ikke
+      // få en bryter som lover en annen versjon enn den man ser.
+      if (ren !== raa.trim()) {
+        deler.push(el("details", {},
+          el("summary", { text: t("ui.epost.meldinger.vis_raa") }),
+          el("pre", { class: "epost-kropp", text: raa })));
+      }
+      sett(boks, ...deler);
       boks.hidden = false;
     },
     feil(tekst) {
@@ -195,18 +279,22 @@ export function visEpost(hoved, ctx) {
     },
     (d) => {
       const kilder = d.kilder || [];
-      const panel = meldingspanel();
       // Bare det SISTE valget får tegne panelet (CodeRabbit): to raske
       // klikk er to svar i lufta, og et sent svar for det første skal
       // ikke overskrive det andre — verken som innhold eller som feil.
+      // Valget er felles for alle listene: én melding er åpen om gangen.
       let valgt = null;
-      const apneMelding = (m) => {
+      const hentDetalj = (m, panel) => {
         valgt = m.melding_id;
         hentEpostMelding(m.melding_id)
-          .then((full) => { if (eierSkjermen() && valgt === m.melding_id) panel.vis(full); })
+          .then((full) => {
+            if (!eierSkjermen() || valgt !== m.melding_id) return;
+            panel.vis(full);
+            panel.fokuser();
+          })
           .catch((e) => {
             if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-            if (valgt === m.melding_id) panel.feil(t("ui.epost.feilet"));
+            if (valgt === m.melding_id) { panel.feil(t("ui.epost.feilet")); panel.fokuser(); }
           });
       };
       const deler = [
@@ -222,10 +310,9 @@ export function visEpost(hoved, ctx) {
           continue;
         }
         deler.push(meldingsliste(ctx, k, (svar && svar.meldinger) || [],
-                                 !!(svar && svar.avkortet), apneMelding,
+                                 !!(svar && svar.avkortet), hentDetalj,
                                  kanAdministrere, bekreftSlett));
       }
-      deler.push(panel.node);
       if (kanAdministrere) deler.push(koblingsseksjon());
       sett(hoved, ...deler);
     });

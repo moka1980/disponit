@@ -6795,7 +6795,6 @@
   "ui.epost.meldinger.kolonne.emne": "Emne",
   "ui.epost.meldinger.kolonne.slettes": "Slettes",
   "ui.epost.meldinger.apne": "Åpne",
-  "ui.epost.meldinger.reapet": "(slettet etter fristen — bare tidspunktet består)",
   "ui.epost.meldinger.uten_emne": "(uten emne)",
   "ui.epost.meldinger.vedlegg": "(vedlegg)",
   "ui.epost.meldinger.avkortet": "Lista er avkortet — de nyeste vises.",
@@ -6834,5 +6833,12 @@
   "ui.dokumentmal.felttype.tekst": "Tekst",
   "ui.dokumentmal.felttype.tall": "Tall",
   "ui.dokumentmal.felttype.dato": "Dato",
-  "ui.dokumentmal.felttype.belop": "Beløp"
+  "ui.dokumentmal.felttype.belop": "Beløp",
+  "ui.epost.meldinger.slettede_vis": "Vis {n} slettede meldinger",
+  "ui.epost.meldinger.slettet_av_menneske": "Slettet av dere",
+  "ui.epost.meldinger.slettet_av_fristen": "Slettet etter oppbevaringsfristen",
+  "ui.epost.meldinger.mottatt_kort": "mottatt",
+  "ui.epost.meldinger.bare_slettede": "Alle meldingene som er hentet, er slettet. Sporet står nedenfor.",
+  "ui.epost.meldinger.vis_raa": "Vis meldingen slik den kom",
+  "ui.epost.meldinger.tom_kropp": "Meldingen har ingen lesbar tekst — bare lenker og bilder."
 }

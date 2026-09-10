@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
-import { visEpost, settNavigasjonForTest }
+import { visEpost, settNavigasjonForTest, lesbarTekst }
   from "../static/js/flater/epost.js";
 
 settI18nForTest(NB, "nb");
@@ -223,8 +223,14 @@ const MELDINGER = { meldinger: [
   { melding_id: "7a1b2c3d-0000-4000-8000-000000000012", kilde_id: K1,
     mottatt_ts: "2026-06-01T08:00:00+00:00", retning: "inn", har_vedlegg: false,
     trad_id: null, slettes_ts: "2026-08-30T08:00:00+00:00", reapet: true,
+    slettet_ts: "2026-08-30T08:00:01+00:00", slettet_for_fristen: false,
     fra: null, fra_navn: null, emne: null, forhandsvisning: null },
-], vist: 2, avkortet: true };
+  { melding_id: "7a1b2c3d-0000-4000-8000-000000000013", kilde_id: K1,
+    mottatt_ts: "2026-09-09T08:00:00+00:00", retning: "inn", har_vedlegg: false,
+    trad_id: null, slettes_ts: "2026-12-08T08:00:00+00:00", reapet: true,
+    slettet_ts: "2026-09-10T14:36:52+00:00", slettet_for_fristen: true,
+    fra: null, fra_navn: null, emne: null, forhandsvisning: null },
+], vist: 3, avkortet: true };
 const MELDING = { ...MELDINGER.meldinger[0], til: ["post@acme.example"],
   kropp: "Hei, kan dere komme på befaring neste uke?\nHilsen Per", kropp_type: "text" };
 
@@ -238,7 +244,10 @@ test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, r
   const tekst = h.textContent;
   assert.ok(tekst.includes("Befaring elbillader"));
   assert.ok(tekst.includes("Per Nordvik <per@nordvik.example>"));
-  assert.ok(tekst.includes(t("ui.epost.meldinger.reapet")));
+  // Slettede står IKKE i lista — de er spor, ikke innboks.
+  assert.ok(!tekst.includes(t("ui.epost.meldinger.slettet_av_fristen"))
+    || h.querySelector("details"), "slettede skal ligge sammenklappet");
+  assert.ok(tekst.includes(t("ui.epost.meldinger.slettede_vis").replace("{n}", "2")));
   assert.ok(tekst.includes(t("ui.epost.meldinger.avkortet")));
   assert.ok(tekst.includes(t("ui.epost.meldinger.vedlegg")));
   // Én meldingsliste: den deaktiverte kilden hentes ikke.
@@ -247,9 +256,10 @@ test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, r
   for (const b of h.querySelectorAll("button")) {
     assert.ok(!/svar|send|videresend|slett/i.test(b.textContent), b.textContent);
   }
+  // Bare den levende meldingen har handlinger, og de står SIDE VED SIDE.
   const knapper = [...h.querySelectorAll("table")[1].querySelectorAll("button")];
-  assert.equal(knapper.length, 2);
-  assert.ok(knapper[1].disabled, "reapet melding kan ikke åpnes");
+  assert.equal(knapper.length, 1, "slettede meldinger har ingen handlinger");
+  assert.ok(knapper[0].closest(".knapperad"), "handlingene står ikke i én rad");
   knapper[0].click();
   await vent(() => h.querySelector(".epost-kropp"));
   assert.ok(h.querySelector(".epost-kropp").textContent.includes("Hilsen Per"));
@@ -301,5 +311,105 @@ test("Epost: en administrator kan slette en hentet melding — bak bekreftelse, 
   const kall = KALL.find((k) => k.url === `/v1/epost/meldinger/${M1}/slett`);
   assert.equal(kall.metode, "POST");
   assert.ok(kall.headers["Idempotency-Key"] || kall.headers["idempotency-key"]);
+});
+
+test("Epost: slettede meldinger er spor — sammenklappet, og teksten sier HVEM som slettet", async () => {
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelector("details"));
+  const detaljer = h.querySelector("details");
+  // Sammenklappet: teksten om de slettede står ikke i veien for innboksen.
+  assert.equal(detaljer.open, false);
+  assert.ok(detaljer.textContent.includes(
+    t("ui.epost.meldinger.slettet_av_menneske")), "manuell sletting sies ikke");
+  assert.ok(detaljer.textContent.includes(
+    t("ui.epost.meldinger.slettet_av_fristen")), "fristen sies ikke");
+  // Lista over selve meldingene har bare den levende.
+  const rader = [...h.querySelectorAll("table")[1].querySelectorAll("tbody tr")];
+  assert.equal(rader.length, 1);
+  assert.ok(rader[0].textContent.includes("Befaring elbillader"));
+});
+
+test("Epost: panelet står i lista og får fokus når en melding åpnes", async () => {
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  const liste = h.querySelectorAll("table")[1].closest("section");
+  const panel = liste.querySelector(".skjemaboks");
+  assert.ok(panel, "panelet står ikke i lista det hører til");
+  assert.equal(panel.hidden, true);
+  liste.querySelector("tbody button").click();
+  await vent(() => !panel.hidden);
+  assert.ok(panel.textContent.includes("Hilsen Per"));
+  assert.equal(document.activeElement, panel, "panelet fikk ikke fokus");
+});
+
+test("Epost: lesevisningen fjerner adressestøyen, og originalen ligger bak en bryter", async () => {
+  // Nøyaktig formen Graph gir for en HTML-post konvertert til tekst.
+  const raa = [
+    "Vis i nettleseren <https://t.emailnotifications.microsoft.com/r/?id=h1a1c44bc7>",
+    "",
+    "[https://cdn-dynmedia-1.microsoft.com/is/image/microsoftcorp/M365?fmt=png-alpha]",
+    "",
+    "[En smarttelefon som viser et OneDrive-fotogalleri.] <https://t.emailnotifications.microsoft.com/r/?id=h1a1c44bc41>",
+    "",
+    "",
+    "",
+    "Din OneDrive er klar",
+    "Les mer <https://onedrive.live.com/>",
+    "https://kun-en-adresse.example/spor",
+  ].join("\n");
+  const ren = lesbarTekst(raa);
+  assert.ok(!ren.includes("https://"), ren);
+  assert.ok(ren.includes("Din OneDrive er klar"));
+  assert.ok(ren.includes("Les mer"));
+  assert.ok(!/\n{3,}/.test(ren), "tomme linjer ble ikke kollapset");
+  // En ren tekstpost røres ikke.
+  const enkel = "Hei, kan dere komme på befaring?\nHilsen Per";
+  assert.equal(lesbarTekst(enkel), enkel);
+
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: { ...MELDING, kropp: raa } };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".epost-kropp"));
+  const panel = h.querySelector(".skjemaboks");
+  assert.ok(panel.querySelector(".epost-kropp").textContent
+    .includes("Din OneDrive er klar"));
+  assert.ok(!panel.querySelector(".epost-kropp").textContent.includes("https://"));
+  // Originalen er ikke borte — den ligger bak bryteren.
+  const raaBryter = panel.querySelector("details");
+  assert.ok(raaBryter && raaBryter.textContent.includes(t("ui.epost.meldinger.vis_raa")));
+  assert.ok(raaBryter.querySelector(".epost-kropp").textContent.includes("https://"));
+});
+
+test("Epost: med to aktive kilder får hver liste sitt eget panel", async () => {
+  const K2 = "5e0a3f1e-0000-4000-8000-000000000003";
+  const TO = { kilder: [KILDER.kilder[0],
+    { kilde_id: K2, leverandor: "m365", postboks: "salg@acme.example",
+      status: "aktiv", sist_hentet_ts: "2026-09-10T10:00:00+00:00",
+      opprettet: "2026-08-02T09:00:00+00:00" }] };
+  SVAR = { "/v1/epost/kilder": TO, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll(".skjemaboks").length >= 2);
+  const seksjoner = [...h.querySelectorAll("section")].filter(
+    (s) => s.querySelector("tbody button"));
+  assert.equal(seksjoner.length, 2, "begge kildene skal ha en liste");
+  const panel0 = seksjoner[0].querySelector(".skjemaboks");
+  const panel1 = seksjoner[1].querySelector(".skjemaboks");
+  assert.ok(panel0 && panel1 && panel0 !== panel1, "listene deler panel");
+  // Åpner vi i den FØRSTE lista, skal panelet der vise meldingen.
+  seksjoner[0].querySelector("tbody button").click();
+  await vent(() => !panel0.hidden);
+  assert.ok(panel0.textContent.includes("Hilsen Per"));
+  assert.equal(panel1.hidden, true, "panelet under feil kilde åpnet seg");
 });
 
