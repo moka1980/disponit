@@ -562,7 +562,7 @@ RESET ROLE;
 -- rolleavgjørelse. Et kompromittert web-API skal ikke engang kunne
 -- eksfiltrere ciphertext.
 GRANT SELECT (tenant, kilde_id, leverandor, postboks, status,
-    sist_hentet_ts, opprettet) ON epost_kilde TO {rolle};
+    sist_hentet_ts, opprettet, scope) ON epost_kilde TO {rolle};
 -- M-6 PR-B: kildens skrivevei FØDES her — OAuth-callbacken skriver
 -- credential-trioen (kryptert i API-laget FØR den når basen), rekobling
 -- av samme postboks roterer den, og deaktivering flipper status.
@@ -573,9 +573,9 @@ GRANT SELECT (tenant, kilde_id, leverandor, postboks, status,
 -- Innhenterens lesing av trioen (PR-C) er sin egen vei med sin egen
 -- rolleavgjørelse; web-API-rollen kan skrive ciphertext den aldri får
 -- lese tilbake.
-GRANT INSERT (tenant, leverandor, postboks, auth_kryptert, nonce, key_id)
-    ON epost_kilde TO {rolle};
-GRANT UPDATE (auth_kryptert, nonce, key_id, status)
+GRANT INSERT (tenant, leverandor, postboks, auth_kryptert, nonce, key_id,
+    scope) ON epost_kilde TO {rolle};
+GRANT UPDATE (auth_kryptert, nonce, key_id, status, scope)
     ON epost_kilde TO {rolle};
 GRANT SELECT ON epost_melding, epost_klassifisering,
     epost_utkast, epost_oppfolging, epost_vedlegg TO {rolle};
@@ -1300,7 +1300,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {rolle};
 -- alt under `tenant_isolasjon` (innhenteren setter tenant per kilde).
 -- Web-API-rollen har fortsatt IKKE trioen (speilporten i test_m6_epost).
 GRANT SELECT (tenant, kilde_id, leverandor, postboks, status, sist_hentet_ts,
-    delta_token, auth_kryptert, nonce, key_id, opprettet)
+    delta_token, auth_kryptert, nonce, key_id, opprettet, scope)
     ON epost_kilde TO {rolle};
 GRANT UPDATE (status, sist_hentet_ts, delta_token) ON epost_kilde TO {rolle};
 GRANT INSERT ON epost_melding TO {rolle};

@@ -313,6 +313,16 @@ export function visEpost(hoved, ctx) {
         ...flateHode(t("ui.epost.tittel"), t("ui.epost.undertittel")),
         kildetabell(kilder, kanAdministrere, bekreftDeaktiver),
       ];
+      // SAMTYKKET AVGJØR, ikke koden: en postboks koblet før
+      // sendetilgangen ble bedt om, kan leses men ikke svares fra. Sagt
+      // HER, over meldingene, i stedet for som en feil når svaret alt er
+      // skrevet og godkjent.
+      for (const k of kilder) {
+        if (k.status === "deaktivert" || k.kan_svare !== false) continue;
+        deler.push(el("p", { role: "status", class: "muted",
+          text: t("ui.epost.kilde.mangler_sendetilgang")
+            .replace("{postboks}", k.postboks) }));
+      }
       for (const k of kilder) {
         if (k.status === "deaktivert") continue;
         const svar = (d.meldinger || {})[k.kilde_id];

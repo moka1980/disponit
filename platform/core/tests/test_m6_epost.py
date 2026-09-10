@@ -877,8 +877,10 @@ def test_kjoreren_speiler_088_rettighetene():
     # Kilden: KOLONNEGRANT uten credential-trioen og cursoren
     # (CodeRabbit på PR-A) — web-API-rollen skal ikke engang kunne
     # eksfiltrere ciphertext.
+    # 178: `scope` kom til — samtykkets egne ord, som flaten leser for å
+    # si om boksen kan svare. Credential-trioen er fortsatt utenfor.
     assert ("GRANT SELECT (tenant, kilde_id, leverandor, postboks,"
-            " status,\n    sist_hentet_ts, opprettet) ON epost_kilde"
+            " status,\n    sist_hentet_ts, opprettet, scope) ON epost_kilde"
             " TO {rolle};") in kjorer
     assert ("GRANT SELECT ON epost_melding, epost_klassifisering,"
             "\n    epost_utkast, epost_oppfolging,"
@@ -895,8 +897,8 @@ def test_kjoreren_speiler_088_rettighetene():
     # (088-vakten stopper den uansett — granten skal ikke love mer enn
     # vakten tillater).
     assert ("GRANT INSERT (tenant, leverandor, postboks, auth_kryptert,"
-            " nonce, key_id)\n    ON epost_kilde TO {rolle};") in kjorer
-    assert ("GRANT UPDATE (auth_kryptert, nonce, key_id, status)\n"
+            " nonce, key_id,\n    scope) ON epost_kilde TO {rolle};") in kjorer
+    assert ("GRANT UPDATE (auth_kryptert, nonce, key_id, status, scope)\n"
             "    ON epost_kilde TO {rolle};") in kjorer
     # PR-C a (175, M-6 inntak): innhenterens skrivevei er født — hos
     # PLANARBEIDEREN (PLAN_RETTIGHETER), aldri hos web-API-rollen. Porten
@@ -911,8 +913,8 @@ def test_kjoreren_speiler_088_rettighetene():
     plan = kjorer.split("PLAN_RETTIGHETER = ")[1].split(
         "DRIFTSTATUS_RETTIGHETER = ")[0]
     assert "GRANT INSERT ON epost_melding TO {rolle};" in plan
-    assert "auth_kryptert, nonce, key_id, opprettet)\n    ON epost_kilde" \
-        " TO {rolle};" in plan
+    assert "auth_kryptert, nonce, key_id, opprettet, scope)\n" \
+        "    ON epost_kilde TO {rolle};" in plan
     for tabell in ("epost_klassifisering", "epost_utkast", "epost_vedlegg",
                    "epost_oppfolging"):
         assert f"INSERT ON {tabell}" not in plan, \

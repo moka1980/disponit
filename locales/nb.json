@@ -1667,7 +1667,7 @@
   "ui.epost.feilet": "Handlingen feilet. Prøv igjen.",
   "ui.epost.ikke_konfigurert": "Microsoft 365-integrasjonen er ikke konfigurert for denne installasjonen.",
   "ui.epost.kilder_caption": "Tilkoblede e-postkilder",
-  "ui.epost.koble_forklaring": "Du sendes til Microsoft for å gi lesetilgang (Mail.Read) til postboksen. Disponit kan aldri sende e-post.",
+  "ui.epost.koble_forklaring": "Du sendes til Microsoft for å gi tilgang til postboksen: lesetilgang for å hente meldingene, og sendetilgang for å kunne svare herfra. Disponit sender aldri av seg selv — bare et svar et menneske har godkjent, innenfor policyen.",
   "ui.epost.koble_til": "Koble til M365",
   "ui.epost.koble_tittel": "Koble til Microsoft 365",
   "ui.epost.kolonne.handling": "Handling",
@@ -6841,5 +6841,6 @@
   "ui.epost.meldinger.bare_slettede": "Alle meldingene som er hentet, er slettet. Sporet står nedenfor.",
   "ui.epost.meldinger.vis_raa": "Vis meldingen slik den kom",
   "ui.epost.meldinger.tom_kropp": "Meldingen har ingen lesbar tekst — bare lenker og bilder.",
-  "ui.epost.meldinger.vis_lesbar": "Vis lesevennlig"
+  "ui.epost.meldinger.vis_lesbar": "Vis lesevennlig",
+  "ui.epost.kilde.mangler_sendetilgang": "{postboks} er koblet til med kun lesetilgang. Koble til på nytt nedenfor for å kunne svare på meldinger herfra — Microsoft spør da om sendetilgang i tillegg."
 }

@@ -425,3 +425,30 @@ test("Epost: med to aktive kilder får hver liste sitt eget panel", async () => 
   assert.equal(panel1.hidden, true, "panelet under feil kilde åpnet seg");
 });
 
+test("Epost: en postboks uten sendetilgang sier det FØR noen skriver et svar", async () => {
+  const utenSend = { kilder: [{ ...KILDER.kilder[0], kan_svare: false },
+                              KILDER.kilder[1]] };
+  SVAR = { "/v1/epost/kilder": utenSend, "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  const varselet = t("ui.epost.kilde.mangler_sendetilgang")
+    .replace("{postboks}", "post@acme.example");
+  let h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.textContent.includes(varselet));
+  // Den deaktiverte kilden får ingen slik oppfordring — den skal ikke
+  // kobles til igjen for å svare, den er avviklet.
+  const varsler = [...h.querySelectorAll("[role=status]")].filter(
+    (n) => n.textContent.includes(t("ui.epost.kilde.mangler_sendetilgang")
+      .split("{postboks}")[1].slice(0, 30)));
+  assert.equal(varsler.length, 1);
+  // Med sendetilgang står det ingenting.
+  SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+           "/v1/epost/meldinger": MELDINGER,
+           [`/v1/epost/meldinger/${M1}`]: MELDING };
+  h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  assert.ok(!h.textContent.includes(
+    t("ui.epost.kilde.mangler_sendetilgang").split("{postboks}")[1].slice(0, 30)));
+});
+

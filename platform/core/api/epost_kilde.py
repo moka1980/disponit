@@ -72,11 +72,31 @@ from . import ssrf
 #: Modulen rutene tilhører (rollback-kontrakten, m57-formen).
 EPOSTMODUL = "m06_epost"
 
-#: Dommen pkt. 1: KUN lesende — Mail.Read + offline_access (refresh-
-#: token). Ingen openid/User.Read: postboksen oppgis av administratoren
-#: i /start-kroppen, ikke utledes av en identitetsclaim — å be om ETT
-#: scope mer enn dommen navnga er en kontraktsendring, ikke en detalj.
-M365_SCOPE = "https://graph.microsoft.com/Mail.Read offline_access"
+#: Scopene samtykket ber om. Å be om ETT scope mer er en
+#: KONTRAKTSENDRING, ikke en detalj — og porten under feller enhver
+#: endring her, med vilje.
+#:
+#: `Mail.Send` kom med EIERVEDTAK 10/9: svar skal gå fra kundens egen
+#: postboks, ikke fra husets SMTP, så tråden holder sammen hos
+#: mottakeren. Det opphever dommen 31/8 pkt. 2 (v1 kun lesende), og det
+#: sies HER fordi en dom som blir borte i en strengendring er en dom
+#: ingen finner igjen. Sendingen selv er fortsatt gjerdet: den skjer
+#: bare på et utkast et menneske har godkjent, gjennom policyporten, av
+#: eiermodulen — aldri fra kildeveien og aldri fra flaten.
+#:
+#: Ingen openid/User.Read: postboksen oppgis av administratoren i
+#: /start-kroppen, ikke utledes av en identitetsclaim.
+M365_SCOPE = ("https://graph.microsoft.com/Mail.Read"
+              " https://graph.microsoft.com/Mail.Send offline_access")
+
+#: Scopet svarveien krever. En kilde koblet FØR vedtaket har det ikke,
+#: og da skal flaten si det før noen skriver et svar som ikke kan sendes.
+SENDESCOPE = "https://graph.microsoft.com/Mail.Send"
+
+
+def kan_svare(scope: str | None) -> bool:
+    """-> kan denne kilden sende? Samtykkets egne ord, ikke vårt ønske."""
+    return SENDESCOPE.lower() in (scope or "").lower()
 
 #: Statens levetid — OIDC-flytens frist (sesjon.LOGIN_TX_MIN), samme
 #: begrunnelse: en authorize-runde tar sekunder, ikke timer.
@@ -555,10 +575,18 @@ def callback_endepunkt(tjeneste, request: Request) -> Response:
                                        tenant, key_id)
         conn.execute(
             "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
-            " auth_kryptert, nonce, key_id) VALUES (%s,'m365',%s,%s,%s,%s)"
+            " auth_kryptert, nonce, key_id, scope)"
+            " VALUES (%s,'m365',%s,%s,%s,%s,%s)"
             " ON CONFLICT (tenant, leverandor, postboks) DO UPDATE SET"
-            " auth_kryptert=%s, nonce=%s, key_id=%s, status='aktiv'",
-            (tenant, postboks, ct, nonce, key_id, ct, nonce, key_id))
+            " auth_kryptert=%s, nonce=%s, key_id=%s, status='aktiv',"
+            " scope=%s",
+            # SAMTYKKETS EGNE ORD (178), ikke våre: Microsoft kan gi
+            # færre scoper enn vi ba om, og da er det det tokenet faktisk
+            # bærer som avgjør om denne boksen kan svare. Mangler feltet,
+            # faller vi tilbake på det vi ba om — aldri på et ønske.
+            (tenant, postboks, ct, nonce, key_id,
+             str(token.get("scope") or M365_SCOPE),
+             ct, nonce, key_id, str(token.get("scope") or M365_SCOPE)))
         conn.commit()
         tjeneste.logg.hendelse("m365_kilde_tilkoblet", rid, tenant,
                                art="drift", aktor=f"bruker:{bruker}")
@@ -606,14 +634,17 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
         tenant, _bid = _leseauth_epost(tjeneste, request, conn, rid)
         rader = conn.execute(
             "SELECT kilde_id, leverandor, postboks, status,"
-            " sist_hentet_ts, opprettet FROM epost_kilde"
+            " sist_hentet_ts, opprettet, scope FROM epost_kilde"
             " WHERE tenant=%s ORDER BY opprettet, kilde_id",
             (tenant,)).fetchall()
         return _ok({"kilder": [
             {"kilde_id": str(r[0]), "leverandor": r[1], "postboks": r[2],
              "status": r[3],
              "sist_hentet_ts": r[4].isoformat() if r[4] else None,
-             "opprettet": r[5].isoformat()} for r in rader]}, rid)
+             "opprettet": r[5].isoformat(),
+             # Samtykkets egne ord, som ja/nei: en kilde koblet før
+             # vedtaket kan lese, ikke svare — og flaten skal si det.
+             "kan_svare": kan_svare(r[6])} for r in rader]}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

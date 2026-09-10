@@ -1,13 +1,18 @@
 """M-6 PR-B: kilderegistrering med M365-OAuth — portene.
 
-Dommene 31/8 er kontrakten denne fila måler:
+Dommene 31/8 var kontrakten denne fila målte. EIERVEDTAK 10/9 endret
+punkt 2: svar skal gå fra kundens egen postboks, ikke fra husets SMTP,
+så tråden holder sammen hos mottakeren. `Mail.Send` kom til samtykket.
+Portene måler derfor den NYE kontrakten, og sier hva som endret seg:
 
-  1. M365 først, og KUN lesende scope: `Mail.Read offline_access`. Ett
-     scope mer er en KONTRAKTSENDRING, ikke en detalj — derfor står
-     scope-strengen som en egen port, sammen med fraværet av enhver
-     sendevei i modulen.
-  2. v1 sender aldri. Ingen `Mail.Send`, ingen `sendMail`, ingen
-     Graph-write noe sted i kildeveien.
+  1. M365 først, og et LUKKET scope-sett: `Mail.Read`, `Mail.Send`,
+     `offline_access`. Ett scope mer er fortsatt en KONTRAKTSENDRING,
+     ikke en detalj — og det som IKKE kom til er like bindende:
+     `Mail.ReadWrite` (å endre kundens postboks) og `MailboxSettings`.
+  2. KILDEVEIEN sender aldri. At scopet finnes, gir ikke OAuth-modulen
+     lov til å kalle Graphs sendeendepunkt: den veien går gjennom claim
+     og policyport, på et utkast et menneske har godkjent, i
+     eiermodulen. Fraværet av sendekall her er fortsatt en port.
 
 Portene (planens §4 for PR-B):
 
@@ -166,17 +171,27 @@ def _kilderad(migrator_, postboks):
 # Port: dommen om scope — v1 er lesende, og sendeveien er urepresenterbar
 # ---------------------------------------------------------------------------
 
-def test_scopet_er_kun_lesende_og_modulen_har_ingen_sendevei():
+def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
     """Dommen 31/8 pkt. 1–2, målt på kilden: nøyaktig `Mail.Read` +
     `offline_access`, og ingen skrive-/sendeverb i hele kildeveien. En
     scope-utvidelse er en kontraktsendring — den skal FELLE en test,
     ikke gli gjennom som en strengendring."""
     from api.epost_kilde import M365_SCOPE
+    # EIERVEDTAK 10/9: `Mail.Send` kom til, fordi svar skal gå fra
+    # kundens egen postboks. Settet er fortsatt LUKKET og pinnet her —
+    # et scope til er en kontraktsendring som skal felle denne testen,
+    # ikke gli gjennom. Det som IKKE kom til, er like viktig:
+    # `Mail.ReadWrite` (å endre kundens postboks) og `MailboxSettings`.
     assert M365_SCOPE.split() == [
-        "https://graph.microsoft.com/Mail.Read", "offline_access"], \
-        "scopet er dommens, ikke utviklerens"
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.Send", "offline_access"], \
+        "scopet er vedtakets, ikke utviklerens"
     kilde = KILDEMODUL.read_text(encoding="utf-8")
-    for forbudt in ("Mail.Send", "Mail.ReadWrite", "sendMail",
+    # SENDINGEN BOR IKKE HER. Kildeveien er samtykket og token­veksling;
+    # at scopet finnes betyr ikke at OAuth-modulen får kalle Graphs
+    # sendeendepunkt. Den veien går gjennom claim og policyport, i
+    # eiermodulen.
+    for forbudt in ("Mail.ReadWrite", "sendMail", "/messages/send",
                     "Mail.ReadBasic", "MailboxSettings"):
         assert forbudt not in kilde, \
             f"{forbudt} gir kildeveien en evne v1 ikke skal ha"
@@ -277,6 +292,7 @@ def test_start_bygger_authorize_url_med_state_pkce_og_binding(klient, migrator,
     assert param["response_type"] == "code"
     assert param["client_id"] == M365_ID
     assert param["scope"] == ("https://graph.microsoft.com/Mail.Read"
+                             " https://graph.microsoft.com/Mail.Send"
                              " offline_access")
     assert param["code_challenge_method"] == "S256"
     assert param["code_challenge"]
@@ -424,9 +440,13 @@ def test_callback_skriver_kilden_og_refresh_tokenet_er_ciphertext(
     poster = [k for k in liste.json()["kilder"]
               if k["postboks"] == postboks]
     assert len(poster) == 1
+    # `kan_svare` er samtykkets egne ord som ja/nei (178) — ikke selve
+    # scope-strengen: flaten trenger dommen, ikke Microsofts formulering.
     assert set(poster[0]) == {"kilde_id", "leverandor", "postboks", "status",
-                              "sist_hentet_ts", "opprettet"}, \
+                              "sist_hentet_ts", "opprettet", "kan_svare"}, \
         "leseflaten har fått en kolonne den ikke skal ha"
+    assert poster[0]["kan_svare"] is True, \
+        "en kilde koblet med det nye samtykket skal kunne svare"
     assert poster[0]["kilde_id"] == str(kilde_id)
 
 
