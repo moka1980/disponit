@@ -57,3 +57,48 @@ og mva-satser står fra 8/9; leverandøren Nordkabel Engros AS er kjent.
 | 8 | `bokforing_av_avvist_eller_bokfort` | avvist → 409 / `feilet`; `bokfort` som dom → 400 |
 | 9 | `kvittering_uten_bokforing` | fakturaen `bokfort`, bilaget i `#/avstemming`, evidens |
 | 10 | `kill_switch_konsumerte_fakturaer` | `DISPONIT_BOKFORING_UTLOSER=av` → ingenting; på igjen → kandidaten står |
+
+## Gjennomført 10/9-2026 på disponit-srv
+
+Alle fem PR-ene (#455–#459) ble merget og deployet 10/9 (migrasjoner
+165–168). Vertsteget `deploy/staging/m14-oppsett.sh` FEILET første gang:
+registerets herdede `registrer_oppdragstype` (040) nekter to typer der
+den ene er strengprefiks av den andre (`faktura.bokfor` /
+`faktura.bokfor_stor`), og hele registreringen rullet tilbake.
+Testporten hadde satt typeradene inn rått og så det aldri. Fikset i #460
+(main `c2cbedff`): ÉN oppdragstype med begge handlingene (M-23s form med
+inkassovarselet), og porten går gjennom den herdede funksjonen. **Lærdom:**
+en rigg som setter inn registerrader rått tester ikke registerets vakt —
+gå samme dør som verten. Andre kjøring: `v_regnskap/k1` kopiert fra
+`DISPONIT_ATT_NOKLER` (ingen ny hemmelighet), `disponit-m14` oppe,
+`m14-r1` claiming, modulhode aktiv, drift-tokenet tilbakekalt.
+
+Ingen policyendring: 0.6.0 bærer begge handlingene.
+
+Bevisrunden (§7) gikk 10:26–10:45Z; artefaktet er
+`deploy/staging/artefakter/m14-bokforing-v1-20260910T104500Z.json` og
+porten `test_bevisartefaktet_passerer_grensen` måler det. Live: før
+vertsteget plukket timer-rundene NK-2026-4471 (23 125 kr, kontrollert
+av et menneske 8/9) og stoppet på `bestillingstype_utilgjengelig` uten
+å bokføre (plattformtilstand konsumerer ikke). Riggen: R1 ren 12 500,
+R2 mva-avvik, R3 ukjent leverandør, R4 30 000 uten manuell kontroll,
+R5 31 000 med, R6 150 000 med, R7 avvist. Manuell bestilling: R2 → sak
+129 (`rolle_ikke_tillatt`), R4/R7 → 409, ukjent → 404, `bokfort` som
+dom → 400. Kill-switch av → ingenting; på → runden plukket 4:
+NK-2026-4471 og R1 → `faktura.bokfor` (oppdrag 107, 109), R5 →
+`faktura.bokfor_stor` (108), R6 → `menneske_kreves`; R2/R3/R4/R7 aldri
+kandidater. Modulen kvitterte tre oppdrag `utfort` (200, én gang hver);
+bilagene `LF-NK-2026-4471`, `LF-NK-2026-5101`, `LF-NK-2026-5105` står i
+M-13s bilagsregister (`#/avstemming`) og fakturaene er `bokfort` med
+bilagets identitet — NK-2026-4471 beholdt menneskets `avgjort_av`.
+Runde 2 og timer-runden etter: stille, `bokforingsbestilling` uendret
+(4). Flaten viser bestillingen og bilaget per faktura.
+
+Seks gule funn: tre punkter målt bare i portene (uten policy — 0.6.0
+bærer handlingene; bilaget som avviker; kvittering to ganger); manuell
+bestilling av et avvik felles på ROLLEN før attestasjonene måles
+(presedens); M-37 mangler verifikatormodul (sak 129 `manuell`); en
+planrunde uten kandidater er stille; v1-koblingen er husets
+bilagsregister (ingen ekstern regnskapskobling ennå); og
+registreringen som nektet prefiks-overlapp (fikset i #460, lagret som
+lærdom).
