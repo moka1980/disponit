@@ -529,6 +529,11 @@ export const trekkTilbakeMalversjon = (versjonId, idem) =>
     `/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/trekk-tilbake`,
     "POST", {}, idem || nyIdempotensnokkel());
 
+// 177: den tredje overgangen — et utkast som aldri kom i kraft.
+export const forkastMalversjon = (versjonId, idem) =>
+  _muter(`/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/forkast`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
 export const fyllMal = (versjonId, verdier) =>
   _muter(`/v1/dokumentmal/versjon/${encodeURIComponent(versjonId)}/utfylling`,
          "POST", { verdier });

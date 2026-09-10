@@ -129,6 +129,8 @@ function nullstill() {
     "/v1/dokumentmal": REGISTER,
     [`/v1/dokumentmal/versjon/${VERSJON_PUBLISERT.versjon_id}/utfylling`]:
       UTFYLLING,
+    [`/v1/dokumentmal/versjon/${VERSJON_UTKAST.versjon_id}/forkast`]:
+      { versjon_id: VERSJON_UTKAST.versjon_id, versjonsnr: 1 },
   };
 }
 
@@ -245,6 +247,11 @@ test("Dokumentmal: overgangsknappene følger tilstanden og skrivescopet",
     assert.ok(knapper.includes(t("ui.dokumentmal.knapp.publiser")));
     assert.ok(knapper.includes(t("ui.dokumentmal.knapp.trekk_tilbake")));
     assert.ok(knapper.includes(t("ui.dokumentmal.knapp.ny_familie")));
+    // 177: forkasting hører til UTKASTET, aldri til en publisert
+    // versjon — den trekkes tilbake.
+    assert.equal(
+      knapper.filter((x) => x === t("ui.dokumentmal.knapp.forkast")).length, 1,
+      "forkast skal stå på utkastet, og bare der");
 
     const brudd = await alvorligeBrudd(h, { fragment: true });
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
@@ -322,3 +329,27 @@ test("Dokumentmal: nb og en har hver eneste ui.dokumentmal-nøkkel",
         `en.json mangler ${k}`);
     }
   });
+
+test("Dokumentmal: forkasting spør først, og poster så mot forkast-ruten",
+  async () => {
+    nullstill();
+    const h = nyHoved();
+    visDokumentmal(h, ctx(["decisions:read", "bestilling:opprett"]));
+    await vent(() => h.querySelectorAll("table").length >= 1);
+    const forkast = [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.dokumentmal.knapp.forkast"));
+    assert.ok(forkast, "forkast-knappen mangler på utkastet");
+    SISTE_POST = null;
+    forkast.click();
+    // Ingenting postes før mennesket har bekreftet.
+    await vent(() => document.querySelector("[role=alertdialog]"));
+    assert.equal(SISTE_POST, null, "forkasting postet uten bekreftelse");
+    const dialog = document.querySelector("[role=alertdialog]");
+    assert.ok(dialog.textContent.includes(t("ui.dokumentmal.forkast.tekst")));
+    const bekreft = [...dialog.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.dokumentmal.knapp.forkast"));
+    bekreft.click();
+    await vent(() => SISTE_POST !== null);
+    assert.ok(SISTE_POST.sti.endsWith("/forkast"), SISTE_POST.sti);
+  });
+

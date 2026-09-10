@@ -6804,5 +6804,10 @@
   "ui.epost.meldinger.slett": "Delete",
   "ui.epost.meldinger.slett_tittel": "Delete this message now?",
   "ui.epost.meldinger.slett_tekst": "The text and the address are removed immediately, instead of when the retention period ends. The timestamp remains as a record that the message existed. This cannot be undone.",
-  "ui.epost.meldinger.slettet": "The message has been deleted."
+  "ui.epost.meldinger.slettet": "The message has been deleted.",
+  "ui.dokumentmal.status.forkastet": "Discarded",
+  "ui.dokumentmal.knapp.forkast": "Discard draft",
+  "ui.dokumentmal.forkast.tittel": "Discard this draft?",
+  "ui.dokumentmal.forkast.tekst": "The draft remains in the history as discarded, and cannot be published or brought back. Its version number is used up, so the next draft gets the next number. Content in an already published version is not affected.",
+  "ui.dokumentmal.forkast.ok": "The draft has been discarded."
 }

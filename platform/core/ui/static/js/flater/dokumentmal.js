@@ -34,10 +34,12 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import {
-  UautorisertFeil, fyllMal, hentJson, nyIdempotensnokkel,
+  UautorisertFeil, forkastMalversjon, fyllMal, hentJson,
+  nyIdempotensnokkel,
   opprettMalfamilie, publiserMalversjon, trekkTilbakeMalversjon,
 } from "../api.js";
 import { Tidspunkt } from "../komponenter.js";
+import { Bekreftelsesdialog } from "../dialog.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, kvRad, medStatus } from "./felles.js";
 
@@ -195,13 +197,17 @@ function utfyllingsSeksjon(versjon, ctx) {
 function overgangsknapper(versjon, ctx, last) {
   const rad = el("div", { class: "knapperad" });
   const utfall = el("span", { "aria-live": "polite" });
-  const lag = (nokkel, kall) => {
+  // `bekreft` (177): en overgang som ikke kan angres spør først. De to
+  // andre er reversible i praksis — en tilbaketrukket versjon kan
+  // etterfølges — mens et forkastet utkast er borte fra veien.
+  const lag = (nokkel, kall, bekreft) => {
     const knapp = el("button", { type: "button",
       text: t(`ui.dokumentmal.knapp.${nokkel}`) });
+    if (bekreft) knapp.classList.add("fare");
     // Én nøkkel per intensjon (PR-014 R1): nullstilles ved 4xx, fordi et
     // avvist forsøk har forbrukt nøkkelen.
     let idem = null;
-    knapp.addEventListener("click", async () => {
+    const utfor = async () => {
       if (knapp.disabled) return;
       knapp.disabled = true;
       if (!idem) idem = nyIdempotensnokkel();
@@ -220,6 +226,11 @@ function overgangsknapper(versjon, ctx, last) {
       idem = null;
       knapp.disabled = false;
       last();
+    };
+    knapp.addEventListener("click", () => {
+      if (!bekreft) { utfor(); return; }
+      Bekreftelsesdialog({ ...bekreft, farlig: true, rolle: "alertdialog",
+        paaPrimar: utfor });
     });
     return knapp;
   };
@@ -228,6 +239,13 @@ function overgangsknapper(versjon, ctx, last) {
   if (versjon.status === "utkast") {
     rad.append(lag("publiser",
       (idem) => publiserMalversjon(versjon.versjon_id, idem)));
+    // 177: et utkast som aldri kom i kraft kan forkastes. Enveis, og
+    // teksten beskriver tilstanden ETTERPÅ.
+    rad.append(lag("forkast",
+      (idem) => forkastMalversjon(versjon.versjon_id, idem),
+      { tittel: t("ui.dokumentmal.forkast.tittel"),
+        tekst: t("ui.dokumentmal.forkast.tekst"),
+        primarTekst: t("ui.dokumentmal.knapp.forkast") }));
   } else if (versjon.status === "publisert") {
     rad.append(lag("trekk_tilbake",
       (idem) => trekkTilbakeMalversjon(versjon.versjon_id, idem)));
