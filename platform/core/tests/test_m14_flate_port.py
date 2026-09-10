@@ -192,3 +192,32 @@ def test_artefaktskjemaet_er_generert_fra_invariantene():
     assert valider_artefaktformat(art, "m14-bokforing-v1") == []
     assert valider_artefaktformat({**art, "maalt": {**m, "x": 1}},
                                   "m14-bokforing-v1")
+
+
+def test_bevisartefaktet_passerer_grensen():
+    """Bevisrunden 10/9 mot disponit.com: artefaktet er innsjekket, har
+    skjemaets form og passerer `m14-bokforing-v1` — og ja-punktet er
+    bokstavelig true. Et artefakt som endres for hånd skal måles på nytt."""
+    import json
+    from pathlib import Path
+    from manifestskjema import (M14_BOKFORING_INVARIANTER, _sjekk_grenser,
+                                valider_artefaktformat)
+    rot = Path(__file__).resolve().parents[3]
+    fil = rot / ("deploy/staging/artefakter/"
+                 "m14-bokforing-v1-20260910T104500Z.json")
+    art = json.loads(fil.read_text(encoding="utf-8"))
+    assert valider_artefaktformat(art, "m14-bokforing-v1") == []
+    assert _sjekk_grenser("m14-bokforing-v1", art) == []
+    assert art["maalt"]["rundtur_paa_disponit_com"] is True
+    for inv in M14_BOKFORING_INVARIANTER:
+        assert art["maalt"][f"{inv}_forsok"] >= 1
+    # De gule funnene er NAVNGITT — et artefakt uten dem påstår mer enn
+    # runden målte.
+    nokler = {f["tekstnokkel"] for f in art["funn"]}
+    for n in ("m14.bokforing.punkt_maalt_kun_i_port",
+              "m14.bokforing.ugodkjent_bestilling_felles_paa_rollen",
+              "m14.bokforing.m37_verifikator_mangler",
+              "m14.bokforing.runden_logger_bare_ved_kandidater",
+              "m14.bokforing.v1_kobling_er_husets_bilagsregister",
+              "m14.bokforing.registreringen_nektet_prefiks_overlapp"):
+        assert n in nokler, n
