@@ -270,6 +270,7 @@ def test_belopet_maales_av_policyen_ikke_av_bestilleren(klient, migrator,
 
 
 @pg
+@dekker("faktura_ikke_klar_for_bokforing", "faktura_ukjent")
 def test_maalportene_stopper_foer_kvote(klient, migrator, token):
     _bokforpolicy(migrator); _rigg(migrator)
     tok = _tok(token)
