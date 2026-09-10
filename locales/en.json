@@ -6795,7 +6795,6 @@
   "ui.epost.meldinger.kolonne.emne": "Subject",
   "ui.epost.meldinger.kolonne.slettes": "Deleted on",
   "ui.epost.meldinger.apne": "Open",
-  "ui.epost.meldinger.reapet": "(deleted after the retention period — only the timestamp remains)",
   "ui.epost.meldinger.uten_emne": "(no subject)",
   "ui.epost.meldinger.vedlegg": "(attachment)",
   "ui.epost.meldinger.avkortet": "The list is truncated — the newest are shown.",
@@ -6834,5 +6833,12 @@
   "ui.dokumentmal.felttype.tekst": "Text",
   "ui.dokumentmal.felttype.tall": "Number",
   "ui.dokumentmal.felttype.dato": "Date",
-  "ui.dokumentmal.felttype.belop": "Amount"
+  "ui.dokumentmal.felttype.belop": "Amount",
+  "ui.epost.meldinger.slettede_vis": "Show {n} deleted messages",
+  "ui.epost.meldinger.slettet_av_menneske": "Deleted by you",
+  "ui.epost.meldinger.slettet_av_fristen": "Deleted after the retention period",
+  "ui.epost.meldinger.mottatt_kort": "received",
+  "ui.epost.meldinger.bare_slettede": "Every message that was fetched has been deleted. The record is below.",
+  "ui.epost.meldinger.vis_raa": "Show the message as it arrived",
+  "ui.epost.meldinger.tom_kropp": "The message has no readable text — only links and images."
 }

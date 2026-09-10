@@ -58,12 +58,17 @@ def test_mennesket_sletter_naa_og_sporet_bestar(migrator, miljo, klient, token):
                              "Idempotency-Key": "slett-" + secrets.token_hex(8)})
     assert r.status_code == 200 and r.json()["ny"] is False, r.text
     assert _tilstand(migrator, mid)[1][0] == ev[0]
-    # Flaten: slettet, uten tekst.
+    # Flaten: slettet, uten tekst — og den sier at MENNESKET tok den,
+    # ikke fristen. Det var eiers funn 10/9: «slettet etter tidsfristen»
+    # på noe hun nettopp slettet selv.
     les, _ = token(rolle="leser", scopes=("epost:read",))
     r = klient.get(f"/v1/epost/meldinger?kilde={kid}",
                    headers={"authorization": f"Bearer {les}"})
     m = r.json()["meldinger"][0]
     assert m["reapet"] is True and m["emne"] is None and m["fra"] is None
+    assert m["slettet_for_fristen"] is True, \
+        "en melding slettet før fristen skal ikke se ut som retensjon"
+    assert m["slettet_ts"] and m["slettet_ts"] < m["slettes_ts"]
     r = klient.get(f"/v1/epost/meldinger/{mid}",
                    headers={"authorization": f"Bearer {les}"})
     assert r.status_code == 200 and r.json()["kropp"] == ""

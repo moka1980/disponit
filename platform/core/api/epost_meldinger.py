@@ -49,6 +49,12 @@ def _rad(conn, tenant: str, r, *, med_kropp: bool) -> dict:
           "har_vedlegg": bool(r[4]), "trad_id": r[5],
           "slettes_ts": r[6].isoformat(),
           "reapet": r[10] is not None,
+          # HVEM tok den, sagt av tallene: en melding som forsvant FØR
+          # fristen ble slettet av et menneske (176); en som forsvant
+          # etter, ble tatt av retensjonen. Flaten skal ikke si «slettet
+          # etter fristen» om noe eier nettopp slettet selv.
+          "slettet_ts": r[10].isoformat() if r[10] else None,
+          "slettet_for_fristen": bool(r[10] is not None and r[10] < r[6]),
           "fra": None, "fra_navn": None, "emne": None,
           "forhandsvisning": None}
     if med_kropp:
