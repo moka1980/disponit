@@ -6842,5 +6842,20 @@
   "ui.epost.meldinger.vis_raa": "Vis meldingen slik den kom",
   "ui.epost.meldinger.tom_kropp": "Meldingen har ingen lesbar tekst — bare lenker og bilder.",
   "ui.epost.meldinger.vis_lesbar": "Vis lesevennlig",
-  "ui.epost.kilde.mangler_sendetilgang": "{postboks} er koblet til med kun lesetilgang. Koble til på nytt nedenfor for å kunne svare på meldinger herfra — Microsoft spør da om sendetilgang i tillegg."
+  "ui.epost.kilde.mangler_sendetilgang": "{postboks} er koblet til med kun lesetilgang. Koble til på nytt nedenfor for å kunne svare på meldinger herfra — Microsoft spør da om sendetilgang i tillegg.",
+  "ui.epost.svar.tittel": "Svar til avsenderen",
+  "ui.epost.svar.nytt": "Skriv et svar",
+  "ui.epost.svar.forklaring": "Svaret lagres som et utkast. Ingenting sendes før du har godkjent det, og plattformen sender det da fra denne postboksen innenfor policyen.",
+  "ui.epost.svar.lagre": "Lagre utkast",
+  "ui.epost.svar.tidligere": "Svarutkast",
+  "ui.epost.svar.uten_tekst": "(teksten er slettet)",
+  "ui.epost.svar.uten_tilgang": "Denne postboksen er koblet til med kun lesetilgang. Koble til på nytt for å kunne svare herfra.",
+  "ui.epost.svar.knapp.godkjenn": "Godkjenn for sending",
+  "ui.epost.svar.knapp.forkast": "Forkast",
+  "ui.epost.svar.feil_tilstand": "Utkastet er alt avgjort — et sendt eller forkastet svar kan ikke avgjøres på nytt.",
+  "ui.epost.svar.status.foreslatt": "Utkast, ikke godkjent",
+  "ui.epost.svar.status.godkjent": "Godkjent — sendes av plattformen",
+  "ui.epost.svar.status.forkastet": "Forkastet",
+  "ui.epost.svar.status.brukt_manuelt": "Brukt manuelt",
+  "ui.epost.svar.status.sendt": "Sendt"
 }

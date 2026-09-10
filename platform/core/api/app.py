@@ -3340,6 +3340,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_melding_slett(request: Request) -> Response:
         return epostmeldingmodul.slett_endepunkt(tjeneste, request)
 
+    # M-6 (179): svarutkastet — mennesket skriver og avgjør.
+    def epost_svarutkast(request: Request) -> Response:
+        return epostmeldingmodul.skriv_utkast_endepunkt(tjeneste, request)
+
+    def epost_utkast_dom(request: Request) -> Response:
+        return epostmeldingmodul.avgjor_utkast_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -4425,6 +4432,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/epost/meldinger/{melding_id:uuid}/slett",
               epost_melding_slett, methods=["POST"]),
+        Route("/v1/epost/meldinger/{melding_id:uuid}/svarutkast",
+              epost_svarutkast, methods=["POST"]),
+        Route("/v1/epost/utkast/{utkast_id:uuid}/dom", epost_utkast_dom,
+              methods=["POST"]),
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
@@ -6024,6 +6035,13 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/epost/meldinger/{melding_id:uuid}"): "epost:read",
     ("POST", "/v1/epost/meldinger/{melding_id:uuid}/slett"):
         "epost:kilde:administrer",
+    # 088 registrerte `epost:utkast:behandle` nettopp for dette: å skrive
+    # og avgjøre et utkast er ikke å administrere en TILKOBLING, og de to
+    # bør kunne gis hver for seg (CodeRabbit).
+    ("POST", "/v1/epost/meldinger/{melding_id:uuid}/svarutkast"):
+        "epost:utkast:behandle",
+    ("POST", "/v1/epost/utkast/{utkast_id:uuid}/dom"):
+        "epost:utkast:behandle",
     ("POST", "/v1/oidc/start"):              None,
     ("GET",  "/v1/oidc/callback"):           None,
     ("GET",  "/v1/sesjon"):                  None,

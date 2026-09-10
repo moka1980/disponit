@@ -14,6 +14,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
+         skrivSvarutkast, avgjorSvarutkast,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -76,7 +77,7 @@ function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
   const tbody = el("tbody");
   for (const m of meldinger) {
     const knapp = el("button", { type: "button", text: t("ui.epost.meldinger.apne") });
-    knapp.addEventListener("click", () => hentDetalj(m, panel));
+    knapp.addEventListener("click", () => hentDetalj(m, panel, kilde));
     // ÉN RAD, IKKE EN STABEL: handlingene hører sammen og står ved siden
     // av hverandre (eiers merknad 10/9).
     const handlinger = el("div", { class: "knapperad" }, knapp);
@@ -161,6 +162,64 @@ export function lesbarTekst(raa) {
   return ut.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// SVARET (179): mennesket skriver, mennesket godkjenner. Flaten sender
+// ingenting — et godkjent utkast er en tilstand, og plattformen sender
+// det innenfor policyen etterpå.
+function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
+  const boks = el("section", {});
+  const utkast = m.utkast || [];
+  if (utkast.length) {
+    boks.append(el("h4", { text: t("ui.epost.svar.tidligere") }));
+    const liste = el("ul", {});
+    for (const u of utkast) {
+      const rad = el("li", {});
+      rad.append(el("p", { class: "muted",
+        text: t(`ui.epost.svar.status.${u.status}`) + " · "
+          + (u.avgjort_av || "") }));
+      rad.append(el("pre", { class: "epost-kropp",
+        text: u.tekst || t("ui.epost.svar.uten_tekst") }));
+      if (kanAdministrere && u.status === "foreslatt") {
+        const rad2 = el("div", { class: "knapperad" });
+        for (const [nokkel, status] of [["godkjenn", "godkjent"],
+                                        ["forkast", "forkastet"]]) {
+          const b = el("button", { type: "button",
+            text: t(`ui.epost.svar.knapp.${nokkel}`) });
+          if (status === "forkastet") b.classList.add("fare");
+          b.addEventListener("click", () => paaEndring(
+            () => avgjorSvarutkast(u.utkast_id, status)));
+          rad2.append(b);
+        }
+        rad.append(rad2);
+      }
+      liste.append(rad);
+    }
+    boks.append(liste);
+  }
+  if (!kanAdministrere) return boks;
+  if (kilde && kilde.kan_svare === false) {
+    boks.append(el("p", { class: "muted", text: t("ui.epost.svar.uten_tilgang") }));
+    return boks;
+  }
+  const id = `svar-${m.melding_id}`;
+  const felt = el("textarea", { id, rows: 5, maxlength: 32768 });
+  const knapp = el("button", { type: "submit", text: t("ui.epost.svar.lagre") });
+  const skjema = el("form", { class: "kv-skjema" },
+    el("label", { for: id, text: t("ui.epost.svar.tittel") }), felt,
+    el("p", { class: "muted", text: t("ui.epost.svar.forklaring") }),
+    el("div", { class: "skjema-bunn" }, knapp));
+  skjema.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!felt.value.trim() || knapp.disabled) return;
+    // Låst mens kallet er i lufta (CodeRabbit): to raske trykk skal
+    // ikke bli to utkast av samme svar.
+    knapp.disabled = true;
+    Promise.resolve(paaEndring(() => skrivSvarutkast(m.melding_id, felt.value)))
+      .finally(() => { knapp.disabled = false; });
+  });
+  boks.append(el("h4", { text: t("ui.epost.svar.nytt") }), skjema);
+  return boks;
+}
+
 function meldingspanel() {
   const boks = el("div", { class: "skjemaboks" });
   boks.hidden = true;
@@ -171,7 +230,7 @@ function meldingspanel() {
       boks.focus();
       if (boks.scrollIntoView) boks.scrollIntoView({ block: "nearest" });
     },
-    vis(m) {
+    vis(m, kilde, kanAdministrere, paaEndring) {
       const til = (m.til || []).join(", ");
       const raa = m.kropp || "";
       const ren = lesbarTekst(raa);
@@ -200,6 +259,9 @@ function meldingspanel() {
         });
         bytt.setAttribute("aria-pressed", "false");
         deler.splice(3, 0, el("div", { class: "knapperad" }, bytt));
+      }
+      if (paaEndring) {
+        deler.push(svarseksjon(m, kilde, kanAdministrere, paaEndring));
       }
       sett(boks, ...deler);
       boks.hidden = false;
@@ -296,12 +358,21 @@ export function visEpost(hoved, ctx) {
       // ikke overskrive det andre — verken som innhold eller som feil.
       // Valget er felles for alle listene: én melding er åpen om gangen.
       let valgt = null;
-      const hentDetalj = (m, panel) => {
+      // En endring på svaret tegner meldingen på nytt, så tilstanden på
+      // skjermen alltid er den registeret har.
+      const hentDetalj = (m, panel, kilde) => {
+        const paaEndring = (kall) => kall()
+          .then(() => hentDetalj(m, panel, kilde))
+          .catch((e) => {
+            if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+            panel.feil(e && e.status === 409
+              ? t("ui.epost.svar.feil_tilstand") : t("ui.epost.feilet"));
+          });
         valgt = m.melding_id;
         hentEpostMelding(m.melding_id)
           .then((full) => {
             if (!eierSkjermen() || valgt !== m.melding_id) return;
-            panel.vis(full);
+            panel.vis(full, kilde, kanAdministrere, paaEndring);
             panel.fokuser();
           })
           .catch((e) => {
