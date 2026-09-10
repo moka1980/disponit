@@ -8465,6 +8465,21 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
             tjeneste.logg.hendelse("svar_bokforing_avvist", rid, tenant,
                                    art="drift", oppdrag_id=oppdrag_id,
                                    grunn=bokfort["avvik"])
+    # M-14 (167, ARC B bokføring PR 4): FAKTURAEN ER BOKFØRT → REGISTERET:
+    # bilaget registreres i M-13 og fakturaen merkes `bokfort` med bilagets
+    # identitet. Samme grep — men her er kvitteringen selve handlingen, så
+    # et avvik betyr at INGENTING ble bokført; det står i driftsloggen, og
+    # fakturaen er kandidat for et menneske som før.
+    elif vellykket and oppdragstype in ("faktura.bokfor",
+                                        "faktura.bokfor_stor"):
+        from .bokforing import bokfor_faktura_bokfort
+        with conn.transaction():
+            bokfort = bokfor_faktura_bokfort(conn, tenant, oppdrag_id,
+                                             kvittering, auth.aktor)
+        if bokfort.get("avvik"):
+            tjeneste.logg.hendelse("faktura_bokforing_avvist", rid, tenant,
+                                   art="drift", oppdrag_id=oppdrag_id,
+                                   grunn=bokfort["avvik"])
     # RETENSJONSANKERET LUKKES VED DET FAKTISKE STATUSSKIFTET (Codex P2
     # ×3, #220). 057: kundens frist løper fra AVSLUTNINGEN — uten
     # lukkingen falt evalueringen til reaperens forlatt-frist målt fra
