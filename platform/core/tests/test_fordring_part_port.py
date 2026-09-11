@@ -61,6 +61,35 @@ def test_kunden_knyttes_ved_registrering_og_navnet_kommer_med():
 
 
 @pg
+def test_koblingen_skjer_ogsaa_naar_adressen_oppgis_samtidig():
+    """M-23 HAR TO REGISTRERINGSDØRER med samme navn: én med åtte
+    argumenter, og én med tretten som ogsaa tar mottakeren (146). Flaten
+    bruker den STORE når adressen fylles ut — og hadde den ikke delegert
+    til den lille, ville koblingen uteblitt i nettopp den veien folk
+    bruker mest.
+
+    Den delegerer, og porten holder det fast: endres det, faller denne."""
+    import uuid
+    t = _t()
+    c = _kobling(DSN)
+    try:
+        _sett_kontekst(c, t)
+        c.execute("SELECT part_registrer(%s,'K-90','Med Mottaker AS',NULL,"
+                  "'bedrift','kari')", (t,))
+        c.execute(
+            "SELECT m23_registrer_fordring(%s,%s,'K-90','F-9001',500000,"
+            " current_date-30, current_date-5,'kari',%s,%s,%s,'k1',%s)",
+            (t, uuid.uuid4(), "fa**@medmottaker.example", b"\x01\x02",
+             bytes(range(12)), "a" * 64))
+        rad = _fordringene(c, t)["K-90"]
+        assert rad[2] is not None, "koblingen uteble i mottaker-veien"
+        assert rad[3] == "Med Mottaker AS"
+        c.rollback()
+    finally:
+        c.close()
+
+
+@pg
 def test_en_ukjent_referanse_virker_akkurat_som_foer():
     """INGEN KALLER BRYTES. `kunde_ref` er fortsatt broen, og en
     referanse registeret ikke kjenner gir NULL — ikke en feil. Ellers
