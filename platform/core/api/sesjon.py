@@ -29,6 +29,12 @@ C_SESJON = "__Host-disponit_sesjon"     # HttpOnly, referanse
 C_CSRF = "__Host-disponit_csrf"         # JS-lesbar (UI må lese)
 C_BINDING = "__Host-disponit_oidc"      # HttpOnly, browserbinding
 
+# Reservert tenant for DELT pålogging (189). Samme form som `_oidc`,
+# den kontekstløse verdien de RLS-frie oidc-tabellene allerede føres
+# på. Ingen kunde kan hete dette: `_tenant_fra_host` tar første ledd av
+# et vertsnavn, og en DNS-etikett kan ikke begynne med understrek.
+PLATTFORM = "_plattform"
+
 INAKTIV_MIN = 30
 ABSOLUTT_TIMER = 12
 LOGIN_TX_MIN = 10
@@ -161,14 +167,58 @@ def _ip_prefiks(request: Request) -> str:
 # Provider-oppslag: tenant fra host, provider fra allowlist
 # ---------------------------------------------------------------------------
 
+def _innloggingstenant(conn, tjeneste, request: Request,
+                       provider_id: str) -> str:
+    """Hvilken tenantkontekst innloggingen SELV kjører under.
+
+    To former, og raden avgjør hvilken:
+
+      * Finnes `(_plattform, provider_id)` i `tenant_oidc_provider`, er
+        påloggingen DELT: alle firmaer bruker samme adresse og samme
+        leverandør, og hvilket firma brukeren hører til avgjøres FØRST i
+        callbacken, av `bruker_tenant` (migrasjon 189). Vertsnavnet leses
+        ikke i det hele tatt.
+      * Finnes raden ikke, utledes tenant av verten som før.
+
+    Det gjør overgangen til data, ikke til en utrulling: raden settes inn når
+    en delt pålogging er satt opp, og slettes den, er gammel oppførsel
+    tilbake i neste forespørsel. Kan vi ikke lese tabellen, faller vi ned på
+    vertsveien — en innlogging som ikke vet bedre skal oppføre seg som i går.
+    """
+    try:
+        sett_tenant(conn, PLATTFORM)
+        rad = conn.execute(
+            "SELECT 1 FROM tenant_oidc_provider"
+            " WHERE tenant=%s AND provider_id=%s",
+            (PLATTFORM, provider_id)).fetchone()
+        if rad is not None:
+            return PLATTFORM
+    except psycopg.Error:
+        conn.rollback()
+    return _tenant_fra_host(tjeneste, request)
+
+
 def _tenant_fra_host(tjeneste, request: Request) -> str:
     """Workspace utledes SERVER-SIDE fra den kanoniske hosten nginx satte
-    (X-Disponit-Host), aldri fra body (v2 §5 / v5 §1)."""
+    (X-Disponit-Host), aldri fra body (v2 §5 / v5 §1).
+
+    RESERVEVEIEN etter 189. Den brukes fortsatt for hvert firma som har sin
+    egen host, og er den eneste veien før den delte påloggingen er satt opp.
+    """
     host = request.headers.get("x-disponit-host") \
         or request.headers.get("host", "").split(":")[0]
     # I v1 er workspace == host; en ekte slug→tenant-mapping er data. For
     # staging bruker vi host direkte som tenant-slug.
-    return host.lower().split(".")[0] if host else ""
+    if not host:
+        return ""
+    slug = host.lower().split(".")[0]
+    # Understrek-prefikset er RESERVERT for plattformens egne kontekster
+    # (`_oidc`, `_plattform`). En DNS-etikett kan ikke begynne med understrek,
+    # så dette skal aldri kunne skje — men `init-tenant.sh` validerer ikke
+    # tenantnavnet i det hele tatt, og `X-Disponit-Host` kommer fra en
+    # nginx-mal noen kan skrive feil. En reservert navneplass som bare er
+    # beskyttet av en kommentar, er ikke beskyttet.
+    return "" if slug.startswith("_") else slug
 
 
 def _provider_for(conn, tenant: str, provider_id: str,
@@ -256,20 +306,31 @@ def oidc_start(tjeneste, request: Request) -> Response:
     except (TimeoutError, psycopg.Error):
         return _feilsvar("db_utilgjengelig", rid)
     try:
-        tenant = _tenant_fra_host(tjeneste, request)
         raa = request.scope.get("state", {}).get("kropp", b"")
         try:
             data = les_startkropp(request.headers.get("content-type", ""), raa)
         except ValueError:
             return _feilsvar("request_feilformet", rid)
         provider_id = data.get("provider_id")
-        if not isinstance(provider_id, str) or not tenant:
+        if not isinstance(provider_id, str):
+            return _feilsvar("request_feilformet", rid)
+        # Leverandøren må være kjent FØR tenant kan bestemmes: det er raden
+        # `(_plattform, provider_id)` som avgjør om påloggingen er delt.
+        tenant = _innloggingstenant(conn, tjeneste, request, provider_id)
+        if not tenant:
             return _feilsvar("request_feilformet", rid)
 
         sett_kontekst(conn, tenant, "oidc-start", rid)
         try:
             _rate(conn, "start", f"{_ip_prefiks(request)}|{tenant}|{provider_id}")
-            _rate(conn, "nodbrems", tenant)
+            # Nødbremsen er 200 starter per 15 min PER NØKKEL. På den delte
+            # påloggingen er tenant den samme for alle, så tenant som nøkkel
+            # ville gjort én kundes trafikk til en global innloggingssperre.
+            # Der nøkles den på IP-prefikset i stedet — samme bremse, samme
+            # tall, men blast-radiusen er den som faktisk lager trafikken.
+            _rate(conn, "nodbrems",
+                  f"{PLATTFORM}|{_ip_prefiks(request)}"
+                  if tenant == PLATTFORM else tenant)
             provider, redirect_uris = _provider_for(
                 conn, tenant, provider_id, _cred_env())
             redirect_uri = redirect_uris[0]
@@ -379,7 +440,13 @@ def oidc_callback(tjeneste, request: Request) -> Response:
                 conn, tenant, ident, _hash(state), rid, ip)
         except SesjonFeil as f:
             conn.rollback()
-            return _feil_side(rid)
+            # `firma_ikke_valgt` er ikke en feilet innlogging — det er en
+            # innlogging som mangler ett svar brukeren selv må gi. Uten dette
+            # ville hun fått nøyaktig samme generiske side som en avvist
+            # bruker, og hatt null vei videre. Firmavelgeren er sin egen
+            # flate (steg 5 i arcen); til den finnes, er dette i det minste
+            # en ærlig beskjed i stedet for en blindvei.
+            return _feil_side(rid, f.kode)
 
         # Ren, relativ redirect (v5 §6) — fjerner code/state fra historikken.
         r = Response(status_code=303, headers={
@@ -406,6 +473,41 @@ def _terminer(conn, state_hash, status, tenant, rid):
                  (status, state_hash))
 
 
+def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet) -> str:
+    """bruker_id → firma, uten tenantkontekst. Presist ETT eller ingenting.
+
+    `brukermedlemskap` kan ikke svare på dette. Den har FORCE ROW LEVEL
+    SECURITY med `tenant_isolasjon`, som gjelder OGSÅ tabelleieren, så et
+    oppslag uten kontekst gir null rader — og konteksten er nettopp det vi
+    ikke har ennå. Migrasjon 189 speiler derfor de AKTIVE medlemskapene til
+    `bruker_tenant`, som står uten RLS slik `brukeridentitet` og
+    `brukersesjon` allerede gjør, av samme grunn: de leses før tenant er
+    kjent.
+
+    FLERE FIRMAER GIR AVVISNING, IKKE ET VALG PÅ VEGNE AV BRUKEREN. Å velge
+    det første ville logget noen inn i feil firma uten å si det — samme
+    klasse som partsregisteret måtte rettes for: to firmaer som ser like ut
+    er ikke ett. Firmavelgeren er sin egen flate; til den finnes, er dette
+    en dør som sier nei. I dag har 0 av 64 brukere mer enn ett medlemskap.
+    """
+    rader = conn.execute(
+        "SELECT tenant FROM bruker_tenant WHERE bruker_id=%s ORDER BY tenant",
+        (bid,)).fetchall()
+    if len(rader) == 1:
+        return rader[0][0]
+    if not rader:
+        # Ingen medlemskap er det samme avviste forsøket som før — og
+        # bremses likt (ingen JIT-provisjonering, v3 §2).
+        sett_tenant(conn, "_oidc")
+        _rate(conn, "medlemskap", f"{ident.issuer}|{ident.sub}")
+        conn.commit()
+        raise SesjonFeil("ingen_tilgang", 401)
+    # Flere medlemskap er IKKE et misbruksforsøk, og skal ikke telles som
+    # ett: en legitim bruker med to arbeidsgivere ville blitt utestengt i en
+    # time av `medlemskap`-bremsen for noe hun ikke kan gjøre noe med.
+    raise SesjonFeil("firma_ikke_valgt", 401)
+
+
 def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip):
     sett_kontekst(conn, tenant, "oidc-callback", rid)
     # Upsert identitet (issuer,sub).
@@ -415,6 +517,14 @@ def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip):
         " SET profil=EXCLUDED.profil RETURNING bruker_id",
         (ident.issuer, ident.sub,
          json.dumps(ident.profil, ensure_ascii=False))).fetchone()[0]
+    # DELT PÅLOGGING (189): tenantkandidaten er den reserverte plattform-
+    # verdien, ikke et firma. Det ekte firmaet avgjøres her, av brukerens
+    # egne medlemskap — og FØRST nå, fordi identiteten ikke fantes før
+    # leverandøren hadde svart. Alt under dette punktet kjører på det
+    # resolverte firmaet, inkludert advisory-låsen og revisjonssporet.
+    if tenant == PLATTFORM:
+        tenant = _firma_for_bruker(conn, bid, ident)
+        sett_kontekst(conn, tenant, "oidc-callback", rid)
     # Serialiser sesjonsgrensen på (tenant, bruker_id) med en advisory lock
     # (v3 §6). To samtidige callbacker for samme bruker kan da ikke begge
     # se fire sesjoner og lage fem og seks. Advisory lock krever ingen
@@ -466,10 +576,20 @@ def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip):
                     max_age=ABSOLUTT_TIMER * 3600))
 
 
-def _feil_side(rid: str) -> Response:
+# Feilkoder callbacken har lov til å SI noe om. Alt annet er generisk med
+# vilje (v5 §6): en innlogging som feiler skal ikke fortelle en angriper om
+# brukeren fantes, om passordet var feil, eller om firmaet eksisterer.
+# `firma_ikke_valgt` lekker ingenting av det — brukeren har ALLEREDE bevist
+# hvem hun er hos leverandøren, og får vite noe bare om sin egen konto.
+SYNLIGE_CALLBACKFEIL = frozenset({"firma_ikke_valgt"})
+
+
+def _feil_side(rid: str, kode: str = "innlogging_feilet") -> Response:
     # Generisk, gjengir ALDRI URL-parametere (v5 §6).
+    if kode not in SYNLIGE_CALLBACKFEIL:
+        kode = "innlogging_feilet"
     return Response(
-        content=b'{"feil":"innlogging_feilet"}', status_code=400,
+        content=json.dumps({"feil": kode}).encode(), status_code=400,
         media_type="application/json",
         headers={"Referrer-Policy": "no-referrer", "x-request-id": rid})
 
