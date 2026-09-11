@@ -76,11 +76,15 @@ function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
   const tabell = el("table", { class: "kpi-tabell" },
     el("caption", { text: t("ui.epost.meldinger.caption")
       .replace("{postboks}", kilde.postboks) }));
+  // EMNET FØRST (eiers merknad 11/9: «hele epost dashboardet er ikke
+  // brukervennlig»). Emnet er det man leter etter i en innboks, og det
+  // sto lengst til høyre — etter mottatt, avsender og et tomt felt.
+  // `slettes` er ute av tabellen: den er en frist, ikke en innbokslinje,
+  // og den står i den åpnede meldingen der den betyr noe.
   tabell.append(el("thead", {}, el("tr", {},
-    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.mottatt") }),
-    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.fra") }),
     el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.emne") }),
-    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.slettes") }),
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.fra") }),
+    el("th", { scope: "col", text: t("ui.epost.meldinger.kolonne.mottatt") }),
     el("th", { scope: "col", text: t("ui.epost.kolonne.handling") }))));
   const tbody = el("tbody");
   for (const m of meldinger) {
@@ -97,22 +101,28 @@ function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
       slett.addEventListener("click", () => paaSlett(m));
       handlinger.append(slett);
     }
+    // AVSENDEREN ER NAVNET NÅR DET FINNES. «M Eliassi
+    // <eliassi@gmail.com>» er dobbelt opp; adressen står i meldingen.
+    const fra = m.fra_navn || m.fra || "—";
     tbody.append(el("tr", {},
-      el("th", { scope: "row" }, Tidspunkt(m.mottatt_ts, {})),
-      el("td", { text: m.fra_navn ? `${m.fra_navn} <${m.fra}>` : (m.fra || "—") }),
-      el("td", { text: (m.emne || t("ui.epost.meldinger.uten_emne"))
-        + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") }),
-      el("td", {}, Tidspunkt(m.slettes_ts, {})),
+      el("th", { scope: "row" },
+        el("span", { text: (m.emne || t("ui.epost.meldinger.uten_emne"))
+          + (m.har_vedlegg ? " " + t("ui.epost.meldinger.vedlegg") : "") })),
+      el("td", { text: fra, title: m.fra || "" }),
+      el("td", {}, Tidspunkt(m.mottatt_ts, {})),
       el("td", {}, handlinger)));
   }
   tabell.append(tbody);
+  // PANELET STÅR OVER LISTA, ikke under den. Under seksten rader måtte
+  // eier bla forbi hele innboksen for å se meldingen han nettopp åpnet —
+  // og skrivefeltet lå enda lenger ned. Over lista er den åpnede
+  // meldingen det første man ser, og lista står igjen under som
+  // navigasjon.
+  boks.append(panel.node);
   if (meldinger.length) boks.append(tabell);
   if (avkortet) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.avkortet") }));
   }
-  // PANELET STÅR HER, rett under lista det hører til — ikke nederst på
-  // siden, der en åpnet melding ser ut som ingenting (eiers merknad).
-  boks.append(panel.node);
   if (slettede.length) boks.append(slettetliste(slettede));
   return boks;
 }
@@ -173,17 +183,36 @@ export function lesbarTekst(raa) {
 // SVARET (179): mennesket skriver, mennesket godkjenner. Flaten sender
 // ingenting — et godkjent utkast er en tilstand, og plattformen sender
 // det innenfor policyen etterpå.
+// AKTØREN ER ET MENNESKE, ikke en økt-streng. Eier så «Klar til
+// sending · token:sesjon:bid_c612864ad46e4063ad2bb4520ffc00be» over sitt
+// eget svar. Bakenden lagrer nå bruker-ID-en (uten `token:`-prefiks),
+// men gamle rader bærer den lange formen — og en id på trettifem tegn
+// midt i en statuslinje er støy uansett hvor riktig den er.
+export function kortAktor(a) {
+  if (!a) return "";
+  const uten = String(a).replace(/^token:sesjon:/, "").replace(/^token:/, "");
+  return uten.length > 14 ? uten.slice(0, 14) + "…" : uten;
+}
+
+// Utkast man har ombestemt seg om er SPOR, ikke arbeid. De hører i en
+// sammenklappet liste, som de slettede meldingene — ikke ved siden av
+// det som venter på deg, med like store knapper.
+const AVSLUTTEDE = ["forkastet", "brukt_manuelt", "sendt"];
+
 function svarseksjon(m, kilde, kanBehandle, paaEndring) {
   const boks = el("section", {});
-  const utkast = m.utkast || [];
+  const alle = m.utkast || [];
+  const utkast = alle.filter((u) => !AVSLUTTEDE.includes(u.status));
+  const avsluttede = alle.filter((u) => AVSLUTTEDE.includes(u.status));
   if (utkast.length) {
     boks.append(el("h4", { text: t("ui.epost.svar.tidligere") }));
     const liste = el("ul", {});
     for (const u of utkast) {
       const rad = el("li", {});
+      const av = kortAktor(u.avgjort_av);
       rad.append(el("p", { class: "muted",
-        text: t(`ui.epost.svar.status.${u.status}`) + " · "
-          + (u.avgjort_av || "") }));
+        text: t(`ui.epost.svar.status.${u.status}`)
+          + (av ? " · " + av : "") }));
       rad.append(el("pre", { class: "epost-kropp",
         text: u.tekst || t("ui.epost.svar.uten_tekst") }));
       // SEND er menneskets egen handling — ingen godkjenningsrunde med
@@ -225,6 +254,22 @@ function svarseksjon(m, kilde, kanBehandle, paaEndring) {
     }
     boks.append(liste);
   }
+  if (avsluttede.length) {
+    const d = el("details", {},
+      el("summary", { text: t("ui.epost.svar.avsluttede")
+        .replace("{n}", String(avsluttede.length)) }));
+    const ul = el("ul", {});
+    for (const u of avsluttede) {
+      const av = kortAktor(u.avgjort_av);
+      ul.append(el("li", {},
+        el("p", { class: "muted",
+          text: t(`ui.epost.svar.status.${u.status}`) + (av ? " · " + av : "") }),
+        el("pre", { class: "epost-kropp",
+          text: u.tekst || t("ui.epost.svar.uten_tekst") })));
+    }
+    d.append(ul);
+    boks.append(d);
+  }
   if (!kanBehandle) return boks;
   if (kilde && kilde.kan_svare === false) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.svar.uten_tilgang") }));
@@ -232,21 +277,36 @@ function svarseksjon(m, kilde, kanBehandle, paaEndring) {
   }
   const id = `svar-${m.melding_id}`;
   const felt = el("textarea", { id, rows: 5, maxlength: 32768 });
-  const knapp = el("button", { type: "submit", text: t("ui.epost.svar.lagre") });
-  const skjema = el("form", { class: "kv-skjema" },
-    el("label", { for: id, text: t("ui.epost.svar.tittel") }), felt,
-    el("p", { class: "muted", text: t("ui.epost.svar.forklaring") }),
-    el("p", { class: "muted", text: t("ui.epost.svar.ventetid") }),
-    el("div", { class: "skjema-bunn" }, knapp));
-  skjema.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    if (!felt.value.trim() || knapp.disabled) return;
+  // Å SENDE ER ETT KLIKK. Før måtte man skrive, trykke «Lagre utkast»,
+  // bla ned til utkastlista og trykke «Send svaret» der — to trykk og en
+  // rulling for det man gjør hver gang. Utkastet er fortsatt sannheten i
+  // basen; knappen gjør bare begge stegene.
+  const send = el("button", { class: "knapp primar", type: "submit",
+    text: t("ui.epost.svar.knapp.send") });
+  const lagre = el("button", { type: "button",
+    text: t("ui.epost.svar.lagre") });
+  const laas = (av) => { send.disabled = av; lagre.disabled = av; };
+  const skriv = (ogsaaSend) => {
+    if (!felt.value.trim() || send.disabled) return;
     // Låst mens kallet er i lufta (CodeRabbit): to raske trykk skal
     // ikke bli to utkast av samme svar.
-    knapp.disabled = true;
-    Promise.resolve(paaEndring(() => skrivSvarutkast(m.melding_id, felt.value)))
-      .finally(() => { knapp.disabled = false; });
-  });
+    laas(true);
+    Promise.resolve(paaEndring(async () => {
+      const svar = await skrivSvarutkast(m.melding_id, felt.value);
+      if (ogsaaSend && svar && svar.utkast_id) {
+        await settSvarIKo(svar.utkast_id);
+      }
+      return svar;
+    })).finally(() => laas(false));
+  };
+  const skjema = el("form", { class: "kv-skjema" },
+    el("label", { for: id, text: t("ui.epost.svar.tittel") }), felt,
+    // ÉN LINJE, ikke to avsnitt. Det som MÅ sies er ventetiden; at
+    // svaret lagres som utkast ser man av knappen ved siden av.
+    el("p", { class: "muted", text: t("ui.epost.svar.ventetid") }),
+    el("div", { class: "knapperad" }, send, lagre));
+  skjema.addEventListener("submit", (ev) => { ev.preventDefault(); skriv(true); });
+  lagre.addEventListener("click", () => skriv(false));
   boks.append(el("h4", { text: t("ui.epost.svar.nytt") }), skjema);
   return boks;
 }
@@ -271,7 +331,14 @@ function meldingspanel() {
         el("h3", { text: m.emne || t("ui.epost.meldinger.uten_emne") }),
         el("p", { class: "muted", text: `${m.fra_navn ? m.fra_navn + " " : ""}<${m.fra || "—"}>`
           + (til ? ` → ${til}` : "") }),
-        el("p", { class: "muted" }, Tidspunkt(m.mottatt_ts, {})),
+        // TIDSPUNKTET OG FRISTEN PÅ ÉN LINJE. Fristen sto som egen
+        // kolonne i innboksen, der den stjal plass fra emnet; her
+        // betyr den noe, for det er her man leser meldingen og
+        // bestemmer om den skal svares på før den ryddes bort.
+        el("p", { class: "muted" }, Tidspunkt(m.mottatt_ts, {}),
+          el("span", { text: " · " + t("ui.epost.meldinger.kolonne.slettes")
+            .toLowerCase() + " " }),
+          Tidspunkt(m.slettes_ts, {})),
         kropp];
       // BRYTEREN VEKSLER, den legger ikke til (eiers merknad 10/9: «da
       // blir det duplikat visning»). Én melding, én tekst på skjermen —
@@ -438,7 +505,19 @@ export function visEpost(hoved, ctx) {
                                  !!(svar && svar.avkortet), hentDetalj,
                                  kanAdministrere, bekreftSlett));
       }
-      if (kanAdministrere) deler.push(koblingsseksjon());
+      // KOBLINGSSEKSJONEN ER SAMMENKLAPPET NÅR EN POSTBOKS ALT ER
+      // TILKOBLET. Den er en engangshandling, og et helt avsnitt om
+      // hvilke tilganger Microsoft blir bedt om hører ikke hjemme
+      // nederst på en side man bruker hver dag (eiers merknad 11/9).
+      // Har man INGEN aktiv kilde, er den åpen — da er den hele poenget.
+      if (kanAdministrere) {
+        const harAktiv = kilder.some((k) => k.status !== "deaktivert");
+        deler.push(harAktiv
+          ? el("details", {},
+              el("summary", { text: t("ui.epost.koble_tittel") }),
+              koblingsseksjon())
+          : koblingsseksjon());
+      }
       sett(hoved, ...deler);
     });
 

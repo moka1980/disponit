@@ -93,11 +93,10 @@ def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
     """POST /v1/epost/meldinger/{melding_id}/svarutkast
     (epost:utkast:behandle, idem): svaret et menneske skrev."""
     from db import kryptering
-    from db.pg import sett_kontekst
 
     from .app import _rid
     from .epost_kilde import _modul_inaktiv
-    from .policyadmin_http import _feil, _kropp, _med_conn, _ok_lagret
+    from .policyadmin_http import (_browserkontekst, _feil, _kropp, _med_conn, _ok_lagret)
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -107,13 +106,19 @@ def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
     def kjor(conn):
         import psycopg
 
-        from . import kjerne
-        from .app import _autentiser
-        try:
-            auth = _autentiser(tjeneste, request, conn, rid,
-                               "epost:utkast:behandle")
-        except kjerne.Feilsvar as f:
-            return _feil(f.kode, rid)
+        # AKTØREN ER MENNESKET, ikke økten. `aktor` er token-ID-en
+        # med `token:`-prefiks — riktig for en integrasjon, galt for en
+        # innlogget person. Og her VISES den: flaten skriver «Klar til
+        # sending · <aktør>» rett på skjermen, så eier så
+        # «token:sesjon:bid_c612864a…» over sitt eget svar.
+        #
+        # `_browserkontekst` (policyadmin_http) gjør tre ting i én:
+        # autentiserer mot scopet, håndhever dobbel-innsendingen for
+        # browsersesjoner (og hopper over den for maskinveien), og setter
+        # konteksten med BRUKER-ID-en som aktør. Ti andre skriveveier
+        # bruker den.
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "epost:utkast:behandle")
         kropp = _kropp(request)
         tekst = kropp.get("tekst")
         if not isinstance(tekst, str) or not tekst.strip():
@@ -121,17 +126,15 @@ def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
                          detalj="tekst mangler")
         if len(tekst) > MAKS_SVAR:
             return _feil("request_feilformet", rid, 400, detalj="tekst er lang")
-        conn.rollback()
-        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
-        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, auth.tenant)
-        ct, nonce = kryptering.krypter(dek, {"tekst": tekst}, auth.tenant,
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+        ct, nonce = kryptering.krypter(dek, {"tekst": tekst}, tenant,
                                        key_id)
         try:
             with conn.transaction():
                 uid = conn.execute(
                     "SELECT m6_skriv_svarutkast(%s,%s,%s,%s,%s,%s)",
-                    (auth.tenant, mid, ct, nonce, key_id,
-                     auth.aktor)).fetchone()[0]
+                    (tenant, mid, ct, nonce, key_id,
+                     aktor)).fetchone()[0]
         except psycopg.errors.InsufficientPrivilege:
             # VAKTENS NEI BETYR AT MELDINGEN IKKE FINNES FOR ØKTEN:
             # usynlig under RLS, eller alt reapet. Begge leses «ikke
@@ -161,11 +164,10 @@ def send_svaret_endepunkt(tjeneste, request: Request) -> Response:
     utenfor web-API-ets rekkevidde (088), så et innbrudd her ikke gir
     noen retten til å sende i kundens navn. Dette setter utkastet i kø;
     bakgrunnsprosessen med nøkkelen sender det."""
-    from db.pg import sett_kontekst
 
     from .app import _rid
     from .epost_kilde import _modul_inaktiv
-    from .policyadmin_http import _feil, _med_conn, _ok_lagret
+    from .policyadmin_http import (_browserkontekst, _feil, _med_conn, _ok_lagret)
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -175,19 +177,23 @@ def send_svaret_endepunkt(tjeneste, request: Request) -> Response:
     def kjor(conn):
         import psycopg
 
-        from . import kjerne
-        from .app import _autentiser
-        try:
-            auth = _autentiser(tjeneste, request, conn, rid,
-                               "epost:utkast:behandle")
-        except kjerne.Feilsvar as f:
-            return _feil(f.kode, rid)
-        conn.rollback()
-        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        # AKTØREN ER MENNESKET, ikke økten. `aktor` er token-ID-en
+        # med `token:`-prefiks — riktig for en integrasjon, galt for en
+        # innlogget person. Og her VISES den: flaten skriver «Klar til
+        # sending · <aktør>» rett på skjermen, så eier så
+        # «token:sesjon:bid_c612864a…» over sitt eget svar.
+        #
+        # `_browserkontekst` (policyadmin_http) gjør tre ting i én:
+        # autentiserer mot scopet, håndhever dobbel-innsendingen for
+        # browsersesjoner (og hopper over den for maskinveien), og setter
+        # konteksten med BRUKER-ID-en som aktør. Ti andre skriveveier
+        # bruker den.
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "epost:utkast:behandle")
         try:
             with conn.transaction():
                 ny = conn.execute("SELECT m6_send_svaret(%s,%s,%s)",
-                                  (auth.tenant, uid, auth.aktor)).fetchone()[0]
+                                  (tenant, uid, aktor)).fetchone()[0]
         except psycopg.errors.ForeignKeyViolation:
             return _feil("ikke_funnet", rid, 404)
         except psycopg.errors.IntegrityConstraintViolation:
@@ -208,11 +214,10 @@ def avgjor_utkast_endepunkt(tjeneste, request: Request) -> Response:
 
     `sendt` er IKKE en dom her — den er kvitteringens vei tilbake når
     plattformen faktisk har sendt (PR 6), og døra nekter den."""
-    from db.pg import sett_kontekst
 
     from .app import _rid
     from .epost_kilde import _modul_inaktiv
-    from .policyadmin_http import _feil, _kropp, _med_conn, _ok_lagret
+    from .policyadmin_http import (_browserkontekst, _feil, _kropp, _med_conn, _ok_lagret)
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -222,23 +227,27 @@ def avgjor_utkast_endepunkt(tjeneste, request: Request) -> Response:
     def kjor(conn):
         import psycopg
 
-        from . import kjerne
-        from .app import _autentiser
-        try:
-            auth = _autentiser(tjeneste, request, conn, rid,
-                               "epost:utkast:behandle")
-        except kjerne.Feilsvar as f:
-            return _feil(f.kode, rid)
+        # AKTØREN ER MENNESKET, ikke økten. `aktor` er token-ID-en
+        # med `token:`-prefiks — riktig for en integrasjon, galt for en
+        # innlogget person. Og her VISES den: flaten skriver «Klar til
+        # sending · <aktør>» rett på skjermen, så eier så
+        # «token:sesjon:bid_c612864a…» over sitt eget svar.
+        #
+        # `_browserkontekst` (policyadmin_http) gjør tre ting i én:
+        # autentiserer mot scopet, håndhever dobbel-innsendingen for
+        # browsersesjoner (og hopper over den for maskinveien), og setter
+        # konteksten med BRUKER-ID-en som aktør. Ti andre skriveveier
+        # bruker den.
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "epost:utkast:behandle")
         status = (_kropp(request) or {}).get("status")
         if status not in ("godkjent", "forkastet", "brukt_manuelt"):
             return _feil("request_feilformet", rid, 400, detalj="status")
-        conn.rollback()
-        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
         try:
             with conn.transaction():
                 ny = conn.execute("SELECT m6_avgjor_utkast(%s,%s,%s,%s)",
-                                  (auth.tenant, uid, status,
-                                   auth.aktor)).fetchone()[0]
+                                  (tenant, uid, status,
+                                   aktor)).fetchone()[0]
         except psycopg.errors.ForeignKeyViolation:
             return _feil("ikke_funnet", rid, 404)
         except (psycopg.errors.IntegrityConstraintViolation,
@@ -321,11 +330,10 @@ def slett_endepunkt(tjeneste, request: Request) -> Response:
     (epost:kilde:administrer, idem): retensjonen gjort NÅ, av et
     menneske. Idempotent — en melding som alt er slettet svarer 200 med
     `ny: false`, aldri en feil."""
-    from db.pg import sett_kontekst
 
     from .app import _rid
     from .epost_kilde import _modul_inaktiv
-    from .policyadmin_http import _feil, _med_conn, _ok_lagret
+    from .policyadmin_http import (_browserkontekst, _feil, _med_conn, _ok_lagret)
     rid = _rid(request)
     av = _modul_inaktiv(tjeneste, rid)
     if av is not None:
@@ -335,19 +343,23 @@ def slett_endepunkt(tjeneste, request: Request) -> Response:
     def kjor(conn):
         import psycopg
 
-        from . import kjerne
-        from .app import _autentiser
-        try:
-            auth = _autentiser(tjeneste, request, conn, rid,
-                               "epost:kilde:administrer")
-        except kjerne.Feilsvar as f:
-            return _feil(f.kode, rid)
-        conn.rollback()
-        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
+        # AKTØREN ER MENNESKET, ikke økten. `aktor` er token-ID-en
+        # med `token:`-prefiks — riktig for en integrasjon, galt for en
+        # innlogget person. Og her VISES den: flaten skriver «Klar til
+        # sending · <aktør>» rett på skjermen, så eier så
+        # «token:sesjon:bid_c612864a…» over sitt eget svar.
+        #
+        # `_browserkontekst` (policyadmin_http) gjør tre ting i én:
+        # autentiserer mot scopet, håndhever dobbel-innsendingen for
+        # browsersesjoner (og hopper over den for maskinveien), og setter
+        # konteksten med BRUKER-ID-en som aktør. Ti andre skriveveier
+        # bruker den.
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "epost:kilde:administrer")
         try:
             with conn.transaction():
                 ny = conn.execute("SELECT m6_slett_melding(%s,%s,%s)",
-                                  (auth.tenant, mid, auth.aktor)).fetchone()[0]
+                                  (tenant, mid, aktor)).fetchone()[0]
         except psycopg.errors.ForeignKeyViolation:
             # Dørens egen «finnes ikke» (176 reiser nettopp denne).
             # Fangsten var `psycopg.Error` (CodeRabbit): drift ble
