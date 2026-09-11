@@ -107,26 +107,22 @@ def importer_endepunkt(tjeneste, request: Request) -> Response:
     "ukjente_kolonner": [...], "skrevet": n, "torrkjoring": bool}`.
     """
     from db import kryptering
-    from db.pg import sett_kontekst
 
     from .app import _rid
-    from .policyadmin_http import _feil, _kropp, _med_conn, _ok, _ok_lagret
-    from .parter import _krev_csrf, _maske
+    from .policyadmin_http import (_browserkontekst, _feil, _kropp,
+                                   _med_conn, _ok, _ok_lagret)
+    from .parter import _maske
     rid = _rid(request)
 
     def kjor(conn):
         import psycopg
 
-        from . import kjerne
-        from .app import _autentiser
-        try:
-            auth = _autentiser(tjeneste, request, conn, rid,
-                               "part:administrer")
-        except kjerne.Feilsvar as f:
-            return _feil(f.kode, rid)
-        avbrudd = _krev_csrf(tjeneste, request, conn, rid, auth)
-        if avbrudd is not None:
-            return avbrudd
+        # AUTENTISERING, CSRF OG AKTØR I ÉN — husets egen hjelper, som
+        # syv andre skriveveier bruker. Aktøren blir BRUKER-ID-en, ikke
+        # `token:sesjon:…`: en import skriver hundrevis av rader, og
+        # `opprettet_av` på hver av dem skal navngi et menneske.
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "part:administrer")
         k = _kropp(request)
         tekst = k.get("csv")
         if not isinstance(tekst, str) or not tekst.strip():
@@ -201,30 +197,26 @@ def importer_endepunkt(tjeneste, request: Request) -> Response:
         # ikke ba om, og en ny kjøring ville vært umulig å resonnere om.
         # Dørene er idempotente hver for seg; transaksjonen gjør hele
         # importen det.
-        conn.rollback()
-        sett_kontekst(conn, auth.tenant, auth.aktor, rid)
-        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, auth.tenant)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
         try:
             with conn.transaction():
                 for ref, navn, org, epost, telefon in gyldige:
                     pid = conn.execute(
                         "SELECT part_registrer(%s,%s,%s,%s,'bedrift',%s)",
-                        (auth.tenant, ref, navn, org,
-                         auth.aktor)).fetchone()[0]
+                        (tenant, ref, navn, org, aktor)).fetchone()[0]
                     for kanal, verdi in (("epost", epost),
                                          ("telefon", telefon)):
                         if not verdi:
                             continue
                         ct, nonce = kryptering.krypter(
-                            dek, {"verdi": verdi}, auth.tenant, key_id)
+                            dek, {"verdi": verdi}, tenant, key_id)
                         psn = conn.execute("SELECT tenant_pseudonym(%s,%s)",
-                                           (auth.tenant,
-                                            verdi)).fetchone()[0]
+                                           (tenant, verdi)).fetchone()[0]
                         conn.execute(
                             "SELECT part_sett_kontakt(%s,%s,%s,%s,%s,%s,%s,"
                             "%s,true,NULL,%s)",
-                            (auth.tenant, pid, kanal, _maske(verdi, kanal),
-                             ct, nonce, key_id, psn, auth.aktor))
+                            (tenant, pid, kanal, _maske(verdi, kanal),
+                             ct, nonce, key_id, psn, aktor))
         except psycopg.errors.IntegrityConstraintViolation:
             return _feil("part_ulovlig_tilstand", rid, 409)
         rapport["skrevet"] = len(gyldige)

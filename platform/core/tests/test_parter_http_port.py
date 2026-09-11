@@ -12,7 +12,7 @@ import secrets
 
 from .test_api import (DSN, MIGRATOR_DSN, dekker, klient,  # noqa: F401
                        app, migrator, miljo, pg, token)
-from .test_pr012_behandle import conn  # noqa: F401
+from .test_pr012_behandle import TEN, conn  # noqa: F401
 from .test_m37 import _sett_kontekst
 
 
@@ -224,19 +224,47 @@ def test_nettleserokten_naar_kundelista_og_ikke_skrivingen(
     abid = _medlem(conn, "kunde-adm", roller="ARRAY['admin']")
     acookie, acsrf = _browsersesjon(abid)
     akaker = {sesjonmodul.C_SESJON: acookie}
+    # FERSK REFERANSE PER KJØRING. Dørene er idempotente på `part_ref`,
+    # så en rad fra forrige kjøring beholder sin opprinnelige
+    # `opprettet_av` — og porten under ville målt en GAMMEL skriver.
+    # (Den fanget nettopp det, første gang den ble kjørt.)
+    csrf_ref = "K-CSRF-" + secrets.token_hex(3)
     uten = klient.post(
-        "/v1/parter", json={"part_ref": "K-CSRF", "navn": "Uten token"},
+        "/v1/parter", json={"part_ref": csrf_ref, "navn": "Uten token"},
         cookies=akaker,
         headers={"Idempotency-Key": "c-" + secrets.token_hex(8)})
     assert uten.status_code == 403, ("uten CSRF slapp gjennom", uten.text)
     # POSITIV KONTROLL: samme økt MED token skriver. Uten den ville
     # porten vært grønn av en økt som ikke kunne skrive uansett.
     med = klient.post(
-        "/v1/parter", json={"part_ref": "K-CSRF", "navn": "Med token"},
+        "/v1/parter", json={"part_ref": csrf_ref, "navn": "Med token"},
         cookies={**akaker, sesjonmodul.C_CSRF: acsrf},
         headers={"Idempotency-Key": "c-" + secrets.token_hex(8),
                  "X-Disponit-CSRF": acsrf})
     assert med.status_code == 200, ("med CSRF ble nektet", med.text)
+
+    # AKTØREN ER MENNESKET, ikke økten. Funnet i PROD: eier la inn sin
+    # første kunde, og `opprettet_av` sa `token:sesjon:bid_c612…`. Første
+    # utgave brukte `auth.aktor`, som er token-ID-en med `token:`-prefiks
+    # — riktig for en integrasjon, galt for en innlogget person. Husets
+    # `_browserkontekst` gir BRUKER-ID-en, som syv andre skriveveier alt
+    # bruker. Revisjonssporet skal navngi den som skrev.
+    from db.pg import koble
+    m = koble(MIGRATOR_DSN)
+    try:
+        # BROWSERSESJONEN TILHØRER `TEN`, ikke API-testenes tenant:
+        # `_medlem` lager medlemskapet der, og RLS gir ingen rader om
+        # konteksten peker et annet sted — porten ville da målt fraværet
+        # av en rad den selv hadde lagt feil sted.
+        _sett_kontekst(m, TEN)
+        av = m.execute("SELECT opprettet_av FROM part WHERE tenant=%s"
+                       "   AND part_ref=%s", (TEN, csrf_ref)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    assert av, "kunden fra browsersesjonen ble ikke skrevet"
+    assert av[0] == abid, (av[0], abid)
+    assert not av[0].startswith("token:"), av[0]
 
 
 def test_sikkerhet_er_fortsatt_en_supermengde_av_leser():
