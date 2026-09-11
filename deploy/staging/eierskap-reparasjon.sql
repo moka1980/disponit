@@ -63,6 +63,14 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm6_for_utsending(text,uuid)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'm6_svar_sendt(text,uuid,text)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'm6_svar_feilet(text,uuid,text,text)',              'disponit_m37_claimer'),
+    -- 183: partsregisteret — én kunde, ett sted. Kryss-modul, derfor
+    -- claimer-eid som resten av det som er det.
+    ('FUNCTION', 'tenant_pseudonym(text,text)',                      'disponit_m37_claimer'),
+    ('FUNCTION', 'part_registrer(text,text,text,text,text,text)',     'disponit_m37_claimer'),
+    ('FUNCTION', 'part_sett_kontakt(text,uuid,text,text,bytea,bytea,text,text,boolean,text,text)', 'disponit_m37_claimer'),
+    ('FUNCTION', 'part_deaktiver(text,uuid,text)',                    'disponit_m37_claimer'),
+    ('FUNCTION', 'part_liste(text,text,integer)',                     'disponit_m37_claimer'),
+    ('FUNCTION', 'part_fra_pseudonym(text,text)',                     'disponit_m37_claimer'),
     ('FUNCTION', 'bruk_kvitteringskapabilitet(text,text)',           'disponit_m37_claimer'),
     ('FUNCTION', 'claim_neste_oppdrag(text,text[],text,integer,text,text,bigint)', 'disponit_m37_claimer'),
     -- 063 (#165): fornyelsesveien — claim-livssyklussteg, claimers eie.
