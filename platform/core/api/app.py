@@ -3350,6 +3350,21 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_utkast_send(request: Request) -> Response:
         return epostmeldingmodul.send_svaret_endepunkt(tjeneste, request)
 
+    # 183/184: partsregisteret — ETT sted å legge inn kundene.
+    from . import parter as partermodul
+
+    def parter_liste(request: Request) -> Response:
+        return partermodul.liste_endepunkt(tjeneste, request)
+
+    def parter_registrer(request: Request) -> Response:
+        return partermodul.registrer_endepunkt(tjeneste, request)
+
+    def parter_kontakt(request: Request) -> Response:
+        return partermodul.kontakt_endepunkt(tjeneste, request)
+
+    def parter_deaktiver(request: Request) -> Response:
+        return partermodul.deaktiver_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -4441,6 +4456,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/epost/utkast/{utkast_id:uuid}/send", epost_utkast_send,
               methods=["POST"]),
+        Route("/v1/parter", parter_liste, methods=["GET"]),
+        Route("/v1/parter", parter_registrer, methods=["POST"]),
+        Route("/v1/parter/{part_id:uuid}/kontakt", parter_kontakt,
+              methods=["POST"]),
+        Route("/v1/parter/{part_id:uuid}/deaktiver", parter_deaktiver,
+              methods=["POST"]),
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
@@ -4527,7 +4548,15 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         # 102 (M-17): henvendelsens innhold — rent
                         # lesende, og skilt fra køens `decisions:read`
                         # fordi bare det ene er persondata.
-                        "kundeservice:innhold"})
+                        "kundeservice:innhold",
+                        # 183: kundelista. UTEN DENNE LINJA er flaten
+                        # DØD for alle som logger inn i nettleseren
+                        # (CodeRabbit, kritisk): browsersesjonen får
+                        # rollen `bruker`, og den måles mot NETTOPP dette
+                        # settet — ikke mot `ROLLE_TIL_SCOPES`. Testene
+                        # mine gikk alle med Bearer-token og traff aldri
+                        # veien eieren faktisk bruker.
+                        "part:read"})
 
 #: Roller som er ALLOWLISTET til kun lesing. `bruker`-rollen når aldri et
 #: muterende endepunkt — selv om noen skulle utstede et bruker-token med
@@ -4574,6 +4603,10 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # finnes først i PR-B/D.
                                      "epost:kilde:administrer",
                                      "epost:utkast:behandle",
+                                     # 183: kunderegisteret er MENNESKELIG
+                                     # arbeid i flaten — samme form som
+                                     # M-6s to over.
+                                     "part:administrer",
                                      # 089 (M-35): hendelseshåndteringen
                                      # er MENNESKELIG arbeid i flaten
                                      # (registrere, føre tidslinje,
@@ -6049,6 +6082,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "epost:utkast:behandle",
     ("POST", "/v1/epost/utkast/{utkast_id:uuid}/send"):
         "epost:utkast:behandle",
+    # 183/184: partsregisteret. To scope, ikke ett — å SE kundelisten og
+    # å ENDRE den er to ting (samme lærdom som `epost:utkast:behandle`).
+    ("GET",  "/v1/parter"):                  "part:read",
+    ("POST", "/v1/parter"):                  "part:administrer",
+    ("POST", "/v1/parter/{part_id:uuid}/kontakt"):    "part:administrer",
+    ("POST", "/v1/parter/{part_id:uuid}/deaktiver"):  "part:administrer",
     ("POST", "/v1/oidc/start"):              None,
     ("GET",  "/v1/oidc/callback"):           None,
     ("GET",  "/v1/sesjon"):                  None,

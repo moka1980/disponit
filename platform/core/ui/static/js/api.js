@@ -366,6 +366,25 @@ export const hentDomener = () => hentJson("/v1/domener");
 // holder nøkkelen stabil til skjemaet endres — replay gir samme
 // authorize-URL); deaktivering er naturlig idempotent (enveis) og
 // bærer ingen nøkkel, som slett-rutene.
+// 183/184: partsregisteret — ÉN kunde, ett sted. `part:read` for å se,
+// `part:administrer` for å endre; flaten gater på begge hver for seg
+// (lærdommen fra M-6, der én nøkkel for begge skjulte det brukeren
+// hadde lov til).
+//
+// ADRESSEN SENDES ÉN VEI. Den går inn i `settPartKontakt` og kommer
+// ALDRI tilbake: svaret og lista bærer bare masken.
+export const hentParter = (sok, grense) =>
+  hentJson("/v1/parter?" + new URLSearchParams(
+    Object.entries({ sok, grense }).filter(([, v]) => v != null && v !== "")));
+export const registrerPart = (part, idem) =>
+  _muter("/v1/parter", "POST", part, idem || nyIdempotensnokkel());
+export const settPartKontakt = (partId, kontakt, idem) =>
+  _muter(`/v1/parter/${encodeURIComponent(partId)}/kontakt`, "POST",
+         kontakt, idem || nyIdempotensnokkel());
+export const deaktiverPart = (partId, idem) =>
+  _muter(`/v1/parter/${encodeURIComponent(partId)}/deaktiver`, "POST",
+         {}, idem || nyIdempotensnokkel());
+
 export const hentEpostKilder = () => hentJson("/v1/epost/kilder");
 export const startEpostKilde = (postboks, idempotensnokkel) =>
   _muter("/v1/epost/kilder/start", "POST", { postboks }, idempotensnokkel);

@@ -283,19 +283,29 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # 089 (M-35): kontinuitetsmutasjonene er admin-myndighet i samme
     # klasse: retten til å REGISTRERE og FØRE, aldri en stående fullmakt
     # (dørene håndhever append-only og etteranalyse-kravet).
+    # 183: `part:administrer` er admins muterende scope over
+    # kunderegisteret — samme klasse som de andre: retten til å FØRE et
+    # register, aldri en stående fullmakt. (`part:read` er lesende og
+    # står i LESESCOPES, som enhver innlogget bruker måles mot.)
     assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
         "plan:gjenoppta", "epost:kilde:administrer",
-        "epost:utkast:behandle", "kontinuitet:write"}
+        "epost:utkast:behandle", "kontinuitet:write",
+        "part:administrer"}
     # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
     # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
     # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant
     # som vil ha en rolle som ser KØEN uten å kunne lese INNHOLDET, skal
     # kunne lage den uten skjemaendring.
+    # 183: `part:read` hos enhver leser — kundelista er arbeidsgrunnlaget,
+    # og en saksbehandler som ikke ser kundene sine kan ikke gjøre jobben.
+    # Settet er LUKKET og pinnet her: et scope til hos `leser` skal FELLE
+    # denne testen, ikke gli inn.
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read",
                                             "epost:read", "kontinuitet:read",
-                                            "kundeservice:innhold"}
+                                            "kundeservice:innhold",
+                                            "part:read"}
     assert "security:read" not in scopes_for_roller(["leser"])
     assert "security:read" in scopes_for_roller(["sikkerhet"])
     # …og `okonomi:read` (101) er ADMINS ALENE: en `leser` skal ikke se

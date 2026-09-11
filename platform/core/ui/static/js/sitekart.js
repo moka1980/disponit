@@ -184,6 +184,16 @@ const BASISRUTER = [
   // i PR-B — klassifiserings-/utkastsflaten og en eventuell
   // modulkort-inngang er PR-D.
   { nokkel: "epost", scope: "epost:read", modulflate: 6 },
+  // 183/184: KUNDENE. Ingen `modulflate` — registeret er ikke én modul,
+  // det er grunnlaget fire av dem deler (fordring, tilbud, prosjekt,
+  // onboarding bar hver sin `kunde_ref` som fritekst). Derfor hører den
+  // i toppnavigasjonen, ved siden av plattformflatene, og ikke bak et
+  // modulkort som ville sagt at kundene tilhører én modul.
+  //
+  // Scopet er flatens SVAKESTE ledd (wcagkontroll-regelen): lista krever
+  // `part:read`, og mutasjonene avgjøres inne på flaten — og av
+  // serveren — med `part:administrer`.
+  { nokkel: "parter", scope: "part:read" },
   // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
   // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er

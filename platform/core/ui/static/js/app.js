@@ -23,6 +23,7 @@ import { visAdjudikator } from "./flater/adjudikator.js";
 import { visNokkeltall } from "./flater/nokkeltall.js";
 import { visModellstyring } from "./flater/modellstyring.js";
 import { visEpost } from "./flater/epost.js";
+import { visParter } from "./flater/parter.js";
 import { visKontinuitet } from "./flater/kontinuitet.js";
 import { visDriftstatus } from "./flater/driftstatus.js";
 import { visDatakvalitet } from "./flater/datakvalitet.js";
@@ -96,6 +97,7 @@ const FLATER = {
   // M-6 PR-B: kildeflaten — scope-gaten (`epost:read`) bor i
   // sitekart.js som for de andre.
   epost: visEpost,
+  parter: visParter,
   // M-35 (089): basisrute bak `kontinuitet:read` (sitekart.js) —
   // scope-gaten bor der, som for de andre flatene. Skriveveiene i
   // flaten er i tillegg gated på `kontinuitet:write`, men det er

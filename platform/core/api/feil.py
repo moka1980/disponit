@@ -382,6 +382,11 @@ FEILVEIER: tuple[Feilvei, ...] = (
                   " «sendt» er kvitteringens vei, aldri en dom. Avvis,"
                   " ikke drift: tilstanden endrer seg ikke av å prøve"
                   " igjen."),
+    Feilvei("part_ulovlig_tilstand", 409, ("avvis",), None,
+            notat="Partsregisteret (183): dørens egne nei — et"
+                  " kontaktpunkt på en deaktivert part, eller en form"
+                  " tabellvakten avviser. Avvis, ikke drift: tilstanden"
+                  " endrer seg ikke av å prøve igjen."),
     Feilvei("faktura_ukjent", 404, ("sikkerhet",), None,
             notat="ARC B bokføring: bestillingen peker på en faktura"
                   " tenanten ikke har — målt FØR beslutningen."),
