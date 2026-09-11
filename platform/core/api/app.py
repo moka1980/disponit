@@ -136,6 +136,14 @@ MAKS_IMPORT_KROPP = 2 * 1024 * 1024
 #: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
 #: er nettopp fallet dette funnet handlet om — da skal det være ÉN
 #: leselig linje å se den i.
+#:
+#: ET TAK HER ER HALVE JOBBEN. INGRESSEN HAR SIN EGEN GRENSE, og den er
+#: uavhengig: uten en `location = <rute>`-blokk med
+#: `client_max_body_size` i `deploy/staging/nginx/disponit-https.conf.
+#: template` svarer nginx 413 lenge før denne tabellen konsulteres —
+#: altså feiler ruten i DRIFT på en kropp appen ville godtatt.
+#: `TestClient` treffer aldri nginx, så ingen apptest ser det;
+#: `test_pr009b` itererer denne tabellen og krever blokken.
 RUTEKROPPSGRENSER = {
     KANDIDATDOK_RUTE: MAKS_KANDIDATDOK_KROPP,
     KANDIDATARTEFAKT_RUTE: MAKS_KANDIDATARTEFAKT_KROPP,

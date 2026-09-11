@@ -34,6 +34,11 @@ gangen (183 brukte fem runder på å finne dem alle):
 
 I tillegg pinner `test_pr010_db` både `leser`s lukkede sett og admins
 muterende differanse mot LESESCOPES.
+
+OG EN RUTE MED EGET KROPPSTAK TRENGER EN SJETTE: en `location`-blokk i
+nginx-malen. Ingressens grense er uavhengig av appens, og uten blokken
+svarer proxyen 413 før `RUTEKROPPSGRENSER` konsulteres. Se kommentaren
+over den tabellen i `api/app.py`.
 """
 from __future__ import annotations
 

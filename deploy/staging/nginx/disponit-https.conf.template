@@ -256,6 +256,23 @@ server {
     # rausere ENN appen på en uautentisert vei. Tokenet reiser i
     # URL-FRAGMENTET på /tidsvalg og i KROPPEN på API-kallene — ingen av
     # delene når access-loggen ($uri er bare stien).
+    # 183/PR 4: kundeimporten bærer et helt regneark som tekst.
+    # INGRESSEN HAR SIN EGEN GRENSE, og den er uavhengig av appens: uten
+    # denne blokken svarer nginx 413 lenge før `RUTEKROPPSGRENSER` blir
+    # konsultert, og importen ville feilet i drift på en fil som er
+    # innenfor appens tak. `TestClient` treffer aldri nginx, så ingen
+    # apptest ser det — porten i `test_pr009b` gjør, og den fant denne.
+    #
+    # `disponit_general` holder: en import er ÉN forespørsel, ikke en
+    # strøm som kandidatskrivingen. Sonen er urørt.
+    location = /v1/parter/import {
+        client_max_body_size 2048k;     # = MAKS_IMPORT_KROPP (2 MiB)
+        limit_req zone=disponit_general burst=100 nodelay;
+        limit_req_status 429;
+        proxy_read_timeout 120s;        # 5 000 rader gjennom dørene
+        proxy_pass http://unix:/run/disponit/api.sock;
+    }
+
     location = /v1/tidsvalg/oppslag {
         client_max_body_size 4k;        # = MAKS_TIDSVALG_KROPP
         limit_req zone=disponit_tidsvalg burst=10 nodelay;
