@@ -871,3 +871,83 @@ test("Fordring: uten «krever et menneske» finnes ingen bestill-knapp,"
       b.textContent === t("ui.fordring.knapp.bestill_inkassovarsel"));
     assert.equal(knapp, undefined);
   });
+
+// ---------------------------------------------------------------------
+// 187: kunden kommer fra registeret
+// ---------------------------------------------------------------------
+
+const PARTER = { parter: [
+  { part_id: "aa000000-0000-4000-8000-000000000001", part_ref: "K-77",
+    navn: "Fjordlys Elektro AS", orgnummer: "912345678",
+    parttype: "bedrift", aktiv: true, epost_maske: "fa**@fjordlys.example",
+    telefon_maske: null, antall_kontakter: 1 },
+  { part_id: "aa000000-0000-4000-8000-000000000002", part_ref: "K-78",
+    navn: "Nordlys Bygg AS", orgnummer: null, parttype: "bedrift",
+    aktiv: true, epost_maske: null, telefon_maske: null,
+    antall_kontakter: 0 },
+] };
+
+test("Fordring: kundefeltet får forslag fra registeret, men kan fortsatt skrives",
+  async () => {
+    // GEVINSTEN, målt: man VELGER kunden i stedet for å skrive
+    // referansen og adressen på nytt. Men feltet er fortsatt fritt —
+    // døra tar imot en referanse registeret ikke kjenner, og en flate
+    // som krevde en registrert kunde ville stanset registreringen av
+    // krav mot kunder ingen har rukket å føre inn.
+    SVAR = { ...fullSvar(), "/v1/parter": PARTER };
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelector("#fo-ny-kunde"));
+    const felt = h.querySelector("#fo-ny-kunde");
+    assert.equal(felt.getAttribute("list"), "fo-kunder");
+    const liste = h.querySelector("datalist#fo-kunder");
+    assert.ok(liste, "ingen forslagsliste");
+    const valg = [...liste.querySelectorAll("option")];
+    assert.deepEqual(valg.map((o) => o.value), ["K-77", "K-78"]);
+    assert.deepEqual(valg.map((o) => o.textContent),
+                     ["Fjordlys Elektro AS", "Nordlys Bygg AS"]);
+    // FELTET ER IKKE LÅST: ingen `readonly`, ingen `pattern`.
+    assert.equal(felt.getAttribute("readonly"), null);
+    assert.equal(felt.getAttribute("pattern"), null);
+  });
+
+test("Fordring: uten part:read faller flaten tilbake, den faller ikke ned",
+  async () => {
+    // `part:read` er et ANNET scope enn flatens eget. En økt uten det
+    // skal se fordringene sine som før — bare uten forslagslista. En
+    // flate som falt på et hjelpekall ville vært verre enn en uten
+    // hjelp.
+    SVAR = fullSvar();                    // /v1/parter mangler -> 404
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelector("#fo-ny-kunde"));
+    assert.ok(h.querySelector("table"), "fordringene forsvant");
+    const liste = h.querySelector("datalist#fo-kunder");
+    assert.equal(liste.querySelectorAll("option").length, 0);
+    // ...og man kan fortsatt registrere.
+    assert.ok(h.querySelector("#fo-ny-kunde"));
+  });
+
+test("Fordring: lista viser kundens NAVN når kravet er knyttet til registeret",
+  async () => {
+    // Navnet leses gjennom fremmednøkkelen (187), ikke kopiert inn — et
+    // navn rettet ETT sted er rettet her i samme øyeblikk. Raden uten
+    // kobling viser referansen som før.
+    const bilde = JSON.parse(JSON.stringify(BILDE));
+    bilde.fordringer[0].part_navn = "Fjordlys Elektro AS";
+    bilde.fordringer[0].part_id = "aa000000-0000-4000-8000-000000000001";
+    SVAR = { ...fullSvar(), "/v1/fordring": bilde, "/v1/parter": PARTER };
+    const h = nyHoved();
+    visFordring(h, ctx());
+    await vent(() => h.querySelector("table tbody th"));
+    const rader = [...h.querySelectorAll("table tbody th")].map(
+      (n) => n.textContent);
+    assert.ok(rader.some((r) => r.includes("Fjordlys Elektro AS")),
+      rader.join(" | "));
+    // Referansen til den UKNYTTEDE raden står som før.
+    const uten = bilde.fordringer.find((f) => !f.part_navn);
+    if (uten) {
+      assert.ok(rader.some((r) => r.includes(uten.kunde_ref)),
+        rader.join(" | "));
+    }
+  });
