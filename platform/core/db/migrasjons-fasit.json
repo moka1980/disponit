@@ -181,5 +181,6 @@
   "180_m6_for_svar.sql": "70d4b9f07786b4427d352e1d0eb24ec45d408b3e66eda71cb3dfe371e30e60db",
   "181_m6_svarutsending.sql": "ddd2f89845c046b4d1d1106d2ecc9017f7e5940f101bc19922c5f15d0a945ce2",
   "182_m6_feilgrunn_null.sql": "5dce119864cb44add2597acbd918194a943b68fd16b2858189ff7eba66f88336",
-  "183_partsregister.sql": "c3c4e5307fdbe9da3cd0d4ad6a9f6d07d99912ca4525000dd635f5c1cf0ffd5c"
+  "183_partsregister.sql": "c3c4e5307fdbe9da3cd0d4ad6a9f6d07d99912ca4525000dd635f5c1cf0ffd5c",
+  "184_partsretensjon.sql": "e225543143c9a704644e5a531c79e52e33d60e2ee88abf6774b3fe8430ce5aee"
 }

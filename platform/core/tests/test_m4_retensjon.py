@@ -416,9 +416,19 @@ def test_kolonnegrantene_er_delmengde_av_registerets_tre(migrator):  # noqa: F81
     """
     lovlige = {}
     _eier(migrator)
+    # HVILKE MIGRASJONER SOM MÅLER, ER IKKE EN KONSTANT. Filteret var
+    # `dom_migrasjon = '093'`, og det var sant så lenge 093 var den
+    # eneste som registrerte et lager MED frist. 184 (partsregisteret)
+    # er det andre, og porten ville da sett grantet uten å finne raden —
+    # «grant til et uregistrert lager» på et lager som ER registrert.
+    #
+    # Dommen porten faktisk håndhever, er uendret: hver kolonne måleren
+    # kan lese, må stå i registeret som tenant-, alders- eller
+    # reap-kolonne. Den leses nå fra HELE registeret, ikke fra én
+    # migrasjon. Tabellgrant-forbudet under står urørt.
     for relasjon, tk, ak, rk in migrator.execute(
             "SELECT relasjon, tenantkolonne, alderskolonne, reapetkolonne"
-            "  FROM retensjonslager WHERE dom_migrasjon = '093'").fetchall():
+            "  FROM retensjonslager").fetchall():
         lovlige[relasjon] = {k for k in (tk, ak, rk) if k}
     _reset(migrator)
     grantet = migrator.execute(
@@ -450,10 +460,13 @@ def test_kryss_tenant_er_policy_aldri_bypassrls(migrator):  # noqa: F811
             (rolle,)).fetchone()[0] is False, rolle
     _eier(migrator)
     # KUN de MIGRASJONSSEEDEDE radene: en testinjisert registerrad har
-    # ingen policy, og porten skal måle det 093 la inn.
+    # ingen policy, og porten skal måle det MIGRASJONENE la inn. Settet
+    # var pinnet til '093' da den var den eneste som registrerte et målt
+    # lager; 184 er det andre, og et lager uten `m4_maaler`-policy ville
+    # da gått umålt gjennom porten som finnes for å måle nettopp det.
     maalte = [r[0] for r in migrator.execute(
         "SELECT relasjon FROM retensjonslager WHERE reapetkolonne IS NOT NULL"
-        "   AND dom_migrasjon = '093'"
+        "   AND dom_migrasjon ~ '^[0-9]+$'"
         "   AND relasjon NOT LIKE 'retensjons%'").fetchall()]
     _reset(migrator)
     for relasjon in maalte:
