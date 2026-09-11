@@ -669,9 +669,13 @@ export const KUNDEROLLER = [
     // enn rollen faktisk har. KOMMENTAREN STÅR UTENFOR ARRAYET: porten
     // i `test_ui_kontrakt.py` leser listen med et regex, og en
     // kommentar inne i den gjør scopet usynlig for porten.
+    // 183: `part:read` — kundelista er arbeidsgrunnlaget, ikke en
+    // hemmelighet i firmaet. Guiden er kundens grunnlag for å TILDELE
+    // roller, så et scope som mangler her er en rolle kunden tror er
+    // snevrere enn den er.
     scopes: ["decisions:read", "exceptions:read", "policy:read",
              "epost:read", "kontinuitet:read",
-             "kundeservice:innhold"],
+             "kundeservice:innhold", "part:read"],
   },
   {
     id: "godkjenner",

@@ -9,6 +9,31 @@ scopene utledet på nytt herfra.
 Scope-navnene er PR-008s lese-scopes. `test_rolle_scopes_er_kjente`
 binder utledningen mot den kanoniske LESESCOPES-mengden, så en rolle ikke
 kan gi et scope som ikke finnes.
+
+ET NYTT SCOPE MÅ INN FEM STEDER, og de oppdages ellers én CI-runde om
+gangen (183 brukte fem runder på å finne dem alle):
+
+  1. HER, i `ROLLE_TIL_SCOPES` — og husk at `sikkerhet` er en
+     SUPERMENGDE av `leser`; porten
+     `test_sikkerhet_er_fortsatt_en_supermengde_av_leser` måler det nå.
+  2. `api/app.py`: `LESESCOPES` hvis scopet er LESENDE. En browsersesjon
+     får rollen `bruker` og måles mot NETTOPP det settet — ikke mot
+     tabellen her. Uteblir linja, er flaten død for alle som logger inn
+     i nettleseren, mens Bearer-tester går grønt.
+  3. `api/app.py`: `RUTESCOPE`, og `BROWSER_MUTASJONSSCOPES` hvis scopet
+     MUTERER fra flaten — og da må endepunktet selv håndheve CSRF
+     (dobbel-innsending); carve-outen slipper bare forbi den generelle
+     porten.
+  4. En MIGRASJON som seeder `rolle_scope` (043 §6b speiler denne
+     tabellen eksakt; port 26 i `test_gate14b` måler de to mot
+     hverandre).
+  5. `ui/static/js/plattformdata.js`: `KUNDEROLLER` — kundens grunnlag
+     for å TILDELE roller. `test_ui_kontrakt` binder guiden mot denne
+     tabellen, og et scope som mangler der er en rolle kunden tror er
+     snevrere enn den er.
+
+I tillegg pinner `test_pr010_db` både `leser`s lukkede sett og admins
+muterende differanse mot LESESCOPES.
 """
 from __future__ import annotations
 
