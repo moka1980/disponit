@@ -26,7 +26,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentParter, registrerPart, settPartKontakt, deaktiverPart,
-         UautorisertFeil, ApiFeil } from "../api.js";
+         importerParter, UautorisertFeil, ApiFeil } from "../api.js";
 import { TomTilstand, meldLive } from "../komponenter.js";
 import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode } from "./felles.js";
@@ -200,6 +200,133 @@ function kontaktskjema(part, paaLagre, paaLukk) {
   return { node: boks, fokuser: () => { boks.focus(); verdi.focus(); } };
 }
 
+
+// IMPORTEN: regnearket inn, én gang. Den er den egentlige grunnen til at
+// registeret finnes — «Ikke gå gjennom hver modul og fylle» betyr først
+// og fremst at man ikke skal skrive de samme 300 kundene på nytt.
+//
+// SJEKK FØRST, LAGRE ETTERPÅ, og knappen for å lagre finnes ikke før
+// sjekken har sagt hvor mange rader som er gyldige. Standard i API-et er
+// tørrkjøring; flaten sier det uttrykkelig uansett.
+export function importrapport(d) {
+  const deler = [];
+  const antall = d.gyldige || 0;
+  // ENTALL HAR SIN EGEN NØKKEL (husets lærdom fra M-21/M-34/M-13/M-17/
+  // M-18): locale-settet har intet pluralmaskineri, og «1 kunder» står
+  // på nettopp den raden et menneske leser først.
+  const lest = d.lest || 0;
+  let melding;
+  if (!antall) melding = t("ui.parter.import.ingen");
+  else if (antall === 1 && lest === 1) {
+    melding = t("ui.parter.import.rapport_en_av_en");
+  } else if (antall === 1) {
+    melding = t("ui.parter.import.rapport_en").replace("{lest}", String(lest));
+  } else {
+    melding = t("ui.parter.import.rapport")
+      .replace("{gyldige}", String(antall)).replace("{lest}", String(lest));
+  }
+  deler.push(el("p", { role: "status", text: melding }));
+  if ((d.ukjente_kolonner || []).length) {
+    deler.push(el("p", { class: "muted",
+      text: t("ui.parter.import.ukjente")
+        .replace("{kolonner}", d.ukjente_kolonner.join(", ")) }));
+  }
+  if ((d.feil || []).length) {
+    const tb = el("tbody", {});
+    for (const f of d.feil) {
+      // GRUNNEN ER EN KODE fra serveren, og oversettes HER. En ukjent
+      // kode skal ikke bli en tom celle — da ser raden feilfri ut.
+      const tekst = t(`ui.parter.import.grunn.${f.grunn}`, "")
+        || t("ui.parter.import.grunn.ukjent");
+      tb.append(el("tr", {},
+        el("th", { scope: "row", text: String(f.linje) }),
+        el("td", { text: tekst })));
+    }
+    deler.push(el("div", { class: "tablewrap" },
+      el("table", {},
+        el("caption", { text: t("ui.parter.import.feilliste") }),
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col", text: t("ui.parter.import.kol.linje") }),
+          el("th", { scope: "col", text: t("ui.parter.import.kol.grunn") }))),
+        tb)));
+  }
+  return deler;
+}
+
+function importseksjon(paaSjekk, paaLagre) {
+  const felt = el("textarea", { id: "import-csv", rows: 8, class: "felt-inp",
+    maxlength: 2000000 });
+  const fil = el("input", { id: "import-fil", type: "file", accept: ".csv,text/csv",
+    class: "felt-inp" });
+  const ut = el("div", {});
+  let sisteGyldige = 0;
+  const sjekk = el("button", { type: "submit",
+    text: t("ui.parter.import.sjekk") });
+  // KNAPPEN HAR ET NAVN FRA FØRSTE ØYEBLIKK, selv mens den er skjult:
+  // en knapp uten tekst er en knapp uten tilgjengelig navn, og den
+  // finnes i DOM-en enten den vises eller ikke.
+  const lagre = el("button", { id: "import-lagre", class: "knapp primar",
+    type: "button",
+    text: t("ui.parter.import.lagre").replace("{n}", "0") });
+  lagre.hidden = true;
+  // RAPPORTEN GJELDER TEKSTEN SOM BLE SJEKKET, og ingen annen
+  // (CodeRabbit). Uten dette kunne man sjekke regneark A, lime inn
+  // regneark B, og trykke «Lagre 2 kunder» — som da sendte B med As
+  // tall. Enhver endring i feltet river rapporten og knappen.
+  const nullstillForhaandsvisning = () => {
+    sisteGyldige = 0;
+    lagre.hidden = true;
+    lagre.textContent = t("ui.parter.import.lagre").replace("{n}", "0");
+    sett(ut);
+  };
+  // FILA LESES I NETTLESEREN og havner i tekstfeltet, så brukeren SER
+  // hva som sendes før hun sender det. Ingen skjult opplasting.
+  fil.addEventListener("change", () => {
+    const f = fil.files && fil.files[0];
+    if (!f) return;
+    f.text().then((tekst) => {
+      felt.value = tekst;
+      nullstillForhaandsvisning();
+    });
+  });
+  felt.addEventListener("input", nullstillForhaandsvisning);
+  const skjema = el("form", { class: "kv-skjema", novalidate: true },
+    el("label", { for: "import-fil", text: t("ui.parter.import.fil") }), fil,
+    el("label", { for: "import-csv", text: t("ui.parter.import.felt") }), felt,
+    el("div", { class: "knapperad" }, sjekk, lagre));
+  skjema.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!felt.value.trim()) return;
+    // BARE DET SISTE SVARET FÅR TEGNE, og bare hvis teksten fortsatt er
+    // den samme (CodeRabbit). `input`-lytteren river rapporten, men et
+    // svar som ALT var i lufta kom tilbake etterpå og fylte den ut igjen
+    // — for regneark A, mens feltet inneholdt B. Da sendte «Lagre 2
+    // kunder» B med As tall. Samme form som «bare det siste valget får
+    // tegne panelet» i e-postflaten.
+    const sendt = felt.value;
+    paaSjekk(sendt, (d) => {
+      if (felt.value !== sendt) return;
+      sisteGyldige = d.gyldige || 0;
+      sett(ut, ...importrapport(d));
+      lagre.hidden = sisteGyldige === 0;
+      lagre.textContent = sisteGyldige === 1
+        ? t("ui.parter.import.lagre_en")
+        : t("ui.parter.import.lagre").replace("{n}", String(sisteGyldige));
+    });
+  });
+  lagre.addEventListener("click", () => {
+    if (!sisteGyldige) return;
+    paaLagre(felt.value, () => {
+      felt.value = ""; fil.value = "";
+      nullstillForhaandsvisning();
+    });
+  });
+  return el("section", {},
+    el("h2", { text: t("ui.parter.import.tittel") }),
+    el("p", { class: "muted", text: t("ui.parter.import.hjelp") }),
+    skjema, ut);
+}
+
 export function visParter(hoved, ctx) {
   const kanSkrive = (ctx.scopes || []).includes(SKRIVESCOPE);
   let sok = "";
@@ -258,9 +385,35 @@ export function visParter(hoved, ctx) {
         return;
       }
 
-      if (kanSkrive) deler.push(nyKundeSkjema(
-        (kropp, paaFeil, paaOk) => lagre(() => registrerPart(kropp),
-          t("ui.parter.kvittering.ny"), paaFeil, paaOk)).node);
+      if (kanSkrive) {
+        deler.push(nyKundeSkjema(
+          (kropp, paaFeil, paaOk) => lagre(() => registrerPart(kropp),
+            t("ui.parter.kvittering.ny"), paaFeil, paaOk)).node);
+        // IMPORTEN STÅR NEDERST, etter skjemaet for én kunde: den
+        // vanligste handlingen først, den store sjeldne under.
+        deler.push(importseksjon(
+          (csv, paaSvar) => importerParter(csv, true)
+            .then(paaSvar)
+            .catch((e) => {
+              if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+              meldLive(e && e.status === 400 ? t("ui.parter.feil.form")
+                                             : t("ui.feilet"));
+            }),
+          (csv, paaOk) => importerParter(csv, false)
+            .then((d) => {
+              meldLive((d.skrevet || 0) === 1
+                ? t("ui.parter.import.lagret_en")
+                : t("ui.parter.import.lagret")
+                    .replace("{n}", String(d.skrevet || 0)));
+              paaOk(); tegn();
+            })
+            .catch((e) => {
+              if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+              const kode = e instanceof ApiFeil ? e.kode : null;
+              meldLive(kode === "part_ulovlig_tilstand"
+                ? t("ui.parter.feil.tilstand") : t("ui.feilet"));
+            })));
+      }
       sett(hoved, ...deler);
     });
 

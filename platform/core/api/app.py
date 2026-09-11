@@ -126,6 +126,12 @@ MAKS_KANDIDATARTEFAKT_KROPP = (
 KANDIDATARTEFAKT_RUTE = "/v1/rekruttering/kandidatartefakt"
 #: M-8 (082): kroppstaket for de uautentiserte tidsvalg-rutene (§3).
 MAKS_TIDSVALG_KROPP = 4 * 1024
+#: 183/PR 4: kundeimporten bærer et helt regneark som tekst. En rad med
+#: navn, referanse, orgnummer, e-post og telefon er sjelden over 150
+#: tegn, så 2 MiB rommer godt over 10 000 kunder — og importmodulens
+#: egen `MAKS_RADER` (5 000) er den KONTRAKTUELLE grensen. De to måles
+#: hver for seg, som strømmetaket og reservasjonen i 162.
+MAKS_IMPORT_KROPP = 2 * 1024 * 1024
 #: Rutene med eget kroppstak. Oppslag, ikke en voksende kjede av
 #: betingede uttrykk: en rute som mangler her får `MAKS_KROPP`, og det
 #: er nettopp fallet dette funnet handlet om — da skal det være ÉN
@@ -138,6 +144,7 @@ RUTEKROPPSGRENSER = {
     # rute er billig forsvar i dybden.
     "/v1/tidsvalg/oppslag": MAKS_TIDSVALG_KROPP,
     "/v1/tidsvalg/velg": MAKS_TIDSVALG_KROPP,
+    "/v1/parter/import": MAKS_IMPORT_KROPP,
 }
 #: #162: inndata-opplastingen STRØMMES gjennom middlewaren — den teller og
 #: videresender chunks, og bufrer aldri. Endepunktet samler derimot opp til
@@ -3365,6 +3372,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def parter_deaktiver(request: Request) -> Response:
         return partermodul.deaktiver_endepunkt(tjeneste, request)
 
+    from . import partsimport as partsimportmodul
+
+    def parter_import(request: Request) -> Response:
+        return partsimportmodul.importer_endepunkt(tjeneste, request)
+
     def rekruttering_tekster(request: Request) -> Response:
         return rekruttering_http.utsendingstekster_endepunkt(
             tjeneste, request)
@@ -4458,6 +4470,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/parter", parter_liste, methods=["GET"]),
         Route("/v1/parter", parter_registrer, methods=["POST"]),
+        Route("/v1/parter/import", parter_import, methods=["POST"]),
         Route("/v1/parter/{part_id:uuid}/kontakt", parter_kontakt,
               methods=["POST"]),
         Route("/v1/parter/{part_id:uuid}/deaktiver", parter_deaktiver,
@@ -6086,6 +6099,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # å ENDRE den er to ting (samme lærdom som `epost:utkast:behandle`).
     ("GET",  "/v1/parter"):                  "part:read",
     ("POST", "/v1/parter"):                  "part:administrer",
+    ("POST", "/v1/parter/import"):           "part:administrer",
     ("POST", "/v1/parter/{part_id:uuid}/kontakt"):    "part:administrer",
     ("POST", "/v1/parter/{part_id:uuid}/deaktiver"):  "part:administrer",
     ("POST", "/v1/oidc/start"):              None,
