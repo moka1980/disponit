@@ -381,6 +381,12 @@ export const registrerPart = (part, idem) =>
 export const settPartKontakt = (partId, kontakt, idem) =>
   _muter(`/v1/parter/${encodeURIComponent(partId)}/kontakt`, "POST",
          kontakt, idem || nyIdempotensnokkel());
+// Importen: regnearket som TEKST. `torrkjoring` er standard i API-et,
+// og flaten sier det uttrykkelig uansett — en glemt parameter skal ikke
+// kunne bli tusen rader.
+export const importerParter = (csv, torrkjoring, idem) =>
+  _muter("/v1/parter/import", "POST", { csv, torrkjoring },
+         idem || nyIdempotensnokkel());
 export const deaktiverPart = (partId, idem) =>
   _muter(`/v1/parter/${encodeURIComponent(partId)}/deaktiver`, "POST",
          {}, idem || nyIdempotensnokkel());

@@ -98,9 +98,12 @@ test("Kunder: tomtilstanden sier HVORDAN man starter, ikke bare at det er tomt",
     // Skjemaet står der ALLEREDE — ingen «Ny kunde»-knapp foran.
     assert.ok(h.querySelector("#part-ref"));
     assert.ok(h.querySelector("#part-navn"));
-    // TRE FELTER. Medianen i huset er tolv, og det var halve klagen.
-    assert.equal(h.querySelectorAll("form.kv-skjema input, form.kv-skjema select")
-      .length, 3);
+    // TRE FELTER I KUNDESKJEMAET. Medianen i huset er tolv, og det var
+    // halve klagen. Målt på NYKUNDE-skjemaet spesifikt — importen under
+    // har sine egne felter, og en telling over hele flaten ville sagt
+    // noe annet enn den mener.
+    const nyskjema = h.querySelector("#part-ref").closest("form");
+    assert.equal(nyskjema.querySelectorAll("input, select, textarea").length, 3);
     // En LESER får en annen tomtekst: hun skal ikke lete etter et skjema
     // hun ikke har lov til å bruke.
     const h2 = nyHoved();
@@ -279,4 +282,155 @@ test("Kunder: søket spør REGISTERET, og tomt søk sier at søket ikke traff",
     await vent(() => h.querySelector(".tilstand.tom"));
     assert.ok(h.textContent.includes(t("ui.parter.tom_sok_tittel")));
     assert.ok(h.textContent.includes(t("ui.parter.tom_sok_tekst")));
+  });
+
+test("Kunder: importen sjekker FØR den lagrer, og lagreknappen finnes ikke før",
+  async () => {
+    // TØRRKJØRING FØRST er hele forskjellen mellom en import man tør
+    // bruke og en man ikke tør. Knappen for å lagre eksisterer ikke før
+    // sjekken har sagt hvor mange rader som er gyldige.
+    SVAR = { "/v1/parter": { parter: [], avkortet: false },
+             "/v1/parter/import": { lest: 3, gyldige: 2, skrevet: 0,
+               torrkjoring: true, skilletegn: ";", ukjente_kolonner: [],
+               feil: [{ linje: 3, grunn: "navn_mangler" }] } };
+    const h = nyHoved();
+    visParter(h, ctx({ scopes: ["part:read", "part:administrer"] }));
+    await vent(() => h.querySelector("#import-csv"));
+    const lagre = h.querySelector("#import-lagre");
+    assert.ok(lagre, "lagreknappen finnes ikke i DOM-en");
+    assert.ok(lagre.hidden, "lagreknappen sto der før noen hadde sjekket");
+    // ...og den har et TILGJENGELIG NAVN selv mens den er skjult.
+    assert.ok(lagre.textContent.trim().length > 0);
+
+    h.querySelector("#import-csv").value = "kundenummer;navn\nK-1;A\n";
+    KALL.length = 0;
+    [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.parter.import.sjekk")).click();
+    await vent(() => KALL.some((k) => k.metode === "POST"));
+    // SJEKKEN SENDER `torrkjoring: true` — aldri en glemt parameter.
+    assert.equal(KALL[0].kropp.torrkjoring, true);
+    await vent(() => h.textContent.includes(t("ui.parter.import.kol.linje")));
+    // Rapporten peker på LINJA og oversetter KODEN.
+    assert.ok(h.textContent.includes(
+      t("ui.parter.import.grunn.navn_mangler")));
+    assert.ok(h.textContent.includes("3"));
+    // ...og nå finnes lagreknappen, med antallet i teksten.
+    const lagre2 = h.querySelector("#import-lagre");
+    assert.ok(!lagre2.hidden, "lagreknappen kom ikke fram");
+    assert.ok(lagre2.textContent.includes("2"), lagre2.textContent);
+
+    // LAGRINGEN sender `torrkjoring: false`.
+    SVAR["/v1/parter/import"] = { lest: 3, gyldige: 2, skrevet: 2,
+      torrkjoring: false, skilletegn: ";", ukjente_kolonner: [], feil: [] };
+    KALL.length = 0;
+    lagre2.click();
+    await vent(() => KALL.some((k) => k.metode === "POST"));
+    assert.equal(KALL[0].kropp.torrkjoring, false);
+  });
+
+test("Kunder: en ny tekst river rapporten, så man ikke lagrer noe annet enn det som ble sjekket",
+  async () => {
+    // FEILEN DETTE STOPPER (CodeRabbit): sjekk regneark A, lim inn
+    // regneark B, trykk «Lagre 2 kunder» — og B ble sendt med As tall.
+    // Rapporten og knappen gjelder teksten som ble SJEKKET.
+    SVAR = { "/v1/parter": { parter: [], avkortet: false },
+             "/v1/parter/import": { lest: 2, gyldige: 2, skrevet: 0,
+               torrkjoring: true, skilletegn: ";", ukjente_kolonner: [],
+               feil: [] } };
+    const h = nyHoved();
+    visParter(h, ctx({ scopes: ["part:read", "part:administrer"] }));
+    await vent(() => h.querySelector("#import-csv"));
+    const felt = h.querySelector("#import-csv");
+    felt.value = "kundenummer;navn\nK-1;A\nK-2;B\n";
+    [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.parter.import.sjekk")).click();
+    await vent(() => !h.querySelector("#import-lagre").hidden);
+    assert.ok(h.querySelector("#import-lagre").textContent.includes("2"));
+
+    // NY TEKST: rapporten og knappen skal være borte.
+    felt.value = "kundenummer;navn\nK-9;Helt annet\n";
+    felt.dispatchEvent(new h.ownerDocument.defaultView.Event("input"));
+    assert.ok(h.querySelector("#import-lagre").hidden,
+      "lagreknappen overlevde en ny tekst");
+    assert.ok(!h.textContent.includes(t("ui.parter.import.kol.linje")));
+    // OG KAPPLØPET: et svar som alt var i lufta da teksten ble endret,
+    // skal IKKE tegne rapporten på nytt (CodeRabbit). Uten vakten kom
+    // As tall tilbake mens feltet inneholdt B — og «Lagre 2 kunder»
+    // sendte B.
+    let slippSvar;
+    const treg = new Promise((r) => { slippSvar = r; });
+    const gammelFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      if (url.split("?")[0] === "/v1/parter/import") {
+        await treg;
+        return { ok: true, status: 200,
+          json: async () => ({ lest: 2, gyldige: 2, skrevet: 0,
+            torrkjoring: true, skilletegn: ";", ukjente_kolonner: [],
+            feil: [] }) };
+      }
+      return gammelFetch(url, opts);
+    };
+    felt.value = "kundenummer;navn\nK-A;A\nK-B;B\n";
+    [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.parter.import.sjekk")).click();
+    // Brukeren rekker å lime inn noe annet FØR svaret kommer.
+    felt.value = "kundenummer;navn\nK-C;Helt annet\n";
+    felt.dispatchEvent(new h.ownerDocument.defaultView.Event("input"));
+    slippSvar();
+    // VENT FAKTISK. `vent(() => true)` returnerer på første runde og
+    // rekker aldri å se det sene svaret — porten var grønn uansett, og
+    // falt ikke da vakten ble fjernet. Her tikkes det et fast antall
+    // ganger, så svaret HAR landet når vi måler.
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    assert.ok(h.querySelector("#import-lagre").hidden,
+      "et utdatert svar tegnet rapporten på nytt");
+    globalThis.fetch = gammelFetch;
+  });
+
+test("Kunder: én rad sier «1 kunde», ikke «1 kunder»", async () => {
+  // HUSETS EGEN LÆRDOM (M-21/M-34/M-13/M-17/M-18): locale-settet har
+  // intet pluralmaskineri, så entall får sin EGEN nøkkel. «1 kunder»
+  // står på nettopp den raden et menneske leser først.
+  SVAR = { "/v1/parter": { parter: [], avkortet: false },
+           "/v1/parter/import": { lest: 1, gyldige: 1, skrevet: 0,
+             torrkjoring: true, skilletegn: ";", ukjente_kolonner: [],
+             feil: [] } };
+  const h = nyHoved();
+  visParter(h, ctx({ scopes: ["part:read", "part:administrer"] }));
+  await vent(() => h.querySelector("#import-csv"));
+  h.querySelector("#import-csv").value = "kundenummer;navn\nK-1;A\n";
+  [...h.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.parter.import.sjekk")).click();
+  await vent(() => !h.querySelector("#import-lagre").hidden);
+  assert.equal(h.querySelector("#import-lagre").textContent,
+               t("ui.parter.import.lagre_en"));
+  assert.ok(h.textContent.includes(t("ui.parter.import.rapport_en_av_en")));
+  // ...og ordet «kunder» i flertall skal IKKE stå der.
+  assert.ok(!h.querySelector("#import-lagre").textContent.includes("kunder"),
+    h.querySelector("#import-lagre").textContent);
+});
+
+test("Kunder: en ukjent feilkode blir en setning, ikke en tom celle",
+  async () => {
+    // En kode flaten ikke kjenner skal ikke gi en TOM celle — da ser
+    // raden feilfri ut, og brukeren leter etter en feil som ikke vises.
+    SVAR = { "/v1/parter": { parter: [], avkortet: false },
+             "/v1/parter/import": { lest: 1, gyldige: 0, skrevet: 0,
+               torrkjoring: true, skilletegn: ";", ukjente_kolonner: [],
+               feil: [{ linje: 2, grunn: "noe_helt_nytt_fra_serveren" }] } };
+    const h = nyHoved();
+    visParter(h, ctx({ scopes: ["part:read", "part:administrer"] }));
+    await vent(() => h.querySelector("#import-csv"));
+    h.querySelector("#import-csv").value = "kundenummer;navn\nK-1;A\n";
+    [...h.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.parter.import.sjekk")).click();
+    await vent(() => h.textContent.includes(t("ui.parter.import.kol.grunn")));
+    const celler = [...h.querySelectorAll("tbody td")].map(
+      (n) => n.textContent.trim());
+    assert.ok(celler.every((c) => c.length > 0), celler);
+    assert.ok(h.textContent.includes(t("ui.parter.import.grunn.ukjent")));
+    // ...og ingen rader kan lagres, så knappen står skjult.
+    assert.ok(h.textContent.includes(t("ui.parter.import.ingen")));
   });
