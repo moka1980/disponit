@@ -375,3 +375,61 @@ def test_samtidige_importkall_gir_en_part_ikke_syv_feil():
         m.commit()
     finally:
         m.close()
+
+
+@pg
+def test_en_slettet_rad_kan_ikke_baere_adressen(migrator):
+    """VAKTEN SOM BINDER PAYLOADEN TIL `slettet_ts` (CodeRabbit).
+
+    Vilkåret var først `(payload finnes) OR (slettet OG payload borte)`.
+    Første gren nevnte ikke `slettet_ts`, så en SLETTET rad med adressen
+    i behold var fullt lovlig — altså nøyaktig den tilstanden retensjonen
+    finnes for å hindre, og den ville sett ryddet ut i enhver liste som
+    filtrerer på `slettet_ts`.
+
+    Porten måler begge ulovlige former, og en lovlig til slutt så den
+    ikke er grønn av at ALT avvises.
+    """
+    t = _t()
+    felt = ("tenant,kontakt_id,part_id,kanal,verdi_maske,verdi_kryptert,"
+            "verdi_nonce,verdi_key_id,verdi_pseudonym,opprettet_av")
+    psn = "psn-" + "a" * 64
+    # Parten COMMITTES: hvert forsøk under ruller tilbake, og uten en
+    # varig forelder ville forsøk nr. 2 falt på fremmednøkkelen i stedet
+    # for på vakten porten faktisk måler.
+    _sett_kontekst(migrator, t)
+    p = migrator.execute(
+        "INSERT INTO part (tenant,part_id,part_ref,navn,opprettet_av)"
+        " VALUES (%s,gen_random_uuid(),'K-1','Fjordlys AS','kari')"
+        " RETURNING part_id", (t,)).fetchone()[0]
+    migrator.commit()
+    try:
+        for merkelapp, sql, arg in (
+            # 1. Slettet, men adressen i behold — den ulovlige.
+            ("slettet med adresse",
+             f"INSERT INTO partkontakt ({felt},slettet_ts,slettet_av)"
+             " VALUES (%s,gen_random_uuid(),%s,'epost','m**@x.no',%s,%s,"
+             "'k1',%s,'kari',now(),'kari')", (t, p, b"\x01", NONCE, psn)),
+            # 2. Levende, men uten ciphertext — like ulovlig.
+            ("levende uten payload",
+             f"INSERT INTO partkontakt ({felt})"
+             " VALUES (%s,gen_random_uuid(),%s,'epost',NULL,NULL,NULL,"
+             "NULL,%s,'kari')", (t, p, psn)),
+        ):
+            _sett_kontekst(migrator, t)
+            with pytest.raises(psycopg.errors.CheckViolation):
+                migrator.execute(sql, arg)
+            migrator.rollback()
+        # 3. POSITIV KONTROLL: en levende rad med hel payload går inn.
+        # Uten den ville porten vært grønn av at ALT ble avvist.
+        _sett_kontekst(migrator, t)
+        migrator.execute(
+            f"INSERT INTO partkontakt ({felt})"
+            " VALUES (%s,gen_random_uuid(),%s,'epost','m**@x.no',%s,%s,"
+            "'k1',%s,'kari')", (t, p, b"\x01", NONCE, psn))
+        migrator.rollback()
+    finally:
+        _sett_kontekst(migrator, t)
+        migrator.execute("DELETE FROM partkontakt WHERE tenant=%s", (t,))
+        migrator.execute("DELETE FROM part WHERE tenant=%s", (t,))
+        migrator.commit()

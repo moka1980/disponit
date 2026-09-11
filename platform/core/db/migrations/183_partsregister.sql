@@ -103,10 +103,21 @@ CREATE TABLE partkontakt (
         CHECK (kanal IN ('epost', 'telefon')),
     -- 058-formen, ordrett som de tre modulene bruker i dag: masken vises,
     -- ciphertext bæres, nonce er 12 byte, nøkkel-id-en sier hvilken DEK.
-    verdi_maske     TEXT NOT NULL CHECK (verdi_maske ~ '[^[:space:]]'),
-    verdi_kryptert  BYTEA NOT NULL,
-    verdi_nonce     BYTEA NOT NULL CHECK (octet_length(verdi_nonce) = 12),
-    verdi_key_id    TEXT NOT NULL CHECK (verdi_key_id ~ '[^[:space:]]'),
+    --
+    -- NULLBARE FORDI RADEN SKAL KUNNE TØMMES (088s form, ordrett).
+    -- Reaperen blanker payloaden og setter `slettet_ts`; raden består
+    -- med pseudonymet, som er ikke-reverserbart og som 078 uttrykkelig
+    -- lar overleve TTL-utløpet — sporet «denne parten hadde et
+    -- kontaktpunkt» er ikke personopplysningen, adressen var det.
+    -- Vakten under holder de fire samlet: enten alle, eller ingen, og
+    -- ingen bare når raden er tømt.
+    verdi_maske     TEXT CHECK (verdi_maske IS NULL
+                                OR verdi_maske ~ '[^[:space:]]'),
+    verdi_kryptert  BYTEA,
+    verdi_nonce     BYTEA CHECK (verdi_nonce IS NULL
+                                 OR octet_length(verdi_nonce) = 12),
+    verdi_key_id    TEXT CHECK (verdi_key_id IS NULL
+                                OR verdi_key_id ~ '[^[:space:]]'),
     -- GJENKJENNINGEN. Formen er 078s egen og uversjonert med vilje —
     -- rotasjon er forbudt der, og et versjonert prefiks her ville lovet
     -- noe nøkkelen ikke holder.
@@ -127,7 +138,21 @@ CREATE TABLE partkontakt (
     CONSTRAINT partkontakt_sletting_helhet CHECK (
         (slettet_ts IS NULL AND slettet_av IS NULL)
         OR (slettet_ts IS NOT NULL AND slettet_av IS NOT NULL
-            AND slettet_av ~ '[^[:space:]]'))
+            AND slettet_av ~ '[^[:space:]]')),
+    -- PAYLOADEN ER HEL ELLER BORTE, og de to tilstandene er BUNDET TIL
+    -- `slettet_ts`. Uten `slettet_ts IS NULL` i første gren (CodeRabbit)
+    -- var en SLETTET rad med adressen i behold fullt lovlig — altså
+    -- nøyaktig den tilstanden retensjonen finnes for å hindre, og den
+    -- ville sett ryddet ut i enhver liste som filtrerer på `slettet_ts`.
+    -- En levende rad uten ciphertext er like galt: et kontaktpunkt
+    -- ingen kan bruke og ingen kan se at er borte.
+    CONSTRAINT partkontakt_payload_helhet CHECK (
+        (slettet_ts IS NULL
+         AND verdi_maske IS NOT NULL AND verdi_kryptert IS NOT NULL
+         AND verdi_nonce IS NOT NULL AND verdi_key_id IS NOT NULL)
+        OR (slettet_ts IS NOT NULL
+            AND verdi_maske IS NULL AND verdi_kryptert IS NULL
+            AND verdi_nonce IS NULL AND verdi_key_id IS NULL))
 );
 ALTER TABLE partkontakt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE partkontakt FORCE ROW LEVEL SECURITY;
