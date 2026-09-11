@@ -67,8 +67,12 @@ etter skjemaet `artefakt-m6-inntak-skjema.json` (generert fra
 * **Ingen klassifisering.** `epost_klassifisering` og `epost_utkast` står
   tomme: modellveien er ikke bygget, og manifestets sjekklistepunkter
   står fortsatt `nei`.
-* **Ingen sending.** v1 er lesende. Dommen 31/8 krever minst fire ukers
-  foreslå-drift med `feil_mottaker=0` før v2 spesifiseres.
+* **Ingen sending — av AGENTEN.** Inntaket er lesende, og dommen 31/8
+  krever minst fire ukers foreslå-drift med `feil_mottaker=0` før en
+  agent får foreslå tekst. Samme kveld ba eier om at MENNESKET skal
+  kunne svare herfra, fra sin egen postboks. Det er en annen sak, og
+  den bor i `RELEASE-M6-SVAR.md`: teksten er menneskets egen, og da er
+  policyporten feil verktøy.
 
 ## Gjennomført 10/9-2026 på disponit-srv
 

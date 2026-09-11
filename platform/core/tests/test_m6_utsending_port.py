@@ -175,17 +175,17 @@ def test_bare_et_utkast_i_ko_sendes(migrator, miljo, app, klient, token,
         pa.close()
 
 
-@pg
+@pg_plan
 def test_feilgrunnen_er_en_kode(migrator, miljo, klient, token):
     import psycopg
-
-    from db.pg import koble
     _, _, uid, _ = _i_ko(klient, migrator, token)
     # Døra kalles av PLANARBEIDEREN — det er den som får svaret fra
     # leverandøren og må gjøre det om til en kode. Web-API-rollen har
     # den ikke, og skal ikke ha den: forespørselsveien vet ingenting om
-    # hvordan sendingen gikk.
-    pa = koble(PLAN_DSN)
+    # hvordan sendingen gikk. Merket er `pg_plan` og ikke `pg`
+    # (CodeRabbit): uten planens DSN skal porten HOPPES OVER, ikke
+    # feile på en tilkobling til None.
+    pa = _pa()
     try:
         _sett_kontekst(pa, TENANT)
         with pytest.raises(psycopg.Error) as e:

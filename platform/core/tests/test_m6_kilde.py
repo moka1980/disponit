@@ -168,14 +168,21 @@ def _kilderad(migrator_, postboks):
 
 
 # ---------------------------------------------------------------------------
-# Port: dommen om scope — v1 er lesende, og sendeveien er urepresenterbar
+# Port: dommen om scope — settet er LUKKET, og kildeveien skriver aldri
 # ---------------------------------------------------------------------------
 
 def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
-    """Dommen 31/8 pkt. 1–2, målt på kilden: nøyaktig `Mail.Read` +
-    `offline_access`, og ingen skrive-/sendeverb i hele kildeveien. En
-    scope-utvidelse er en kontraktsendring — den skal FELLE en test,
-    ikke gli gjennom som en strengendring."""
+    """Scopesettet er lukket og pinnet: `Mail.Read`, `Mail.Send` og
+    `offline_access`, og ingen skriveverb mot postboksen i hele
+    kildeveien. En scope-utvidelse er en kontraktsendring — den skal
+    FELLE denne testen, ikke gli gjennom som en strengendring.
+
+    `Mail.Send` kom til med eiervedtaket 10/9 (svaret skal gå fra
+    kundens egen postboks). Docstringen sa fortsatt «nøyaktig
+    Mail.Read + offline_access» etterpå, altså det motsatte av det
+    assertion under måler — funnet av CodeRabbit. En port som
+    BESKRIVER noe annet enn den måler, er verre enn ingen port: den
+    neste som leser den tror settet er strammere enn det er."""
     from api.epost_kilde import M365_SCOPE
     # EIERVEDTAK 10/9: `Mail.Send` kom til, fordi svar skal gå fra
     # kundens egen postboks. Settet er fortsatt LUKKET og pinnet her —
