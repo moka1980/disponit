@@ -193,16 +193,21 @@ def test_modulen_ser_kunden_men_aldri_kontaktpunktene():
 
 
 @pg
-def test_backfillen_slaar_ALDRI_sammen_to_referanser(migrator):
+def test_registreringen_slaar_ALDRI_sammen_to_referanser(migrator):
     """MÅLT FØR DESIGNET: referansene i drift identifiserer ikke den
     samme kunden på tvers. Fordring har både firmanavn («Havnegata
     Eiendom AS») og koder («kunde-nordbyen»); tilbud har ingen referanse
     i det hele tatt.
 
-    En backfill som GJETTET at to av dem er den samme kunden, ville slått
+    En kobling som GJETTET at to av dem er den samme kunden, ville slått
     sammen to virkelige kunder — vanskelig å oppdage, verre å rette.
     Derfor: én part per referanse, alltid. Sammenslåingen er et
     menneskes valg, og den veien bygges når tilbud kobles på.
+
+    NAVNET ER RETTET (188): testen het «backfillen slår aldri sammen»,
+    men den måler REGISTRERINGSDØRA — backfillen rører den ikke. Det
+    navnet fikk 187s stille nulloperasjon til å se dekket ut, og den
+    gikk til prod. Backfillen har nå sin egen portfil.
     """
     t = _t()
     c = _kobling(DSN)
