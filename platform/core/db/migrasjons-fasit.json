@@ -184,5 +184,6 @@
   "183_partsregister.sql": "c3c4e5307fdbe9da3cd0d4ad6a9f6d07d99912ca4525000dd635f5c1cf0ffd5c",
   "184_partsretensjon.sql": "e225543143c9a704644e5a531c79e52e33d60e2ee88abf6774b3fe8430ce5aee",
   "185_partsscope.sql": "bd871ef7a1b3b65a5d8df1cada76fefd230b251599d23e5962f931a940016e15",
-  "186_part_avviklet_er_ikke_borte.sql": "9ed0e75332b2068693fc2df26d6ac9f425bba3dce57a9d884c91cf84e9f36627"
+  "186_part_avviklet_er_ikke_borte.sql": "9ed0e75332b2068693fc2df26d6ac9f425bba3dce57a9d884c91cf84e9f36627",
+  "187_fordring_leser_registeret.sql": "92cd63f469001c3b9e6db03565f7321f54e226993a7519db9a653c5cb040ece3"
 }

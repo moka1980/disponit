@@ -29,6 +29,7 @@ import {
   UautorisertFeil, bestillPurring, ettergiFordring, hentJson, nesteTrinn,
   nyIdempotensnokkel, registrerBetaling, registrerFordring, settAvsender,
   settPurreplan,
+  hentParter,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -87,8 +88,11 @@ function trinnTekst(f) {
 function fordringsrad(f, ctx, apneDetalj) {
   const rad = el("tr", {});
   // KUNDEN NAVNGIR raden.
+  // NAVNET NÅR KUNDEN ER I REGISTERET, referansen ellers. `part_navn`
+  // leses gjennom fremmednøkkelen (187), så et navn rettet ETT sted er
+  // rettet her i samme øyeblikk.
   rad.append(el("th", { scope: "row", class: "celle-tekst" },
-    el("span", { text: f.kunde_ref }),
+    el("span", { text: f.part_navn || f.kunde_ref }),
     f.mottaker_maske
       ? el("span", { class: "muted celle-under", text: f.mottaker_maske })
       : el("span", { class: "muted celle-under",
@@ -489,11 +493,23 @@ function detaljpanel(ctx, last, kvitter, settApen) {
   };
 }
 
-function nySkjema(ctx, last, kvitter) {
+function nySkjema(ctx, last, kvitter, parter = []) {
   const utfall = el("p", { "aria-live": "polite" });
   const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  // KUNDEN VELGES, MEN KAN FORTSATT SKRIVES. `datalist` gir forslag fra
+  // registeret uten å STENGE for en referanse som ikke er der ennå —
+  // døra tar imot begge, og en flate som krevde en registrert kunde
+  // ville stanset registreringen av krav mot kunder ingen har rukket å
+  // føre inn. Verdien er kundenummeret, som ER broen til registeret.
   const kunde = el("input", { id: "fo-ny-kunde", name: "kunde_ref",
-    type: "text", required: true, maxlength: 300 });
+    type: "text", required: true, maxlength: 300, list: "fo-kunder",
+    autocomplete: "off" });
+  const forslag = el("datalist", { id: "fo-kunder" });
+  for (const p of parter) {
+    // Teksten i `option` vises ved siden av verdien i nettleserne som
+    // støtter det; verdien er det som havner i feltet.
+    forslag.append(el("option", { value: p.part_ref }, p.navn));
+  }
   const faktura = el("input", { id: "fo-ny-faktura",
     name: "fakturanummer", type: "text", required: true, maxlength: 100 });
   const belop = el("input", { id: "fo-ny-belop", name: "belop",
@@ -509,7 +525,7 @@ function nySkjema(ctx, last, kvitter) {
   const knapp = el("button", { type: "submit",
     text: t("ui.fordring.knapp.ny") });
   skjema.append(
-    felt("fo-ny-kunde", "ui.fordring.skjema.kunde", kunde),
+    felt("fo-ny-kunde", "ui.fordring.skjema.kunde", kunde), forslag,
     felt("fo-ny-faktura", "ui.fordring.skjema.faktura", faktura),
     felt("fo-ny-belop", "ui.fordring.skjema.belop", belop),
     felt("fo-ny-utstedt", "ui.fordring.skjema.utstedt", utstedt),
@@ -686,8 +702,17 @@ export function visFordring(hoved, ctx) {
   // raden igjen.
   let apenRad = null;
   const settApen = (id) => { apenRad = id; };
+  // 187: KUNDENE FRA REGISTERET, hentet ved siden av fordringene.
+  // FEILER DEN, GÅR FLATEN VIDERE: `part:read` er et annet scope enn
+  // flatens eget (`okonomi:read`), og en økt uten det skal se
+  // fordringene sine som før — bare uten forslagslista. En flate som
+  // falt på et hjelpekall ville vært verre enn en uten hjelp.
+  let kunderegister = [];
   const last = () => medStatus(hoved, ctx,
-    () => hentJson("/v1/fordring"),
+    () => Promise.all([
+      hentJson("/v1/fordring"),
+      hentParter(null, 500).then((k) => k.parter || []).catch(() => []),
+    ]).then(([d, parter]) => { kunderegister = parter; return d; }),
     (d) => {
       sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
@@ -728,7 +753,7 @@ export function visFordring(hoved, ctx) {
       const deler = [oversikt, alder, liste, planseksjon,
                      avsenderSeksjon(d.avsender), detalj.node];
       if (harScope(ctx, "bestilling:opprett")) {
-        deler.push(nySkjema(ctx, last, kvitter),
+        deler.push(nySkjema(ctx, last, kvitter, kunderegister),
                    planSkjema(ctx, last, kvitter),
                    avsenderSkjema(ctx, last, kvitter, d.avsender));
       }
