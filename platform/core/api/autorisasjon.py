@@ -30,7 +30,12 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # kunder trenger den, og derfor står den her — men den er skilt ut
     # nettopp for at en tenant som vil ha en rolle som ser køen UTEN å
     # kunne lese innholdet, kan lage den uten skjemaendring.
-    "leser": frozenset({"decisions:read", "exceptions:read", "policy:read",
+    # 183: `part:read` hos ENHVER leser. Kundelisten er ikke en
+    # hemmelighet i firmaet — den er selve arbeidsgrunnlaget, og en
+    # saksbehandler som ikke ser kundene sine kan ikke gjøre jobben.
+    # Å ENDRE den er `part:administrer`, og de to gis hver for seg.
+    "leser": frozenset({"part:read",
+                        "decisions:read", "exceptions:read", "policy:read",
                         "epost:read", "kontinuitet:read",
                         "kundeservice:innhold"}),
     # Compliance/ops: i tillegg sikkerhetsinnsyn.
@@ -41,7 +46,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # saklig: en henvendelse klassifisert som `mistenkelig` blir en
     # SIKKERHETSSAK i M-37s kø, og den som skal behandle den må kunne
     # lese hva som faktisk sto der.
-    "sikkerhet": frozenset({"decisions:read", "exceptions:read",
+    "sikkerhet": frozenset({"part:read",
+                            "decisions:read", "exceptions:read",
                             "policy:read", "security:read",
                             "epost:read", "kontinuitet:read",
                             "kundeservice:innhold"}),
@@ -66,6 +72,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
                         "plan:opprett", "plan:aktiver", "plan:gjenoppta",
                         "epost:read", "epost:kilde:administrer",
                         "epost:utkast:behandle",
+                        # 183/184: partsregisteret — se og endre.
+                        "part:read", "part:administrer",
                         "kontinuitet:read", "kontinuitet:write",
                         # 101 (M-13): avstemmingsregisteret. `okonomi:read`
                         # er et NYTT scope, og det oppsto ikke av vane —

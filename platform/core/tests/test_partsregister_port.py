@@ -251,7 +251,10 @@ def test_en_primaer_per_kanal_og_deaktivering_er_enveis():
             c.execute("SELECT part_sett_kontakt(%s,%s,'epost','ny**@f.no',"
                       "%s,%s,'k1',%s,false,NULL,'kari')",
                       (t, p, b"\x01", NONCE, psn))
-        assert "deaktivert" in str(e.value)
+        # 186 delte vakten i to: «finnes ikke» og «er avviklet» er ikke
+        # det samme, og API-laget kan ikke skille dem når basen ikke gjør
+        # det. Ordet er «avviklet», og koden er husets 23000.
+        assert "avviklet" in str(e.value), str(e.value)
         c.rollback()
     finally:
         c.close()
