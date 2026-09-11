@@ -6,7 +6,8 @@
 //
 // TABELLEN ER TILGANGSFORMEN (m16-formen): ekte <table> med <caption>
 // og th scope, status som TEKST (aldri kun farge). Forvaltnings-
-// kontrollene vises KUN når økten bærer `epost:kilde:administrer` —
+// kontrollene vises KUN når økten bærer `epost:kilde:administrer`, og
+// svarkontrollene KUN med `epost:utkast:behandle` —
 // samme regel som wcagkontrolls faner: menyen/ruten gates av flatens
 // svakeste ledd (`epost:read`), mutasjonene av sitt eget scope, og
 // serveren håndhever begge uansett hva flaten viser.
@@ -22,6 +23,13 @@ import { Bekreftelsesdialog } from "../dialog.js";
 import { medStatus, flateHode } from "./felles.js";
 
 const ADMINSCOPE = "epost:kilde:administrer";
+// SVARVEIEN HAR SITT EGET SCOPE (088), og det er ikke kildens.
+// Flaten gatet hele svarseksjonen på `ADMINSCOPE` mens alle tre
+// endepunktene bak den krever `epost:utkast:behandle` — så en økt med
+// utkastscopet så INGEN svarkontroller den hadde lov til å bruke, og
+// en økt med bare forvaltningsscopet så knapper som ga 403. Én av dem
+// er en skjult funksjon, den andre er en løgn.
+const UTKASTSCOPE = "epost:utkast:behandle";
 
 // Toppnivå-navigasjonen er et SNITT (i18n.js' `settI18nForTest`-form).
 // jsdoms `Location` er [Unforgeable]: `assign` kan verken skrives over
@@ -165,7 +173,7 @@ export function lesbarTekst(raa) {
 // SVARET (179): mennesket skriver, mennesket godkjenner. Flaten sender
 // ingenting — et godkjent utkast er en tilstand, og plattformen sender
 // det innenfor policyen etterpå.
-function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
+function svarseksjon(m, kilde, kanBehandle, paaEndring) {
   const boks = el("section", {});
   const utkast = m.utkast || [];
   if (utkast.length) {
@@ -181,7 +189,7 @@ function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
       // SEND er menneskets egen handling — ingen godkjenningsrunde med
       // seg selv (eiervedtak 10/9, andre runde). Forkasting står ved
       // siden av, for det man ombestemte seg om.
-      if (kanAdministrere && ["foreslatt", "godkjent", "feilet"]
+      if (kanBehandle && ["foreslatt", "godkjent", "feilet"]
           .includes(u.status)) {
         const rad2 = el("div", { class: "knapperad" });
         // Send-knappen finnes bare når postboksen KAN sende
@@ -217,7 +225,7 @@ function svarseksjon(m, kilde, kanAdministrere, paaEndring) {
     }
     boks.append(liste);
   }
-  if (!kanAdministrere) return boks;
+  if (!kanBehandle) return boks;
   if (kilde && kilde.kan_svare === false) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.svar.uten_tilgang") }));
     return boks;
@@ -253,7 +261,7 @@ function meldingspanel() {
       boks.focus();
       if (boks.scrollIntoView) boks.scrollIntoView({ block: "nearest" });
     },
-    vis(m, kilde, kanAdministrere, paaEndring) {
+    vis(m, kilde, kanBehandle, paaEndring) {
       const til = (m.til || []).join(", ");
       const raa = m.kropp || "";
       const ren = lesbarTekst(raa);
@@ -284,7 +292,7 @@ function meldingspanel() {
         deler.splice(3, 0, el("div", { class: "knapperad" }, bytt));
       }
       if (paaEndring) {
-        deler.push(svarseksjon(m, kilde, kanAdministrere, paaEndring));
+        deler.push(svarseksjon(m, kilde, kanBehandle, paaEndring));
       }
       sett(boks, ...deler);
       boks.hidden = false;
@@ -351,6 +359,7 @@ export function visEpost(hoved, ctx) {
   const minRute = visningsToken(hoved);
   const eierSkjermen = () => erGjeldendeVisning(hoved, minRute);
   const kanAdministrere = (ctx.scopes || []).includes(ADMINSCOPE);
+  const kanBehandleUtkast = (ctx.scopes || []).includes(UTKASTSCOPE);
 
   // Idempotensnøkkelen holdes av FLATEN og er stabil så lenge
   // postboksfeltet står urørt (038-regelen): et tapt svar + nytt klikk
@@ -395,7 +404,7 @@ export function visEpost(hoved, ctx) {
         hentEpostMelding(m.melding_id)
           .then((full) => {
             if (!eierSkjermen() || valgt !== m.melding_id) return;
-            panel.vis(full, kilde, kanAdministrere, paaEndring);
+            panel.vis(full, kilde, kanBehandleUtkast, paaEndring);
             panel.fokuser();
           })
           .catch((e) => {

@@ -132,7 +132,16 @@ def skriv_utkast_endepunkt(tjeneste, request: Request) -> Response:
                     "SELECT m6_skriv_svarutkast(%s,%s,%s,%s,%s,%s)",
                     (auth.tenant, mid, ct, nonce, key_id,
                      auth.aktor)).fetchone()[0]
-        except psycopg.Error:
+        except psycopg.errors.InsufficientPrivilege:
+            # VAKTENS NEI BETYR AT MELDINGEN IKKE FINNES FOR ØKTEN:
+            # usynlig under RLS, eller alt reapet. Begge leses «ikke
+            # funnet» av et menneske.
+            #
+            # Fangsten var `psycopg.Error` (CodeRabbit): en brutt
+            # tilkobling eller en serialiseringsfeil ble da rapportert
+            # som at MELDINGEN ikke fantes, og et menneske som nettopp
+            # hadde skrevet et svar fikk vite at meldingen var borte.
+            # Alt annet bobler videre til rammens vanlige driftsvei.
             return _feil("ikke_funnet", rid, 404)
         return _ok_lagret(conn, {"utkast_id": str(uid), "status": "foreslatt"},
                           rid)
@@ -339,7 +348,10 @@ def slett_endepunkt(tjeneste, request: Request) -> Response:
             with conn.transaction():
                 ny = conn.execute("SELECT m6_slett_melding(%s,%s,%s)",
                                   (auth.tenant, mid, auth.aktor)).fetchone()[0]
-        except psycopg.Error:
+        except psycopg.errors.ForeignKeyViolation:
+            # Dørens egen «finnes ikke» (176 reiser nettopp denne).
+            # Fangsten var `psycopg.Error` (CodeRabbit): drift ble
+            # rapportert som en melding som ikke fantes.
             return _feil("ikke_funnet", rid, 404)
         # `_ok_lagret` COMMITTER: uten det ville poolen rullet tilbake
         # slettingen mens svaret sa at den skjedde.
