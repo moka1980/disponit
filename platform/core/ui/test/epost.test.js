@@ -467,7 +467,7 @@ test("Epost: et svar skrives som utkast og sendes — men flaten snakker aldri m
            "/v1/epost/utkast/u-1/send": { utkast_id: "u-1", status: "sendes" },
            "/v1/epost/utkast/u-1/dom": { utkast_id: "u-1", status: "forkastet" } };
   const h = nyHoved();
-  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
   await vent(() => h.querySelector("textarea"));
@@ -516,7 +516,7 @@ test("Epost: uten sendetilgang finnes ikke svarfeltet, bare forklaringen", async
            "/v1/epost/meldinger": MELDINGER,
            [`/v1/epost/meldinger/${M1}`]: { ...MELDING, utkast: [] } };
   const h = nyHoved();
-  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
   await vent(() => h.querySelector(".skjemaboks").textContent
@@ -545,3 +545,57 @@ test("Epost: et utkast i kø sier at det sendes innen fem minutter", async () =>
     (b) => b.textContent === t("ui.epost.svar.knapp.send")));
 });
 
+
+// ---------------------------------------------------------------------------
+// SVARVEIEN GATES AV SITT EGET SCOPE, ikke kildeforvaltningens.
+// ---------------------------------------------------------------------------
+
+test("Epost: svarkontrollene følger epost:utkast:behandle, ikke kildescopet", async () => {
+  // FUNNET SOM GJORDE DENNE PORTEN NØDVENDIG (CodeRabbit): flaten gatet
+  // hele svarseksjonen på `epost:kilde:administrer` mens alle tre
+  // endepunktene bak den krever `epost:utkast:behandle`. To feil i hver
+  // sin retning — en økt med utkastscopet så ingen svarkontroller den
+  // hadde lov til å bruke, og en økt med bare forvaltningsscopet fikk
+  // knapper som ga 403.
+  //
+  // Testen som skulle fanget det, var en FRAVÆRSTEST som gikk grønn på
+  // søppel: den ba om utkastscopet og slo fast at send-knappen ikke
+  // fantes — og den fantes ikke, men fordi HELE seksjonen manglet.
+  // Derfor måles begge retninger her, og positivt først.
+  const medUtkast = { ...MELDING, utkast: [
+    { utkast_id: "u-1", status: "foreslatt",
+      opprettet: "2026-09-10T12:00:00+00:00", avgjort_ts: null,
+      avgjort_av: null, tekst: "Vi kommer torsdag.", slettet: false,
+      sendt_ts: null, feilgrunn: null }] };
+  const svar = () => ({
+    "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+    "/v1/epost/meldinger": MELDINGER,
+    [`/v1/epost/meldinger/${M1}`]: medUtkast });
+
+  // MED utkastscopet: skrivefeltet og send-knappen finnes.
+  SVAR = svar();
+  let h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".skjemaboks textarea"));
+  let panel = h.querySelector(".skjemaboks");
+  assert.ok([...panel.querySelectorAll("button")].some(
+    (b) => b.textContent === t("ui.epost.svar.knapp.send")),
+    "utkastscopet ga ingen send-knapp");
+
+  // MED BARE kildescopet: ingen av delene — knappen ville gitt 403.
+  SVAR = svar();
+  h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  h.querySelectorAll("table")[1].querySelector("tbody button").click();
+  await vent(() => h.querySelector(".skjemaboks").textContent
+    .includes("Vi kommer torsdag."));
+  panel = h.querySelector(".skjemaboks");
+  assert.equal(panel.querySelector("textarea"), null,
+    "kildescopet alene ga et svarfelt endepunktet ville nektet");
+  assert.ok(![...panel.querySelectorAll("button")].some(
+    (b) => b.textContent === t("ui.epost.svar.knapp.send")),
+    "kildescopet alene ga en send-knapp endepunktet ville nektet");
+});

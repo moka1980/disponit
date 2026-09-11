@@ -307,8 +307,14 @@ def send_ett(conn, rad, *, poster=graph_post, veksler=None) -> dict:
         conn.rollback()
         if e.status in (401, 403):
             return feilet("sendetilgang_avvist")
-        if e.status and 500 <= e.status < 600:
+        if e.status == 429 or (e.status and 500 <= e.status < 600):
             # DRIFT, ikke en dom: utkastet står i kø og prøves igjen.
+            #
+            # 429 HØRER HJEMME HER (CodeRabbit). Graph struper normalt,
+            # og en struping er det motsatte av et nei: den sier «senere»
+            # om nøyaktig det samme kallet. Uten denne linja døde svaret
+            # som `feilet` på et svar som ba oss vente — og et menneske
+            # som hadde skrevet teksten selv, måtte skrevet den på nytt.
             ut["forbigaende"] = f"graph_{e.status}"
             _log("epost_svar_forbigaende", **ut)
             return ut

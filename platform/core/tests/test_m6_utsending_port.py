@@ -202,6 +202,25 @@ def test_feilgrunnen_er_en_kode(migrator, miljo, klient, token):
         pa.execute("SELECT m6_svar_feilet(%s,%s,'graph_550','x')",
                    (TENANT, uid))
         pa.rollback()
+        # NULL ER HELLER INGEN KODE (182, CodeRabbit). `NULL !~ mønster`
+        # er NULL i SQL, ikke sant — så 181s IF kjørte ikke grenen sin,
+        # og et NULL-kall skrev `feilgrunn = NULL` på en rad merket
+        # `feilet`. Flaten viser grunnen bare når den finnes, så raden
+        # hadde stått som feilet uten å si hvorfor.
+        _sett_kontekst(pa, TENANT)
+        with pytest.raises(psycopg.Error) as e2:
+            pa.execute("SELECT m6_svar_feilet(%s,%s,NULL,'x')",
+                       (TENANT, uid))
+        assert "KODE" in str(e2.value), str(e2.value)
+        pa.rollback()
+        # ...og raden bærer fortsatt ingen feilgrunn: vakten stoppet
+        # FØR skrivingen, den ryddet ikke opp etterpå.
+        _sett_kontekst(pa, TENANT)
+        rad = pa.execute("SELECT status, feilgrunn FROM epost_utkast"
+                         " WHERE tenant=%s AND utkast_id=%s",
+                         (TENANT, uid)).fetchone()
+        assert rad == ("sendes", None), rad
+        pa.rollback()
     finally:
         pa.close()
 
