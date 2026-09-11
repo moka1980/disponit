@@ -6858,7 +6858,7 @@
   "ui.epost.svar.status.sendt": "Sent",
   "ui.epost.svar.status.godkjent": "Ready to send",
   "ui.epost.svar.knapp.send": "Send the reply",
-  "ui.epost.svar.ventetid": "Note: the e-mail is sent within five minutes, not the same second. The key to the mailbox is held by the background process, not by the website.",
+  "ui.epost.svar.ventetid": "The reply goes out from your own mailbox, in the same thread, within five minutes.",
   "ui.epost.svar.i_koe": "Queued — will be sent within five minutes.",
   "ui.epost.svar.status.sendes": "Sending within five minutes",
   "ui.epost.svar.status.feilet": "Sending failed",
@@ -6932,5 +6932,6 @@
   "ui.parter.import.lagre_en": "Save 1 customer",
   "ui.parter.import.rapport_en": "1 of {lest} rows can be saved.",
   "ui.parter.import.rapport_en_av_en": "1 of 1 row can be saved.",
-  "ui.parter.import.lagret_en": "1 customer is saved."
+  "ui.parter.import.lagret_en": "1 customer is saved.",
+  "ui.epost.svar.avsluttede": "Show {n} closed drafts"
 }

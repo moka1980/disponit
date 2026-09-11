@@ -6858,7 +6858,7 @@
   "ui.epost.svar.status.sendt": "Sendt",
   "ui.epost.svar.status.godkjent": "Klar til sending",
   "ui.epost.svar.knapp.send": "Send svaret",
-  "ui.epost.svar.ventetid": "Merk: e-posten sendes innen fem minutter, ikke i samme sekund. Nøkkelen til postboksen ligger hos bakgrunnsprosessen, ikke i nettsiden.",
+  "ui.epost.svar.ventetid": "Svaret går ut fra din egen postboks, i samme tråd, innen fem minutter.",
   "ui.epost.svar.i_koe": "I kø — sendes innen fem minutter.",
   "ui.epost.svar.status.sendes": "Sendes innen fem minutter",
   "ui.epost.svar.status.feilet": "Sendingen feilet",
@@ -6932,5 +6932,6 @@
   "ui.parter.import.lagre_en": "Lagre 1 kunde",
   "ui.parter.import.rapport_en": "1 av {lest} rader kan lagres.",
   "ui.parter.import.rapport_en_av_en": "1 av 1 rad kan lagres.",
-  "ui.parter.import.lagret_en": "1 kunde er lagret."
+  "ui.parter.import.lagret_en": "1 kunde er lagret.",
+  "ui.epost.svar.avsluttede": "Vis {n} avsluttede utkast"
 }

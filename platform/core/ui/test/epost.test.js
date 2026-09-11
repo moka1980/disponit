@@ -243,7 +243,17 @@ test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, r
   await vent(() => h.querySelectorAll("table").length >= 2);
   const tekst = h.textContent;
   assert.ok(tekst.includes("Befaring elbillader"));
-  assert.ok(tekst.includes("Per Nordvik <per@nordvik.example>"));
+  // LISTA VISER NAVNET, ikke «Navn <adresse>» (eiers merknad 11/9:
+  // dashbordet var ikke brukervennlig). Adressen står i den ÅPNEDE
+  // meldingen, og porten måler at den ikke er BORTE — bare flyttet.
+  assert.ok(tekst.includes("Per Nordvik"));
+  const listetabell = h.querySelectorAll("table")[1];
+  assert.ok(!listetabell.textContent.includes("<per@nordvik.example>"),
+    "adressen står fortsatt i lista");
+  // EMNET ER RADENS NAVN, altså det man leter etter — ikke tidspunktet.
+  const forsteRad = listetabell.querySelector("tbody th");
+  assert.ok(forsteRad.textContent.includes("Befaring elbillader"),
+    forsteRad.textContent);
   // Slettede står IKKE i lista — de er spor, ikke innboks.
   assert.ok(!tekst.includes(t("ui.epost.meldinger.slettet_av_fristen"))
     || h.querySelector("details"), "slettede skal ligge sammenklappet");
@@ -264,6 +274,9 @@ test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, r
   await vent(() => h.querySelector(".epost-kropp"));
   assert.ok(h.querySelector(".epost-kropp").textContent.includes("Hilsen Per"));
   assert.ok(h.textContent.includes("post@acme.example"));
+  // ...og adressen er der, i meldingen.
+  assert.ok(h.querySelector(".skjemaboks").textContent
+    .includes("per@nordvik.example"), "adressen forsvant helt");
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
@@ -492,17 +505,27 @@ test("Epost: et svar skrives som utkast og sendes — men flaten snakker aldri m
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
   await vent(() => h.querySelector(".skjemaboks").textContent
     .includes(t("ui.epost.svar.i_koe")));
-  assert.ok(![...h.querySelector(".skjemaboks").querySelectorAll("button")]
+  // UTKASTET I KØ har ingen send-knapp. Målt i UTKASTLISTA, ikke i hele
+  // panelet: skrivefeltet har nå sin egen «Send svaret» (ett klikk i
+  // stedet for lagre-bla-send), og en assertion over hele panelet ville
+  // blandet de to.
+  const utkastlista = h.querySelector(".skjemaboks ul");
+  assert.ok(![...utkastlista.querySelectorAll("button")]
     .some((b) => b.textContent === t("ui.epost.svar.knapp.send")));
-  // Nytt utkast lagres, ikke sendes.
+
+  // «LAGRE UTKAST» LAGRER BARE. Det er veien for et svar man vil skrive
+  // ferdig senere.
   KALL.length = 0;
-  const felt = panel.querySelector("textarea");
+  const felt = h.querySelector(".skjemaboks textarea");
   felt.value = "Takk for beskjeden.";
-  felt.closest("form").requestSubmit();
+  [...h.querySelectorAll(".skjemaboks button")].find(
+    (b) => b.textContent === t("ui.epost.svar.lagre")).click();
   await vent(() => KALL.some((k) => k.url.endsWith("/svarutkast")));
   const kall = KALL.find((k) => k.url.endsWith("/svarutkast"));
   assert.equal(kall.metode, "POST");
   assert.equal(kall.kropp.tekst, "Takk for beskjeden.");
+  assert.ok(!KALL.some((k) => k.url.endsWith("/send")),
+    "«Lagre utkast» satte svaret i kø");
   // Send-knappen SKAL finnes (eiervedtak 10/9) — det som ikke skal
   // finnes, er en flate som snakker med Microsoft. Alle kall går til
   // vårt eget API.
@@ -540,9 +563,15 @@ test("Epost: et utkast i kø sier at det sendes innen fem minutter", async () =>
   await vent(() => h.querySelector(".skjemaboks").textContent
     .includes(t("ui.epost.svar.i_koe")));
   const panel = h.querySelector(".skjemaboks");
-  // Et utkast som alt er i kø, har ingen send-knapp igjen.
-  assert.ok(![...panel.querySelectorAll("button")].some(
+  // Et utkast som alt er i kø, har ingen send-knapp igjen — målt i
+  // UTKASTLISTA. Skrivefeltet under har sin egen «Send svaret», og den
+  // skal finnes: man kan skrive et svar til selv om et annet ligger i kø.
+  const utkastlista = panel.querySelector("ul");
+  assert.ok(![...utkastlista.querySelectorAll("button")].some(
     (b) => b.textContent === t("ui.epost.svar.knapp.send")));
+  // ...og ventetiden står ÉN gang, ikke som to avsnitt.
+  const ventetid = t("ui.epost.svar.ventetid");
+  assert.equal(panel.textContent.split(ventetid).length - 1, 1);
 });
 
 
@@ -599,3 +628,115 @@ test("Epost: svarkontrollene følger epost:utkast:behandle, ikke kildescopet", a
     (b) => b.textContent === t("ui.epost.svar.knapp.send")),
     "kildescopet alene ga en send-knapp endepunktet ville nektet");
 });
+
+// ---------------------------------------------------------------------------
+// DASHBORDET (eiers merknad 11/9: «hele epost dashboardet er ikke
+// brukervennlig»). Fire konkrete ting, målt.
+// ---------------------------------------------------------------------------
+
+test("Epost: den åpnede meldingen står OVER lista, ikke under seksten rader",
+  async () => {
+    // Eier måtte bla forbi hele innboksen for å se meldingen han nettopp
+    // åpnet, og skrivefeltet lå enda lenger ned.
+    SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
+             [`/v1/epost/meldinger/${M1}`]: MELDING };
+    const h = nyHoved();
+    visEpost(h, ctx());
+    await vent(() => h.querySelectorAll("table").length >= 2);
+    h.querySelectorAll("table")[1].querySelector("tbody button").click();
+    await vent(() => h.querySelector(".epost-kropp"));
+    const panel = h.querySelector(".skjemaboks");
+    const tabell = h.querySelectorAll("table")[1];
+    // DOM-rekkefølge: panelet kommer FØR meldingstabellen.
+    const plass = panel.compareDocumentPosition(tabell);
+    assert.ok(plass & Node.DOCUMENT_POSITION_FOLLOWING,
+      "meldingstabellen står før panelet — da må man bla forbi den");
+  });
+
+test("Epost: skrivefeltet sender i ETT klikk, og lagrer i ett annet",
+  async () => {
+    // FØR: skriv → «Lagre utkast» → bla ned til utkastlista → «Send
+    // svaret». To trykk og en rulling for det man gjør hver gang.
+    SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+             "/v1/epost/meldinger": MELDINGER,
+             [`/v1/epost/meldinger/${M1}`]: { ...MELDING, utkast: [] },
+             [`/v1/epost/meldinger/${M1}/svarutkast`]:
+               { utkast_id: "u-9", status: "foreslatt" },
+             "/v1/epost/utkast/u-9/send": { utkast_id: "u-9", status: "sendes" } };
+    const h = nyHoved();
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
+    await vent(() => h.querySelectorAll("table").length >= 2);
+    h.querySelectorAll("table")[1].querySelector("tbody button").click();
+    await vent(() => h.querySelector(".skjemaboks textarea"));
+    const panel = h.querySelector(".skjemaboks");
+    panel.querySelector("textarea").value = "Ja, det passer.";
+    KALL.length = 0;
+    [...panel.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.epost.svar.knapp.send")).click();
+    await vent(() => KALL.some((k) => k.url.endsWith("/send")));
+    // BEGGE stegene, i riktig rekkefølge: utkastet skrives FØRST, så
+    // settes det i kø. Uten det ville «send» pekt på ingenting.
+    const stier = KALL.filter((k) => k.metode === "POST").map((k) => k.url);
+    assert.deepEqual(stier, [`/v1/epost/meldinger/${M1}/svarutkast`,
+                             "/v1/epost/utkast/u-9/send"]);
+  });
+
+test("Epost: forkastede utkast ligger sammenklappet, ikke ved siden av det som venter",
+  async () => {
+    const medBegge = { ...MELDING, utkast: [
+      { utkast_id: "u-a", status: "godkjent",
+        opprettet: "2026-09-10T12:00:00+00:00",
+        avgjort_ts: "2026-09-10T12:01:00+00:00",
+        avgjort_av: "token:sesjon:bid_c612864ad46e4063ad2bb4520ffc00be",
+        tekst: "Det som venter.", slettet: false, sendt_ts: null,
+        feilgrunn: null },
+      { utkast_id: "u-b", status: "forkastet",
+        opprettet: "2026-09-10T11:00:00+00:00",
+        avgjort_ts: "2026-09-10T11:30:00+00:00", avgjort_av: "bid_c612864a",
+        tekst: "Det jeg ombestemte meg om.", slettet: false,
+        sendt_ts: null, feilgrunn: null }] };
+    SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+             "/v1/epost/meldinger": MELDINGER,
+             [`/v1/epost/meldinger/${M1}`]: medBegge };
+    const h = nyHoved();
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
+    await vent(() => h.querySelectorAll("table").length >= 2);
+    h.querySelectorAll("table")[1].querySelector("tbody button").click();
+    await vent(() => h.querySelector(".skjemaboks ul"));
+    const panel = h.querySelector(".skjemaboks");
+    // Det som VENTER står i den åpne lista, med knapper.
+    const aapen = panel.querySelector("ul");
+    assert.ok(aapen.textContent.includes("Det som venter."));
+    assert.ok(!aapen.textContent.includes("Det jeg ombestemte meg om."));
+    // Det forkastede ligger i en <details>, uten knapper.
+    const lukket = [...panel.querySelectorAll("details")].find(
+      (d) => d.textContent.includes("Det jeg ombestemte meg om."));
+    assert.ok(lukket, "det forkastede utkastet står ikke sammenklappet");
+    assert.equal(lukket.querySelectorAll("button").length, 0);
+    // ØKT-STRENGEN VISES IKKE RÅ. Eier så
+    // «token:sesjon:bid_c612864ad46e4063ad2bb4520ffc00be» over sitt svar.
+    assert.ok(!panel.textContent.includes("token:sesjon:"), panel.textContent);
+    assert.ok(!panel.textContent.includes(
+      "bid_c612864ad46e4063ad2bb4520ffc00be"));
+    assert.ok(panel.textContent.includes("bid_c612864ad4…"),
+      "den forkortede aktøren mangler");
+  });
+
+test("Epost: koblingsskjemaet er sammenklappet når en postboks alt er tilkoblet",
+  async () => {
+    // Et helt avsnitt om hvilke tilganger Microsoft blir bedt om, hører
+    // ikke hjemme nederst på en side man bruker hver dag.
+    SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER };
+    const h = nyHoved();
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h.querySelector("#epost-kilde-postboks"));
+    const felt = h.querySelector("#epost-kilde-postboks");
+    assert.ok(felt.closest("details"), "koblingen står åpen med aktiv kilde");
+    // ...men UTEN noen kilde er den åpen — da er den hele poenget.
+    SVAR = { "/v1/epost/kilder": { kilder: [] }, "/v1/epost/meldinger": MELDINGER };
+    const h2 = nyHoved();
+    visEpost(h2, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h2.querySelector("#epost-kilde-postboks"));
+    assert.equal(h2.querySelector("#epost-kilde-postboks").closest("details"),
+                 null, "koblingen er gjemt når det ikke finnes noen postboks");
+  });
