@@ -194,6 +194,11 @@ const BASISRUTER = [
   // `part:read`, og mutasjonene avgjøres inne på flaten — og av
   // serveren — med `part:administrer`.
   { nokkel: "parter", scope: "part:read" },
+  // 192: REGISTRER BEDRIFTEN — den eneste ruten rollen `registrant` når.
+  // En registrant har ingen andre scopes, så `tillatteFlater` gir henne
+  // nøyaktig denne ene flaten. Det er riktig: hun har ingen data å se
+  // ennå, og et skall fullt av tomme moduler ville sagt at noe var galt.
+  { nokkel: "firmaregistrering", scope: "firma:opprett" },
   // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
   // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er
