@@ -5668,6 +5668,7 @@
   "ui.rolle.godkjenner": "godkjenner",
   "ui.rolle.leser": "leser",
   "ui.rolle.policyforvalter": "policyforvalter",
+  "ui.rolle.registrant": "registrant",
   "ui.rolle.sikkerhet": "sikkerhet",
   "ui.sanksjon.aldri_kontrollert": "Aldri kontrollert",
   "ui.sanksjon.antall_treff": "{n} uavklarte treff",

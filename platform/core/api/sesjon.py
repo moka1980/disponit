@@ -34,6 +34,9 @@ C_BINDING = "__Host-disponit_oidc"      # HttpOnly, browserbinding
 # på. Ingen kunde kan hete dette: `_tenant_fra_host` tar første ledd av
 # et vertsnavn, og en DNS-etikett kan ikke begynne med understrek.
 PLATTFORM = "_plattform"
+# 192: der en identitet står mens hun registrerer sitt første firma. Ikke et
+# firma, og aldri data — bare et sted å ha ett scope.
+REGISTRERING = "_registrering"
 
 INAKTIV_MIN = 30
 ABSOLUTT_TIMER = 12
@@ -496,8 +499,21 @@ def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet) -> str:
     if len(rader) == 1:
         return rader[0][0]
     if not rader:
-        # Ingen medlemskap er det samme avviste forsøket som før — og
-        # bremses likt (ingen JIT-provisjonering, v3 §2).
+        # INGEN MEDLEMSKAP ER IKKE LENGER EN BLINDVEI (192).
+        #
+        # «Ingen JIT-provisjonering» (v3 §2) står ved lag: hun får fortsatt
+        # ikke tilgang til noe firma. Men uten et sted å stå kunne hun heller
+        # ikke REGISTRERE et — hun kunne ikke bli kunde fordi hun ikke var
+        # kunde. Hun får derfor et ekte medlemskap på den reserverte
+        # tenanten `_registrering`, med rollen `registrant` og dens ene
+        # scope `firma:opprett`. Resten av autorisasjonen virker uendret.
+        #
+        # Døra håndhever selv at dette bare skjer for noen uten firma, og
+        # svarer `false` hvis forutsetningen ikke holder — da er det gamle
+        # avslaget fortsatt riktig.
+        if conn.execute("SELECT registrant_medlemskap(%s)",
+                        (bid,)).fetchone()[0]:
+            return REGISTRERING
         sett_tenant(conn, "_oidc")
         _rate(conn, "medlemskap", f"{ident.issuer}|{ident.sub}")
         conn.commit()

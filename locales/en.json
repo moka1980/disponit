@@ -5668,6 +5668,7 @@
   "ui.rolle.godkjenner": "approver",
   "ui.rolle.leser": "reader",
   "ui.rolle.policyforvalter": "policy manager",
+  "ui.rolle.registrant": "registrant",
   "ui.rolle.sikkerhet": "security",
   "ui.sanksjon.aldri_kontrollert": "Never screened",
   "ui.sanksjon.antall_treff": "{n} unresolved matches",
