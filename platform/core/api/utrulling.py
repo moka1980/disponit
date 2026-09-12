@@ -21,6 +21,8 @@ tenantkontekst, rollback).
 """
 from __future__ import annotations
 
+import re
+
 #: Plattformdriftens autoritet. Skilt fra `security:read`, som er en
 #: TENANTBUNDET ops/compliance-scope på en kundesesjon (PR-008 §1) — den sier
 #: ingenting om rett til å se andre kunder.
@@ -98,7 +100,61 @@ def egen_rad(tenant, sprak: str | None = None) -> dict | None:
     return None
 
 
-def svar_for(tenant, scopes, sprak: str | None = None) -> dict:
+#: Modulnummer fra en policyhandling: "M-14" → 14. Ukjent form gir None og
+#: faller bort — en modul vi ikke kan tallfeste, kan klienten uansett ikke
+#: slå opp i katalogen.
+_MODUL = re.compile(r"^M-(\d{1,3})$")
+
+
+def moduler_fra_policy(policy: object) -> list[int]:
+    """Modulnumrene en policy faktisk gir agenten fullmakt over.
+
+    HVORFOR DETTE OG IKKE EN TABELL: `_UTRULLING` er statisk kildekode, og
+    kommentaren over den sier det selv — «fortsatt statisk pilotdata». Et
+    firma som registrerer seg selv står ikke der, og fikk derfor
+    `moduler: null`, som venstremenyen viser som «Modultildelingen er ikke
+    tilgjengelig». En selvbetjent kunde landet altså i et skall uten
+    moduler, og hver ny kunde ville krevd en kodeendring og en deploy.
+
+    Bransjemalene navngir modulene selv, i `handlinger[].modul`. Å lese dem
+    derfra er ikke en utledning vi finner på: det er den samme autoriteten
+    som styrer hva agenten får GJØRE. Da kan ingen kunde ende opp med en
+    modul uten fullmakt, eller en fullmakt uten modul — og listen følger
+    policyen automatisk hvis den endres.
+    """
+    if not isinstance(policy, dict):
+        return []
+    ut: set[int] = set()
+    for h in policy.get("handlinger") or ():
+        if not isinstance(h, dict):
+            continue
+        m = _MODUL.match(str(h.get("modul") or "").strip())
+        if m:
+            ut.add(int(m.group(1)))
+    return sorted(ut)
+
+
+def rad_for_nytt_firma(tenant, navn, status, prove_utloper, moduler,
+                       sprak: str | None = None) -> dict:
+    """Utrullingsraden for et firma som ikke står i `_UTRULLING`.
+
+    `plan` er firmaets LIVSSYKLUS (190), ikke en pilotbetegnelse — det er
+    det mest sannferdige et nyregistrert firma kan si om seg selv. Og
+    «neste steg» er prøveperiodens frist: for en ny kunde er det faktisk
+    det neste som skjer.
+    """
+    naa = {"nb": "Prøveperioden varer til {dato}.",
+           "en": "The trial runs until {dato}."}
+    tekst = (naa.get(sprak if sprak in SPRAK else RESERVESPRAK) or "")
+    return {"id": str(tenant), "navn": str(navn),
+            "plan": str(status),
+            "moduler": list(moduler),
+            "neste": tekst.replace("{dato}", str(prove_utloper or ""))
+                     if prove_utloper else ""}
+
+
+def svar_for(tenant, scopes, sprak: str | None = None,
+             nytt_firma: dict | None = None) -> dict:
     """Svaret for én økt. REN funksjon — den er hele autorisasjonsregelen for
     hva som forlater serveren, og testes uten DB.
 
@@ -111,7 +167,11 @@ def svar_for(tenant, scopes, sprak: str | None = None) -> dict:
     ikke en annen kundes rad.
     """
     plattformdrift = PLATTFORMDRIFT in set(scopes or ())
-    egen = egen_rad(tenant, sprak)
+    # `_UTRULLING` VINNER. Den er håndpleide pilotdata for tre kjente
+    # kunder; `nytt_firma` er utledningen for alle andre. Rekkefølgen er
+    # med vilje — en pilotrad som ble overstyrt av en automatisk utledning
+    # ville endret det noen har bestemt for hånd, uten at noe sa fra.
+    egen = egen_rad(tenant, sprak) or nytt_firma
     if plattformdrift:
         tenanter = [_rad(r, sprak) for r in _UTRULLING]
     else:
