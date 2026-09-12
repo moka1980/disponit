@@ -187,5 +187,6 @@
   "186_part_avviklet_er_ikke_borte.sql": "9ed0e75332b2068693fc2df26d6ac9f425bba3dce57a9d884c91cf84e9f36627",
   "187_fordring_leser_registeret.sql": "92cd63f469001c3b9e6db03565f7321f54e226993a7519db9a653c5cb040ece3",
   "188_fordring_backfill_som_virker.sql": "c2db94e89eb39689b5fb9764f46b6f4c90baf70bd486d807092818fabb9f748d",
-  "189_innlogging_uten_vertsnavn.sql": "79a008b8dae71d7576d3e117d6237bb7bf4cd8d7ebef0a551a2f6f6644320ef8"
+  "189_innlogging_uten_vertsnavn.sql": "79a008b8dae71d7576d3e117d6237bb7bf4cd8d7ebef0a551a2f6f6644320ef8",
+  "190_firmaregister.sql": "df185e69e0e6b4c90e80b1c171efce0dc9d5289cb2106636251e74bb653a4944"
 }
