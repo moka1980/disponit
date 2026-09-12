@@ -378,6 +378,13 @@ export const hentParter = (sok, grense) =>
     Object.entries({ sok, grense }).filter(([, v]) => v != null && v !== "")));
 export const registrerPart = (part, idem) =>
   _muter("/v1/parter", "POST", part, idem || nyIdempotensnokkel());
+// 192: selvregistrering. NØKKELEN ER KALLERENS, og for denne ruten skal den
+// være STABIL så lenge skjemaet er uendret: et tapt svar + nytt klikk skal
+// REPLAYe, ikke føde firma nummer to. Derfor ingen `|| nyIdempotensnokkel()`
+// her — flaten holder nøkkelen, og et glemt argument skal gi en synlig feil,
+// ikke et stille duplikat.
+export const registrerFirma = (firma, idem) =>
+  _muter("/v1/firma/registrer", "POST", firma, idem);
 export const settPartKontakt = (partId, kontakt, idem) =>
   _muter(`/v1/parter/${encodeURIComponent(partId)}/kontakt`, "POST",
          kontakt, idem || nyIdempotensnokkel());
