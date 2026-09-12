@@ -274,7 +274,13 @@ function hjemSide() {
         el("h1", { text: t("site.home.tittel") }),
         el("p", { class: "site-home-ingress", text: t("site.home.ingress") }),
         el("div", { class: "site-home-handlinger" },
-          el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
+          // DEN PRIMÆRE HANDLINGEN ER Å PRØVE, ikke å lese mer. Den gamle
+          // primærknappen gikk til `tjenester` — en informasjonsside — så
+          // en besøkende som VILLE begynne, fant ingen vei dit. Den står
+          // fortsatt, som sekundær.
+          el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
+            text: t("site.home.cta_prov") }),
+          el("a", { class: "site-tekstlenke", href: offentligUrl("tjenester"),
             text: t("site.home.cta") }),
           el("a", { class: "site-tekstlenke", href: offentligUrl("produkt"),
             text: t("site.cta.produkt") }))),
@@ -383,6 +389,24 @@ function tjenesterSide() {
 function innloggingSide(provider) {
   return [
     sideIntroduksjon("site.login.kicker", "site.login.tittel", "site.login.tekst"),
+    // NY BEDRIFT FØRST, og alene på sin egen rad.
+    //
+    // EIERS FUNN: «hvor kan man registrere ny kunde? En ny kunde vel må gå
+    // gjennom offentlig side for å registrere seg.» Siden hadde bare to
+    // kort, begge for noen som ALLEREDE er kunde. Maskineriet virket — en
+    // ny person som klikket «Logg inn» havnet faktisk på
+    // registreringsskjemaet, fordi hun ikke har noe medlemskap — men hun
+    // måtte GJETTE at innlogging var måten å registrere seg på. Det er
+    // ikke en selvbetjent vei; det er en skjult en.
+    //
+    // Kortet bruker samme `loginKort` som de to andre: registrering ER en
+    // innlogging, fordi identiteten må bevises FØR et firma kan knyttes
+    // til den. Forskjellen er hvor hun lander etterpå — `retursti`-en
+    // peker på registreringsflaten i stedet for kundeadmin.
+    el("section", { class: "site-grid" },
+      loginKort(provider, "firmaregistrering", t("site.login.ny_tittel"),
+        t("site.login.ny_tekst"), t("site.login.ny_knapp"))),
+    el("h2", { class: "site-login-skille", text: t("site.login.alt_kunde") }),
     el("section", { class: "site-grid site-grid-2" },
       loginKort(provider, "kundeadmin", t("site.login.kunde_tittel"),
         t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
