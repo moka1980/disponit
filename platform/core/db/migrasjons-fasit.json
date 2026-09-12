@@ -188,5 +188,6 @@
   "187_fordring_leser_registeret.sql": "92cd63f469001c3b9e6db03565f7321f54e226993a7519db9a653c5cb040ece3",
   "188_fordring_backfill_som_virker.sql": "c2db94e89eb39689b5fb9764f46b6f4c90baf70bd486d807092818fabb9f748d",
   "189_innlogging_uten_vertsnavn.sql": "79a008b8dae71d7576d3e117d6237bb7bf4cd8d7ebef0a551a2f6f6644320ef8",
-  "190_firmaregister.sql": "df185e69e0e6b4c90e80b1c171efce0dc9d5289cb2106636251e74bb653a4944"
+  "190_firmaregister.sql": "df185e69e0e6b4c90e80b1c171efce0dc9d5289cb2106636251e74bb653a4944",
+  "191_modulene_leser_firmanavnet.sql": "5ed881ff0c4be014258f23a973781a7345c0409d56517acde642e71f2022e795"
 }
