@@ -64,6 +64,14 @@ KANDIDATGRENSE = 50
 #: transaksjon. Speiler `reap_epostdata(p_grense INT DEFAULT 50)`.
 EPOSTGRENSE = 50
 
+#: Maks antall KONTAKTPUNKTER per kjøring (184, partsregisteret). Hver rad
+#: blankes i sin egen transaksjon inne i funksjonen, som de andre.
+PARTSGRENSE = 50
+
+#: Maks antall FIRMAER per kjøring (190). Prøveperioder utløper i praksis
+#: noen få per døgn; grensen er en bøtte, ikke et tak noen når.
+PROVEGRENSE = 100
+
 
 @dataclass
 class Reapresultat:
@@ -76,11 +84,19 @@ class Reapresultat:
     #: (tenant, melding_id) per tømt e-postmelding (088, M-6).
     epostdata: list[tuple[str, str]] = field(default_factory=list)
     epostdata_feilet: bool = False
+    #: (tenant, kontakt_id) per blanket kontaktpunkt (184, partsregisteret).
+    partsdata: list[tuple[str, str]] = field(default_factory=list)
+    partsdata_feilet: bool = False
+    #: (tenant, dato) per firma hvis prøveperiode gikk ut (190).
+    proveutlop: list[tuple[str, str]] = field(default_factory=list)
+    proveutlop_feilet: bool = False
 
 
 def kjor(conn, *, grense: int = BATCHGRENSE,
          kandidatgrense: int = KANDIDATGRENSE,
-         epostgrense: int = EPOSTGRENSE) -> Reapresultat:
+         epostgrense: int = EPOSTGRENSE,
+         partsgrense: int = PARTSGRENSE,
+         provegrense: int = PROVEGRENSE) -> Reapresultat:
     """Én reaperkjøring: evidensfristene først, så kandidatdatagrensen,
     så e-postdatagrensen (088). Overlapp er trygt uten lås i alle tre:
     funksjonene bruker `FOR UPDATE SKIP LOCKED`, så to samtidige
@@ -128,4 +144,45 @@ def kjor(conn, *, grense: int = BATCHGRENSE,
         except Exception:
             pass
         r.epostdata_feilet = True
+
+    # 184 (PARTSREGISTERET) og 190 (PRØVEPERIODEN) — begge var «definert,
+    # testet og GRANTet, og aldri kalt». Det er 057s Codex P1 for tredje og
+    # fjerde gang, og docstringen over sier uttrykkelig at den ikke skulle
+    # gjentas. Jeg gjentok den i to PR-er samme dag.
+    #
+    # De hører hjemme HER og ikke i to nye tjenester, av nøyaktig samme
+    # grunn som kandidat- og e-postdatagrensen: rollen er den samme
+    # (`disponit_domener`), DSN-en er den samme, og både 184 og 190 gir
+    # EXECUTE til akkurat den rollen denne enheten alt kjører som. To nye
+    # timere ville vært to nye deploy-flater for regler basen eier alene.
+    #
+    # UTEN DEM ER LØFTENE DEKORASJON: en avviklet kundes adresse ville stått
+    # til evig tid selv om 184 lovet en frist, og en prøveperiode ville
+    # aldri tatt slutt — «et gratisabonnement med en misvisende etikett»,
+    # som 190 selv formulerte det.
+    try:
+        rader = conn.execute("SELECT tenant, kontakt_id"
+                             "  FROM reap_partkontakt(%s)",
+                             (partsgrense,)).fetchall()
+        conn.commit()
+        r.partsdata = [(t, str(k)) for (t, k) in rader]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        r.partsdata_feilet = True
+
+    try:
+        rader = conn.execute("SELECT tenant, utlopt_dato"
+                             "  FROM firma_sveip_proveutlop(%s)",
+                             (provegrense,)).fetchall()
+        conn.commit()
+        r.proveutlop = [(t, str(d)) for (t, d) in rader]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        r.proveutlop_feilet = True
     return r
