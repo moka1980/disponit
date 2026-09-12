@@ -190,5 +190,6 @@
   "189_innlogging_uten_vertsnavn.sql": "79a008b8dae71d7576d3e117d6237bb7bf4cd8d7ebef0a551a2f6f6644320ef8",
   "190_firmaregister.sql": "df185e69e0e6b4c90e80b1c171efce0dc9d5289cb2106636251e74bb653a4944",
   "191_modulene_leser_firmanavnet.sql": "5ed881ff0c4be014258f23a973781a7345c0409d56517acde642e71f2022e795",
-  "192_selvregistrering.sql": "096f2ab12a8196b6c90d13c9d9bdcb96827c23f55e28d5f360c13b3383dd66eb"
+  "192_selvregistrering.sql": "096f2ab12a8196b6c90d13c9d9bdcb96827c23f55e28d5f360c13b3383dd66eb",
+  "193_proveutlopet_maa_kunne_kjores.sql": "d4c10bf1af874879b24c7042dc2997901988e6546fe7ad2148d7f2acb93d65cf"
 }

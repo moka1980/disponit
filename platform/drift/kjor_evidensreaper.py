@@ -48,10 +48,10 @@ def main() -> int:
             pass
     # Id-ene logges — de er referanser, aldri innhold (payloaden er og
     # forblir kryptert; klartekst finnes ikke i denne prosessen).
-    # Kandidatdatagrensen (057 §5) og e-postdatagrensen (088) rapporteres
-    # i EGNE felter med hvert sitt feilflagg: kjøringen bærer tre
-    # uavhengige retensjonsplikter, og `journalctl` skal kunne se hvilken
-    # av dem som eventuelt feilet.
+    # Hver plikt rapporteres i EGNE felter med sitt eget feilflagg:
+    # kjøringen bærer nå FEM uavhengige retensjons- og livssyklusplikter,
+    # og `journalctl` skal kunne se hvilken av dem som eventuelt feilet.
+    # En samlet «feilet: 1» ville sagt at noe gikk galt, ikke hva.
     print(json.dumps({"hendelse": "reaperkjoring",
                       "reapet": len(r.reapet),
                       "saker": [{"tenant": t, "oppdrag_id": o,
@@ -64,9 +64,18 @@ def main() -> int:
                       "epostdata_reapet": len(r.epostdata),
                       "meldinger": [{"tenant": t, "melding_id": m}
                                     for t, m in r.epostdata],
-                      "epostdata_feilet": int(r.epostdata_feilet)}))
+                      "epostdata_feilet": int(r.epostdata_feilet),
+                      "partsdata_reapet": len(r.partsdata),
+                      "kontakter": [{"tenant": t, "kontakt_id": k}
+                                    for t, k in r.partsdata],
+                      "partsdata_feilet": int(r.partsdata_feilet),
+                      "proveutlop": len(r.proveutlop),
+                      "utlopte": [{"tenant": t, "frist": d}
+                                  for t, d in r.proveutlop],
+                      "proveutlop_feilet": int(r.proveutlop_feilet)}))
     return 1 if (r.feilet or r.kandidatdata_feilet
-                 or r.epostdata_feilet) else 0
+                 or r.epostdata_feilet or r.partsdata_feilet
+                 or r.proveutlop_feilet) else 0
 
 
 if __name__ == "__main__":       # pragma: no cover
