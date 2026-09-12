@@ -282,3 +282,40 @@ def test_verten_kan_aldri_gi_en_reservert_tenant(host, forventet):
         headers = {"x-disponit-host": host}
 
     assert _tenant_fra_host(None, _Req()) == forventet
+
+
+# ---------------------------------------------------------------------------
+# 10. Oppslaget gjennom RUNTIME-rollen — veien innloggingen faktisk går.
+# ---------------------------------------------------------------------------
+
+@pg
+def test_runtime_kan_faktisk_slaa_opp_firmaet(migrator):
+    """Porten som manglet, og feilen den ville fanget.
+
+    189 la `GRANT SELECT ON bruker_tenant TO disponit` i migrasjonen. Men
+    `deploy/staging/migrer.py` kjører `NULLSTILL_TABELLER` ETTER
+    migrasjonene — den trekker tilbake alt runtime har på hver tabell
+    migrator eier — og gir så tilbake fra en kanonisk liste. Grantet ble
+    visket ut av neste steg i samme deploy, stille.
+
+    Prod sto med `INGEN` rettigheter for runtime på tabellen. Ingen merket
+    det, fordi den delte påloggingen ikke var skrudd på ennå — og fordi de
+    andre portene her kaller døra som MIGRATOR, en vei ingen ekte kaller
+    går. Samme klasse som «alle testene mine brukte Bearer-tokens».
+
+    Grantet hører derfor hjemme i `RETTIGHETER`, ikke i migrasjonen.
+    """
+    from db.pg import koble
+    from api.sesjon import _firma_for_bruker
+
+    bid = _bruker(migrator)
+    _meld_inn(migrator, bid, TENANT)
+    migrator.commit()
+
+    c = koble(DSN)
+    try:
+        c.execute("SELECT set_config('disponit.tenant', '', true)")
+        # Nøyaktig samme kall som `_opprett_sesjon` gjør i callbacken.
+        assert _firma_for_bruker(c, bid, _Ident()) == TENANT
+    finally:
+        c.close()

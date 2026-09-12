@@ -61,6 +61,18 @@ GRANT SELECT ON migrasjoner TO {rolle};
 GRANT SELECT, INSERT ON unntak_historikk, attestasjon_jti TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON unntak, idempotens TO {rolle};
 GRANT SELECT, INSERT, UPDATE ON tenant_nokler TO {rolle};
+-- 192: innloggingen slår opp bruker_id → firma FØR noen tenantkontekst
+-- finnes (189), og den gjør det som RUNTIME. Grantet MÅ stå her og ikke i
+-- migrasjonen: `NULLSTILL_TABELLER` over trekker tilbake alt runtime har på
+-- hver tabell migrator eier, rett etter at migrasjonene har kjørt. En GRANT
+-- inne i en migrasjon blir altså visket ut av neste steg i samme deploy —
+-- stille, og først synlig når noen faktisk kaller veien.
+--
+-- Det skjedde: 189 grantet i migrasjonen, deployen fjernet det, og prod sto
+-- med `INGEN` rettigheter for runtime på tabellen. Porten merket ingenting
+-- fordi den kalte døra som migrator — altså en vei ingen ekte kaller går.
+-- Bare arbeiderrollene skal fortsatt IKKE ha den: de logger ingen inn.
+GRANT SELECT ON bruker_tenant TO {rolle};
 GRANT SELECT ON policyer TO {rolle};
 -- #189: stillingsprofilen — leseflaten går rett på tabellene (RLS-gated);
 -- all skriving eies av domene_eier-døren. Grantes HER (migrator eier
