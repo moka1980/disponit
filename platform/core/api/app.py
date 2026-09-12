@@ -3374,6 +3374,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def parter_registrer(request: Request) -> Response:
         return partermodul.registrer_endepunkt(tjeneste, request)
 
+    def firma_registrer(request: Request) -> Response:
+        from . import firmaregistrering
+        return firmaregistrering.registrer_firma(tjeneste, request)
+
     def parter_kontakt(request: Request) -> Response:
         return partermodul.kontakt_endepunkt(tjeneste, request)
 
@@ -4476,6 +4480,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/epost/utkast/{utkast_id:uuid}/send", epost_utkast_send,
               methods=["POST"]),
+        Route("/v1/firma/registrer", firma_registrer, methods=["POST"]),
         Route("/v1/parter", parter_liste, methods=["GET"]),
         Route("/v1/parter", parter_registrer, methods=["POST"]),
         Route("/v1/parter/import", parter_import, methods=["POST"]),
@@ -4634,7 +4639,15 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # lukke) — CSRF håndheves i
                                      # endepunktene (policyadmin-
                                      # formen); dørene bærer resten.
-                                     "kontinuitet:write"})
+                                     "kontinuitet:write",
+                                     # 192: SELVREGISTRERING. Scopet
+                                     # muterer, og uten linja her avviser
+                                     # `_autentiser` det BLANKT for enhver
+                                     # browsersesjon — også den som har
+                                     # rollen. Registranten ville fått
+                                     # `scope_mangler` på det eneste hun
+                                     # har lov til.
+                                     "firma:opprett"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -6105,6 +6118,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "epost:utkast:behandle",
     # 183/184: partsregisteret. To scope, ikke ett — å SE kundelisten og
     # å ENDRE den er to ting (samme lærdom som `epost:utkast:behandle`).
+    # 192: den ENESTE ruten rollen `registrant` kan nå. Scopet muterer,
+    # så det må også stå i BROWSER_MUTASJONSSCOPES — og endepunktet
+    # håndhever CSRF selv gjennom `_browserkontekst`.
+    ("POST", "/v1/firma/registrer"):         "firma:opprett",
     ("GET",  "/v1/parter"):                  "part:read",
     ("POST", "/v1/parter"):                  "part:administrer",
     ("POST", "/v1/parter/import"):           "part:administrer",

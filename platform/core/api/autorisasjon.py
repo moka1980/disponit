@@ -46,6 +46,22 @@ EN SJUENDE GJELDER HVER NY PRIVILEGERT DØR, uansett scope: den må stå i
 måler basen mot den lista og sier «privilegert eide objekter utenfor
 designet» — et navn som mangler der, er en dør ingen har tatt stilling
 til hvem som skal eie.
+
+OG EN ÅTTENDE GJELDER EN NY ROLLE, ikke bare et nytt scope: `ui.rolle.
+<rolle>` MÅ finnes i BÅDE `locales/nb.json` og `locales/en.json`.
+`test_hver_kanonisk_rolle_har_navn_i_begge_lokalene` går over HELE denne
+tabellen, ikke over flaten — uten nøkkelen viser skallet den rå
+identifikatoren, altså et norsk stikkord i et ellers engelsk grensesnitt.
+Speil 5 (`KUNDEROLLER`) er derimot IKKE påkrevd for alle roller: porten
+der går over guiden og sjekker at hver oppføring finnes her — ikke
+motsatt. En rolle kunden ikke skal kunne TILDELE (`registrant`, og senere
+plattformrollen) hører derfor ikke hjemme i guiden.
+
+EN NIENDE, HVIS SCOPET MUTERER FRA NETTLESEREN: `BROWSER_MUTASJONSSCOPES`
+er nevnt i speil 3, men grunnen tåler å gjentas — `app.py` avviser
+BLANKT ethvert scope en browsersesjon ber om som verken står i
+`LESESCOPES` eller der. Et muterende scope uten den linja gir
+`scope_mangler` til en bruker som har rollen, og loggen sier ikke hvorfor.
 """
 from __future__ import annotations
 
@@ -167,6 +183,23 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # attesterer utfallet; motoren gjør overgangen.
     "domeneadjudikator": frozenset({"decisions:read", "exceptions:read",
                                     "domains:adjudicate"}),
+    # 192: REGISTRANTEN — den eneste rollen som ikke tilhører et firma.
+    #
+    # En helt ny bruker har ingen medlemskap, og `_opprett_sesjon` avviser
+    # derfor med `ingen_tilgang` (v3 §2, «ingen JIT») FØR hun rekker å
+    # registrere noe: hun kan ikke bli kunde fordi hun ikke er kunde.
+    # Callbacken gir henne i stedet et ekte medlemskap på den reserverte
+    # tenanten `_registrering`, og da virker resten av autorisasjonen
+    # uendret — ingen særtilfeller i sesjonsveien.
+    #
+    # ETT SCOPE, OG INGEN LESESCOPES. Hun skal kunne opprette et firma og
+    # ingenting annet; `decisions:read` her ville gitt henne en tom
+    # beslutningsflate å vandre rundt i mens hun ennå ikke er kunde.
+    #
+    # Rollen står BEVISST utenfor `KUNDEROLLER` (plattformdata.js): en kunde
+    # som kunne tildelt den, ville gitt bort retten til å opprette firmaer
+    # på plattformen.
+    "registrant": frozenset({"firma:opprett"}),
 }
 
 

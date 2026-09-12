@@ -140,14 +140,33 @@ def test_flere_medlemskap_gir_avvisning_ikke_en_gjetning(migrator):
     assert f.value.http == 401
 
 
-def test_ingen_medlemskap_gir_ingen_tilgang(migrator):
-    from api.sesjon import SesjonFeil, _firma_for_bruker
-    bid = _bruker(migrator)
-    migrator.execute("SELECT set_config('disponit.tenant', '', true)")
+def test_ingen_medlemskap_gir_registrantsesjon_ikke_blindvei(migrator):
+    """KONTRAKTEN ENDRET SEG I 192, og det er verdt å si hvordan.
 
-    with pytest.raises(SesjonFeil) as f:
-        _firma_for_bruker(migrator, bid, _Ident())
-    assert f.value.kode == "ingen_tilgang"
+    Før: ingen medlemskap → `ingen_tilgang`, punktum. En helt ny bruker
+    kunne ikke bli kunde fordi hun ikke var kunde.
+
+    Nå: hun får et ekte medlemskap på den reserverte tenanten
+    `_registrering`, med rollen `registrant` og dens ene scope
+    `firma:opprett`. «Ingen JIT-provisjonering» (v3 §2) står ved lag — hun
+    får fortsatt ikke tilgang til noe FIRMA.
+
+    Det gamle avslaget gjelder fortsatt der forutsetningen ikke holder:
+    `registrant_medlemskap` svarer `false` for en som alt hører til et
+    firma, og da faller vi tilbake til `ingen_tilgang`.
+    """
+    from api.sesjon import REGISTRERING, _firma_for_bruker
+    bid = _bruker(migrator)
+    migrator.execute("SELECT set_config('disponit.tenant', \'\', true)")
+
+    assert _firma_for_bruker(migrator, bid, _Ident()) == REGISTRERING
+    migrator.commit()
+    # Og hun står der som et ekte medlem, ikke som et særtilfelle.
+    migrator.execute("SELECT set_config('disponit.tenant', %s, true)",
+                     (REGISTRERING,))
+    assert migrator.execute(
+        "SELECT roller FROM brukermedlemskap WHERE tenant=%s AND bruker_id=%s",
+        (REGISTRERING, bid)).fetchone()[0] == ["registrant"]
 
 
 class _Ident:
