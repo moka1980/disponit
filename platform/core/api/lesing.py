@@ -1750,6 +1750,47 @@ def policy_aktiv(tjeneste, request: Request) -> Response:
 # endepunktet avgjør på egen hånd.
 # ---------------------------------------------------------------------------
 
+def _utrulling_fra_firmaet(conn, tenant, sprak):
+    """Utrullingsraden utledet av firmaets EGEN tilstand og policy.
+
+    Modulene leses fra den aktive policyens `handlinger[].modul` — samme
+    autoritet som styrer hva agenten får GJØRE. Da kan ingen kunde ende opp
+    med en modul uten fullmakt, eller en fullmakt uten modul.
+
+    FEILER NOE HER, ER SVARET `None` og flaten sier «vet ikke» som før. Et
+    skall som ikke kan tegnes fordi utrullingsraden manglet, ville vært en
+    verre feil enn en menylinje som mangler.
+    """
+    import psycopg
+
+    from . import utrulling as utrullingsmodul
+
+    try:
+        rad = conn.execute("SELECT navn, status, prove_utloper"
+                           "  FROM firma_hent(%s)", (tenant,)).fetchone()
+        if rad is None:
+            return None
+        # ALLE AKTIVE POLICYER, ikke den første (CodeRabbit).
+        # `en_aktiv_per_policy` er unik per POLICY_ID — en tenant kan altså
+        # ha flere aktive serier samtidig, og `LIMIT 1` ville skjult
+        # modulene i alle unntatt én.
+        rader = conn.execute(
+            "SELECT innhold FROM policyer WHERE tenant=%s AND aktiv"
+            " ORDER BY policy_id, versjon", (tenant,)).fetchall()
+    except psycopg.Error:
+        return None
+    # INGEN AKTIV POLICY ER «VET IKKE», IKKE «INGEN MODULER». Første utgave
+    # ga tom liste her — og skrev samtidig i testen at «en flate som ikke
+    # vet, skal si det». Tom liste sier noe annet: at firmaet er kartlagt og
+    # ikke har noen moduler. `None` er husets form, sagt i `egen_rad`.
+    if not rader:
+        return None
+    moduler = sorted({m for (innhold,) in rader
+                      for m in utrullingsmodul.moduler_fra_policy(innhold)})
+    return utrullingsmodul.rad_for_nytt_firma(
+        tenant, rad[0], rad[1], rad[2], moduler, sprak)
+
+
 def utrulling(tjeneste, request: Request) -> Response:
     from . import utrulling as utrullingsmodul
 
@@ -1760,7 +1801,19 @@ def utrulling(tjeneste, request: Request) -> Response:
         # ren presentasjon: `svar_for` bruker den ikke til å velge rader, og en
         # ukjent verdi gir norsk tekst.
         sprak = request.query_params.get("sprak")
-        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes, sprak)
+        # ET FIRMA SOM REGISTRERTE SEG SELV står ikke i `_UTRULLING` — den
+        # er statisk pilotdata. Uten dette fikk det `moduler: null`, og
+        # venstremenyen sa «Modultildelingen er ikke tilgjengelig»: en
+        # selvbetjent kunde landet i et skall uten moduler, og hver ny
+        # kunde ville krevd en kodeendring og en deploy.
+        #
+        # Oppslaget gjøres bare når `_UTRULLING` ikke kjenner tenanten, så
+        # de tre pilotradene koster ingen ekstra spørring.
+        nytt = None
+        if utrullingsmodul.egen_rad(auth.tenant) is None:
+            nytt = _utrulling_fra_firmaet(conn, auth.tenant, sprak)
+        svar = utrullingsmodul.svar_for(auth.tenant, auth.scopes, sprak,
+                                        nytt_firma=nytt)
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)
