@@ -791,6 +791,16 @@ for base in $DB ${DB}_test; do
   # …og for klynge 3s fem eiere (101-105), av nøyaktig samme grunn.
   sudo -u postgres psql -q -d "$base" -c \
     "GRANT USAGE, CREATE ON SCHEMA public TO $AVSTEMMINGEIER, $KUNDESERVICEEIER, $ONBOARDINGEIER, $FORDRINGEIER, $LEVERANDOREIER"
+  # 199: plattformeier-doerene lages UNDER `SET LOCAL ROLE
+  # disponit_plattform_eier`, akkurat som klyngeeiernes. Uten CREATE paa
+  # public doer migrasjonen med «permission denied for schema public» —
+  # maalt lokalt da jeg bygget proben.
+  #
+  # MANGLET HELT I #506/#507. `ci.yml` fikk granten, skriptet ikke, og da
+  # ville CI vaert groenn mens deployen doede paa verten. Et oppsett som
+  # bare CI speiler, speiler ingenting.
+  sudo -u postgres psql -q -d "$base" -c \
+    "GRANT USAGE, CREATE ON SCHEMA public TO $PLATTFORMEIER"
 done
 
 # ------------------------------------------------------------
