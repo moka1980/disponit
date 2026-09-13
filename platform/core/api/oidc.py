@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -52,6 +53,9 @@ class Provider:
     client_secret: str            # hentet fra credential — aldri lagret i DB
     tillatte_algoritmer: tuple
     allowlist: tuple = ()         # staging (scheme,host,port,cidr)
+    #: Issuer-MAL for en flerleietaker-IdP, med `{tenantid}` i seg (198).
+    #: None = eksakt likhet mot `issuer`, som for. Se `_issuermonster`.
+    issuer_mal: str | None = None
 
     def __post_init__(self):
         # EN TOM LISTE ER IKKE «INGENTING TILLATT» — DEN ER «ALT TILLATT».
@@ -67,6 +71,42 @@ class Provider:
             raise OidcFeil(
                 f"provider {self.provider_id!r} har tom algoritmeliste — "
                 "det slår av algoritmepinningen")
+
+
+# ---------------------------------------------------------------------------
+# Flerleietaker-issuer (198): EN MAL, IKKE ET REGEX
+# ---------------------------------------------------------------------------
+
+PLASSHOLDER = "{tenantid}"
+
+#: Microsofts tenant-id er en GUID. Mønsteret står HER, i koden — ikke i en
+#: rad noen skriver for hånd. Det er hele grunnen til at kolonnen bærer en
+#: MAL: en tastefeil i malen kan bare gjøre den snevrere, aldri videre.
+#: Et fritt regex i basen ville latt `.*` gjøre enhver utsteder gyldig,
+#: stille — samme feilklasse som den tomme algoritmelisten i 197.
+GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+
+
+def _issuermonster(mal: str) -> re.Pattern:
+    """Malen → et forankret mønster med ÉN gruppe: tenant-id-en.
+
+    `re.escape` på begge sider av plassholderen; ingenting fra basen når
+    regexmotoren som metategn.
+    """
+    if PLASSHOLDER not in mal:
+        raise OidcFeil("issuer-mal uten plassholder")
+    for_, etter = mal.split(PLASSHOLDER, 1)
+    if PLASSHOLDER in etter:
+        raise OidcFeil("issuer-mal med mer enn én plassholder")
+    return re.compile(f"^{re.escape(for_)}({GUID}){re.escape(etter)}$")
+
+
+def _tenant_fra_issuer(provider: Provider, iss: str) -> str:
+    """Tenant-id-en i `iss`, eller OidcFeil. Kun for malbaserte providere."""
+    m = _issuermonster(provider.issuer_mal or "").match(iss or "")
+    if not m:
+        raise OidcFeil("iss matcher ikke providerens issuer-mal")
+    return m.group(1)
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +157,17 @@ def hent_discovery(provider: Provider, naa: float | None = None) -> Discovery:
         return cachet[0]
 
     doc = _hent_json(provider.discovery_url, provider.allowlist)
-    if doc.get("issuer") != provider.issuer:
+    # MALT 13/9: Microsofts `common`- og `organizations`-discovery svarer med
+    # den LITTERALE plassholderen «https://login.microsoftonline.com/
+    # {tenantid}/v2.0» — ikke med en tenant. Eksakt likhet er derfor umulig
+    # for en flerleietaker-IdP, og kravet blir i stedet at dokumentet sier
+    # NOYAKTIG den malen raden er registrert med. Uendret for alle andre:
+    # uten mal gjelder eksakt likhet som for.
+    ventet = provider.issuer_mal or provider.issuer
+    if doc.get("issuer") != ventet:
         raise OidcFeil(
             f"discovery-issuer {doc.get('issuer')!r} != forventet "
-            f"{provider.issuer!r}")
+            f"{ventet!r}")
     d = Discovery(
         issuer=doc["issuer"],
         authorization_endpoint=doc["authorization_endpoint"],
@@ -250,8 +297,27 @@ def _valider_id_token(provider: Provider, d: Discovery, id_token: str,
 
     claims = tok.claims
     naa_epoch = int(naa) if naa is not None else int(time.time())
+
+    # FLERLEIETAKER (198): `iss` kan ikke pinnes til én verdi, så den
+    # valideres mot malen her — og BINDES til `tid`. Uten den bindingen
+    # ville malen godtatt et token fra HVILKEN SOM HELST Microsoft-tenant
+    # som utga seg for en annen; med den må utstederen i `iss` være den
+    # tenanten tokenet selv sier det kom fra. Microsoft dokumenterer kravet.
+    if provider.issuer_mal:
+        iss = claims.get("iss")
+        tid_i_iss = _tenant_fra_issuer(provider, iss if isinstance(iss, str)
+                                       else "")
+        tid = claims.get("tid")
+        if not isinstance(tid, str) or not tid:
+            raise OidcFeil("flerleietaker-id_token uten tid-claim")
+        if tid.lower() != tid_i_iss.lower():
+            raise OidcFeil("tid matcher ikke tenanten i iss")
+        løst_issuer = iss
+    else:
+        løst_issuer = provider.issuer
+
     krav = jwt.JWTClaimsRegistry(
-        iss={"essential": True, "value": provider.issuer},
+        iss={"essential": True, "value": løst_issuer},
         aud={"essential": True, "value": provider.client_id},
         exp={"essential": True}, iat={"essential": True},
         now=naa_epoch)
@@ -286,7 +352,10 @@ def _valider_id_token(provider: Provider, d: Discovery, id_token: str,
         "epost_verifisert": (bool(claims["email_verified"])
                              if "email_verified" in claims else None),
     }
-    return Identitet(issuer=provider.issuer, sub=str(sub), profil=profil)
+    # `brukeridentitet` er `(issuer, sub)`. Ble MALEN stående her, ville
+    # alle Microsoft-brukere i verden delt én issuer-verdi hos oss, og
+    # tenanten deres vært borte fra identiteten. Den LØSTE issueren lagres.
+    return Identitet(issuer=løst_issuer, sub=str(sub), profil=profil)
 
 
 def toem_cache() -> None:

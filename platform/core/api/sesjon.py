@@ -233,21 +233,22 @@ def _provider_for(conn, tenant: str, provider_id: str,
                   allowlist_env: dict) -> oidc.Provider:
     rad = conn.execute(
         "SELECT p.issuer, p.discovery_url, p.client_id, p.client_secret_ref,"
-        " p.tillatte_algoritmer, t.redirect_uris"
+        " p.tillatte_algoritmer, t.redirect_uris, p.issuer_mal"
         "  FROM oidc_provider p JOIN tenant_oidc_provider t"
         "    ON t.provider_id = p.provider_id"
         " WHERE p.provider_id=%s AND p.aktiv AND t.tenant=%s",
         (provider_id, tenant)).fetchone()
     if rad is None:
         raise SesjonFeil("ukjent_provider", 400)
-    issuer, disc, cid, secret_ref, algs, redirect_uris = rad
+    issuer, disc, cid, secret_ref, algs, redirect_uris, issuer_mal = rad
     secret = allowlist_env.get(secret_ref)
     if not secret:
         # Manglende credential → provideren er utilgjengelig, fail-closed.
         raise SesjonFeil("provider_utilgjengelig", 400)
     allow = _staging_allowlist()
     return (oidc.Provider(provider_id, issuer, disc, cid, secret,
-                          tuple(algs), allow), list(redirect_uris))
+                          tuple(algs), allow, issuer_mal),
+            list(redirect_uris))
 
 
 def _staging_allowlist() -> tuple:
