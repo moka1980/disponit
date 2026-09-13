@@ -1807,7 +1807,23 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm40_start_lop(text,uuid,uuid,integer,text)',                                            'disponit_medarbeider_eier'),
     ('FUNCTION', 'm40_sveip_medarbeider(integer)',                                                        'disponit_medarbeider_eier'),
     ('FUNCTION', 'm40_utfor_steg(text,uuid,integer,text,text)',                                           'disponit_medarbeider_eier'),
-    ('FUNCTION', 'm40_utsted_kontrakt(text,uuid,uuid,uuid,text[],text)',                                  'disponit_medarbeider_eier');
+    ('FUNCTION', 'm40_utsted_kontrakt(text,uuid,uuid,uuid,text[],text)',                                  'disponit_medarbeider_eier'),
+    -- 199: plattformeier-doerene. Eid av `disponit_plattform_eier`, ikke av
+    -- migrator, fordi de maa SE alle tenanters firmarader — policyen
+    -- `plattform_eier_ser_alle` har TO-klausul paa nettopp den rollen, og en
+    -- definer eid av migrator ville truffet FORCE RLS uten kontekst
+    --
+    -- `plattform_krev_eier` staar her ogsaa, selv om den aldri grantes ut:
+    -- en funksjon uten eier i designet blir ALTER-et til migrator av
+    -- reparasjonen, og da ville doerene kalt den som feil rolle
+    --
+    -- INGEN SEMIKOLON I DENNE KOMMENTAREN
+    ('FUNCTION', 'plattform_er_eier(text)',                                  'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_krev_eier(text,text)',                           'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_firmaliste(text)',                               'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_firma_opprett(text,text,text,text,integer,text)', 'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_firma_oppdater(text,text,text,text,text)',       'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_firma_status(text,text,text,text)',              'disponit_plattform_eier');
 
 DO $$
 DECLARE

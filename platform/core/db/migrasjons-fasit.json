@@ -196,5 +196,6 @@
   "195_invitasjonsscope.sql": "856623610dd995decee5dae999b5cffc278f6a47c0737c408a953d9bca3e10b9",
   "196_firmavalget.sql": "58d1d95c5dcf62e7b5d308635eb51b3e428991dc271724364e120a9ad99f8f8b",
   "197_algoritmelisten_kan_ikke_vaere_tom.sql": "8499ac1e72e393ed8b95be9312b75c005e5346a4f8f8700f3f72888e3e4bc2a8",
-  "198_microsoft_flerleietaker.sql": "766859a8a11d4738cddc234830223e1680dfc6daae9dc2bfd2de8729953fc386"
+  "198_microsoft_flerleietaker.sql": "766859a8a11d4738cddc234830223e1680dfc6daae9dc2bfd2de8729953fc386",
+  "199_plattformeier.sql": "327e4d71a041bf78679c88543c6256dc9f21657b010631a0325b6732536f5fac"
 }
