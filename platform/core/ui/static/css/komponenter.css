@@ -384,6 +384,14 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
 .innlogging { max-width: 28rem; }
 .innlogging-form { margin-top: var(--sp-4); }
 .innlogging-form .knapp { width: 100%; }
+/* Flere leverandoerer: knappene stables, og hver fyller bredden som foer.
+   `gap` i stedet for margin paa hvert skjema — margin ville lagt seg til
+   `.innlogging-form`s egen `margin-top` og gitt ujevn avstand mellom
+   foerste og de neste. */
+.innlogging-valg { display: flex; flex-direction: column;
+                   gap: var(--sp-2); }
+.innlogging-valg .innlogging-form { margin-top: 0; }
+.innlogging-valg { margin-top: var(--sp-4); }
 
 /* Dashbordet: KPI-kortene øverst, de to listene side om side. */
 .dash-kpi { margin-top: var(--sp-2); }
@@ -1616,6 +1624,11 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 .site-login-card h2 { margin: 0; font-size: var(--fs-tittel); font-family: var(--font-serif); }
 .site-login-card p { color: var(--muted); margin: 0 0 var(--sp-2); }
 .site-login-card .innlogging-form { margin-top: var(--sp-2); }
+/* …og i login-kortet gjelder den strammere avstanden ogsaa naar
+   knappene staar i en valgliste. Uten denne arvet lista den generelle
+   `--sp-4` og kortet fikk et hull under teksten. */
+.site-login-card .innlogging-valg { margin-top: var(--sp-2); }
+.site-login-card .innlogging-valg .innlogging-form { margin-top: 0; }
 .site-mini-card {
   display: grid; gap: var(--sp-2); align-content: start;
   border: 1px solid var(--line); border-radius: var(--radius);

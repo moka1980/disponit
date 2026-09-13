@@ -218,24 +218,52 @@ const SPORSMAL = [
 // scope-gatede og leses av dem som faktisk styrer utrullingen.
 // Forsiden svarer på hva Disponit GJØR for en bedrift.
 
-function loginKort(provider, visning, tittel, tekst, knapp) {
+// Navnet på en leverandør kommer fra locale, ikke fra id-en. Mangler nøkkelen,
+// vises id-en RÅ — synlig, ikke stille borte: en vert som legger til en
+// leverandør vi ikke har oversatt ennå skal få en knapp som virker og et navn
+// som avslører at teksten mangler.
+function leverandornavn(id) {
+  return t(`site.login.provider.${id}`, id);
+}
+
+function loginKort(providere, visning, tittel, tekst, knapp) {
   const kort = el("article", { class: "kort site-login-card" },
     el("h2", { text: tittel }),
     el("p", { text: tekst }));
 
-  if (provider) {
-    const form = el("form", { class: "innlogging-form", method: "post",
-      action: "/v1/oidc/start" });
-    // Retursti-en er den siste offentlige navigasjonen: språket må bli med
-    // over OIDC-runden, ellers står skallet på `data-sprak="nb"` etter
-    // innlogging for den som ikke kan lagre valget. `trygg_retursti` beholder
-    // query-strengen på en lokal path-referanse, så leddet overlever turen.
-    form.append(
-      el("input", { type: "hidden", name: "provider_id", value: provider }),
-      el("input", { type: "hidden", name: "retursti",
-        value: `/?visning=${visning}&sprak=${sprak()}` }),
-      el("button", { type: "submit", class: "knapp primar", text: knapp }));
-    kort.append(form);
+  const liste = Array.isArray(providere) ? providere : (providere ? [providere] : []);
+  if (liste.length) {
+    // ÉN KNAPP PER LEVERANDØR, ikke en nedtrekksliste. Eier: «så vi kan begge
+    // deler, google account og microsof 365». Et valg mellom to ting er to
+    // knapper — et nedtrekk ville lagt et klikk og en skjult tilstand mellom
+    // brukeren og handlingen, og forsidens stående prinsipp er færrest mulig
+    // klikk til produktet.
+    //
+    // ER DET BARE ÉN, STÅR DEN UTEN NAVN. «Logg inn som kunde» + «Åpne
+    // kundeflate» er allerede klart; «Åpne kundeflate med Google» er støy når
+    // Google er eneste vei. Navnet kommer først når det faktisk er et valg.
+    const alene = liste.length === 1;
+    const rad = el("div", { class: "innlogging-valg" });
+    for (const p of liste) {
+      const form = el("form", { class: "innlogging-form", method: "post",
+        action: "/v1/oidc/start" });
+      // Retursti-en er den siste offentlige navigasjonen: språket må bli med
+      // over OIDC-runden, ellers står skallet på `data-sprak="nb"` etter
+      // innlogging for den som ikke kan lagre valget. `trygg_retursti`
+      // beholder query-strengen på en lokal path-referanse, så leddet
+      // overlever turen.
+      form.append(
+        el("input", { type: "hidden", name: "provider_id", value: p }),
+        el("input", { type: "hidden", name: "retursti",
+          value: `/?visning=${visning}&sprak=${sprak()}` }),
+        el("button", { type: "submit", class: "knapp primar",
+          text: alene ? knapp
+            : t("site.login.med_provider")
+              .replace("{knapp}", knapp)
+              .replace("{leverandor}", leverandornavn(p)) }));
+      rad.append(form);
+    }
+    kort.append(rad);
   } else {
     kort.append(Feiltilstand({ tittel: t("ui.feil_tittel"),
       tekst: t("ui.logg_inn_utilgjengelig") }));
@@ -454,7 +482,7 @@ function offentligBunn() {
 export async function visInnlogging(opsjoner = {}) {
   const gjelderFortsatt = opsjoner.gjelderFortsatt || (() => true);
   const app = document.getElementById("app");
-  let provider = null;
+  let provider = [];
   // Miljøet avgjør om forsiden kan LOVE noe, og leses fail-closed: bare den
   // eksakte strengen teller, så et manglende felt eller en feilet henting
   // koster et løfte i stedet for å gi et. Svaret bæres som LOKAL variabel her
@@ -462,10 +490,16 @@ export async function visInnlogging(opsjoner = {}) {
   let iProduksjon = false;
   try {
     const o = await hentJson("/ui/oppsett.json");
-    provider = o && typeof o.provider_id === "string" ? o.provider_id : null;
+    // `providere` er den nye kontrakten; `provider_id` beholdes for en eldre
+    // server (og betyr da «den eneste»). Rekkefølgen er serverens — den er
+    // rekkefølgen på verten, altså den eier har bestemt.
+    provider = Array.isArray(o && o.providere)
+      ? o.providere.filter((x) => typeof x === "string" && x)
+      : (o && typeof o.provider_id === "string" && o.provider_id
+        ? [o.provider_id] : []);
     iProduksjon = o && o.miljo === "produksjon";
   } catch {
-    provider = null;
+    provider = [];
     iProduksjon = false;
   }
   // Sjekken står FØR treet bygges, ikke bare før `sett`: er kallet forbigått,

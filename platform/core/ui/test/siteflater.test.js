@@ -1037,3 +1037,95 @@ test("Landing: axe-porten dekker OGSÅ produkt, sikkerhet og innlogging (#238 P3
     window.history.replaceState({}, "", "/");
   }
 });
+
+// ---------------------------------------------------------------------------
+// Leverandørvalget. Eier: «så vi kan begge deler, google account og
+// microsof 365», og etter en test på live-siden: «fortsatt kun google».
+//
+// Grunnen var målt: `DISPONIT_UI_PROVIDER` bar ÉN id, og flaten rendret én
+// knapp. Nå bærer den en liste.
+// ---------------------------------------------------------------------------
+
+async function _innloggingMed(oppsett) {
+  const gammel = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const sti = url.split("?")[0];
+    if (sti === "/ui/oppsett.json") {
+      return { ok: true, status: 200, json: async () => oppsett };
+    }
+    const locale = sti.match(/^\/ui\/locale\/(nb|en)$/);
+    if (locale) {
+      return { ok: true, status: 200, json: async () => LOCALER[locale[1]] };
+    }
+    return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
+  };
+  try {
+    // `nyttAppBrett`, ikke `nyttBrett`: `visInnlogging` tegner inn i `#app`,
+    // og uten elementet kastet `sett` på null. Speiler de andre
+    // landing-testene i denne fila.
+    const app = nyttAppBrett();
+    window.history.replaceState({}, "", "/?side=innlogging");   // `lesSide` leser `side=`, ikke `visning=`
+    await visInnlogging();
+    return app;
+  } finally {
+    globalThis.fetch = gammel;
+  }
+}
+
+const _providerFelt = (app) =>
+  [...app.querySelectorAll('input[name="provider_id"]')].map((i) => i.value);
+
+test("Innlogging: to leverandører gir to knapper, hver med sitt navn",
+  async () => {
+    const app = await _innloggingMed(
+      { providere: ["google", "microsoft"], miljo: "produksjon" });
+    const felt = _providerFelt(app);
+    assert.ok(felt.includes("google") && felt.includes("microsoft"),
+      `bare disse leverandørene ble rendret: ${[...new Set(felt)].join(", ")}`);
+    const tekst = app.textContent;
+    // Navnet kommer fra locale, ikke fra id-en.
+    assert.ok(tekst.includes(t("site.login.provider.microsoft")),
+      "Microsoft-knappen mangler leverandørnavnet");
+    assert.ok(tekst.includes(t("site.login.provider.google")),
+      "Google-knappen mangler leverandørnavnet");
+  });
+
+test("Innlogging: ÉN leverandør er uendret — ingen navn, én knapp",
+  async () => {
+    // REGRESJONSVERNET. Prod har i dag bare Google, og den veien skal se
+    // nøyaktig ut som før: «Åpne kundeflate», ikke «Åpne kundeflate med
+    // Google». Navnet hører til der det faktisk er et VALG.
+    const app = await _innloggingMed(
+      { providere: ["google"], miljo: "produksjon" });
+    assert.deepEqual([...new Set(_providerFelt(app))], ["google"]);
+    assert.ok(app.textContent.includes(t("site.login.kunde_knapp")),
+      "kundeknappen mangler");
+    assert.ok(!app.textContent.includes(
+      t("site.login.med_provider").replace("{knapp}", t("site.login.kunde_knapp"))
+        .replace("{leverandor}", t("site.login.provider.google"))),
+      "én leverandør skal ikke navngis — det er ikke et valg");
+  });
+
+test("Innlogging: en eldre server med bare provider_id virker fortsatt",
+  async () => {
+    // Kontraktvernet. Deployen og koden ruller ikke i samme sekund; en flate
+    // som krevde det nye feltet ville vært død i vinduet mellom dem.
+    const app = await _innloggingMed({ provider_id: "google", miljo: "staging" });
+    assert.deepEqual([...new Set(_providerFelt(app))], ["google"]);
+  });
+
+test("Innlogging: uten leverandør sier flaten fra, den poster ikke tomt",
+  async () => {
+    const app = await _innloggingMed({ providere: [], miljo: "staging" });
+    assert.equal(_providerFelt(app).length, 0,
+      "flaten rendret et skjema uten leverandør");
+    assert.ok(app.textContent.includes(t("ui.logg_inn_utilgjengelig")),
+      "flaten sa ikke fra at innlogging mangler");
+  });
+
+test("Innlogging: leverandørvalget er axe-rent", async () => {
+  const app = await _innloggingMed(
+    { providere: ["google", "microsoft"], miljo: "produksjon" });
+  const brudd = await alvorligeBrudd(app);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
