@@ -118,26 +118,34 @@ def test_ett_medlemskap_gir_firmaet(migrator):
     assert _firma_for_bruker(migrator, bid, _Ident()) == TENANT
 
 
-def test_flere_medlemskap_gir_avvisning_ikke_en_gjetning(migrator):
-    """Den dyre feilen: å logge noen inn i FEIL firma uten å si det.
+def test_flere_medlemskap_gir_et_forutsigbart_valg(migrator):
+    """KONTRAKTEN ENDRET SEG I 196.
 
-    To firmaer som ser like ut er ikke ett — samme klasse som
-    partsregisteret måtte rettes for. Døra skal si nei til den kommer en
-    firmavelger, ikke velge først i alfabetet.
+    Før: flere medlemskap ga `firma_ikke_valgt`, og låste henne ute av
+    BEGGE firmaene — også det hun alt jobbet i. Begrunnelsen var god (å
+    velge først i alfabetet ville logget noen inn i feil firma uten å si
+    det), men prisen var at et helt bruksmønster ikke fantes.
+
+    Nå lander hun ALFABETISK FØRST — forutsigbart, samme sted hver gang —
+    skallet sier hvilket firma hun er i, og et ønske fra innloggingen
+    respekteres når medlemskapet finnes.
+
+    Det ene som IKKE endret seg: gjetting gir aldri tilgang.
+    `test_onsket_gjelder_bare_der_medlemskapet_finnes` (196s portfil) måler
+    nettopp det.
     """
-    from api.sesjon import SesjonFeil, _firma_for_bruker
+    from api.sesjon import _firma_for_bruker
     bid = _bruker(migrator)
     _meld_inn(migrator, bid, TENANT)
     _meld_inn(migrator, bid, "t-firma-nummer-to")
-    migrator.execute("SELECT set_config('disponit.tenant', '', true)")
+    migrator.execute("SELECT set_config('disponit.tenant', \'\', true)")
 
     assert sorted(_speil(migrator, bid)) == sorted([TENANT, "t-firma-nummer-to"])
-    with pytest.raises(SesjonFeil) as f:
-        _firma_for_bruker(migrator, bid, _Ident())
-    assert f.value.kode == "firma_ikke_valgt"
-    # Og den skal ikke brenne `medlemskap`-bremsen: en bruker med to
-    # arbeidsgivere har ikke gjort noe galt.
-    assert f.value.http == 401
+    valgt = _firma_for_bruker(migrator, bid, _Ident())
+    assert valgt == sorted([TENANT, "t-firma-nummer-to"])[0]
+    # Og valget er STABILT — ikke tilfeldig fra gang til gang.
+    assert {_firma_for_bruker(migrator, bid, _Ident()) for _ in range(4)} \
+        == {valgt}
 
 
 def test_ingen_medlemskap_gir_registrantsesjon_ikke_blindvei(migrator):

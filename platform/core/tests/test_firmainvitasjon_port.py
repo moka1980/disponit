@@ -285,20 +285,24 @@ def test_en_invitasjon_uten_roller_avvises(migrator):
 
 
 @pg
-def test_to_medlemskap_laaser_ute_av_BEGGE(migrator):
-    """VERNET bak scopekravet på innløsningsruten, målt.
+def test_to_medlemskap_laaser_ikke_lenger_ute(migrator):
+    """MARKØREN FYRTE, og det er hele poenget med den.
 
-    Ruten krever `firma:opprett` — registrantens scope. Det ser ut som en
-    begrensning («en ansatt i firma A kan ikke bli med i firma B»), og
-    CodeRabbit ba meg fjerne det. Men uten kravet ville hun mistet tilgangen
-    til firmaet hun ALT jobber i, i samme klikk: `_firma_for_bruker` svarer
-    `firma_ikke_valgt` når det finnes to medlemskap, og det gjelder BEGGE.
+    Da invitasjonen ble bygget krevde innløsningsruten `firma:opprett` —
+    registrantens scope — og det var et VERN: to medlemskap låste en bruker
+    ute av BEGGE firmaene, så en ansatt i firma A som innløste en invitasjon
+    til firma B ville mistet tilgangen til firmaet hun alt jobbet i.
 
-    Kravet skal derfor løftes SAMMEN MED firmavelgeren — ikke før, og ikke
-    som en separat forbedring. Denne porten er stedet å oppdage at velgeren
-    har landet.
+    Porten sa: «den faller den dagen firmavelgeren lander». 196 landet, og
+    den falt.
+
+    VERNETS FORUTSETNING ER BORTE. Det som står igjen er en ren FUNKSJONELL
+    begrensning: en ansatt i firma A har ikke `firma:opprett` og kan derfor
+    ikke innløse en invitasjon til firma B. Det er ikke farlig, bare i
+    veien — og det løftes i egen PR, fordi et nytt scope må inn hos ALLE
+    roller og i rolleguiden.
     """
-    from api.sesjon import SesjonFeil, _firma_for_bruker
+    from api.sesjon import _firma_for_bruker
 
     bid = _bruker(migrator, "d")
     a, b = _t(), _t()
@@ -307,8 +311,5 @@ def test_to_medlemskap_laaser_ute_av_BEGGE(migrator):
     assert sorted(_medlemskap(migrator, bid)) == sorted([a, b])
 
     migrator.execute("SELECT set_config('disponit.tenant','',true)")
-    with pytest.raises(SesjonFeil) as f:
-        _firma_for_bruker(migrator, bid, _Ident())
-    assert f.value.kode == "firma_ikke_valgt", (
-        "firmavelgeren finnes nå — scopekravet på innløsningsruten kan og "
-        "SKAL løftes (se api/invitasjon.py)")
+    # Ingen SesjonFeil lenger — hun lander alfabetisk først.
+    assert _firma_for_bruker(migrator, bid, _Ident()) == sorted([a, b])[0]
