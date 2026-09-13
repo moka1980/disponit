@@ -40,6 +40,12 @@ KJENTE_EIERROLLER = (
     "disponit_policy_eier",
     "disponit_modul_eier",
     "disponit_domene_eier",
+    # 199: plattformeier-doerene. Eid av en egen rolle fordi de maa se ALLE
+    # tenanters firmarader — policyen `plattform_eier_ser_alle` har
+    # TO-klausul paa nettopp den, og en definer eid av migrator ville
+    # truffet FORCE RLS uten kontekst. Ikke BYPASSRLS: maalt at policyen
+    # holder, og den er strengt snevrere.
+    "disponit_plattform_eier",  # 199
     # Klyngen «orden i eget hus» — én eier per modul (#326/#327).
     "disponit_kvalitet_eier",   # M-3, migrasjon 092
     "disponit_lager_eier",      # M-4, migrasjon 093

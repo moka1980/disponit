@@ -47,7 +47,15 @@ SKJEMA_ROLLER = ("disponit_authenticator", "disponit_m37_claimer",
                  "disponit_plikt_eier",
                  # Klynge 2 (097-100), samme grunn.
                  "disponit_tilgang_eier", "disponit_lisens_eier",
-                 "disponit_personvern_eier", "disponit_compliance_eier")
+                 "disponit_personvern_eier", "disponit_compliance_eier",
+                 # 199: plattformeier-doerene. Samme grunn som over — og
+                 # den ble oppdaget her, ved at SP-10 stoppet paa
+                 # «permission denied for schema public» mens hovedbasen
+                 # var groenn. EN NY EIERROLLE MAA INN TRE STEDER:
+                 # `oppsett-postgresql.sh` (verten), `ci.yml` (hovedbasen)
+                 # og denne lista (engangsbasen). To av dem er lette aa
+                 # huske fordi CI sier fra; den tredje sier fra senere.
+                 "disponit_plattform_eier")
 
 TEN = "t-sp10"
 
