@@ -3378,6 +3378,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import firmaregistrering
         return firmaregistrering.registrer_firma(tjeneste, request)
 
+    def invitasjon_opprett(request: Request) -> Response:
+        from . import invitasjon
+        return invitasjon.opprett_endepunkt(tjeneste, request)
+
+    def invitasjon_liste(request: Request) -> Response:
+        from . import invitasjon
+        return invitasjon.liste_endepunkt(tjeneste, request)
+
+    def invitasjon_innloes(request: Request) -> Response:
+        from . import invitasjon
+        return invitasjon.innloes_endepunkt(tjeneste, request)
+
     def parter_kontakt(request: Request) -> Response:
         return partermodul.kontakt_endepunkt(tjeneste, request)
 
@@ -4481,6 +4493,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/epost/utkast/{utkast_id:uuid}/send", epost_utkast_send,
               methods=["POST"]),
         Route("/v1/firma/registrer", firma_registrer, methods=["POST"]),
+        Route("/v1/invitasjoner", invitasjon_liste, methods=["GET"]),
+        Route("/v1/invitasjoner", invitasjon_opprett, methods=["POST"]),
+        Route("/v1/invitasjoner/innloes", invitasjon_innloes,
+              methods=["POST"]),
         Route("/v1/parter", parter_liste, methods=["GET"]),
         Route("/v1/parter", parter_registrer, methods=["POST"]),
         Route("/v1/parter/import", parter_import, methods=["POST"]),
@@ -4647,7 +4663,10 @@ BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
                                      # rollen. Registranten ville fått
                                      # `scope_mangler` på det eneste hun
                                      # har lov til.
-                                     "firma:opprett"})
+                                     "firma:opprett",
+                                     # 194/195: admin lager
+                                     # invitasjonslenken fra flaten.
+                                     "firma:inviter"})
 
 
 def _autentiser(tjeneste: Tjeneste, request: Request, conn, rid: str,
@@ -6122,6 +6141,15 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # så det må også stå i BROWSER_MUTASJONSSCOPES — og endepunktet
     # håndhever CSRF selv gjennom `_browserkontekst`.
     ("POST", "/v1/firma/registrer"):         "firma:opprett",
+    # 194/195: å invitere er administratorens handling.
+    ("GET",  "/v1/invitasjoner"):            "firma:inviter",
+    ("POST", "/v1/invitasjoner"):            "firma:inviter",
+    # INNLØSNINGEN BRUKER REGISTRANTENS SCOPE. Autoriteten er TOKENET;
+    # scopet er bare det `_autentiser` krever for å slippe forbi (den er
+    # bygget for ett påkrevd scope og avviser None). Målt: en bruker med
+    # to medlemskap kan ikke logge inn før firmavelgeren finnes (192), så
+    # hver inviterte ER registrant. MÅ UTVIDES med firmavelgeren.
+    ("POST", "/v1/invitasjoner/innloes"):    "firma:opprett",
     ("GET",  "/v1/parter"):                  "part:read",
     ("POST", "/v1/parter"):                  "part:administrer",
     ("POST", "/v1/parter/import"):           "part:administrer",

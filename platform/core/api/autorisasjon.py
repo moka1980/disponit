@@ -161,13 +161,29 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
                         # blitt STILLE DROPPET av den porten — altså en
                         # rolleguide som lovet mindre enn rollen har,
                         # uten at noe ble rødt.
-                        "kundeservice:innhold"}),
+                        "kundeservice:innhold",
+                             "firma:inviter"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).
     "godkjenner": frozenset({"decisions:read", "exceptions:read",
                              "exceptions:approve", "exceptions:reject",
                              "exceptions:escalate"}),
+    # 194/195: `firma:inviter` — å slippe inn en kollega er å dele ut
+    # fullmakter i firmaet, altså administratorens handling. En `leser` som
+    # kunne invitere, kunne invitert seg selv en ny konto med flere roller
+    # enn hun har.
+    #
+    # INNLØSNINGEN krever `firma:opprett` (`RUTESCOPE`), altså REGISTRANTENS
+    # scope — ikke fordi autoriteten ligger der, men fordi `_autentiser` er
+    # bygget for ett påkrevd scope og avviser `None`. Autoriteten er TOKENET;
+    # sesjonen beviser bare hvem hun er, og CSRF at det er hennes egen
+    # nettleser.
+    #
+    # KRAVET MÅ UTVIDES SAMMEN MED FIRMAVELGEREN (192): en ansatt i et ANNET
+    # firma har ikke `firma:opprett`, og kunne da ikke innløst en invitasjon.
+    # I dag er det uten betydning — en bruker med to medlemskap kan ikke
+    # logge inn i det hele tatt før velgeren finnes.
     # PR-013: policyforvalteren redigerer utkast OG attesterer aktivering.
     # `policy:write` og `policy:activate` er adskilte scopes: fire-øyne (V6)
     # hviler på at aktivering krever attestasjoner, ikke på at rollen mangler

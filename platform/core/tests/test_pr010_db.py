@@ -287,11 +287,15 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # kunderegisteret — samme klasse som de andre: retten til å FØRE et
     # register, aldri en stående fullmakt. (`part:read` er lesende og
     # står i LESESCOPES, som enhver innlogget bruker måles mot.)
+    # 194/195: `firma:inviter` er admins muterende scope over MEDLEMSKAP —
+    # å slippe inn en kollega er å dele ut fullmakter i firmaet. En `leser`
+    # som kunne invitere, kunne invitert seg selv en ny konto med flere
+    # roller enn hun har.
     assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
         "plan:gjenoppta", "epost:kilde:administrer",
         "epost:utkast:behandle", "kontinuitet:write",
-        "part:administrer"}
+        "part:administrer", "firma:inviter"}
     # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
     # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
     # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant
