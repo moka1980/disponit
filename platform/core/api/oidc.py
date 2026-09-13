@@ -53,6 +53,21 @@ class Provider:
     tillatte_algoritmer: tuple
     allowlist: tuple = ()         # staging (scheme,host,port,cidr)
 
+    def __post_init__(self):
+        # EN TOM LISTE ER IKKE «INGENTING TILLATT» — DEN ER «ALT TILLATT».
+        # Målt 13/9: `jwt.decode(rs256_token, nøkkel, algorithms=[])`
+        # AKSEPTERER tokenet, mens `algorithms=["HS256"]` avviser det med
+        # `UnsupportedAlgorithmError`. joserfc leser en tom liste som fravær
+        # av begrensning, og pinningen forsvinner uten et eneste varsel.
+        #
+        # 197 strammer CHECK-en i basen, men vernet hører også HER: laget som
+        # BRUKER lista skal si nei selv, uavhengig av hvilken rad den kom fra
+        # og uavhengig av om den kom fra basen i det hele tatt.
+        if not self.tillatte_algoritmer:
+            raise OidcFeil(
+                f"provider {self.provider_id!r} har tom algoritmeliste — "
+                "det slår av algoritmepinningen")
+
 
 # ---------------------------------------------------------------------------
 # Egress: hvert provider-endepunkt valideres FØR bruk (v5 §2)
@@ -218,7 +233,8 @@ def _valider_id_token(provider: Provider, d: Discovery, id_token: str,
                       nonce: str, naa: float | None) -> Identitet:
     # `alg: none` og enhver algoritme utenfor allowlisten avvises av
     # `algorithms=` (v6 §3) — joserfc eier JWS-valideringen, ingen egen
-    # base64-dekoding.
+    # base64-dekoding. Løftet gjelder BARE for en ikke-tom liste; en tom
+    # liste avvises allerede i `Provider.__post_init__` (se der).
     algs = list(provider.tillatte_algoritmer)
     keyset = _keyset_for(provider, naa=naa)
     try:
