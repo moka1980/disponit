@@ -29,19 +29,16 @@ CSRF at det er hennes egen nettleser som ber. Ideelt sett hadde ruten stått
 uten scopekrav, som `/v1/sesjon`, men `_autentiser` er bygget for ett
 påkrevd scope og avviser `None`.
 
-`firma:opprett` er likevel riktig i praksis, og grunnen er målt: en bruker
-med TO medlemskap kan ikke logge inn i det hele tatt — `_firma_for_bruker`
-svarer `firma_ikke_valgt` til firmavelgeren finnes (192). «Allerede ansatt i
-et annet firma» er altså en tilstand systemet ikke kan nå ennå, og hver
-eneste inviterte er registrant.
+KRAVET VAR ET VERN, OG ER DET IKKE LENGER. Da dette ble skrevet låste to
+medlemskap en bruker ute av BEGGE firmaene (`firma_ikke_valgt`), så en
+ansatt i firma A som innløste en invitasjon til firma B mistet tilgangen
+til firmaet hun alt jobbet i, i samme klikk. 196 (firmavelgeren) fjernet
+den utestengelsen — og dermed vernets forutsetning.
 
-OG KRAVET ER ET VERN, IKKE BARE EN BINDING. Målt: en bruker med TO
-medlemskap blir LÅST UTE AV BEGGE — `_firma_for_bruker` svarer
-`firma_ikke_valgt`. Uten scopekravet kunne en ansatt i firma A innløst en
-invitasjon til firma B og mistet tilgangen til firmaet hun alt jobber i, i
-samme klikk. Kravet skal derfor løftes SAMMEN MED firmavelgeren — ikke før,
-og ikke som en separat «forbedring». Porten
-`test_kollegaen_blir_medlem_med_registrantens_scope` navngir bindingen.
+DET SOM STÅR IGJEN ER EN FUNKSJONELL BEGRENSNING: en ansatt i et annet
+firma har ikke `firma:opprett`, og kan derfor ikke innløse en invitasjon.
+Ikke farlig, bare i veien. Å løfte det krever et nytt scope hos ALLE roller
+og i rolleguiden — egen PR, ikke et påheng her.
 
 TENANTEN STÅR I LENKEN, og det er ikke en lekkasje: den inviterte skal jo
 inn dit. Den autoriserer ingenting alene — døra krever tokenet, og feil

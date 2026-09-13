@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,10 @@ PLATTFORM = "_plattform"
 # 192: der en identitet står mens hun registrerer sitt første firma. Ikke et
 # firma, og aldri data — bare et sted å ha ett scope.
 REGISTRERING = "_registrering"
+#: Formen på et firmanavn, speilet fra `firma_tenant_form` (190). Den
+#: brukes bare til å avvise umulige ØNSKER tidlig — autoriteten er og
+#: forblir medlemskapet.
+FIRMAFORM = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 
 INAKTIV_MIN = 30
 ABSOLUTT_TIMER = 12
@@ -345,14 +350,22 @@ def oidc_start(tjeneste, request: Request) -> Response:
                                            tenant, key_id)
             # Én binding om gangen (v5 §8): ryddes implisitt av at bare denne
             # transaksjonens binding_hash matcher i callback.
+            # 196: FIRMAØNSKET. En PREFERANSE, ikke en fullmakt — callbacken
+            # bruker det bare hvis medlemskapet finnes. Formen valideres her
+            # så en umulig verdi aldri når basen; innholdet autoriserer
+            # ingenting uansett.
+            onske = data.get("firma")
+            if not isinstance(onske, str) or not FIRMAFORM.match(onske or ""):
+                onske = None
             conn.execute(
                 "INSERT INTO oidc_logintransaksjon (state_hash, binding_hash,"
                 " nonce, pkce_kryptert, pkce_nonce, pkce_key_id, provider_id,"
-                " tenant_kandidat, retursti, utloper) VALUES"
-                " (%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + make_interval(mins => %s))",
+                " tenant_kandidat, retursti, utloper, firma_onske) VALUES"
+                " (%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + make_interval(mins => %s),"
+                " %s)",
                 (_hash(sv.state), _hash(binding), sv.nonce, ct, nonce, key_id,
                  provider_id, tenant, trygg_retursti(data.get("retursti")),
-                 LOGIN_TX_MIN))
+                 LOGIN_TX_MIN, onske))
             conn.commit()
         except SesjonFeil as f:
             conn.rollback()
@@ -406,13 +419,14 @@ def oidc_callback(tjeneste, request: Request) -> Response:
             " WHERE state_hash=%s AND binding_hash=%s AND status='NY'"
             "   AND utloper > now()"
             " RETURNING provider_id, tenant_kandidat, nonce, pkce_kryptert,"
-            "           pkce_nonce, pkce_key_id, retursti",
+            "           pkce_nonce, pkce_key_id, retursti, firma_onske",
             (_hash(state), _hash(binding))).fetchone()
         if rad is None:
             _rate(conn, "callback_ugyldig", ip)
             conn.commit()
             return _feil_side(rid)
-        (provider_id, tenant, nonce, ct, pnonce, pkey_id, retursti) = rad
+        (provider_id, tenant, nonce, ct, pnonce, pkey_id, retursti,
+         firma_onske) = rad
         conn.commit()                 # ingen lås under nettverkskallet
 
         # Dekrypter pkce + veksle + valider (UTEN DB-lås).
@@ -440,7 +454,8 @@ def oidc_callback(tjeneste, request: Request) -> Response:
         # serialisert (5-grensen, v3 §6), FULLFØRT i SAMME transaksjon.
         try:
             sesjon_cookie, csrf_cookie = _opprett_sesjon(
-                conn, tenant, ident, _hash(state), rid, ip)
+                conn, tenant, ident, _hash(state), rid, ip,
+                firma_onske=firma_onske)
         except SesjonFeil as f:
             conn.rollback()
             # `firma_ikke_valgt` er ikke en feilet innlogging — det er en
@@ -476,7 +491,8 @@ def _terminer(conn, state_hash, status, tenant, rid):
                  (status, state_hash))
 
 
-def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet) -> str:
+def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet,
+                      onske: str | None = None) -> str:
     """bruker_id → firma, uten tenantkontekst. Presist ETT eller ingenting.
 
     `brukermedlemskap` kan ikke svare på dette. Den har FORCE ROW LEVEL
@@ -498,6 +514,12 @@ def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet) -> str:
         (bid,)).fetchall()
     if len(rader) == 1:
         return rader[0][0]
+    # 196: ØNSKET GJELDER BARE DER MEDLEMSKAPET FINNES. Det kom med inn i
+    # runden fra `/v1/oidc/start`, og er en PREFERANSE — aldri en fullmakt.
+    # En fremmed som gjetter et firmanavn har ikke kommet nærmere noe: hun
+    # må uansett gjennom leverandøren og eie raden.
+    if onske and any(r[0] == onske for r in rader):
+        return onske
     if not rader:
         # INGEN MEDLEMSKAP ER IKKE LENGER EN BLINDVEI (192).
         #
@@ -518,13 +540,23 @@ def _firma_for_bruker(conn, bid: str, ident: oidc.Identitet) -> str:
         _rate(conn, "medlemskap", f"{ident.issuer}|{ident.sub}")
         conn.commit()
         raise SesjonFeil("ingen_tilgang", 401)
-    # Flere medlemskap er IKKE et misbruksforsøk, og skal ikke telles som
-    # ett: en legitim bruker med to arbeidsgivere ville blitt utestengt i en
-    # time av `medlemskap`-bremsen for noe hun ikke kan gjøre noe med.
-    raise SesjonFeil("firma_ikke_valgt", 401)
+    # FLERE MEDLEMSKAP ER IKKE LENGER EN BLINDVEI (196).
+    #
+    # Fram til nå svarte denne `firma_ikke_valgt`, og det låste henne ute av
+    # BEGGE firmaene — også det hun alt jobbet i. Begrunnelsen var god: å
+    # velge det første alfabetisk ville logget noen inn i feil firma uten å
+    # si det. Men prisen var at et helt bruksmønster ikke fantes.
+    #
+    # Nå lander hun et sted hun HAR tilgang, skallet sier hvilket firma hun
+    # er i, og bytteren er ett klikk unna (den starter en ny innloggingsrunde
+    # med `firma` satt — sesjonens tenant er uforanderlig og skal være det).
+    # Rekkefølgen er alfabetisk og dermed FORUTSIGBAR: samme bruker lander
+    # samme sted hver gang, til hun ber om noe annet.
+    return rader[0][0]
 
 
-def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip):
+def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip,
+                    firma_onske: str | None = None):
     sett_kontekst(conn, tenant, "oidc-callback", rid)
     # Upsert identitet (issuer,sub).
     bid = conn.execute(
@@ -539,7 +571,7 @@ def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip):
     # leverandøren hadde svart. Alt under dette punktet kjører på det
     # resolverte firmaet, inkludert advisory-låsen og revisjonssporet.
     if tenant == PLATTFORM:
-        tenant = _firma_for_bruker(conn, bid, ident)
+        tenant = _firma_for_bruker(conn, bid, ident, onske=firma_onske)
         sett_kontekst(conn, tenant, "oidc-callback", rid)
     # Serialiser sesjonsgrensen på (tenant, bruker_id) med en advisory lock
     # (v3 §6). To samtidige callbacker for samme bruker kan da ikke begge
@@ -628,9 +660,27 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
         return kanonisk_json(
             {"tenant": tenant, "bruker_id": bid, "scopes": sorted(scopes),
              "roller": sorted(roller), "epost": epost,
+             # 196: firmaene hun HAR, så skallet kan tegne bytteren. Lista
+             # leses fra det RLS-frie speilet (189) — den samme kilden
+             # innloggingen bruker, så de to ikke kan komme i utakt.
+             "firmaer": _firmaene_hennes(conn, bid),
              "utloper": utloper, "request_id": rid}, 200, {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)
+
+
+def _firmaene_hennes(conn, bid: str) -> list[str]:
+    """Firmaene en identitet hører til. Tom liste hvis noe feiler — skallet
+    skal tegne uten bytter, ikke nekte å tegne."""
+    import psycopg
+
+    try:
+        return [r[0] for r in conn.execute(
+            "SELECT tenant FROM bruker_tenant WHERE bruker_id=%s"
+            "   AND tenant NOT LIKE %s ORDER BY tenant",
+            (bid, "\\_%")).fetchall()]
+    except psycopg.Error:
+        return []
 
 
 def csrf_matcher(lagret_hash: str | None, request: Request) -> bool:

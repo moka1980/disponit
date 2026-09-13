@@ -192,10 +192,10 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # sesjonen beviser bare hvem hun er, og CSRF at det er hennes egen
     # nettleser.
     #
-    # KRAVET ER ET VERN, ikke bare en binding: en bruker med TO medlemskap
-    # blir LÅST UTE AV BEGGE (`firma_ikke_valgt`, målt). Uten det kunne en
-    # ansatt i firma A innløst en invitasjon til firma B og mistet tilgangen
-    # til firmaet hun alt jobber i. Løftes SAMMEN MED firmavelgeren (192).
+    # KRAVET VAR ET VERN — to medlemskap låste ute av BEGGE — og 196
+    # (firmavelgeren) fjernet den utestengelsen. Igjen står en funksjonell
+    # begrensning: en ansatt i et annet firma har ikke `firma:opprett` og
+    # kan ikke innløse en invitasjon. Løftes i egen PR.
     # PR-013: policyforvalteren redigerer utkast OG attesterer aktivering.
     # `policy:write` og `policy:activate` er adskilte scopes: fire-øyne (V6)
     # hviler på at aktivering krever attestasjoner, ikke på at rollen mangler

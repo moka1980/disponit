@@ -193,5 +193,6 @@
   "192_selvregistrering.sql": "096f2ab12a8196b6c90d13c9d9bdcb96827c23f55e28d5f360c13b3383dd66eb",
   "193_proveutlopet_maa_kunne_kjores.sql": "d4c10bf1af874879b24c7042dc2997901988e6546fe7ad2148d7f2acb93d65cf",
   "194_firmainvitasjon.sql": "a47bd42552a8cbe115fdd04d62e6f3f9cfd749d0fd76f09944ca6bb4bca96f02",
-  "195_invitasjonsscope.sql": "856623610dd995decee5dae999b5cffc278f6a47c0737c408a953d9bca3e10b9"
+  "195_invitasjonsscope.sql": "856623610dd995decee5dae999b5cffc278f6a47c0737c408a953d9bca3e10b9",
+  "196_firmavalget.sql": "58d1d95c5dcf62e7b5d308635eb51b3e428991dc271724364e120a9ad99f8f8b"
 }
