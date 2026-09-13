@@ -92,7 +92,7 @@ CREATE OR REPLACE FUNCTION plattform_er_eier(p_bruker_id TEXT)
 RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER STABLE
 SET search_path = pg_catalog AS $$
     SELECT nullif(current_setting('disponit.aktor', true), '')
-           IS NOT DISTINCT FROM 'bruker:' || p_bruker_id
+           IS NOT DISTINCT FROM p_bruker_id
        AND EXISTS (SELECT 1 FROM public.plattformeier
                     WHERE bruker_id = p_bruker_id)
 $$;
@@ -110,11 +110,19 @@ BEGIN
     -- Dette er 038s form, speilet: `krev_tenantkontekst` binder `p_tenant`
     -- til `current_setting('disponit.tenant')` nettopp fordi «definer-veiene
     -- binder tenanten til KONTEKSTEN, aldri til parameteret alene». Her er
-    -- aktøren det samme: API-et setter `disponit.aktor` til `bruker:<bid>`
-    -- fra SESJONEN (`sett_kontekst`), aldri fra kroppen.
+    -- aktøren det samme.
+    --
+    -- FORMEN ER DEN RÅ BRUKER-ID-EN, ikke `bruker:<id>`. Jeg skrev prefikset
+    -- først, fordi `invitasjon.py` bruker den formen i sitt eget kall — men
+    -- `_browserkontekst` (policyadmin_http) gjør `bid = token_id.split(
+    -- 'sesjon:', 1)[-1]` og sender NØYAKTIG den strengen til `sett_kontekst`.
+    -- Med prefikset ville døra avvist hvert eneste ekte kall, mens porten min
+    -- sto grønn fordi den satte konteksten slik jeg TRODDE API-et gjorde.
+    -- Porten kaller nå `db.pg.sett_kontekst` selv, så formen kan ikke skli
+    -- fra hverandre igjen.
     IF p_bruker_id IS NULL OR btrim(p_bruker_id) = ''
        OR nullif(current_setting('disponit.aktor', true), '')
-          IS DISTINCT FROM 'bruker:' || p_bruker_id THEN
+          IS DISTINCT FROM p_bruker_id THEN
         RAISE EXCEPTION '%: p_bruker_id er ikke kallerens aktørkontekst', p_dor
             USING ERRCODE = 'insufficient_privilege';
     END IF;

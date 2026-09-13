@@ -18,6 +18,11 @@ from .test_api import DSN, MIGRATOR_DSN, migrator, miljo  # noqa: F401
 pg = pytest.mark.skipif(not (DSN and MIGRATOR_DSN),
                         reason="test-DSN ikke satt")
 
+#: En plattformeier har ingen enkelt tenant — men `sett_kontekst` krever en,
+#: og doerene bryr seg ikke om hvilken (policyen er `USING (true)`). Denne er
+#: bare et sted aa staa.
+T = "t-plattform"
+
 
 def _runtime():
     """Doerene er grantet til RUNTIME, ikke til migrator.
@@ -33,12 +38,21 @@ def _runtime():
     return koble(DSN)
 
 
-def _som(conn, bruker_id):
-    """Setter `disponit.aktor` slik API-et gjoer det: `bruker:<bid>` fra
-    SESJONEN. Doerene binder `p_bruker_id` til nettopp denne (038s form),
-    saa uten dette er parameteret ingen identitet."""
-    conn.execute("SELECT set_config('disponit.aktor',%s,true)",
-                 ("bruker:" + bruker_id,))
+def _som(conn, bruker_id, tenant=None):
+    """Setter konteksten slik API-et GJOER det — via `db.pg.sett_kontekst`.
+
+    Foerste form skrev `set_config('disponit.aktor', 'bruker:'||bid)` for
+    hand, fordi `invitasjon.py` bruker den formen i sitt eget kall. Men
+    `_browserkontekst` gjoer `bid = token_id.split('sesjon:',1)[-1]` og sender
+    NOEYAKTIG den strengen videre. Doera krevde prefikset, og ville derfor
+    avvist hvert eneste ekte kall — mens porten sto groenn fordi den satte
+    konteksten slik jeg TRODDE API-et gjorde.
+
+    Ved aa kalle produksjonsfunksjonen kan de to ikke skli fra hverandre
+    igjen: endrer formen seg, foelger porten med.
+    """
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, tenant or T, bruker_id, "port")
 
 
 def _ctx(conn, tenant):
@@ -159,7 +173,7 @@ def test_konteksten_legges_tilbake_etter_et_kall(migrator, eier, to_firmaer):  #
     """
     min_tenant = to_firmaer[0]
     with _runtime() as c:
-        _ctx(c, min_tenant); _som(c, eier)
+        _som(c, eier, tenant=min_tenant)
         c.execute("SELECT plattform_firma_oppdater(%s,%s,%s,NULL,'eier')",
                   (eier, to_firmaer[1], "Endret"))
         etter = c.execute(
@@ -167,6 +181,38 @@ def test_konteksten_legges_tilbake_etter_et_kall(migrator, eier, to_firmaer):  #
         c.rollback()
     assert etter == min_tenant, (
         f"konteksten ble staaende paa {etter!r} i stedet for {min_tenant!r}")
+
+
+@pg
+def test_aktorformen_er_den_API_ET_FAKTISK_SETTER(miljo, eier):  # noqa: F811
+    """DEN PORTEN SOM MANGLET, OG SOM NESTEN KOSTET HELE 199.
+
+    Doerene binder `p_bruker_id` til `disponit.aktor`. Jeg skrev bindingen som
+    `'bruker:' || p_bruker_id`, fordi `invitasjon.py` bruker den formen i sitt
+    eget kall — og porten sto groenn fordi den satte konteksten paa NOEYAKTIG
+    samme maate. To feil som var enige med hverandre.
+
+    Den ekte veien er `policyadmin_http._gjenopprett_kontekst`, kalt av
+    `_browserkontekst` med `bid = token_id.split('sesjon:', 1)[-1]` — altsaa
+    den RAA id-en. Med prefikset ville hver eneste ekte forespoersel blitt
+    avvist med «ikke kallerens aktoerkontekst», i prod, etter groenn CI.
+
+    Denne porten kaller den FUNKSJONEN, ikke en etterligning av den.
+
+    MUTASJON SOM FELLER: sett `'bruker:' || p_bruker_id` tilbake i doera.
+    """
+    from api.policyadmin_http import _gjenopprett_kontekst
+
+    with _runtime() as c:
+        _gjenopprett_kontekst(c, T, eier, "port-rid")
+        assert c.execute(
+            "SELECT current_setting('disponit.aktor', true)"
+        ).fetchone()[0] == eier, \
+            "API-ets egen kontekstsetter skriver noe annet enn den raa id-en"
+        # …og doera skal godta nettopp DEN konteksten.
+        assert c.execute("SELECT plattform_er_eier(%s)",
+                         (eier,)).fetchone()[0] is True, \
+            "doera avviste konteksten API-et faktisk setter"
 
 
 @pg
@@ -231,7 +277,7 @@ def test_tenantkontekst_paavirker_ikke_listen(migrator, eier, to_firmaer):  # no
     hadde riktig kontekst fra en tidligere setning.
     """
     with _runtime() as c:
-        _ctx(c, to_firmaer[0]); _som(c, eier)
+        _som(c, eier, tenant=to_firmaer[0])
         sett = {r[0] for r in c.execute(
             "SELECT tenant FROM plattform_firmaliste(%s)", (eier,)).fetchall()}
     assert to_firmaer[1] in sett, \
