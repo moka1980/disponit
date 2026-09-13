@@ -16,7 +16,7 @@ MODULEIER=disponit_modul_eier    # PR-014a: eier modulregisterets overgangsfunks
 MODULESADMIN=disponit_modules_admin  # PR-014a: EXECUTE på overgangsfunksjonene
 EGRESS=disponit_egress           # PR-014b: egress-proxyens rolle, SELECT kun paa visningen
 DOMENEEIER=disponit_domene_eier  # PR-014b: eier domene/artefakt-funksjonene (BYPASSRLS: takeover er kryss-tenant)
-PLATTFORMEIER=disponit_plattform_eier  # 199: eier plattformeier-doerene (BYPASSRLS: firmaadministrasjon er kryss-tenant)
+PLATTFORMEIER=disponit_plattform_eier  # 199: eier plattformeier-doerene (kryss-tenant via POLICY paa firma, ikke BYPASSRLS)
 DOMAINSADMIN=disponit_domains_admin  # PR-014b: EXECUTE paa domenefunksjonene
 ADJUDIKATOR=disponit_domains_adjudicator  # 041: policy-avgrenset SELECT paa overtakelsessaker
 # PR-015 (Codex P1): EGEN, minst-privilegert rolle for driftstimerne
@@ -295,15 +295,25 @@ done
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DOMENEEIER'" \
   | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $DOMENEEIER NOLOGIN BYPASSRLS"
 # plattform_eier eier doerene plattformeieren bruker til aa se og administrere
-# ALLE firmaer. BYPASSRLS av samme grunn som domene_eier: `firma` har FORCE
-# RLS, saa en SECURITY DEFINER-doer eid av migrator ser NULL rader uten
-# tenantkontekst — og en plattformeier har per definisjon ingen enkelt tenant.
+# ALLE firmaer. `firma` har FORCE RLS, saa en SECURITY DEFINER-doer eid av
+# migrator ser NULL rader uten tenantkontekst — og en plattformeier har per
+# definisjon ingen enkelt tenant aa staa i.
+#
+# INGEN BYPASSRLS. Foerste form ga rollen BYPASSRLS, speilet paa domene_eier.
+# Saa maalte jeg den snevrere veien, og den holder: en SECURITY DEFINER-doer
+# eid av en rolle UTEN bypassrls, med en POLICY `TO $PLATTFORMEIER` paa
+# `firma`, teller alle firmaer paa tvers av tenanter — mens runtime selv faar
+# «permission denied for table firma». Det er `disponit_m37_claimer`s form
+# (policyen `firma_sveiper`), og den er strengt mindre: BYPASSRLS opphever RLS
+# paa HVER tabell i basen, ogsaa de doerene aldri skal se.
 #
 # ROLLEN ER IKKE FULLMAKTEN. Doerene sjekker selv at kalleren staar i
-# `plattformeier`-tabellen; rollen er bare det som lar dem SE radene. En
-# BYPASSRLS-rolle uten den sjekken ville gjort enhver kaller til eier.
+# `plattformeier`-tabellen; rollen er bare det som lar dem SE radene.
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$PLATTFORMEIER'" \
-  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $PLATTFORMEIER NOLOGIN BYPASSRLS"
+  | grep -q 1 || sudo -u postgres psql -qc "CREATE ROLE $PLATTFORMEIER NOLOGIN"
+# Idempotens for baser der rollen alt ble opprettet med BYPASSRLS: skriptet
+# skal konvergere mot den snevre formen, ikke bare hoppe over.
+sudo -u postgres psql -qc "ALTER ROLE $PLATTFORMEIER NOBYPASSRLS"
 # Migrator maa vaere MEDLEM av begge for aa kunne sette eierskap (OWNER TO)
 # paa api_tokener (003) og paa arbeidskapabiliteter + M-37-funksjonene (005).
 sudo -u postgres psql -qc "GRANT $AUTH TO $MIGRATOR"

@@ -254,10 +254,10 @@ jobs:
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_egress LOGIN PASSWORD 'egr'"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domene_eier NOLOGIN BYPASSRLS"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domene_eier TO disponit_migrator WITH INHERIT FALSE"
-          # 199: plattformeier-doerene. BYPASSRLS av samme grunn som
-          # domene_eier — `firma` har FORCE RLS, og en plattformeier har
-          # per definisjon ingen enkelt tenant aa staa i.
-          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plattform_eier NOLOGIN BYPASSRLS"
+          # 199: plattformeier-doerene. INGEN BYPASSRLS — kryss-tenant-synet
+          # kommer fra en POLICY `TO disponit_plattform_eier` paa `firma`,
+          # maalt til aa holde. BYPASSRLS ville opphevet RLS paa hver tabell.
+          psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_plattform_eier NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_plattform_eier TO disponit_migrator WITH INHERIT FALSE"
           psql -h 127.0.0.1 -U postgres -qtAc "CREATE ROLE disponit_domains_admin NOLOGIN"
           psql -h 127.0.0.1 -U postgres -qtAc "GRANT disponit_domains_admin TO disponit_migrator WITH INHERIT FALSE"
