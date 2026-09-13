@@ -266,12 +266,27 @@ def ui_locale(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 def ui_oppsett(request: Request) -> Response:
-    provider = os.environ.get("DISPONIT_UI_PROVIDER", "").strip()
-    # json.dumps gjør verdien injeksjonstrygg i svaret; i tillegg fail-closed
-    # mot samme lukkede mønster som backenden — ugyldig → tom (flaten sier
-    # «ikke konfigurert» i stedet for å poste en umulig provider).
-    if not _PROVIDER_RE.match(provider):
-        provider = ""
+    # FLERE PROVIDERE, IKKE ÉN. Eier: «så vi kan begge deler, google account
+    # og microsoft 365». Variabelen var én id; nå er den en kommaliste, og
+    # ÉN VERDI ER FORTSATT GYLDIG — en vert som ikke er rørt oppfører seg
+    # nøyaktig som før.
+    #
+    # FAIL-CLOSED PER LEDD, ikke for hele lista: en feilskrevet id faller ut,
+    # mens de andre står. Motsatt ville én skrivefeil på verten tatt bort
+    # innloggingen helt, og det er en dyrere feil enn å mangle én knapp.
+    raa = os.environ.get("DISPONIT_UI_PROVIDER", "").strip()
+    providere = []
+    for del_ in raa.split(","):
+        d = del_.strip()
+        # json.dumps gjør verdien injeksjonstrygg i svaret; i tillegg
+        # fail-closed mot samme lukkede mønster som backenden.
+        if _PROVIDER_RE.match(d) and d not in providere:
+            providere.append(d)
+    # `provider_id` BLIR STÅENDE. Den er kontrakten eldre lesere har, og
+    # betyr nå «den første» — flaten bruker `providere` når den finnes.
+    # To felt som kan si ulikt er en lukt; her kan de ikke, fordi det ene
+    # er utledet av det andre i samme uttrykk.
+    provider = providere[0] if providere else ""
     # `miljo` er det forsiden trenger for å avgjøre om noe kan LOVES en kunde.
     # `driftstilstand: produksjon` sier hvor koden KJØRER; det sier ingenting om
     # hvilke policystatuser verten godtar. Kjører prosessen i staging-modus,
@@ -287,5 +302,6 @@ def ui_oppsett(request: Request) -> Response:
     # forsiden mens registeret fortsatt sto i staging og lot `utkast` binde
     # beslutninger. Da faller de to ikke lenger sammen, som er hele poenget.
     miljo = gjeldende_miljo()
-    data = json.dumps({"provider_id": provider, "miljo": miljo}).encode("utf-8")
+    data = json.dumps({"provider_id": provider, "providere": providere,
+                       "miljo": miljo}).encode("utf-8")
     return _svar(data, _CT[".json"])
