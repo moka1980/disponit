@@ -57,6 +57,18 @@ der går over guiden og sjekker at hver oppføring finnes her — ikke
 motsatt. En rolle kunden ikke skal kunne TILDELE (`registrant`, og senere
 plattformrollen) hører derfor ikke hjemme i guiden.
 
+EN TIENDE, OG DEN GJELDER RUTEN OG IKKE SCOPET: en GET MÅ ha et scope som
+står i `LESESCOPES`. `test_pr008` sier «leserute med ikke-lese-scope» og er
+den eneste porten som fanger det — jeg la `GET /v1/invitasjoner` bak det
+muterende `firma:inviter`, kjørte fem andre kontraktporter, og oppdaget det
+først i CI. Rutekontrakten hører med HVER gang en rute legges til.
+
+Det er heller ikke formalisme: en browsersesjon måles mot NETTOPP
+`LESESCOPES` for lesing, så en GET utenfor settet lever på en carve-out den
+ikke skulle trengt. Finnes det ikke et passende lesescope, er det som regel
+et tegn på at ruten leser noe som hører til en annen fullmakt —
+invitasjonslista endte på `security:read`, og ble riktigere av det.
+
 EN NIENDE, HVIS SCOPET MUTERER FRA NETTLESEREN: `BROWSER_MUTASJONSSCOPES`
 er nevnt i speil 3, men grunnen tåler å gjentas — `app.py` avviser
 BLANKT ethvert scope en browsersesjon ber om som verken står i
@@ -180,10 +192,10 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # sesjonen beviser bare hvem hun er, og CSRF at det er hennes egen
     # nettleser.
     #
-    # KRAVET MÅ UTVIDES SAMMEN MED FIRMAVELGEREN (192): en ansatt i et ANNET
-    # firma har ikke `firma:opprett`, og kunne da ikke innløst en invitasjon.
-    # I dag er det uten betydning — en bruker med to medlemskap kan ikke
-    # logge inn i det hele tatt før velgeren finnes.
+    # KRAVET ER ET VERN, ikke bare en binding: en bruker med TO medlemskap
+    # blir LÅST UTE AV BEGGE (`firma_ikke_valgt`, målt). Uten det kunne en
+    # ansatt i firma A innløst en invitasjon til firma B og mistet tilgangen
+    # til firmaet hun alt jobber i. Løftes SAMMEN MED firmavelgeren (192).
     # PR-013: policyforvalteren redigerer utkast OG attesterer aktivering.
     # `policy:write` og `policy:activate` er adskilte scopes: fire-øyne (V6)
     # hviler på at aktivering krever attestasjoner, ikke på at rollen mangler

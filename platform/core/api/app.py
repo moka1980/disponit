@@ -6151,8 +6151,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # INNLØSNINGEN BRUKER REGISTRANTENS SCOPE. Autoriteten er TOKENET;
     # scopet er bare det `_autentiser` krever for å slippe forbi (den er
     # bygget for ett påkrevd scope og avviser None). Målt: en bruker med
-    # to medlemskap kan ikke logge inn før firmavelgeren finnes (192), så
-    # hver inviterte ER registrant. MÅ UTVIDES med firmavelgeren.
+    # to medlemskap blir LÅST UTE AV BEGGE (`firma_ikke_valgt`, målt), så
+    # kravet er et VERN: uten det kunne en ansatt i firma A innløst en
+    # invitasjon til firma B og mistet tilgangen til begge. Løftes SAMMEN
+    # MED firmavelgeren, ikke før.
     ("POST", "/v1/invitasjoner/innloes"):    "firma:opprett",
     ("GET",  "/v1/parter"):                  "part:read",
     ("POST", "/v1/parter"):                  "part:administrer",

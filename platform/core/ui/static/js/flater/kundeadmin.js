@@ -2,6 +2,9 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { KUNDEROLLER, modulerFraIder, tenantTelling } from "../plattformdata.js";
+import { opprettInvitasjon, hentInvitasjoner,
+         nyIdempotensnokkel } from "../api.js";
+import { meldLive } from "../komponenter.js";
 import { byggRuter, kanForvaltePolicy } from "../sitekart.js";
 import { siteModuleKort, siteStatusMerke } from "../sitekomponenter.js";
 
@@ -56,6 +59,128 @@ function policykort(forvalter, ruter) {
     el("p", { text: t("ui.kundeadmin.policy_ingen_tekst") }));
 }
 
+// Rollene en admin kan gi bort. KUNDEROLLER er husets guide over
+// KUNDEROLLER (leser/godkjenner/policyforvalter); `admin` står bevisst
+// utenfor den — den er ikke en rolle guiden forklarer — men et firma må
+// kunne ha mer enn én administrator, og grunnleggeren kan slutte. Derfor
+// tilbys den her, eksplisitt og sist.
+export const INVITERBARE = [...KUNDEROLLER.map((r) => r.id), "admin"];
+
+function invitasjonsdel(ctx) {
+  const scopes = new Set(ctx.scopes || []);
+  const kanInvitere = scopes.has("firma:inviter");
+  const kanSe = scopes.has("security:read");
+  if (!kanInvitere && !kanSe) return el("div", { hidden: true });
+
+  const boks = el("div", { class: "kv-underdel" });
+  // Idempotensnøkkelen lever i lukkingen, ikke i kallet: den skal overleve
+  // et nytt klikk etter et tapt svar, og bare da.
+  let idem = null;
+  let idemFor = null;
+  const melding = el("p", { class: "melding", role: "status" });
+  const lenkeboks = el("div", {});
+  const liste = el("div", {});
+
+  const tegnListe = async () => {
+    if (!kanSe) return;
+    try {
+      const d = await hentInvitasjoner();
+      const inv = d.invitasjoner || [];
+      sett(liste,
+        el("h3", { text: t("ui.kundeadmin.invitasjoner") }),
+        inv.length
+          ? el("ul", { class: "site-list" }, inv.map((i) =>
+              el("li", {},
+                el("strong", { text: i.merke }), " ",
+                (i.roller || []).join(", "), " — ",
+                i.brukt ? t("ui.kundeadmin.invitasjon_brukt")
+                        : t("ui.kundeadmin.invitasjon_apen"))))
+          : el("p", { class: "muted",
+                      text: t("ui.kundeadmin.invitasjoner_tom") }));
+    } catch {
+      // Lista er et tillegg; feiler den, skal skjemaet fortsatt virke.
+      sett(liste, "");
+    }
+  };
+
+  if (kanInvitere) {
+    const avkrysninger = INVITERBARE.map((id) => {
+      const inp = el("input", { type: "checkbox", id: `inv-${id}`,
+                                value: id });
+      return { id, inp,
+        rad: el("div", { class: "felt-avkryss" }, inp,
+          el("label", { for: `inv-${id}`, text: t(`ui.rolle.${id}`) })) };
+    });
+    const knapp = el("button", { type: "submit", class: "knapp primar",
+                                 text: t("ui.kundeadmin.inviter_knapp") });
+    const skjema = el("form", { class: "kv-skjema", novalidate: "" },
+      el("h3", { text: t("ui.kundeadmin.inviter") }),
+      el("p", { class: "hjelpetekst",
+                text: t("ui.kundeadmin.inviter_hjelp") }),
+      el("fieldset", {},
+        el("legend", { text: t("ui.kundeadmin.inviter_roller") }),
+        ...avkrysninger.map((a) => a.rad)),
+      el("div", { class: "knapperad" }, knapp), melding, lenkeboks);
+
+    skjema.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      melding.classList.remove("feil");
+      sett(melding, "");
+      const valgte = avkrysninger.filter((a) => a.inp.checked).map((a) => a.id);
+      if (!valgte.length) {
+        melding.classList.add("feil");
+        sett(melding, t("ui.kundeadmin.inviter_ingen_rolle"));
+        avkrysninger[0].inp.focus();
+        return;
+      }
+      // ÉN NØKKEL PER ROLLEVALG, beholdt til opprettelsen lykkes
+      // (CodeRabbit). Første utgave lot klienten lage en fersk nøkkel per
+      // klikk: et tapt svar + nytt klikk ga da TO invitasjoner, og den ene
+      // ble liggende ubrukt til den utløp. Endrer hun valget, er det en
+      // annen operasjon og nøkkelen nullstilles.
+      const valgnokkel = valgte.join(",");
+      if (idemFor !== valgnokkel) {
+        idemFor = valgnokkel;
+        idem = nyIdempotensnokkel();
+      }
+      knapp.disabled = true;
+      try {
+        const svar = await opprettInvitasjon({ roller: valgte }, idem);
+        idemFor = null;          // lykkes den, er neste klikk en ny lenke
+        // LENKEN VISES ÉN GANG. Tokenet finnes ikke i basen og kan ikke
+        // hentes igjen — derfor står den i et felt hun kan merke og
+        // kopiere, ikke i en flyktig melding.
+        const url = `${window.location.origin}/?visning=blimed`
+          + `&t=${encodeURIComponent(svar.tenant)}`
+          + `&k=${encodeURIComponent(svar.token)}`;
+        const felt = el("input", { class: "felt-inp", readOnly: true,
+                                   value: url, id: "inv-lenke" });
+        sett(lenkeboks,
+          el("label", { for: "inv-lenke",
+                        text: t("ui.kundeadmin.inviter_lenke") }),
+          felt,
+          el("p", { class: "muted",
+                    text: t("ui.kundeadmin.inviter_utloper")
+                      .replace("{dato}", svar.utloper) }));
+        felt.select();
+        meldLive(t("ui.kundeadmin.inviter_lenke"));
+        await tegnListe();
+      } catch {
+        melding.classList.add("feil");
+        sett(melding, t("ui.kundeadmin.inviter_feil"));
+      } finally {
+        knapp.disabled = false;
+      }
+    });
+    boks.append(skjema);
+  }
+
+  boks.append(liste);
+  tegnListe();
+  return boks;
+}
+
+
 export function visKundeadmin(hoved, ctx = {}) {
   // Flaten er åpen for hele kundeøkten, men policyADMINISTRASJONEN er det
   // ikke: uten `policy:write`/`policy:activate` peker snarveien på en flate
@@ -107,7 +232,13 @@ export function visKundeadmin(hoved, ctx = {}) {
         el("ul", { class: "site-list" },
           KUNDEROLLER.map((rolle) =>
             el("li", {}, el("strong", { text: t(rolle.navn_nokkel) }), " ",
-              t(rolle.tekst_nokkel))))),
+              t(rolle.tekst_nokkel))),
+        ),
+        // 194/195: INVITASJONEN STÅR HER, i seksjonen om brukere, og ikke
+        // som en egen flate. Rolleguiden over forklarer hva rollene
+        // BETYR; skjemaet under er stedet man faktisk bruker den. En egen
+        // flate ville skilt forklaringen fra handlingen.
+        invitasjonsdel(ctx)),
       el("section", { class: "kort" },
         el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.integrasjoner") }),
         el("h2", { text: t("ui.kundeadmin.integrasjoner_tittel") }),

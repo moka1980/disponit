@@ -141,6 +141,20 @@ export async function loggUt() {
   return r.status === 204 || r.status === 401;
 }
 
+// Kort, stabil hash for idempotensnøkler som må utledes av innhold.
+// To uavhengige runder gir 64 bits — rikelig for å skille to forespørsler
+// fra samme bruker, og ingen hemmelighet lekker ut i headeren.
+function _kortHash(tekst) {
+  const rund = (fro, faktor) => {
+    let h = fro >>> 0;
+    for (let i = 0; i < tekst.length; i += 1) {
+      h = Math.imul(h ^ tekst.charCodeAt(i), faktor) >>> 0;
+    }
+    return ((h ^ (h >>> 15)) >>> 0).toString(16).padStart(8, "0");
+  };
+  return rund(0x811c9dc5, 0x01000193) + rund(0xdeadbeef, 0x85ebca6b);
+}
+
 export function nyIdempotensnokkel() {
   if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -385,6 +399,25 @@ export const registrerPart = (part, idem) =>
 // ikke et stille duplikat.
 export const registrerFirma = (firma, idem) =>
   _muter("/v1/firma/registrer", "POST", firma, idem);
+
+// 194/195: invitasjon av kolleger.
+//
+// `opprettInvitasjon` returnerer RÅTOKENET ÉN GANG — det finnes ikke i
+// basen og kan ikke hentes igjen. Flaten MÅ vise det med en gang; lukker
+// hun vinduet uten å kopiere lenken, må hun lage en ny.
+export const opprettInvitasjon = (kropp, idem) =>
+  _muter("/v1/invitasjoner", "POST", kropp, idem || nyIdempotensnokkel());
+export const hentInvitasjoner = () => hentJson("/v1/invitasjoner");
+// Nøkkelen binder BÅDE firma og token (CodeRabbit). Første utgave nøklet
+// bare på tenant, og da ville to ULIKE invitasjoner til samme firma — en
+// utløpt og en ny — delt nøkkel: det andre kallet hadde fått REPLAY av det
+// førstes svar i stedet for å bli innløst.
+//
+// Tokenet hashes inn, ikke limes inn: `Idempotency-Key` er en header som
+// kan havne i logger, og en hemmelighet hører ikke hjemme der.
+export const innloesInvitasjon = (tenant, token) =>
+  _muter("/v1/invitasjoner/innloes", "POST", { tenant, token },
+         `invinnl-${_kortHash(`${tenant}\u001f${token}`)}`);
 export const settPartKontakt = (partId, kontakt, idem) =>
   _muter(`/v1/parter/${encodeURIComponent(partId)}/kontakt`, "POST",
          kontakt, idem || nyIdempotensnokkel());

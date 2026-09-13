@@ -35,9 +35,12 @@ svarer `firma_ikke_valgt` til firmavelgeren finnes (192). «Allerede ansatt i
 et annet firma» er altså en tilstand systemet ikke kan nå ennå, og hver
 eneste inviterte er registrant.
 
-DETTE MÅ UTVIDES SAMMEN MED FIRMAVELGEREN. Den dagen en person kan høre til
-to firmaer, vil en ansatt i firma A ikke kunne innløse en invitasjon til
-firma B — hun har ikke `firma:opprett`. Porten
+OG KRAVET ER ET VERN, IKKE BARE EN BINDING. Målt: en bruker med TO
+medlemskap blir LÅST UTE AV BEGGE — `_firma_for_bruker` svarer
+`firma_ikke_valgt`. Uten scopekravet kunne en ansatt i firma A innløst en
+invitasjon til firma B og mistet tilgangen til firmaet hun alt jobber i, i
+samme klikk. Kravet skal derfor løftes SAMMEN MED firmavelgeren — ikke før,
+og ikke som en separat «forbedring». Porten
 `test_kollegaen_blir_medlem_med_registrantens_scope` navngir bindingen.
 
 TENANTEN STÅR I LENKEN, og det er ikke en lekkasje: den inviterte skal jo
