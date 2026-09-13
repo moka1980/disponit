@@ -354,6 +354,18 @@ export const slettPolicy = (policyId, versjon, innholdsHash,
          { versjon, innholds_hash: innholdsHash }, idem);
 export const merkVarselLest = (id, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/varsel/${id}/lest`, "POST", {}, idem);
+// Slett ETT varsel. Nøkkelen bindes til id-en: to slettinger i samme økt er
+// to forskjellige handlinger, og en delt nøkkel ville latt den andre svare med
+// den førstes kvittering.
+export const slettVarsel = (id, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/varsel/${id}/slett`, "POST", {}, idem);
+// Tøm innboksen — ved å navngi de varslene FLATEN VISTE (CodeRabbit).
+// «Slett alt som finnes nå» oppga feil tall i bekreftelsen (lista er kappet
+// på 50) og var ikke idempotent: et gjentatt kall ville tatt varsler som kom
+// imellom. Med id-er sletter et gjentatt kall de samme radene, altså
+// ingenting andre gang.
+export const slettAlleVarsler = (ider, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/varsel/slett-alle", "POST", { ider }, idem);
 export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>
   _muter("/v1/varselvalg", "POST", { kanal, sprak }, idem);
 export const forkastUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>

@@ -445,6 +445,79 @@ def merk_lest(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
         (tenant, bruker_id, varsel_id)).fetchone() is not None
 
 
+def slett(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
+          varsel_id: int) -> bool:
+    """Fjern ETT av MINE varsler. Eier: «det blir mange dag etter dag.»
+
+    `bruker_id` i WHERE av samme grunn som i `merk_lest`: RLS skiller
+    tenanter, ikke mennesker inne i samme tenant. Uten den kunne én bruker
+    slettet en kollegas varsel — og dermed skjult at noe ventet på henne, denne
+    gangen uten at det engang sto igjen som lest.
+
+    HARD DELETE, IKKE EN SKJULT-KOLONNE. Ingen fremmednøkkel peker på `varsel`
+    (målt), og raden har ingen etterliv: teksten er en nøkkel som finnes i
+    locales, og handlingen ligger på flaten varselet peker til. En
+    skjult-kolonne ville i tillegg krevd at HVER lesevei husket å filtrere på
+    den — `innboks`, `antall_uleste`, senderens klaim — og den som glemte det
+    ville vist et varsel eier trodde var borte.
+
+    `under_sending` STÅR UTENFOR, av nøyaktig samme grunn som i `I_KO`: den
+    raden er i et SMTP-kall akkurat nå, og en e-post som er ute kan ikke kalles
+    hjem. Senderen tåler riktignok at raden forsvinner — fullføringen er
+    token-bundet og teller et tap med en advarsel i journalen — men å produsere
+    den advarselen med vilje er å lage driftsstøy for å slippe å vente noen
+    sekunder. Vinduet er kort; neste sletting tar raden.
+
+    Ligger raden i kø, er slettingen samtidig en avlysning: raden er borte, og
+    senderen finner den ikke. Det er den samme regelen som `merk_lest` —
+    portalen er varselet, e-posten er en kopi.
+    """
+    return conn.execute(
+        "DELETE FROM varsel"
+        " WHERE tenant=%s AND bruker_id=%s AND id=%s"
+        "   AND epost_status IS DISTINCT FROM 'under_sending'"
+        " RETURNING id",
+        (tenant, bruker_id, varsel_id)).fetchone() is not None
+
+
+#: Taket flaten viser (`innboks`s `grense`) er også taket for hvor mange
+#: id-er én tømming kan bære. Uten et tak er kroppen ubundet.
+MAKS_SLETT = 200
+
+
+def slett_mange(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
+                ider: list[int]) -> int:
+    """Slett de varslene FLATEN VISTE. Returnerer antallet som faktisk gikk.
+
+    DEN TOK FØRST INGEN ID-ER — «slett alt som finnes nå» — og det var galt på
+    to måter samtidig (CodeRabbit):
+
+    * `innboks` er kappet på `grense` (50). Knappen sa «Slett alle (50)» mens
+      kallet slettet ALLE 200. En destruktiv bekreftelse som oppgir feil tall
+      er verre enn en uten tall.
+    * Den var ikke idempotent. Varselrutene har ingen idempotensrad — de er
+      «naturlig idempotente» fordi «lest» og «kanal» er TILSTANDER. «Slett alt
+      som finnes nå» er derimot en HENDELSE: et gjentatt kall etter en
+      nettverkshikke ville tatt varsler som kom imellom, usett.
+
+    Med id-er er begge borte: tallet i bekreftelsen er nøyaktig det som
+    slettes, og et gjentatt kall med de samme id-ene sletter de samme radene
+    — altså ingenting andre gang. Det er den samme naturlige idempotensen som
+    de andre varselrutene hviler på.
+
+    `under_sending` står utenfor, som i `slett`.
+    """
+    if not ider:
+        return 0
+    if len(ider) > MAKS_SLETT:
+        raise ValueError("for mange id-er")
+    return conn.execute(
+        "DELETE FROM varsel"
+        " WHERE tenant=%s AND bruker_id=%s AND id = ANY(%s)"
+        "   AND epost_status IS DISTINCT FROM 'under_sending'",
+        (tenant, bruker_id, list(ider))).rowcount
+
+
 def sett_kanal(conn: psycopg.Connection, *, tenant: str, bruker_id: str,
                kanal: str, sprak: str | None = None) -> str:
     """Valget eier ba om. Ukjent verdi avvises — en feilstavet kanal skal ikke

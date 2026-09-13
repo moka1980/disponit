@@ -3467,6 +3467,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_varsel_lest(request: Request) -> Response:
         return policyadmin_http.varsel_lest_endepunkt(tjeneste, request)
 
+    def pa_varsel_slett(request: Request) -> Response:
+        return policyadmin_http.varsel_slett_endepunkt(tjeneste, request)
+
+    def pa_varsel_slett_alle(request: Request) -> Response:
+        return policyadmin_http.varsel_slett_alle_endepunkt(tjeneste, request)
+
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
@@ -4519,6 +4525,16 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/varsel", pa_varsel_liste, methods=["GET"]),
         Route("/v1/varsel/{varsel_id:str}/lest", pa_varsel_lest,
+              methods=["POST"]),
+        # POST, ikke DELETE: dette speiler `/lest` nøyaktig — samme scope,
+        # samme CSRF-vei, samme idempotensnøkkel. Huset har én DELETE-rute i
+        # hele API-et (`/v1/sesjon`), og å innføre verbet her ville vært en ny
+        # form å ta stilling til for en knapp som gjør det samme som naboen.
+        # `slett-alle` står FØR den parametriserte ruten av vane, ikke av nød:
+        # stiene har ulikt antall ledd og kan ikke kollidere.
+        Route("/v1/varsel/slett-alle", pa_varsel_slett_alle,
+              methods=["POST"]),
+        Route("/v1/varsel/{varsel_id:str}/slett", pa_varsel_slett,
               methods=["POST"]),
         Route("/v1/varselvalg", pa_varselvalg, methods=["POST"]),
         Route("/v1/policy/{policy_id:str}/slett", pa_slett_policy,
@@ -6101,6 +6117,13 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # Å handle på et varsel skal aldri kreve mer enn å se det.
     ("GET",  "/v1/varsel"):                  "policy:read",
     ("POST", "/v1/varsel/{varsel_id:str}/lest"): "policy:read",
+    # Å rydde sin egen innboks er samme fullmakt som å kvittere den ut:
+    # raden er MIN, og bruker-id-en kommer fra økten. `policy:read` står i
+    # LESESCOPES, så browsersesjonen slipper forbi den generelle porten uten
+    # at scopet må inn i `BROWSER_MUTASJONSSCOPES` — nøyaktig som `/lest`,
+    # som muterer med det samme scopet i dag.
+    ("POST", "/v1/varsel/slett-alle"):       "policy:read",
+    ("POST", "/v1/varsel/{varsel_id:str}/slett"): "policy:read",
     ("POST", "/v1/varselvalg"):              "policy:read",
     ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",

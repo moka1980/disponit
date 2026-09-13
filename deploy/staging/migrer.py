@@ -602,7 +602,12 @@ RESET ROLE;
 -- Varsler: flaten leser og merker som lest; tjenesten oppretter. Senderen
 -- oppdaterer e-poststatus. Ingen DELETE — rydding er en driftsoppgave med
 -- egen rolle, ikke noe forespørselsveien skal kunne gjøre.
-GRANT SELECT, INSERT, UPDATE ON varsel TO {rolle};
+-- DELETE kom til da eier ba om «slett og slett alle varsler, det blir
+-- mange dag etter dag». Granten står HER og ikke i en migrasjon:
+-- `NULLSTILL_TABELLER` trekker tilbake alt runtime har på hver tabell
+-- migrator eier, rett etter migrasjonene — en GRANT inne i en migrasjon
+-- viskes ut av neste steg i samme deploy. Det skjedde med 189.
+GRANT SELECT, INSERT, UPDATE, DELETE ON varsel TO {rolle};
 -- Senderfunksjonene er BEVISST utelatt her (Codex P1): de er kryss-tenant,
 -- og web-API-rollen skal ikke kunne enumerere andre tenanters varsler om
 -- forespørselsveien kompromitteres. De tilhører `disponit_varselsender` alene —

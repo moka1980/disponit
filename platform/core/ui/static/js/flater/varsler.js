@@ -10,7 +10,8 @@
 // åpnet — og et språkbytte endrer gamle varsler også.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, merkVarselLest, settVarselkanal, UautorisertFeil } from "../api.js";
+import { hentJson, merkVarselLest, slettVarsel, slettAlleVarsler,
+         settVarselkanal, UautorisertFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { flateHode, medStatus } from "./felles.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
@@ -47,7 +48,7 @@ function varseltekst(v) {
   return s;
 }
 
-function rad(v, paaLest, paaAapne) {
+function rad(v, paaLest, paaAapne, paaSlett) {
   const li = el("li", { class: `varselrad${v.lest ? "" : " varsel-ulest"}` });
   const tekst = el("p", { class: "varseltekst", text: varseltekst(v) });
   // ISO-STRENGEN, ikke et objekt rundt den (Codex P2). `Tidspunkt` tar
@@ -73,8 +74,58 @@ function rad(v, paaLest, paaAapne) {
     m.addEventListener("click", () => paaLest(v));
     knapper.append(m);
   }
+  // SLETT STÅR SIST, og uten `primar`. Rekkefølgen er ikke pynt: «Gå til» er
+  // veien til handlingen og skal møte fingeren først — den destruktive
+  // knappen skal ikke ligge der tommelen lander.
+  //
+  // Ingen bekreftelse på ÉN rad. Den er billig å miste og dyr å bekrefte:
+  // eier har mange varsler hver dag, og et ja-dialog per rad ville gjort
+  // ryddingen til det arbeidet den skulle fjerne. «Slett alle» spør, fordi
+  // den tar alt på én gang.
+  const d = el("button", { class: "knapp liten fare", type: "button",
+    text: t("ui.varsler.slett") });
+  d.addEventListener("click", () => paaSlett(v));
+  knapper.append(d);
   li.append(tekst, el("p", { class: "sub" }, nar), knapper);
   return li;
+}
+
+
+function slettAlleDel(ider, paaBekreftet) {
+  const antall = ider.length;
+  // TO STEG, IKKE `confirm()`. Nettleserens dialog er ikke stilbar, ikke
+  // oversatt av oss, og i noen sandkasser returnerer den bare `false` — da
+  // ville knappen sett ut som den ikke virket. To knapper i flaten er
+  // dessuten lesbare for en skjermleser i samme flyt som resten.
+  const boks = el("div", { class: "varsler-slettalle" });
+  const tegnStart = () => {
+    const b = el("button", { class: "knapp liten fare", type: "button",
+      text: t("ui.varsler.slett_alle").replace("{n}", String(antall)) });
+    b.addEventListener("click", tegnBekreft);
+    sett(boks, b);
+  };
+  const tegnBekreft = () => {
+    const ja = el("button", { class: "knapp liten fare", type: "button",
+      text: t("ui.varsler.slett_alle_ja") });
+    const nei = el("button", { class: "knapp liten", type: "button",
+      text: t("ui.varsler.slett_alle_avbryt") });
+    ja.addEventListener("click", () => { ja.disabled = true; paaBekreftet(ider); });
+    nei.addEventListener("click", tegnStart);
+    sett(boks,
+      el("p", { class: "melding", role: "alert",
+        // «1 varsler» er ikke norsk. Huset har ingen pluralhjelper (målt),
+        // så entallet er sin egen nøkkel — ikke en {n} som tilfeldigvis
+        // leses riktig for alle tall unntatt ett.
+        text: antall === 1
+          ? t("ui.varsler.slett_alle_bekreft_en")
+          : t("ui.varsler.slett_alle_bekreft").replace("{n}", String(antall)) }),
+      el("div", { class: "knapperad" }, ja, nei));
+    // Fokus flyttes til AVBRYT, ikke til «ja». Den som traff knappen ved et
+    // uhell skal ikke kunne bekrefte med samme bevegelse.
+    nei.focus();
+  };
+  tegnStart();
+  return boks;
 }
 
 function kanalvelger(kanal, paaValg) {
@@ -117,13 +168,20 @@ export function visVarsler(hoved, ctx) {
       const liste = varsler.length
         ? el("ul", { class: "varselliste",
             "aria-label": t("ui.varsler.tittel") },
-          ...varsler.map((v) => rad(v, merkLest, aapne)))
+          ...varsler.map((v) => rad(v, merkLest, aapne, slettEn)))
         : TomTilstand({ tittel: t("ui.varsler.tom"),
             tekst: t("ui.varsler.tom_tekst") });
       sett(hoved,
         ...flateHode(t("ui.varsler.tittel"),
           t("ui.varsler.undertittel").replace("{n}", String(d.uleste || 0))),
         kanalvelger(d.kanal, settKanal),
+        // «Slett alle» finnes bare når det ER noe å slette. En knapp som
+        // alltid står der, og som ikke gjør noe i den vanligste tilstanden,
+        // lærer eier å overse den.
+        // ID-ENE, ikke bare antallet: bekreftelsen lover nøyaktig disse
+        // radene, og kallet sletter nøyaktig dem.
+        ...(varsler.length
+          ? [slettAlleDel(varsler.map((v) => v.id), slettAlle)] : []),
         liste);
     });
 
@@ -147,6 +205,49 @@ export function visVarsler(hoved, ctx) {
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         meldLive(t("ui.varsler.feilet"));
+      });
+  }
+
+  function slettEn(v) {
+    slettVarsel(v.id)
+      .then((svar) => {
+        // LES SVARET (CodeRabbit). Lå raden i et SMTP-kall, svarer døra
+        // `slettet: false` og varselet blir stående — og da er «Varselet er
+        // slettet» en kvittering skjermen motsier med én gang.
+        meldLive(svar && svar.slettet === false
+          ? t("ui.varsler.slettet_ingen") : t("ui.varsler.slettet"));
+        // Var varselet ULEST, er skallets teller nå feil — samme grunn som
+        // etter `merkLest`. Den oppdateres uavhengig av `eierSkjermen`:
+        // skallet blir stående uansett hvor eier navigerer videre.
+        ctx.oppdaterVarseltall?.();
+        if (eierSkjermen()) tegn();
+      })
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        meldLive(t("ui.varsler.feilet"));
+      });
+  }
+
+  function slettAlle(ider) {
+    slettAlleVarsler(ider)
+      .then((svar) => {
+        const n = Number(svar && svar.slettet) || 0;
+        // ANTALLET SERVEREN FAKTISK SLETTET, ikke antallet på skjermen. En
+        // rad som lå i et SMTP-kall blir stående igjen (`varsel.slett`), og
+        // da er «alt er tømt» usant. Ble ingenting slettet, sier vi DET —
+        // en kvittering som gratulerer med en tom handling er verre enn
+        // ingen kvittering.
+        meldLive(
+          n === 0 ? t("ui.varsler.slettet_ingen")
+            : n === 1 ? t("ui.varsler.slettet_alle_en")
+              : t("ui.varsler.slettet_alle").replace("{n}", String(n)));
+        ctx.oppdaterVarseltall?.();
+        if (eierSkjermen()) tegn();
+      })
+      .catch((e) => {
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        meldLive(t("ui.varsler.feilet"));
+        if (eierSkjermen()) tegn();   // tilbake til knappen, ikke til «ja»
       });
   }
 
