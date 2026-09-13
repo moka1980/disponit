@@ -10,9 +10,16 @@ TRE RUTER:
   RÅTOKENET RETURNERES ÉN GANG og lagres aldri; basen har bare hashen.
   Lukker hun vinduet uten å kopiere lenken, må hun lage en ny — det er
   prisen for at den som får tak i basen ikke kan bruke invitasjonene.
-* GET  /v1/invitasjoner          (`firma:inviter`) — hva som er sendt ut,
+* GET  /v1/invitasjoner          (`security:read`) — hva som er sendt ut,
   og hva som er brukt. Aldri tokenet, bare hashens første tegn som et
   gjenkjennelsesmerke.
+
+  LESESCOPE, IKKE `firma:inviter`. `test_pr008` håndhever at en GET har et
+  scope fra `LESESCOPES`, og det er ikke formalisme: en browsersesjon måles
+  mot NETTOPP det settet for lesing. `security:read` er dessuten riktig på
+  innholdet — hvem som blir gitt tilgang til firmaet er
+  sikkerhetsinformasjon, og `sikkerhet`-rollen bør se ventende
+  invitasjoner.
 * POST /v1/invitasjoner/innloes  (`firma:opprett`) — den inviterte blir
   medlem.
 
@@ -105,14 +112,18 @@ def opprett_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+LESESCOPE = "security:read"
+
+
 def liste_endepunkt(tjeneste, request):
-    """GET /v1/invitasjoner — `firma:inviter`."""
+    """GET /v1/invitasjoner — `security:read` (se modulens topp)."""
     from .app import _rid, kanonisk_json
     from .policyadmin_http import _browserkontekst, _med_conn
     rid = _rid(request)
 
     def kjor(conn):
-        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid, SCOPE)
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        LESESCOPE)
         rader = conn.execute(
             "SELECT token_hash, roller, opprettet_av, opprettet, utloper,"
             " brukt_ts FROM invitasjon_liste(%s)", (tenant,)).fetchall()

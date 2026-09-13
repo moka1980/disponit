@@ -6141,8 +6141,12 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # så det må også stå i BROWSER_MUTASJONSSCOPES — og endepunktet
     # håndhever CSRF selv gjennom `_browserkontekst`.
     ("POST", "/v1/firma/registrer"):         "firma:opprett",
-    # 194/195: å invitere er administratorens handling.
-    ("GET",  "/v1/invitasjoner"):            "firma:inviter",
+    # 194/195: å invitere er administratorens handling — men Å SE LISTA er
+    # en LESERUTE, og `test_pr008` håndhever at en GET har et scope fra
+    # `LESESCOPES`. `security:read` er riktig og ikke bare tilgjengelig:
+    # hvem som blir gitt tilgang til firmaet ER sikkerhetsinformasjon, og
+    # at `sikkerhet`-rollen ser ventende invitasjoner er en fordel.
+    ("GET",  "/v1/invitasjoner"):            "security:read",
     ("POST", "/v1/invitasjoner"):            "firma:inviter",
     # INNLØSNINGEN BRUKER REGISTRANTENS SCOPE. Autoriteten er TOKENET;
     # scopet er bare det `_autentiser` krever for å slippe forbi (den er

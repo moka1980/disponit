@@ -116,6 +116,14 @@ def test_admin_far_raatokenet_en_gang_og_basen_bare_hashen(miljo, migrator,
 
 @pg
 def test_lista_viser_aldri_tokenet(miljo, migrator, klient):
+    """Lista står bak `security:read`, ikke `firma:inviter` — CI fanget at
+    en GET med et MUTERENDE scope bryter husets kontrakt (`test_pr008`:
+    «leserute med ikke-lese-scope»). En browsersesjon måles mot nettopp
+    `LESESCOPES` for lesing.
+
+    Scopet er dessuten riktig på innholdet: hvem som blir gitt tilgang til
+    firmaet er sikkerhetsinformasjon.
+    """
     t = _t()
     _firma(migrator, t)
     admin = _identitet(migrator, "a")
@@ -282,3 +290,24 @@ def test_uten_csrf_slipper_ingen_inn(miljo, migrator,
     assert migrator.execute(
         "SELECT count(*) FROM brukermedlemskap WHERE tenant=%s AND"
         " bruker_id=%s", (t, ny)).fetchone()[0] == 0
+
+
+@pg
+def test_sikkerhetsrollen_ser_lista_men_kan_ikke_invitere(miljo, migrator,
+                                                          klient):
+    """Skillet er hele grunnen til at lista har sitt eget scope: å SE hvem
+    som er sluppet inn, og å SLIPPE NOEN INN, er to fullmakter."""
+    t = _t()
+    _firma(migrator, t)
+    admin, vakt = _identitet(migrator, "a"), _identitet(migrator, "s")
+    ac, acsrf = _okt(migrator, t, admin, ["admin"])
+    _kall(klient, "/v1/invitasjoner", ac, acsrf, {"roller": ["leser"]})
+
+    sc, scsrf = _okt(migrator, t, vakt, ["sikkerhet"])
+    lese = _kall(klient, "/v1/invitasjoner", sc, scsrf, metode="GET")
+    assert lese.status_code == 200, lese.text
+    assert len(lese.json()["invitasjoner"]) == 1
+
+    skrive = _kall(klient, "/v1/invitasjoner", sc, scsrf,
+                   {"roller": ["admin"]})
+    assert skrive.status_code in (401, 403), skrive.text
