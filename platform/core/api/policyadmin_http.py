@@ -697,6 +697,69 @@ def varsel_lest_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def varsel_slett_endepunkt(tjeneste, request):
+    """Slett ETT av MINE varsler.
+
+    Samme scope som `varsel_lest_endepunkt`, og av samme grunn: raden er MIN,
+    og bruker-id-en kommer fra ØKTEN. Å rydde sin egen innboks er ikke en
+    policyfullmakt — og etter 044 varsles administratoren som aktiverte
+    planen, en rolle uten `policy:write`. CSRF-vernet står, som der.
+    """
+    from .app import _rid
+    rid = _rid(request)
+    try:
+        vid = int(request.path_params["varsel_id"])
+    except (TypeError, ValueError):
+        return _feil("request_feilformet", rid)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:read")
+        from . import varsel as v
+        return _ok_lagret(
+            conn, {"slettet": v.slett(conn, tenant=tenant, bruker_id=bid,
+                                      varsel_id=vid)}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def varsel_slett_alle_endepunkt(tjeneste, request):
+    """Slett de varslene FLATEN VISTE. Svarer med antallet som faktisk gikk.
+
+    KROPPEN BÆRER ID-ENE, og det er ikke seremoni (CodeRabbit): «slett alt
+    som finnes nå» oppga feil tall i bekreftelsen (lista er kappet på 50) og
+    var ikke idempotent — et gjentatt kall ville tatt varsler som kom
+    imellom. Se `varsel.slett_mange`.
+
+    Id-ene AUTORISERER ingenting: WHERE-en har fortsatt `bruker_id` fra
+    ØKTEN, så en oppdiktet id treffer ingen rad.
+    """
+    from .app import _rid
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:read")
+        from . import varsel as v
+        k = _kropp(request)
+        raa = k.get("ider")
+        if not isinstance(raa, list) or not raa:
+            return _feil("request_feilformet", rid, 400, detalj="ider")
+        if len(raa) > v.MAKS_SLETT:
+            return _feil("request_feilformet", rid, 400, detalj="for mange")
+        ider = []
+        for x in raa:
+            # `bool` er en `int` i Python; `True` ville blitt id 1.
+            if isinstance(x, bool) or not isinstance(x, int):
+                return _feil("request_feilformet", rid, 400, detalj="ider")
+            ider.append(x)
+        return _ok_lagret(
+            conn, {"slettet": v.slett_mange(conn, tenant=tenant,
+                                            bruker_id=bid, ider=ider)}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
 def varselvalg_endepunkt(tjeneste, request):
     """Valget eier ba om: e-post + portal, eller kun portal."""
     from .app import _rid

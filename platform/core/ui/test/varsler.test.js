@@ -422,3 +422,115 @@ test("Varsler: axe-ren, og radiogruppen har en legend", async () => {
     "et valg uten legend er en gruppe uten navn for skjermleseren");
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Sletting. Eier: «kan du legge til slett og slett alle varsler, det blir
+// mange dag etter dag.»
+// ---------------------------------------------------------------------------
+
+test("Varsler: «Slett» fjerner ETT varsel og oppdaterer skallets teller",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+      kanal: "epost_og_portal" } };
+    let tellerOppdatert = 0;
+    const h = nyHoved();
+    visVarsler(h, ctx({ oppdaterVarseltall: () => { tellerOppdatert += 1; } }));
+    await vent(() => h.querySelector(".varselrad"));
+
+    const slett = finn(h, t("ui.varsler.slett"));
+    assert.ok(slett, "raden mangler en sletteknapp");
+    // Ingen bekreftelse på én rad — den skal gå med ETT klikk.
+    slett.dispatchEvent(new window.Event("click"));
+    // Vent på SELVE BETINGELSEN, ikke på POST-en: `POSTET` fylles INNE i
+    // fetch, altså før `.then()` som oppdaterer telleren har kjørt. Ventet
+    // jeg på POST-en, målte jeg et tidspunkt der svaret ennå ikke var
+    // behandlet — og assertet under falt på timing, ikke på oppførsel.
+    await vent(() => tellerOppdatert > 0);
+
+    const kall = POSTET.find((p) => p.sti.endsWith("/slett"));
+    assert.equal(kall.sti, `/v1/varsel/${VARSEL.id}/slett`,
+      "slettingen traff feil rute");
+    // Var varselet ULEST, er skallets teller feil til den oppdateres.
+    assert.ok(tellerOppdatert > 0,
+      "telleren ble ikke oppdatert — skallet ville vist et slettet varsel");
+  });
+
+test("Varsler: «Slett alle» spør FØRST, og avbryt sletter ingenting",
+  async () => {
+    POSTET = [];
+    SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+      kanal: "epost_og_portal" } };
+    const h = nyHoved();
+    visVarsler(h, ctx());
+    await vent(() => h.querySelector(".varselrad"));
+
+    const alle = finn(h, t("ui.varsler.slett_alle").replace("{n}", "1"));
+    assert.ok(alle, "mangler «slett alle»");
+    alle.dispatchEvent(new window.Event("click"));
+    await vent(() => finn(h, t("ui.varsler.slett_alle_ja")));
+    // ETT varsel → entallsnøkkelen. «Slette alle 1 varsler?» er ikke norsk.
+    assert.ok(h.textContent.includes(t("ui.varsler.slett_alle_bekreft_en")),
+      "bekreftelsen brukte flertallsformen for ett varsel");
+
+    // INGEN POST ennå. Første klikk er et spørsmål, ikke en handling.
+    assert.equal(POSTET.filter((p) => p.sti.includes("slett")).length, 0,
+      "slettet uten å spørre");
+    const avbryt = finn(h, t("ui.varsler.slett_alle_avbryt"));
+    assert.ok(avbryt, "bekreftelsen mangler en vei ut");
+    avbryt.dispatchEvent(new window.Event("click"));
+    await vent(() => finn(h, t("ui.varsler.slett_alle").replace("{n}", "1")));
+    assert.equal(POSTET.filter((p) => p.sti.includes("slett")).length, 0,
+      "avbryt slettet likevel");
+  });
+
+test("Varsler: bekreftet «slett alle» kaller ruten én gang", async () => {
+  POSTET = [];
+  SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+    kanal: "epost_og_portal" } };
+  const h = nyHoved();
+  visVarsler(h, ctx());
+  await vent(() => h.querySelector(".varselrad"));
+  finn(h, t("ui.varsler.slett_alle").replace("{n}", "1"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => finn(h, t("ui.varsler.slett_alle_ja")));
+  finn(h, t("ui.varsler.slett_alle_ja")).dispatchEvent(new window.Event("click"));
+  await vent(() => POSTET.some((p) => p.sti === "/v1/varsel/slett-alle"));
+  const kall = POSTET.filter((p) => p.sti === "/v1/varsel/slett-alle");
+  assert.equal(kall.length, 1, "ruten ble kalt mer enn én gang");
+  // ID-ENE FØLGER MED. Uten dem ville kallet betydd «slett alt som finnes
+  // nå» — og da lover bekreftelsens tall noe annet enn kallet gjør, siden
+  // lista er kappet på 50.
+  assert.deepEqual(kall[0].body.ider, [VARSEL.id],
+    "tømmingen navnga ikke varslene den viste");
+});
+
+test("Varsler: «slett alle» finnes ikke i en tom innboks", async () => {
+  POSTET = [];
+  SVAR = { "/v1/varsel": { varsler: [], uleste: 0, kanal: "kun_portal" } };
+  const h = nyHoved();
+  visVarsler(h, ctx());
+  await vent(() => h.textContent.includes(t("ui.varsler.tom")));
+  // En knapp som alltid står der, og som ikke gjør noe i den vanligste
+  // tilstanden, lærer eier å overse den.
+  assert.equal(finn(h, t("ui.varsler.slett_alle").replace("{n}", "0")),
+    undefined, "tømmeknappen sto i en tom innboks");
+});
+
+test("Varsler: bekreftelsen er axe-ren og gir fokus til AVBRYT", async () => {
+  POSTET = [];
+  SVAR = { "/v1/varsel": { varsler: [VARSEL], uleste: 1,
+    kanal: "epost_og_portal" } };
+  const h = nyHoved();
+  visVarsler(h, ctx());
+  await vent(() => h.querySelector(".varselrad"));
+  finn(h, t("ui.varsler.slett_alle").replace("{n}", "1"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => finn(h, t("ui.varsler.slett_alle_ja")));
+  // Den som traff knappen ved et uhell skal ikke kunne bekrefte med samme
+  // bevegelse — fokus står på veien UT, ikke på den destruktive knappen.
+  assert.equal(h.ownerDocument.activeElement,
+    finn(h, t("ui.varsler.slett_alle_avbryt")),
+    "fokus sto ikke på avbryt");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+});
