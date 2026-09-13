@@ -199,6 +199,13 @@ const BASISRUTER = [
   // nøyaktig denne ene flaten. Det er riktig: hun har ingen data å se
   // ennå, og et skall fullt av tomme moduler ville sagt at noe var galt.
   { nokkel: "firmaregistrering", scope: "firma:opprett" },
+// 194/195: BLI MED — samme scope som registreringen, og det er et VERN,
+  // ikke en mangel. En bruker med TO medlemskap blir låst ute av BEGGE:
+  // `_firma_for_bruker` svarer `firma_ikke_valgt` til firmavelgeren finnes
+  // (målt). Uten scopekravet kunne en ansatt i firma A innløst en
+  // invitasjon til firma B og mistet tilgangen til firmaet hun alt jobber
+  // i. Kravet skal løftes SAMMEN MED velgeren, ikke før.
+  { nokkel: "blimed", scope: "firma:opprett" },
   // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
   // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er

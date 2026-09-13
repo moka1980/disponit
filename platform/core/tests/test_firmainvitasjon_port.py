@@ -282,3 +282,33 @@ def test_en_invitasjon_uten_roller_avvises(migrator):
             " opprettet_av, utloper) VALUES (%s,%s,ARRAY[]::TEXT[],'kari',"
             " now() + interval '1 day')", (h, t))
     migrator.rollback()
+
+
+@pg
+def test_to_medlemskap_laaser_ute_av_BEGGE(migrator):
+    """VERNET bak scopekravet på innløsningsruten, målt.
+
+    Ruten krever `firma:opprett` — registrantens scope. Det ser ut som en
+    begrensning («en ansatt i firma A kan ikke bli med i firma B»), og
+    CodeRabbit ba meg fjerne det. Men uten kravet ville hun mistet tilgangen
+    til firmaet hun ALT jobber i, i samme klikk: `_firma_for_bruker` svarer
+    `firma_ikke_valgt` når det finnes to medlemskap, og det gjelder BEGGE.
+
+    Kravet skal derfor løftes SAMMEN MED firmavelgeren — ikke før, og ikke
+    som en separat forbedring. Denne porten er stedet å oppdage at velgeren
+    har landet.
+    """
+    from api.sesjon import SesjonFeil, _firma_for_bruker
+
+    bid = _bruker(migrator, "d")
+    a, b = _t(), _t()
+    for t in (a, b):
+        _firma(migrator, t, bid)
+    assert sorted(_medlemskap(migrator, bid)) == sorted([a, b])
+
+    migrator.execute("SELECT set_config('disponit.tenant','',true)")
+    with pytest.raises(SesjonFeil) as f:
+        _firma_for_bruker(migrator, bid, _Ident())
+    assert f.value.kode == "firma_ikke_valgt", (
+        "firmavelgeren finnes nå — scopekravet på innløsningsruten kan og "
+        "SKAL løftes (se api/invitasjon.py)")

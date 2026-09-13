@@ -25,6 +25,7 @@ import { visModellstyring } from "./flater/modellstyring.js";
 import { visEpost } from "./flater/epost.js";
 import { visParter } from "./flater/parter.js";
 import { visFirmaregistrering } from "./flater/firmaregistrering.js";
+import { visBliMed } from "./flater/blimed.js";
 import { visKontinuitet } from "./flater/kontinuitet.js";
 import { visDriftstatus } from "./flater/driftstatus.js";
 import { visDatakvalitet } from "./flater/datakvalitet.js";
@@ -100,6 +101,7 @@ const FLATER = {
   epost: visEpost,
   parter: visParter,
   firmaregistrering: visFirmaregistrering,
+  blimed: visBliMed,
   // M-35 (089): basisrute bak `kontinuitet:read` (sitekart.js) —
   // scope-gaten bor der, som for de andre flatene. Skriveveiene i
   // flaten er i tillegg gated på `kontinuitet:write`, men det er
