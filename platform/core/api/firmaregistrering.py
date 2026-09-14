@@ -261,3 +261,45 @@ def _aktiver_bransjemal(conn, tenant: str, bransje: str) -> None:
         "SELECT firma_bootstrap_policy(%s,%s,%s,%s,%s,%s)",
         (tenant, meta["policy_id"], meta["versjon"], innholds_hash(policy),
          meta["status"], json.dumps(policy, ensure_ascii=False)))
+
+
+def avslutt_endepunkt(tjeneste, request):
+    """POST /v1/firma/avslutt — kunden sier opp sitt eget abonnement.
+
+    Eier: «kunden kan avbryte prøveperioden og samme etter 30 dager ikke
+    fortsette.»
+
+    DØRA GÅR ÉN VEI (201). Gjenåpning er plattformeierens handling, fordi
+    `stengt → aktiv` er den eneste veien ut av `stengt` — en angreknapp her
+    ville i praksis vært en oppgraderingsknapp. Angrefristen i 190 gjør at
+    veien tilbake fortsatt finnes: raden og dataene står til
+    `slettefrist_dogn` er ute.
+
+    TENANTEN KOMMER FRA ØKTEN, aldri fra kroppen. Døra binder den i tillegg
+    til kontekstene (038s form), så et firmanavn i en request-kropp treffer
+    ingenting.
+    """
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _feil, _med_conn,
+                                   _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        import psycopg
+
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "firma:avslutt")
+        try:
+            with conn.transaction():
+                conn.execute("SELECT firma_kunde_avslutt(%s,%s)",
+                             (tenant, f"bruker:{bid}"))
+        except psycopg.errors.ForeignKeyViolation:
+            return _feil("firma_ukjent", rid, 404)
+        except psycopg.errors.IntegrityConstraintViolation:
+            # Alt stengt, eller utløpt — ingenting å si opp herfra.
+            return _feil("overgang_ulovlig", rid, 409)
+        except psycopg.errors.InvalidParameterValue:
+            return _feil("request_feilformet", rid, 400)
+        return _ok_lagret(conn, {"tenant": tenant, "status": "stengt"}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)

@@ -369,6 +369,11 @@ export const slettAlleVarsler = (ider, idem = nyIdempotensnokkel()) =>
 // PLATTFORMEIEREN (199). Autoriteten er raden i `plattformeier`, ikke scopet:
 // dørene slår opp kalleren selv og svarer 403 uansett hva flaten tror.
 // Derfor spør flaten først — og tegner ingenting hvis svaret er nei.
+// 201: kunden sier opp sitt eget abonnement. Døra går ÉN vei — det finnes
+// ingen `gjenaapne` her, fordi `stengt → aktiv` ville latt kunden gi seg selv
+// et betalt abonnement. Gjenåpning er plattformeierens handling.
+export const siOppAbonnement = (idem = nyIdempotensnokkel()) =>
+  _muter("/v1/firma/avslutt", "POST", {}, idem);
 export const erPlattformeier = () => hentJson("/v1/plattform/meg");
 export const hentPlattformFirmaer = () => hentJson("/v1/plattform/firmaer");
 export const opprettPlattformFirma = (kropp, idem = nyIdempotensnokkel()) =>
