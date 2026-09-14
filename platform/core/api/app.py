@@ -3473,6 +3473,25 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_varsel_slett_alle(request: Request) -> Response:
         return policyadmin_http.varsel_slett_alle_endepunkt(tjeneste, request)
 
+    # 199: plattformeierens flate. Autoriteten er `plattformeier`-tabellen
+    # og dørene i 199 — ikke scopet. Se `plattform_http`s modultopp.
+    from . import plattform_http as plattformmodul
+
+    def pa_plattform_meg(request: Request) -> Response:
+        return plattformmodul.meg_endepunkt(tjeneste, request)
+
+    def pa_plattform_firmaer(request: Request) -> Response:
+        return plattformmodul.firmaer_endepunkt(tjeneste, request)
+
+    def pa_plattform_opprett(request: Request) -> Response:
+        return plattformmodul.opprett_endepunkt(tjeneste, request)
+
+    def pa_plattform_oppdater(request: Request) -> Response:
+        return plattformmodul.oppdater_endepunkt(tjeneste, request)
+
+    def pa_plattform_status(request: Request) -> Response:
+        return plattformmodul.status_endepunkt(tjeneste, request)
+
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
@@ -4536,6 +4555,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/varsel/{varsel_id:str}/slett", pa_varsel_slett,
               methods=["POST"]),
+        Route("/v1/plattform/meg", pa_plattform_meg, methods=["GET"]),
+        Route("/v1/plattform/firmaer", pa_plattform_firmaer,
+              methods=["GET"]),
+        Route("/v1/plattform/firmaer", pa_plattform_opprett,
+              methods=["POST"]),
+        Route("/v1/plattform/firmaer/{tenant:str}/oppdater",
+              pa_plattform_oppdater, methods=["POST"]),
+        Route("/v1/plattform/firmaer/{tenant:str}/status",
+              pa_plattform_status, methods=["POST"]),
         Route("/v1/varselvalg", pa_varselvalg, methods=["POST"]),
         Route("/v1/policy/{policy_id:str}/slett", pa_slett_policy,
               methods=["POST"]),
@@ -6124,6 +6152,21 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # som muterer med det samme scopet i dag.
     ("POST", "/v1/varsel/slett-alle"):       "policy:read",
     ("POST", "/v1/varsel/{varsel_id:str}/slett"): "policy:read",
+    # 199: PLATTFORMEIERENS RUTER. `policy:read` er ikke fullmakten —
+    # dørene slår opp kalleren i `plattformeier` og nekter med
+    # `insufficient_privilege` uansett hva scopet sier. Scopet er bare det
+    # `_autentiser` krever for å slippe forbi den generelle porten (den er
+    # bygget for ett påkrevd scope og avviser `None`). Samme valg, og samme
+    # grunn, som `/v1/invitasjoner/innloes`: et eget scope måtte inn hos ALLE
+    # roller, i rolleguiden og i en migrasjon — et stort apparat for å
+    # uttrykke noe døra alt håndhever strengere. `policy:read` står dessuten
+    # i LESESCOPES, så browsersesjonen slipper forbi uten at scopet må inn i
+    # `BROWSER_MUTASJONSSCOPES`.
+    ("GET",  "/v1/plattform/meg"):           "policy:read",
+    ("GET",  "/v1/plattform/firmaer"):       "policy:read",
+    ("POST", "/v1/plattform/firmaer"):       "policy:read",
+    ("POST", "/v1/plattform/firmaer/{tenant:str}/oppdater"): "policy:read",
+    ("POST", "/v1/plattform/firmaer/{tenant:str}/status"): "policy:read",
     ("POST", "/v1/varselvalg"):              "policy:read",
     ("POST", "/v1/policy/{policy_id:str}/slett"): "policy:write",
     ("POST", "/v1/policyutkast/{utkast_id:str}/forkast"): "policy:write",
