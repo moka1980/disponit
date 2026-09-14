@@ -1307,7 +1307,249 @@ KRAVGRENSER["m23-purring-v1"] = {
     # Ja-punktet: bevisrunden gikk mot disponit.com med et EKTE oppdrag
     # gjennom modulen (ikke stub-SMTP) — kvitteringen står i basen.
     "krav_ja": ("rundtur_paa_disponit_com",),
-    "punktbinding": {},
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    #
+    # BINDINGEN STO TOM MENS MÅLINGEN ALT VAR GJORT. Bevisrunden 9/9
+    # injiserte fire ekte feil mot disponit.com og målte hvor de havnet —
+    # men uten en binding kunne ingen av tallene flippe et punkt, og
+    # evidensen lå ubrukt. Det er den bindingen som mangler her, ikke
+    # målingen.
+    #
+    # HVORFOR NETTOPP DISSE FIRE beviser
+    # `feilinjisering_til_unntakskø`, og ikke de andre sytten tallene:
+    #   * `policygrense_omgaatt` (2 forsøk, 0 brudd) — frekvensgrensen og
+    #     vilkåret stoppet i UNNTAKSKØEN som sak 121/122/123. Aldri
+    #     stille, aldri tillat. Det er punktets kjerne: en injisert feil
+    #     skal havne et sted et menneske ser den.
+    #   * `kvittering_uten_bokforing` (1, 0) — kvitteringen nådde
+    #     registeret: fordringen står på trinnet som ble purret,
+    #     hendelsen i historikken, evidensen i loggen. Dette er
+    #     manifestets egen formulering målt fra motsatt kant — en
+    #     fordring merket purret UTEN at trinnet ble registrert.
+    #   * `kill_switch_konsumerte_trinn` (1, 0) — bryteren slått av midt
+    #     i kjeden stoppet uten å BRENNE trinnet: fordringen var kandidat
+    #     igjen da bryteren kom på. En nødstopp som spiser arbeidet den
+    #     stoppet, er ikke en nødstopp.
+    #   * `sending_uten_mottaker` (2, 0) — uten adresse bestilles
+    #     ingenting, og et menneskelig oppdrag uten adresse kvitteres
+    #     `feilet` UTEN sending.
+    #
+    # DE ANDRE SYTTEN ER IKKE BUNDET, og det er med vilje: de måler
+    # adressevern, trinnvalg og dobbeltbestilling — sanne og viktige,
+    # men de svarer på et annet spørsmål enn «hvor havner en feil».
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.policygrense_omgaatt_forsok",
+            "maalt.policygrense_omgaatt_brudd",
+            "maalt.kvittering_uten_bokforing_forsok",
+            "maalt.kvittering_uten_bokforing_brudd",
+            "maalt.kill_switch_konsumerte_trinn_forsok",
+            "maalt.kill_switch_konsumerte_trinn_brudd",
+            "maalt.sending_uten_mottaker_forsok",
+            "maalt.sending_uten_mottaker_brudd",
+        ),
+    },
+}
+
+#: M-23 SERTIFISERING (14/9) — det syntetiske fordringssettet med KJENT
+#: fasit. Manifestets punkt krever «et fordringssett med KJENT fasit for
+#: aldersbøttene og for hvilke fordringer som skal bli funn … Settet må
+#: inneholde GRENSETILFELLENE på bøttekantene».
+#:
+#: DERFOR TO FASITER, og begge er skrevet FØR kjøringen:
+#:   * aldersbøttene (`m23_aldersfordeling`): kantene `<= forfall`,
+#:     `<= 30`, `<= 60`, `<= 90`;
+#:   * funnene (`m23_funnkandidater` gjennom sveipen): kantene `>=`,
+#:     `<` og `> 90` — TRE ULIKE operatorer.
+#:
+#: Grensen er 0 avvik på BEGGE. Ett avvik er ikke «nesten»: en
+#: aldersfordeling som er feil på kanten er feil overalt der den betyr
+#: noe, og et funn som uteblir er en fordring ingen ser på.
+#: M-23s ANDEL av suiten, PINNET (delingsbetingelsen i RUTINER.md: et
+#: delt løp må navngi hvilken måling som beviser punktet for nettopp
+#: denne modulen; fritekst er ikke en binding).
+#:
+#: FILER, IKKE NODE-ID-ER, og det er en annen avveining enn m02s. M-2
+#: pinnet sju navngitte tester fordi andelen er en HÅNDPLUKKET delmengde
+#: av to store, delte filer. M-23 eier tolv HELE filer, og en liste over
+#: hundre node-id-er ville vært brutt av den første testen noen legger
+#: til — og da ville pinningen fungert som en brems på nye porter i
+#: stedet for som et vern. Filene er stabile; antallet måles for seg.
+M23_SUITE_ANDEL: tuple[str, ...] = (
+    "platform/core/tests/test_bestilling_purring_port.py",
+    "platform/core/tests/test_fordring_backfill_port.py",
+    "platform/core/tests/test_fordring_part_port.py",
+    "platform/core/tests/test_m23_bokforing_port.py",
+    "platform/core/tests/test_m23_controller.py",
+    "platform/core/tests/test_m23_fasit_port.py",
+    "platform/core/tests/test_m23_flate_port.py",
+    "platform/core/tests/test_m23_fordring.py",
+    "platform/core/tests/test_m23_inkassovarsel_port.py",
+    "platform/core/tests/test_m23_mottaker_port.py",
+    "platform/core/tests/test_m23_purringsutloser_port.py",
+    "platform/core/tests/test_m23_sending_port.py",
+)
+
+#: M-23 FLIPPEDRILLEN, registrert FØR drillen er kjørt (§0-regelen, som
+#: `m57-v1`s revisjonsgrense: «den definerer hva som må leveres, i
+#: stedet for å bli skrevet etterpå av den som allerede vet hva målingen
+#: ga»).
+#:
+#: FORMEN ER `rollback-m56-v1`s, IKKE OPPFUNNET HER. M-23 er en
+#: registrert modul med releaser og en arbeider som claimer oppdrag over
+#: API-et med modultoken (035) — samme livsløp m56 drilles på. Å finne
+#: på en egen form for det samme ordet ville gjort to grenser som måler
+#: det samme usammenlignbare.
+#:
+#: DRILLEN ER IKKE KJØRT, OG PUNKTET STÅR `nei`. Den sender ekte
+#: purre-e-post til en ekte kunde gjennom modulen, og det er en utgående
+#: handling som ikke kan trekkes tilbake — eierens beslutning, ikke
+#: min. Grensen står her så drillen måles mot krav noen skrev FØR den,
+#: og så punktet kan flippes samme dag den kjøres.
+#:
+#: SKJEMAET OG PORTEN FØLGER MED DRILLEN, ikke med denne grensen: det
+#: er artefaktets FORM, og den kan ikke skrives før produsenten finnes.
+#: Et artefakt som peker hit uten et registrert skjema feiler høylytt på
+#: «ukjent krav_id» — som er riktig svar, ikke et hull.
+#:
+#: HVORFOR IKKE LÅNE `m23-purring-v1`: bevisrunden 9/9 målte at
+#: purrekjeden holder under feilinjisering. Den rullet ingen release
+#: tilbake, og drenerte ingen kø. Å binde `rollback_testet` til de
+#: tallene ville vært å låne en konklusjon fra en måling som stilte et
+#: annet spørsmål — nøyaktig det m37s manifest nekter å gjøre med
+#: `rollback-m01-v1`.
+KRAVGRENSER["m23-rollback-v1"] = {
+    # Den drenerte releasen claimer INGENTING nytt.
+    "maks_claims_etter_drenering": 0,
+    # Oppdraget som VAR claimet da rullingen traff, fullfører eller
+    # feiler rent — signert kvittering, aldri et falskt verdikt (SP-3).
+    "min_inflight": 1,
+    "maks_falske_verdikter": 0,
+    # RULLBAKKEN SELV må boote og gjøre arbeid. Uten dette leddet måler
+    # drillen bare at den gamle arbeideren sluttet å claime, og en
+    # forrige release som ikke lar seg kjøre ville gitt et grønt
+    # rullbakkbevis (Codex P1, #117).
+    "min_rullback_claims": 1,
+    "min_rullback_promoterte": 0,
+    # …OG DEN MÅ BÆRE FORGJENGERENS BYTES, ikke kandidatens under et
+    # nytt navn. Uten den bindingen kan «rullbakken» være det man ruller
+    # tilbake FRA (#117 runde 6).
+    "krev_release_digest_bundet": True,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.claims_etter_drenering",
+            "maalt.inflight_oppdrag",
+            "maalt.falske_verdikter",
+            "maalt.rullback_claimet_oppdrag",
+            "maalt.release_digest_bundet",
+        ),
+    },
+}
+
+KRAVGRENSER["m23-suite-v1"] = {
+    # Suitekjøringen PÅ STAGING: hele suiten grønn, og M-23s ANDEL pinnet
+    # og grønn. Gulvet for helheten er romslig med vilje — det måler at
+    # KJØRINGEN var hel, ikke at antallet aldri vokser.
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    # Andelens gulv er MÅLT, ikke gjettet: 101 tester i de tolv filene
+    # (målt 14/9). Gulvet står litt under så en fjernet test ikke feller
+    # punktet, men en HALVERT andel gjør det.
+    "min_m23_tester": 95,
+    "maks_m23_feilet": 0,
+    # NULL HOPPEDE I ANDELEN. Hele M-23s andel er `skipif(not DSN)`, og
+    # fasitporten krever i tillegg sveiperollens egen DSN. Uten den
+    # porten ville en vert uten oppsatt testbase levert en «grønn» andel
+    # der ingen av testene hadde kjørt — og det er nettopp den
+    # sveiperollen deployen må ha satt opp.
+    "maks_m23_hoppet": 0,
+    "m23_andel_pakrevd": M23_SUITE_ANDEL,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "tester_gronne_pa_staging": (
+            "maalt.m23_feilet",
+            "maalt.m23_tester",
+            "maalt.m23_hoppet",
+            "maalt.tester_feilet",
+            "maalt.tester_totalt",
+        ),
+    },
+}
+
+M23_SETT_STI = REPOROT / "deploy/staging/m23_fasit.py"
+
+#: Produsentflaten for M-23s fasitartefakt. SVEIPEDRIVEREN ER MED, og
+#: det er poenget: funnene i artefaktet er skrevet av nettopp den filen,
+#: så en kjøring med en annen `fordringssveip.py` er en annen kjøring.
+M23_BEVISROT_FILER = (
+    "deploy/staging/m23_fasit.py",
+    "deploy/staging/m23-fasit-artefakt.py",
+    "deploy/staging/m23-suite-artefakt.py",
+    "platform/drift/fordringssveip.py",
+    "platform/drift/kjor_fordringssveip.py",
+)
+
+KRAVGRENSER["m23-fasit-v1"] = {
+    # SETTET ER EKSAKT, ikke «minst». 21 fordringer, 10 ventede funn, 43
+    # evidenshendelser — nøyaktig de radene `m23_fasit.py` bærer.
+    #
+    # TALLET 10 ER TELT, IKKE GJETTET: sju funn i plan-tenanten
+    # (`noyaktig_trinn1`, `dagen_etter_trinn1`, `noyaktig_trinn2`,
+    # `noyaktig_trinn3`, `nitti_med_plan`, og TO på `nittien_med_plan`
+    # som bærer både `trinn_forfalt` og `forfalt_uten_trinn`) pluss tre
+    # `ingen_purreplan` i den planløse. Første utkast skrev 9 fordi det
+    # talte den doble raden som én — og porten i `test_m23_fasit_port`
+    # felte det, fordi gulvet leses fra settet og ikke fra minnet.
+    #
+    # EN NEDRE GRENSE VAR FEIL DOKTRINE (CodeRabbit, major): den tillot
+    # et STØRRE sett, og et større sett er et annet sett — samme dom som
+    # `fordeling_eksakt` for m02 («83 TILLAT er ikke nesten»). Et sett
+    # med to ekstra fordringer ville hatt to kanter ingen skrev en fasit
+    # for, og bestått med null avvik fordi ingen målte dem.
+    "fordringer_eksakt": 21,
+    "ventede_funn_eksakt": 10,
+    # Evidenssummen er settets egen: 21 registreringer + 21
+    # trinnflyttinger + 1 purreplan.
+    "evidenshendelser_eksakt": 43,
+    "maks_funnavvik": 0,
+    "maks_botteavvik": 0,
+    "maks_evidensavvik": 0,
+    # … og «samme sett» må være MÅLT, ikke oppgitt: driverens bytes
+    # hashes i begge ledd og må stemme (samme form som m02-fordeling).
+    "krev_sett_sha_lik_innsjekket": True,
+    # YTELSE: taket for én sveipekjøring. Sveipen er kryss-tenant og
+    # kjøres én gang i døgnet — taket er romslig med vilje, for det som
+    # måles er at kostnaden ikke EKSPLODERER, ikke at den er lav.
+    "maks_sveipetid_ms": 30_000,
+    # …OG NEVNEREN. Settet lager to tenanter, så en sveip som
+    # rapporterer færre enn to har ikke sett dem — og da er
+    # `sveipetid_ms` tiden det tok å gjøre ingenting.
+    "min_sveip_tenanter": 2,
+    # PUNKTBINDING (#166): hvilke MÅLINGER som kan bevise hvert
+    # punkt. Et punkt som ikke står her er UFLIPPBART.
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.fordringer",
+            "maalt.ventede_funn",
+            "maalt.funnavvik",
+            "maalt.botteavvik",
+        ),
+        # REVISJONSLOGGEN: hver fordring og hver trinnendring i kjeden,
+        # målt som hendelser MED IDENTITET — driveren krever at hver
+        # registrering har sin egen `input_hash`, ikke bare at antallet
+        # stemmer.
+        "revisjonslogg_korrekt": (
+            "maalt.evidenshendelser",
+            "maalt.evidensavvik",
+        ),
+        "ytelse_bestatt": (
+            "maalt.sveipetid_ms",
+        ),
+    },
 }
 
 M24_INVARIANTER: tuple[str, ...] = (
@@ -2466,6 +2708,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m57-v1": "artefakt-m57-skjema.json",
     "m35-v1": "artefakt-m35-skjema.json",
     "m23-purring-v1": "artefakt-m23-purring-skjema.json",
+    "m23-fasit-v1": "artefakt-m23-fasit-skjema.json",
+    "m23-suite-v1": "artefakt-m23-suite-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
@@ -2719,6 +2963,22 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m6(grense, art)
     if krav_id == "m35-v1":
         return feil + _grenser_m35(grense, art)
+    if krav_id == "m23-fasit-v1":
+        return feil + _grenser_m23_fasit(grense, art)
+    if krav_id == "m23-suite-v1":
+        return feil + _grenser_m23_suite(grense, art)
+    if krav_id == "m23-rollback-v1":
+        # FEILER LUKKET TIL DRILLEN FINNES (CodeRabbit, major). Grensen
+        # er registrert FØR produsenten (§0), og uten en egen arm falt
+        # kallet videre til den generiske ytelsesporten — som leter etter
+        # `min_antall` og `oppsett.antall`, felt en flippedrill aldri
+        # bærer. Da hadde et rollback-artefakt blitt målt mot HELT andre
+        # krav, og svaret ville sagt noe sant om et spørsmål ingen
+        # stilte. Et punkt uten produsent skal si nettopp det.
+        return feil + ["m23-rollback-v1: flippedrillen er ikke bygget —"
+                       " grensen er registrert (§0), men verken"
+                       " produsent eller artefaktskjema finnes, så et"
+                       " artefakt kan ikke måles mot den ennå"]
     if krav_id == "m10-v1":
         return feil + _grenser_m10(grense, art)
     if krav_id == "m11-v1":
@@ -3189,6 +3449,234 @@ def _m02_bevisrot_feil(art: dict) -> list[str]:
                 " ukjente bytes"]
     try:
         lokal = m02_bevisrot_sha256()
+    except OSError as e:
+        return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"bevisrot_sha256={sha[:12]}… er ikke de innsjekkede"
+                f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
+                " produsentflate enn treet porten står i"]
+    return []
+
+
+def m23_bevisrot_sha256() -> str:
+    """ÉN digest over hele M-23-produsentflaten — tillitsgrensens anker.
+
+    Samme kanoniske form som `m02_bevisrot_sha256`: sti + innholds-sha
+    per fil, i fastlåst rekkefølge. Artefaktet beviser KJØRINGEN — settet,
+    artefaktbyggeren og SVEIPEDRIVEREN slik de er sjekket inn.
+
+    SVEIPEDRIVEREN ER MED I FLATEN, og det skiller denne fra m02s: funnene
+    i artefaktet er skrevet av `fordringssveip.kjor()`, ikke av
+    artefaktbyggeren. En kjøring med en annen sveipedriver — en som
+    hoppet over kontraktvalideringen, eller committet før den —  ville
+    produsert de samme radene og vært en helt annen kjøring.
+    """
+    h = hashlib.sha256()
+    for rel in M23_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _grenser_m23_suite(grense: dict, art: dict) -> list[str]:
+    """`m23-suite-v1` — hele suiten på staging, med M-23s andel målt for
+    seg. Formen er `_grenser_m02_suite` sin, og av de samme grunnene:
+    gulvene måles mot KJØRTE tester (totalt minus hoppede), andelen tåler
+    ingen hoppede, og exitkoden er en egen port fordi en AVBRUTT pytest
+    skriver en junit-XML som bare teller testene som rakk å bli ferdige.
+    """
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    tall = {}
+    for navn in ("tester_totalt", "tester_feilet", "tester_hoppet",
+                 "m23_tester", "m23_feilet", "m23_hoppet",
+                 "suite_exitkode", "m23_exitkode"):
+        verdi, melding = _teller(m, navn, navn)
+        if melding:
+            feil.append(melding)
+        tall[navn] = verdi
+    if any(v is None for v in tall.values()):
+        return feil
+
+    # EN HOPPET TEST ER IKKE EN BESTÅTT TEST: junit teller den i `tests`
+    # og rapporterer null failures for den, så gulvet måles mot kjørte.
+    kjorte = tall["tester_totalt"] - tall["tester_hoppet"]
+    if kjorte < grense["min_tester"]:
+        feil.append(f"tester_totalt={tall['tester_totalt']} minus"
+                    f" tester_hoppet={tall['tester_hoppet']} = {kjorte}"
+                    f" kjørte, krever >= {grense['min_tester']}")
+    if tall["tester_feilet"] > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={tall['tester_feilet']}, krever <="
+                    f" {grense['maks_feilet']}")
+    m23_kjorte = tall["m23_tester"] - tall["m23_hoppet"]
+    if m23_kjorte < grense["min_m23_tester"]:
+        feil.append(f"m23_tester={tall['m23_tester']} minus"
+                    f" m23_hoppet={tall['m23_hoppet']} = {m23_kjorte}"
+                    f" kjørte, krever >= {grense['min_m23_tester']}")
+    if tall["m23_feilet"] > grense["maks_m23_feilet"]:
+        feil.append(f"m23_feilet={tall['m23_feilet']}, krever <="
+                    f" {grense['maks_m23_feilet']}")
+    if tall["m23_hoppet"] > grense["maks_m23_hoppet"]:
+        feil.append(f"m23_hoppet={tall['m23_hoppet']}, krever <="
+                    f" {grense['maks_m23_hoppet']} — M-23s navngitte"
+                    " andel skal være KJØRT, ikke hoppet over. Hele"
+                    " andelen er skipif(not DSN), og fasitporten krever i"
+                    " tillegg sveiperollens egen DSN")
+    if tall["m23_tester"] > tall["tester_totalt"]:
+        feil.append(f"m23_tester={tall['m23_tester']} >"
+                    f" tester_totalt={tall['tester_totalt']} — andelen"
+                    " kan ikke overstige helheten")
+    for navn in ("suite_exitkode", "m23_exitkode"):
+        if tall[navn] != 0:
+            feil.append(f"{navn}={tall[navn]} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige, og er ikke en"
+                        " hel suite")
+
+    oppsett = art.get("oppsett")
+    feil += _m23_bevisrot_feil(art)
+    filer = oppsett.get("m23_filer") if isinstance(oppsett, dict) else None
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m23_filer mangler — M-23s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    elif sorted(filer) != sorted(grense["m23_andel_pakrevd"]):
+        mangler = sorted(set(grense["m23_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m23_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m23_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene, ikke"
+              " en liste produsenten valgte selv")
+    return feil
+
+
+def _grenser_m23_fasit(grense: dict, art: dict) -> list[str]:
+    """`m23-fasit-v1` — det syntetiske fordringssettet mot KJENT fasit.
+
+    DOMMEN RE-REGNES AV AVVIKSLISTENE artefaktet selv bærer. `bestatt`
+    inne i filen er produsentens påstand og leses aldri; og `maalt`s
+    tellinger sammenlignes med lengden på listene, for et artefakt som
+    rapporterer 0 avvik ved siden av en liste med tre er to ulike
+    kjøringer i samme fil.
+    """
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    oppsett = art.get("oppsett")
+    if not isinstance(oppsett, dict):
+        return ["artefaktet mangler `oppsett` — settet er ukjent"]
+
+    # --- produsentflaten og settet ------------------------------------
+    feil += _m23_bevisrot_feil(art)
+    sha = oppsett.get("sett_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.sett_sha256 mangler — uten driverens bytes er"
+                    " «samme sett» en påstand, ikke en måling")
+    elif grense.get("krev_sett_sha_lik_innsjekket"):
+        try:
+            lokal = hashlib.sha256(M23_SETT_STI.read_bytes()).hexdigest()
+        except OSError as e:
+            feil.append(f"settdriveren lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(
+                    f"sett_sha256={sha[:12]}… er ikke de innsjekkede"
+                    f" bytenes {lokal[:12]}… — settet kjøringen drev er"
+                    " ikke settet CI driver, og da er ikke fasiten «lik"
+                    " lokalt»")
+
+    # BEGGE TENANTENE. Uten den planløse er `ingen_purreplan`-grenen
+    # umålt, og uten den med plan er hele trinnkanten umålt.
+    tenanter = oppsett.get("tenanter")
+    if not (isinstance(tenanter, list) and len(tenanter) >= 2):
+        feil.append("oppsett.tenanter har færre enn to — en fasit uten en"
+                    " planløs tenant måler ikke `ingen_purreplan`")
+
+    # --- avvikene, RE-TALT --------------------------------------------
+    avvik = art.get("avvik")
+    if not isinstance(avvik, dict) or not avvik:
+        return feil + ["artefaktet mangler `avvik` — en dom uten listene"
+                       " sine kan ikke re-regnes"]
+    talt = {"funnavvik": 0, "botteavvik": 0, "evidensavvik": 0}
+    for rolle, d in avvik.items():
+        if not isinstance(d, dict):
+            return feil + [f"avvik[{rolle!r}] er ikke et oppslag"]
+        for nokkel in talt:
+            liste = d.get(nokkel)
+            if not isinstance(liste, list):
+                return feil + [f"avvik[{rolle!r}].{nokkel} mangler"]
+            talt[nokkel] += len(liste)
+
+    for nokkel, tak in (("funnavvik", grense["maks_funnavvik"]),
+                        ("botteavvik", grense["maks_botteavvik"]),
+                        ("evidensavvik", grense["maks_evidensavvik"])):
+        oppgitt, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif oppgitt != talt[nokkel]:
+            feil.append(f"maalt.{nokkel}={oppgitt} spriker fra de"
+                        f" {talt[nokkel]} avvikene artefaktet lister")
+        if talt[nokkel] > tak:
+            feil.append(f"{talt[nokkel]} {nokkel} re-talt av listene,"
+                        f" taket er {tak} — en kant som er feil er feil"
+                        " overalt der den betyr noe")
+
+    # --- settet må være NØYAKTIG det innsjekkede ----------------------
+    for nokkel, fasit in (
+            ("fordringer", grense["fordringer_eksakt"]),
+            ("ventede_funn", grense["ventede_funn_eksakt"]),
+            ("evidenshendelser", grense["evidenshendelser_eksakt"])):
+        verdi, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif verdi != fasit:
+            feil.append(f"{nokkel}={verdi}, fasiten er {fasit} — eksakt,"
+                        " aldri «nesten». Et krympet sett består med null"
+                        " avvik fordi kantene det mistet er umålte, og et"
+                        " utvidet har kanter ingen skrev en fasit for")
+
+    # --- ytelse -------------------------------------------------------
+    ms, melding = _teller(m, "sveipetid_ms", "sveipetid_ms")
+    if melding:
+        feil.append(melding)
+    elif ms < 1:
+        # NULL ER IKKE EN MÅLING (CodeRabbit): en produsent som aldri
+        # satte feltet rapporterer 0, og 0 ligger under ethvert tak. Da
+        # ville `ytelse_bestatt` vært grønt på en sveip ingen tok tiden
+        # på. En ekte kryss-tenant-sveip bruker alltid mer enn ett
+        # millisekund; gjør den ikke det, er det fordi den ikke kjørte.
+        feil.append("sveipetid_ms=0 — en sveip ingen tok tiden på er"
+                    " ikke en ytelsesmåling, og 0 består ethvert tak")
+    elif ms > grense["maks_sveipetid_ms"]:
+        feil.append(f"sveipetid_ms={ms}, taket er"
+                    f" {grense['maks_sveipetid_ms']}")
+    tenanter, melding = _teller(m, "sveip_tenanter", "sveip_tenanter")
+    if melding:
+        feil.append(melding)
+    elif tenanter < grense["min_sveip_tenanter"]:
+        feil.append(f"sveip_tenanter={tenanter}, krever >="
+                    f" {grense['min_sveip_tenanter']} — settet lager to"
+                    " tenanter, så en sveip som så færre har ikke rørt"
+                    " dem, og tiden er da tiden det tok å gjøre ingenting")
+    return feil
+
+
+def _m23_bevisrot_feil(art: dict) -> list[str]:
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                " ubundet, og artefaktet beviser da en kjøring av"
+                " ukjente bytes"]
+    try:
+        lokal = m23_bevisrot_sha256()
     except OSError as e:
         return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
     if sha != lokal:

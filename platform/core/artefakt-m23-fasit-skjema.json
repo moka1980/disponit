@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m23fasitartefakt-v1.json",
+  "title": "m23 fasitartefakt (m23-fasit-v1)",
+  "comment": "Det syntetiske fordringssettet (deploy/staging/m23_fasit.py) drevet gjennom kundens egne doerer, sveipet av drift/fordringssveip.kjor() som sveiperollen, og maalt mot TO haandskrevne fasiter: aldersboettene og funnene. Avvikene baeres i artefaktet saa dommen kan RE-REGNES av porten - bestatt inne i fila er produsentens paastand og teller ikke. CI driver samme sett mot lokal base (test_m23_fasit_port), saa likt lokalt er en staaende maaling. Skrevet av deploy/staging/m23-fasit-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "avvik"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m23-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "sett_versjon",
+        "sett_sha256",
+        "bevisrot_sha256",
+        "tenanter"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m23_fordring"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sett_versjon": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m23_fasit.py) slik kjoeringen FAKTISK brukte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "EN digest over hele m23-produsentflaten (manifestskjema.M23_BEVISROT_FILER), re-regnet av porten over sitt eget tre."
+        },
+        "tenanter": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": "Tenantene runden kjoerte mot - en med purreplan og en uten. Begge kreves: uten plan-loese tenanten er ingen_purreplan-grenen umaalt."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fordringer",
+        "ventede_funn",
+        "evidenshendelser",
+        "funnavvik",
+        "botteavvik",
+        "evidensavvik",
+        "sveipetid_ms",
+        "sveip_tenanter"
+      ],
+      "properties": {
+        "fordringer": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall fordringer i settet - summen over begge tenantene."
+        },
+        "ventede_funn": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall funn fasiten venter. En fasit som ikke venter et eneste funn maaler ingen funnkant."
+        },
+        "funnavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "botteavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveipetid_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Veggklokketid for fordringssveipen i denne runden. Punktet ytelse_bestatt maales mot dette tallet, ikke mot settets stoerrelse."
+        },
+        "evidenshendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall hendelser fasiten venter i evidenskjeden - en per registrert fordring, en per trinnflytting, og en per satt purreplan. Punktet revisjonslogg_korrekt maales mot dette."
+        },
+        "evidensavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip_tenanter": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall tenanter fordringssveipen rapporterte at den gikk gjennom. Nevneren til sveipetid_ms: en sveip som roerte null tenanter er rask og ville bestaatt ytelsestaket uten aa ha gjort jobben."
+        }
+      }
+    },
+    "avvik": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "funnavvik",
+          "botteavvik",
+          "evidensavvik"
+        ],
+        "properties": {
+          "funnavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "botteavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidensavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "comment": "Avvikene per tenantrolle, ordrett. Porten teller dem paa nytt og sammenligner med maalt - en telling som spriker fra listen er to ulike kjoeringer i samme fil."
+    }
+  }
+}
