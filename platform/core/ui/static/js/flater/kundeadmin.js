@@ -2,7 +2,8 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { KUNDEROLLER, modulerFraIder, tenantTelling } from "../plattformdata.js";
-import { opprettInvitasjon, hentInvitasjoner,
+import { ApiFeil, UautorisertFeil, loggUt, opprettInvitasjon,
+         hentInvitasjoner, siOppAbonnement,
          nyIdempotensnokkel } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { byggRuter, kanForvaltePolicy } from "../sitekart.js";
@@ -181,6 +182,93 @@ function invitasjonsdel(ctx) {
 }
 
 
+// ABONNEMENTET — kundens egen vei ut (201).
+//
+// Eier: «kunden kan avbryte prøveperioden og samme etter 30 dager ikke
+// fortsette.» Et abonnement du ikke kommer ut av selv er ikke en
+// prøveperiode, det er en binding.
+//
+// ADMIN ALENE (`firma:avslutt`). En `leser` som kunne si opp, kunne
+// avsluttet firmaet på vei ut døra. Seksjonen finnes derfor ikke for andre
+// — ikke som en deaktivert knapp, som bare ville fortalt henne at noen
+// andre kan gjøre noe hun ikke kan.
+//
+// TO STEG, og «behold» har fokus. Dette er det mest inngripende en kunde
+// kan gjøre, og den som traff knappen ved et uhell skal ikke kunne bekrefte
+// med samme bevegelse.
+function abonnementsdel(ctx) {
+  // EGEN SCOPE-SJEKK, som `invitasjonsdel` over. Jeg la den foerst i
+  // `visKundeadmin` og brukte en `scopes` som er definert i en HELT ANNEN
+  // funksjon — `scopes is not defined`, og fem eksisterende tester falt med
+  // meg. En seksjon som vet selv hvem den er for, kan ikke plasseres feil.
+  if (!new Set(ctx.scopes || []).has("firma:avslutt")) {
+    return el("div", { hidden: true });
+  }
+  const boks = el("section", { class: "kort" });
+  const melding = el("p", { class: "melding", role: "alert" });
+
+  const tegnStart = () => {
+    const knapp = el("button", { type: "button", class: "knapp liten fare",
+      text: t("ui.kundeadmin.si_opp") });
+    knapp.addEventListener("click", tegnBekreft);
+    sett(boks,
+      el("h2", { text: t("ui.kundeadmin.abonnement") }),
+      el("p", { text: t("ui.kundeadmin.si_opp_tekst") }),
+      el("div", { class: "knapperad" }, knapp), melding);
+  };
+
+  const tegnBekreft = () => {
+    const ja = el("button", { type: "button", class: "knapp liten fare",
+      text: t("ui.kundeadmin.si_opp_ja") });
+    const nei = el("button", { type: "button", class: "knapp liten",
+      text: t("ui.kundeadmin.si_opp_avbryt") });
+    ja.addEventListener("click", () => {
+      ja.disabled = true; nei.disabled = true;
+      siOppAbonnement()
+        .then(() => {
+          sett(melding, t("ui.kundeadmin.si_opp_ferdig"));
+          meldLive(t("ui.kundeadmin.si_opp_ferdig"));
+          // ØKTEN ER IKKE LENGER GYLDIG for et stengt firma. Å la henne bli
+          // stående på en flate som svarer 403 på hvert klikk ville vært en
+          // verre avslutning enn å sende henne ut selv.
+          //
+          // `loggUt()` FØRST, så navigasjonen: økten skal tilbakekalles, ikke
+          // bare forlates. Feiler utloggingen, sendes hun likevel ut —
+          // poenget er at hun ikke blir stående. (Jeg skrev først
+          // `ctx.paaUtlogging?.()`, en callback som ikke finnes noe sted;
+          // den ville vært en stille ingenting.)
+          loggUt().catch(() => {}).then(() => ctx.paaUautorisert?.());
+        })
+        .catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+          sett(melding, t(e instanceof ApiFeil && e.kode === "overgang_ulovlig"
+            ? "ui.kundeadmin.si_opp_umulig" : "ui.kundeadmin.si_opp_feilet"));
+          meldLive(t("ui.kundeadmin.si_opp_feilet"));
+          tegnStart();
+        });
+    });
+    nei.addEventListener("click", tegnStart);
+    // `melding` MÅ BLI MED (CodeRabbit). Uten den er elementet løsrevet fra
+    // DOM-en i det bekreftelsen tegnes, og `sett(melding, …)` etterpå skriver
+    // til et sted ingen ser. Kvitteringen «Abonnementet er sagt opp» ville
+    // aldri kommet på skjermen — og porten min merket det ikke, fordi den
+    // sjekket utloggingen og ikke teksten. Samme feilklasse som
+    // plattformflaten hadde i går.
+    sett(melding, "");
+    sett(boks,
+      el("h2", { text: t("ui.kundeadmin.abonnement") }),
+      el("p", { class: "melding", role: "alert",
+        text: t("ui.kundeadmin.si_opp_bekreft")
+          .replace("{firma}", ctx.tenant || "") }),
+      el("div", { class: "knapperad" }, ja, nei),
+      melding);
+    nei.focus();
+  };
+
+  tegnStart();
+  return boks;
+}
+
 export function visKundeadmin(hoved, ctx = {}) {
   // Flaten er åpen for hele kundeøkten, men policyADMINISTRASJONEN er det
   // ikke: uten `policy:write`/`policy:activate` peker snarveien på en flate
@@ -211,6 +299,9 @@ export function visKundeadmin(hoved, ctx = {}) {
 
   sett(hoved,
     ...flateHode(t("ui.kundeadmin.tittel"), t("ui.kundeadmin.undertittel")),
+    // Kundens egen vei ut. Seksjonen skjuler seg selv for den som mangler
+    // scopet.
+    abonnementsdel(ctx),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.kundeadmin.workspace") }),

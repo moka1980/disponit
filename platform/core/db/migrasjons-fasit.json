@@ -198,5 +198,7 @@
   "197_algoritmelisten_kan_ikke_vaere_tom.sql": "8499ac1e72e393ed8b95be9312b75c005e5346a4f8f8700f3f72888e3e4bc2a8",
   "198_microsoft_flerleietaker.sql": "766859a8a11d4738cddc234830223e1680dfc6daae9dc2bfd2de8729953fc386",
   "199_plattformeier.sql": "c9f64356dfed3cf7e35b0afa30f49ef75114df6d7292edc18f8e1f3eaf25675e",
-  "200_blimed_scope.sql": "2515af104d289d6318de6dc045c6d2221e35236bde7506cb788392d4d7f2b439"
+  "200_blimed_scope.sql": "2515af104d289d6318de6dc045c6d2221e35236bde7506cb788392d4d7f2b439",
+  "201_kunden_kan_si_opp.sql": "ec528fd6921dc5d30c2f142f3499c2224dfd2b4200536600d6a5211c644b3c9e",
+  "202_avslutt_scope.sql": "5867d1391f225d8a03921c78d37f547a1de83dca213a9c712c0ca2e410e99f34"
 }

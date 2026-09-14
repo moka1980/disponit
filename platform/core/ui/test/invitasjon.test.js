@@ -281,3 +281,114 @@ test("Inviter: nøkkelen holder gjennom en retry, men bytter med rollevalget",
   assert.notEqual(tredje.idem, poster[0].idem,
     "et nytt rollevalg gjenbrukte nøkkelen fra det forrige");
 });
+
+// ---------------------------------------------------------------------------
+// Kundens egen vei ut (201). Eier: «kunden kan avbryte prøveperioden og samme
+// etter 30 dager ikke fortsette.»
+//
+// Et abonnement du ikke kommer ut av selv er ikke en prøveperiode, det er en
+// binding.
+// ---------------------------------------------------------------------------
+
+const finnK = (h, tekst) => [...h.querySelectorAll("button")]
+  .find((b) => b.textContent.trim() === tekst);
+
+test("Abonnement: bare den med `firma:avslutt` ser seksjonen", async () => {
+  // En `leser` som kunne si opp, kunne avsluttet firmaet på vei ut døra.
+  // Seksjonen finnes ikke for andre — ikke som en deaktivert knapp, som
+  // bare ville fortalt henne at noen andre kan noe hun ikke kan.
+  //
+  // MUTASJON SOM FELLER: tegn seksjonen uten scope-sjekken.
+  SVAR = { "/v1/invitasjoner": { invitasjoner: [] } };
+  const h = nyHoved();
+  visKundeadmin(h, ctxAdmin(["security:read"]));
+  await vent(() => h.textContent.length > 0);
+  assert.equal(finnK(h, t("ui.kundeadmin.si_opp")), undefined,
+    "en uten `firma:avslutt` fikk oppsigelsesknappen");
+  assert.ok(!h.textContent.includes(t("ui.kundeadmin.abonnement")),
+    "seksjonen røpet at den finnes");
+});
+
+test("Abonnement: oppsigelsen spør FØRST, og «behold» har fokus", async () => {
+  SVAR = { "/v1/invitasjoner": { invitasjoner: [] } };
+  const h = nyHoved();
+  visKundeadmin(h, ctxAdmin(["firma:avslutt", "security:read"]));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp")));
+  finnK(h, t("ui.kundeadmin.si_opp")).dispatchEvent(new window.Event("click"));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp_ja")));
+
+  // INGEN POST ennå — første klikk er et spørsmål.
+  assert.equal(KALL.filter((k) => k.metode === "POST").length, 0,
+    "sa opp uten å spørre");
+  // Den som traff knappen ved et uhell skal ikke kunne bekrefte med samme
+  // bevegelse. Fokus står på veien TILBAKE.
+  assert.equal(h.ownerDocument.activeElement,
+    finnK(h, t("ui.kundeadmin.si_opp_avbryt")),
+    "fokus sto ikke på «behold abonnementet»");
+});
+
+test("Abonnement: «behold» avbryter, og ingenting er sendt", async () => {
+  SVAR = { "/v1/invitasjoner": { invitasjoner: [] } };
+  const h = nyHoved();
+  visKundeadmin(h, ctxAdmin(["firma:avslutt", "security:read"]));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp")));
+  finnK(h, t("ui.kundeadmin.si_opp")).dispatchEvent(new window.Event("click"));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp_avbryt")));
+  finnK(h, t("ui.kundeadmin.si_opp_avbryt"))
+    .dispatchEvent(new window.Event("click"));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp")));
+  assert.equal(KALL.filter((k) => k.metode === "POST").length, 0,
+    "«behold» sendte likevel en oppsigelse");
+});
+
+test("Abonnement: bekreftet oppsigelse kaller ruten og logger henne ut",
+  async () => {
+    // Økten er ikke lenger gyldig for et stengt firma. Å la henne bli stående
+    // på en flate som svarer 403 på hvert klikk ville vært en verre
+    // avslutning enn å sende henne ut.
+    //
+    // MUTASJON SOM FELLER: fjern `loggUt()`/`paaUautorisert()`-kallet.
+    SVAR = { "/v1/invitasjoner": { invitasjoner: [] },
+             "/v1/firma/avslutt": { tenant: "fjordlys-as", status: "stengt" },
+             "/v1/sesjon": { ok: true } };
+    let utlogget = false;
+    const c = ctxAdmin(["firma:avslutt", "security:read"]);
+    c.paaUautorisert = () => { utlogget = true; };
+    const h = nyHoved();
+    visKundeadmin(h, c);
+    await vent(() => finnK(h, t("ui.kundeadmin.si_opp")));
+    finnK(h, t("ui.kundeadmin.si_opp")).dispatchEvent(new window.Event("click"));
+    await vent(() => finnK(h, t("ui.kundeadmin.si_opp_ja")));
+    finnK(h, t("ui.kundeadmin.si_opp_ja")).dispatchEvent(new window.Event("click"));
+
+    await vent(() => utlogget);
+    const post = KALL.filter((k) => k.url.includes("/v1/firma/avslutt"));
+    assert.equal(post.length, 1, "ruten ble ikke kalt nøyaktig én gang");
+    assert.ok(utlogget, "hun ble stående igjen i et stengt firma");
+    // KVITTERINGEN MÅ VÆRE PÅ SKJERMEN. Første utgave skrev den til et
+    // element som var løsrevet fra DOM-en da bekreftelsen ble tegnet — teksten
+    // fantes, men ingen kunne se den. Porten sjekket utloggingen og merket
+    // ingenting (CodeRabbit fant det).
+    //
+    // MUTASJON SOM FELLER: ta `melding` ut av `sett(boks, …)` i bekreftelsen.
+    assert.ok(h.textContent.includes(t("ui.kundeadmin.si_opp_ferdig")),
+      "kvitteringen kom aldri på skjermen");
+  });
+
+test("Abonnement: en umulig oppsigelse sier nøyaktig det", async () => {
+  // Fra `utlopt` er det ingenting å si opp — og da skal hun få vite hvorfor,
+  // ikke en generisk «feilet».
+  SVAR = { "/v1/invitasjoner": { invitasjoner: [] },
+           "/v1/firma/avslutt": 409, _feilkode: "overgang_ulovlig" };
+  const h = nyHoved();
+  visKundeadmin(h, ctxAdmin(["firma:avslutt", "security:read"]));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp")));
+  finnK(h, t("ui.kundeadmin.si_opp")).dispatchEvent(new window.Event("click"));
+  await vent(() => finnK(h, t("ui.kundeadmin.si_opp_ja")));
+  finnK(h, t("ui.kundeadmin.si_opp_ja")).dispatchEvent(new window.Event("click"));
+  await vent(() => h.textContent.includes(t("ui.kundeadmin.si_opp_umulig")));
+  assert.ok(h.textContent.includes(t("ui.kundeadmin.si_opp_umulig")),
+    "hun fikk ikke vite hvorfor det ikke gikk");
+  // …og knappen er tilbake, ikke en død bekreftelse.
+  assert.ok(finnK(h, t("ui.kundeadmin.si_opp")), "veien tilbake mangler");
+});

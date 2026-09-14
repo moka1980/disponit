@@ -177,7 +177,9 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
                         # rolleguide som lovet mindre enn rollen har,
                         # uten at noe ble rødt.
                         "kundeservice:innhold",
-                             "firma:inviter"}),
+                             "firma:inviter",
+                             # 201: å si opp firmaets eget abonnement.
+                             "firma:avslutt"}),
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).

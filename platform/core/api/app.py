@@ -3477,6 +3477,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     # og dørene i 199 — ikke scopet. Se `plattform_http`s modultopp.
     from . import plattform_http as plattformmodul
 
+    def pa_firma_avslutt(request: Request) -> Response:
+        from . import firmaregistrering as firmaregmodul
+        return firmaregmodul.avslutt_endepunkt(tjeneste, request)
+
     def pa_plattform_meg(request: Request) -> Response:
         return plattformmodul.meg_endepunkt(tjeneste, request)
 
@@ -4555,6 +4559,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/varsel/{varsel_id:str}/slett", pa_varsel_slett,
               methods=["POST"]),
+        Route("/v1/firma/avslutt", pa_firma_avslutt, methods=["POST"]),
         Route("/v1/plattform/meg", pa_plattform_meg, methods=["GET"]),
         Route("/v1/plattform/firmaer", pa_plattform_firmaer,
               methods=["GET"]),
@@ -4664,6 +4669,9 @@ BROWSER_MUTASJONSSCOPES = frozenset({
                                      # her. Endepunktet håndhever CSRF selv
                                      # gjennom `_browserkontekst`.
                                      "firma:blimed",
+                                     # 201: oppsigelsen skjer i flaten, med
+                                     # CSRF gjennom `_browserkontekst`.
+                                     "firma:avslutt",
                                      "exceptions:approve", "exceptions:reject",
                                      "exceptions:escalate",
                                      # PR-013: policyadministrasjon. `write`
@@ -6172,6 +6180,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # uttrykke noe døra alt håndhever strengere. `policy:read` står dessuten
     # i LESESCOPES, så browsersesjonen slipper forbi uten at scopet må inn i
     # `BROWSER_MUTASJONSSCOPES`.
+    # 201: kunden sier opp SITT EGET abonnement. `firma:avslutt` har admin
+    # alene — den mest inngripende handlingen en vanlig kunde kan gjøre, og
+    # en `leser` som kunne si opp kunne avsluttet firmaet på vei ut døra.
+    ("POST", "/v1/firma/avslutt"):           "firma:avslutt",
     ("GET",  "/v1/plattform/meg"):           "policy:read",
     ("GET",  "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer"):       "policy:read",
