@@ -118,7 +118,7 @@
         "sveip_tenanter": {
           "type": "integer",
           "minimum": 1,
-          "comment": "Antall tenanter fordringssveipen rapporterte at den gikk gjennom. Nevneren til sveipetid_ms: en sveip som roerte null tenanter er rask og ville bestaatt ytelsestaket uten aa ha gjort jobben."
+          "comment": "Antall tenanter fordringssveipen rapporterte at den gikk gjennom. Nevneren til sveipetid_ms: en sveip som roerte null tenanter er rask og ville bestaatt ytelsestaket uten aa ha gjort jobben. TELLER NOE ANNET ENN oppsett.tenanter: det feltet er de to tenantene settet selv opprettet, mens dette er ALLE basens tenanter med fordringer - sveipen er kryss-tenant, og kostnaden maales over det den faktisk roerer."
         }
       }
     },
