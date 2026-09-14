@@ -1,0 +1,38 @@
+{
+  "avvik": {
+    "med_plan": {
+      "botteavvik": [],
+      "evidensavvik": [],
+      "funnavvik": []
+    },
+    "uten_plan": {
+      "botteavvik": [],
+      "evidensavvik": [],
+      "funnavvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m23-fasit-v1",
+  "maalt": {
+    "botteavvik": 0,
+    "evidensavvik": 0,
+    "evidenshendelser": 43,
+    "fordringer": 21,
+    "funnavvik": 0,
+    "sveip_tenanter": 3,
+    "sveipetid_ms": 17,
+    "ventede_funn": 10
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f33a08b8b271deeaf20b67462a80d9c8492488855f53c87596e4d70d902d2a6f",
+    "modul": "m23_fordring",
+    "sett_sha256": "3660d070208e9b9b01bce73982c997726ab7bab72a674fc5746b80b31fbbe429",
+    "sett_versjon": "m23-fasit-1",
+    "tenanter": [
+      "t-m23fasit-med_plan-e4d954b5",
+      "t-m23fasit-uten_plan-e4d954b5"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-14T16:40:04.118592+00:00"
+}

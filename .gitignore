@@ -60,3 +60,8 @@ deploy/staging/artefakter/*.json
 # binder råfilen (kilde_sha256), og CI regenererer og sammenligner.
 !deploy/staging/artefakter/wcag-kontroll-v1-20260818T200413.json
 !deploy/staging/artefakter/rollback-m56-v1-20260820T132200.json
+# M-23-sertifiseringen (14/9): fasitartefaktet manifestet sha256-binder.
+# Settet drives av `deploy/staging/m23_fasit.py`, og CI kjører NØYAKTIG
+# samme sett mot lokal base (`test_m23_fasit_port`) — `sett_sha256` må
+# stemme i begge ledd, så en JSON fra en tilfeldig maskin passerer ikke.
+!deploy/staging/artefakter/m23-fasit-v1-20260914T164015Z.json

@@ -68,12 +68,22 @@ staging_sjekkliste:
     #
     # STÅR LIKEVEL `nei`: staging-leddet er ikke kjørt. Punktet krever
     # settet drevet PÅ STAGING, og artefaktet finnes ikke ennå.
-    status: nei
+    status: ja
     krav_id: m23-fasit-v1
+    bevismaalinger:
+      - maalt.fordringer
+      - maalt.ventede_funn
+      - maalt.funnavvik
+      - maalt.botteavvik
+    artefakt: deploy/staging/artefakter/m23-fasit-v1-20260914T164015Z.json
+    artefakt_sha256: c405385c8870cf450a0be726234cdcbdf6a1a564854a316a794f2d37e774ee44
     notat: >-
-      Settet, fasiten og porten er bygget og målt lokalt. Gjenstår:
-      kjøringen på staging (`deploy/staging/m23-fasit-artefakt.py`) og
-      artefaktet den skriver.
+      21 fordringer, 10 ventede funn, NULL avvik på begge fasitene — kjørt
+      mot disponit.com 14/9 gjennom kundens egne dører, sveipet av
+      `fordringssveip.kjor()` som sveiperollen, og lest gjennom
+      `api.fordring.svar_for`. Samme sett kjøres mot lokal base ved hver
+      CI-runde (`test_m23_fasit_port`), og bindingen er BYTENE:
+      `sett_sha256` må stemme i begge ledd, ellers er punktet rødt.
   revisjonslogg_korrekt:
     # MÅLES I SAMME KJØRING som fasiten, og på de samme radene: 21
     # `fordring.registrert`, 21 `fordring.trinn` (trinnet flyttes ETT om
@@ -81,12 +91,20 @@ staging_sjekkliste:
     # `purreplan.satt`. «Med identitet» er målt bokstavelig: hver
     # registrering må ha SIN EGEN `input_hash` — en kjede som skrev samme
     # hash for alle 21 ville hatt riktig antall rader og null sporbarhet.
-    status: nei
+    status: ja
     krav_id: m23-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m23-fasit-v1-20260914T164015Z.json
+    artefakt_sha256: c405385c8870cf450a0be726234cdcbdf6a1a564854a316a794f2d37e774ee44
     notat: >-
-      Målingen er bygget og felt av en mutasjon (evidenskallet fjernet
-      fra `m23_neste_trinn`: 21 hendelser ble 0 mens funnene sto
-      uendret). Gjenstår: kjøringen på staging.
+      43 hendelser i kjeden, null avvik: 21 `fordring.registrert`, 21
+      `fordring.trinn` og 1 `purreplan.satt`, hver med aktør og hver med
+      SIN EGEN `input_hash`. Målingen er felt av en mutasjon — fjernes
+      evidenskallet fra `m23_neste_trinn`, går 21 hendelser til 0 mens
+      funnene står uendret. Det er den stille varianten punktet finnes
+      for.
   feilinjisering_til_unntakskø:
     # MÅLINGEN VAR GJORT, BINDINGEN MANGLET. Bevisrunden 9/9 gikk mot
     # disponit.com med Fjordlys Elektro AS og injiserte fire ekte feil —
@@ -119,11 +137,22 @@ staging_sjekkliste:
     # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000` i KRAVGRENSER, og
     # porten avviser 0 — en sveip ingen tok tiden på er ikke en
     # ytelsesmåling, og 0 ville bestått ethvert tak.
-    status: nei
+    status: ja
     krav_id: m23-fasit-v1
+    bevismaalinger:
+      - maalt.sveipetid_ms
+    artefakt: deploy/staging/artefakter/m23-fasit-v1-20260914T164015Z.json
+    artefakt_sha256: c405385c8870cf450a0be726234cdcbdf6a1a564854a316a794f2d37e774ee44
     notat: >-
-      Grensen er pinnet og måles av samme artefakt som fasiten.
-      Gjenstår: den målte kjøringen på staging.
+      17 ms mot taket på 30 000. NEVNEREN STÅR I ARTEFAKTET: uten
+      `sveip_tenanter` ville en sveip som gikk hjem igjen uten å røre en
+      tenant vært rask og bestått taket. Porten avviser også 0 ms — en
+      sveip ingen tok tiden på er ikke en ytelsesmåling. MERK AT DE TO
+      TALLENE TELLER ULIKE TING, og det er villet: `oppsett.tenanter` er
+      de TO settet selv opprettet, mens `maalt.sveip_tenanter` er 3 fordi
+      sveipen er KRYSS-TENANT og også gikk gjennom `disponit` — tenanten
+      purrerunden 9/9 brukte. Kostnaden skal måles over alt sveipen
+      faktisk rører, ikke bare over det denne runden la inn.
   rollback_testet:
     # NOTATET VAR UTDATERT: «Modulen har ingen release.» M-23 er
     # registrert gjennom `deploy/staging/registrer-m23-fordring.py`, har
