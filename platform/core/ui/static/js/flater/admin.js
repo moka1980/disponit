@@ -1,10 +1,206 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
+import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
+         oppdaterPlattformFirma, opprettPlattformFirma,
+         settPlattformFirmastatus } from "../api.js";
+import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 import { FASEOVERSIKT, MODULOVERSIKT, modulmerke, planEtikett, plattformTelling }
   from "../plattformdata.js";
 import { byggRuter, erPlattformdrift, kanForvaltePolicy } from "../sitekart.js";
 import { siteFaseMerke, siteModuleKort } from "../sitekomponenter.js";
+
+
+// ---------------------------------------------------------------------------
+// PLATTFORMEIERENS FIRMAADMINISTRASJON (199).
+//
+// Eier: «Jeg er … eier … og skal også ha mulighet til å opprette nye firmaer,
+// redigere og slette.»
+//
+// FULLMAKTEN ER IKKE ET SCOPE, og derfor kan ikke menyen avgjøre dette.
+// Rutene krever `policy:read` bare for å slippe forbi den generelle porten;
+// det er raden i `plattformeier` som bestemmer, og den kjenner bare serveren.
+// Seksjonen spør derfor `/v1/plattform/meg` FØRST, og tegner ingenting hvis
+// svaret er nei — ikke en tom tabell, ikke en «du mangler tilgang», bare
+// ingenting. En seksjon som forteller deg at den finnes, er en opplysning om
+// systemet den som ikke skal se den ikke trenger.
+//
+// Den bor på adminflaten fordi det er flaten som allerede heter «Plattform»
+// i toppnavigasjonen. Én ekstra henting, og bare når noen åpner den siden.
+function plattformseksjon(ctx) {
+  const boks = el("section", { class: "kort" });
+  boks.hidden = true;
+
+  const meld = (nokkel) => {
+    const m = el("p", { class: "melding", role: "status", text: t(nokkel) });
+    boks.prepend(m);
+    meldLive(t(nokkel));
+  };
+
+  const feilkode = (e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return null; }
+    if (e instanceof ApiFeil && e.kode === "firma_finnes") return "ui.plattform.finnes";
+    if (e instanceof ApiFeil && e.kode === "overgang_ulovlig") return "ui.plattform.ulovlig";
+    return "ui.plattform.feilet";
+  };
+
+  // Lovlige overganger speiler 190s ENE tabell. Kopien her er ERGONOMI —
+  // døra dømmer uansett, og en knapp som ikke finnes er bedre enn en 409.
+  const HANDLINGER = {
+    prove: [["aktiv", "ui.plattform.aktiver"], ["stengt", "ui.plattform.steng"]],
+    aktiv: [["stengt", "ui.plattform.steng"]],
+    utlopt: [["aktiv", "ui.plattform.aktiver"], ["stengt", "ui.plattform.steng"]],
+    stengt: [["aktiv", "ui.plattform.gjenapne"]],
+  };
+
+  const tegnListe = (firmaer) => {
+    if (!firmaer.length) {
+      return el("p", { class: "sub", text: t("ui.plattform.tom") });
+    }
+    const tbody = el("tbody");
+    for (const f of firmaer) {
+      const handlinger = el("td");
+      // HELE RADEN LÅSES, ikke bare knappen som ble trykket (CodeRabbit).
+      // Med bare én knapp låst kunne «Aktiver» og «Steng» ligge ute
+      // samtidig, og da er det nettverket — ikke brukeren — som avgjør
+      // hvilken status firmaet ender på. Samme feilklasse som de to
+      // kanalvalgene i varselflaten.
+      const laas = (av) => {
+        for (const b of handlinger.querySelectorAll("button")) b.disabled = av;
+      };
+      for (const [status, nokkel] of (HANDLINGER[f.status] || [])) {
+        const knapp = el("button", {
+          type: "button", text: t(nokkel),
+          class: status === "stengt" ? "knapp liten fare" : "knapp liten" });
+        knapp.addEventListener("click", () => {
+          laas(true);
+          settPlattformFirmastatus(f.tenant, status)
+            // OPPFRISK FØRST, MELD ETTERPÅ (CodeRabbit). `last()` kaller
+            // `sett(boks, …)`, som erstatter alt innholdet — meldte vi først,
+            // ble kvitteringen vasket bort i samme åndedrag, og brukeren så
+            // aldri at noe var lagret.
+            .then(() => last()).then(() => meld("ui.plattform.endret"))
+            .catch((e) => {
+              const k = feilkode(e);
+              if (k) { meld(k); laas(false); }
+            });
+        });
+        handlinger.append(knapp);
+      }
+      // ENDRE NAVN, tredje verb i eiers krav. Raden bytter til et skjema i
+      // stedet for å åpne en dialog: du ser fortsatt de andre firmaene mens
+      // du retter ett, og «Avbryt» tar deg tilbake uten å ha rørt noe.
+      const navncelle = el("td", { text: f.navn });
+      const endre = el("button", { type: "button", class: "knapp liten",
+        text: t("ui.plattform.endre") });
+      endre.addEventListener("click", () => {
+        const inn = el("input", { type: "text", value: f.navn, class: "felt",
+          "aria-label": t("ui.plattform.felt.navn") });
+        const lagre = el("button", { type: "button", class: "knapp liten primar",
+          text: t("ui.plattform.lagre") });
+        const avbryt = el("button", { type: "button", class: "knapp liten",
+          text: t("ui.plattform.avbryt") });
+        lagre.addEventListener("click", () => {
+          const nytt = inn.value.trim();
+          if (!nytt) { inn.focus(); return; }
+          lagre.disabled = true;
+          oppdaterPlattformFirma(f.tenant, { navn: nytt,
+                                             orgnummer: f.orgnummer || null })
+            .then(() => last()).then(() => meld("ui.plattform.endret"))
+            .catch((e) => {
+              const k = feilkode(e);
+              if (k) { meld(k); lagre.disabled = false; }
+            });
+        });
+        avbryt.addEventListener("click", () => {
+          sett(navncelle, f.navn);
+          endre.disabled = false;
+          endre.focus();
+        });
+        sett(navncelle, inn, lagre, avbryt);
+        endre.disabled = true;
+        inn.focus();
+      });
+      handlinger.append(endre);
+
+      tbody.append(el("tr", {},
+        navncelle,
+        el("td", { text: f.tenant }),
+        el("td", { text: t(`ui.plattform.status.${f.status}`, f.status) }),
+        // Prøvefristen er BARE relevant i prøveperioden. Å vise en gammel
+        // dato på et aktivt firma ville sett ut som en frist som gjelder.
+        el("td", { text: f.status === "prove" && f.prove_utloper
+          ? f.prove_utloper.slice(0, 10) : "—" }),
+        handlinger));
+    }
+    return el("div", { class: "tabellramme" },
+      el("table", { class: "tabell" },
+        el("caption", { class: "visuelt-skjult",
+          text: t("ui.plattform.firmaer") }),
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col", text: t("ui.plattform.kol.navn") }),
+          el("th", { scope: "col", text: t("ui.plattform.kol.tenant") }),
+          el("th", { scope: "col", text: t("ui.plattform.kol.status") }),
+          el("th", { scope: "col", text: t("ui.plattform.kol.prove") }),
+          el("th", { scope: "col", text: t("ui.plattform.kol.handling") }))),
+        tbody));
+  };
+
+  const nyttFirmaSkjema = () => {
+    const felt = (id, nokkel, type = "text", verdi = "") => {
+      const inn = el("input", { type, id, value: verdi, class: "felt" });
+      return [el("label", { for: id, text: t(nokkel) }), inn, inn];
+    };
+    const [lNavn, iNavn] = felt("pf-navn", "ui.plattform.felt.navn");
+    const [lTenant, iTenant] = felt("pf-tenant", "ui.plattform.felt.tenant");
+    const [lOrg, iOrg] = felt("pf-org", "ui.plattform.felt.orgnummer");
+    const [lProve, iProve] = felt("pf-prove", "ui.plattform.felt.prove",
+                                  "number", "30");
+    const knapp = el("button", { type: "submit", class: "knapp primar",
+      text: t("ui.plattform.opprett") });
+    const skjema = el("form", { class: "skjema" },
+      lNavn, iNavn, lTenant, iTenant, lOrg, iOrg, lProve, iProve,
+      el("div", { class: "knapperad" }, knapp));
+    skjema.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      knapp.disabled = true;
+      opprettPlattformFirma({
+        navn: iNavn.value.trim(),
+        tenant: iTenant.value.trim(),
+        orgnummer: iOrg.value.trim() || null,
+        prove_dogn: Number(iProve.value) || 30,
+      })
+        .then(() => {
+          skjema.reset(); iProve.value = "30";
+          return last().then(() => meld("ui.plattform.opprettet"));
+        })
+        .catch((e) => { const k = feilkode(e); if (k) meld(k); })
+        .finally(() => { knapp.disabled = false; });
+    });
+    return el("div", {},
+      el("h3", { text: t("ui.plattform.nytt_firma") }), skjema);
+  };
+
+  const last = () => hentPlattformFirmaer()
+    .then((d) => {
+      sett(boks,
+        el("h2", { text: t("ui.plattform.firmaer") }),
+        el("p", { text: t("ui.plattform.firmaer_tekst") }),
+        tegnListe(d.firmaer || []),
+        nyttFirmaSkjema());
+      boks.hidden = false;
+    })
+    .catch((e) => { if (feilkode(e)) boks.hidden = true; });
+
+  // FØRST spørsmålet, så innholdet. Er svaret nei, gjøres ingen flere kall —
+  // og seksjonen forblir `hidden`.
+  erPlattformeier()
+    .then((d) => { if (d && d.eier === true) return last(); })
+    .catch(() => {});
+
+  return boks;
+}
+
 
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
@@ -58,6 +254,10 @@ export function visAdmin(hoved, ctx = {}) {
   sett(hoved,
     ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
     profil,
+    // Seksjonen tegner seg selv NÅR serveren har sagt at kalleren er
+    // plattformeier. Til da er den `hidden`, og for alle andre forblir den
+    // det for alltid.
+    plattformseksjon(ctx),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.status") }),
