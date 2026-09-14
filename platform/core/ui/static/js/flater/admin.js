@@ -133,9 +133,15 @@ function plattformseksjon(ctx) {
           ? f.prove_utloper.slice(0, 10) : "—" }),
         handlinger));
     }
-    return el("div", { class: "tabellramme" },
+    // `tablewrap` og `sr-only` er HUSETS navn — begge sto allerede i denne
+    // fila og i `base.css`. Jeg fant på `tabellramme` og `visuelt-skjult`, og
+    // ingen av dem finnes i noen CSS-fil: tabellen mistet sin vannrette
+    // rulling på smal skjerm, og «skjult» bildetekst sto synlig og gjentok
+    // overskriften rett over. Eier så det på skjermen; jeg hadde ikke sett
+    // etter, fordi jsdom ikke laster CSS og porten derfor var blind.
+    return el("div", { class: "tablewrap" },
       el("table", { class: "tabell" },
-        el("caption", { class: "visuelt-skjult",
+        el("caption", { class: "sr-only",
           text: t("ui.plattform.firmaer") }),
         el("thead", {}, el("tr", {},
           el("th", { scope: "col", text: t("ui.plattform.kol.navn") }),
