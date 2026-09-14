@@ -247,11 +247,23 @@ def test_tabellen_starter_tom_i_en_fersk_base(migrator):  # noqa: F811
 
     MUTASJON SOM FELLER: legg en INSERT i migrasjonen.
     """
-    n = migrator.execute(
-        "SELECT count(*) FROM plattformeier WHERE opprettet_av <> 'port'"
-    ).fetchone()[0]
-    assert n == 0, ("migrasjonen skal ikke skrive en eneste eier — "
-                    f"fant {n}")
+    # MAALER MIGRASJONEN, IKKE BASEN. Foerste form talte rader i tabellen og
+    # utelot sine egne — og falt straks `test_plattform_http` la inn en eier
+    # for aa teste rutene sine. Da maalte porten hvilke ANDRE tester som
+    # hadde kjoert, ikke om migrasjonen skriver en bakdoer.
+    #
+    # Kilden kan ikke forurenses av en testkjoering.
+    from pathlib import Path
+    kilde = (Path(__file__).resolve().parents[1]
+             / "db/migrations/199_plattformeier.sql").read_text(
+                 encoding="utf-8").lower()
+    assert "insert into plattformeier" not in kilde, \
+        "migrasjonen skriver en innebygget plattformeier — det er en bakdoer"
+    assert "insert into public.plattformeier" not in kilde
+    # …og tabellen skal faktisk finnes, ellers er assertene over vakuoese.
+    assert migrator.execute(
+        "SELECT count(*) FROM pg_class WHERE relname='plattformeier'"
+    ).fetchone()[0] == 1
 
 
 # ---------------------------------------------------------------------------
