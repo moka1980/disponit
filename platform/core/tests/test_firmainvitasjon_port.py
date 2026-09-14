@@ -296,11 +296,14 @@ def test_to_medlemskap_laaser_ikke_lenger_ute(migrator):
     Porten sa: «den faller den dagen firmavelgeren lander». 196 landet, og
     den falt.
 
-    VERNETS FORUTSETNING ER BORTE. Det som står igjen er en ren FUNKSJONELL
-    begrensning: en ansatt i firma A har ikke `firma:opprett` og kan derfor
-    ikke innløse en invitasjon til firma B. Det er ikke farlig, bare i
-    veien — og det løftes i egen PR, fordi et nytt scope må inn hos ALLE
-    roller og i rolleguiden.
+    VERNETS FORUTSETNING ER BORTE, og 200 løftet også den funksjonelle
+    begrensningen som sto igjen: ruten har nå sitt EGET scope,
+    `firma:blimed`, som hver rolle har. En ansatt i firma A kan innløse en
+    invitasjon til firma B.
+
+    Kjeden i sin helhet, fordi den er lærerik: kravet var et vern → 196 tok
+    bort forutsetningen → igjen sto et LÅNT scope (`firma:opprett`) som
+    løy om hva det gjaldt → 200 ga ruten et scope som sier sannheten.
     """
     from api.sesjon import _firma_for_bruker
 
@@ -313,3 +316,16 @@ def test_to_medlemskap_laaser_ikke_lenger_ute(migrator):
     migrator.execute("SELECT set_config('disponit.tenant','',true)")
     # Ingen SesjonFeil lenger — hun lander alfabetisk først.
     assert _firma_for_bruker(migrator, bid, _Ident()) == sorted([a, b])[0]
+
+    # …OG SCOPET SOM SLIPPER HENNE INN har hun uansett hvilken rolle hun
+    # hadde i det gamle firmaet. Det er kjernen: en invitert ansatt måles
+    # mot rollene hun HAR, ikke mot en hun skal få.
+    #
+    # MUTASJON SOM FELLER: fjern `firma:blimed` fra én rolle.
+    from api.app import RUTESCOPE
+    from api.autorisasjon import ROLLE_TIL_SCOPES
+
+    krevd = RUTESCOPE[("POST", "/v1/invitasjoner/innloes")]
+    assert krevd == "firma:blimed", f"ruten krever {krevd!r}"
+    uten = [r for r, sc in ROLLE_TIL_SCOPES.items() if krevd not in sc]
+    assert not uten, f"disse rollene kan ikke innløse en invitasjon: {uten}"

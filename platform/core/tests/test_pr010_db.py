@@ -273,8 +273,22 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     for scopes in ROLLE_TIL_SCOPES.values():
         assert scopes <= kjente, f"ukjent scope: {scopes - kjente}"
     # Kun leseroller er rene lese-roller; godkjenner er den muterende.
+    #
+    # 200: ETT UNNTAK, OG DET ER ENUMERERT — samme form som admins
+    # differanse rett under, ikke en løsere test. Legger noen et ANNET
+    # muterende scope på `leser`, faller denne fortsatt.
+    #
+    # `firma:blimed` endrer INGENTING i kallerens eget firma. Den innløser en
+    # invitasjon til et ANNET firma, og bare mot et engangstoken hun allerede
+    # må ha i hånden. `leser`s løfte — «du kan lese firmaets data, ikke endre
+    # dem» — står urørt; det er derfor scopet kan gis til alle roller uten å
+    # gi bort noe.
+    #
+    # Scopet MÅTTE til alle: en ansatt som inviteres til et nytt firma måles
+    # mot rollene hun har i det GAMLE, og de kan være hvilke som helst.
     for rolle in ("leser", "sikkerhet"):
-        assert ROLLE_TIL_SCOPES[rolle] <= LESESCOPES
+        assert ROLLE_TIL_SCOPES[rolle] - LESESCOPES == {"firma:blimed"}, \
+            f"{rolle} har et muterende scope utover `firma:blimed`"
     # 038 §6 + 044 §6: admin BESTILLER kontroller og forvalter PLANENE
     # for dem — planen er stående intensjon, ikke stående fullmakt, så
     # også plan-scopene fører bare til policyvurderte bestillinger.
@@ -291,11 +305,17 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # å slippe inn en kollega er å dele ut fullmakter i firmaet. En `leser`
     # som kunne invitere, kunne invitert seg selv en ny konto med flere
     # roller enn hun har.
+    # 200: `firma:blimed` har HVER rolle, admin også. Den hører ikke til
+    # samme klasse som de andre her — de er fullmakter OVER firmaet, mens
+    # denne ikke endrer noe i firmaet i det hele tatt: den innløser en
+    # invitasjon til et ANNET, mot et engangstoken kalleren alt må ha.
+    # Den står i lista fordi lista er en LUKKET enumerasjon av alt admin
+    # har utover lesing — ikke fordi den er en administratorfullmakt.
     assert ROLLE_TIL_SCOPES["admin"] - LESESCOPES == {
         "bestilling:opprett", "plan:opprett", "plan:aktiver",
         "plan:gjenoppta", "epost:kilde:administrer",
         "epost:utkast:behandle", "kontinuitet:write",
-        "part:administrer", "firma:inviter"}
+        "part:administrer", "firma:inviter", "firma:blimed"}
     # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
     # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
     # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant
@@ -305,11 +325,17 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
     # og en saksbehandler som ikke ser kundene sine kan ikke gjøre jobben.
     # Settet er LUKKET og pinnet her: et scope til hos `leser` skal FELLE
     # denne testen, ikke gli inn.
+    # 200: `firma:blimed` inn i det lukkede settet. Kommentaren over sier at
+    # et scope til hos `leser` SKAL felle denne — og den gjorde det. Tallet
+    # endres bare med en grunn skrevet ned, aldri fordi testen var i veien:
+    # scopet endrer ingenting i firmaet, det innløser en invitasjon til et
+    # ANNET mot et engangstoken, og det måtte til ALLE roller fordi en
+    # invitert ansatt måles mot rollene hun har i det gamle firmaet.
     assert scopes_for_roller(["leser"]) == {"decisions:read",
                                             "exceptions:read", "policy:read",
                                             "epost:read", "kontinuitet:read",
                                             "kundeservice:innhold",
-                                            "part:read"}
+                                            "part:read", "firma:blimed"}
     assert "security:read" not in scopes_for_roller(["leser"])
     assert "security:read" in scopes_for_roller(["sikkerhet"])
     # …og `okonomi:read` (101) er ADMINS ALENE: en `leser` skal ikke se

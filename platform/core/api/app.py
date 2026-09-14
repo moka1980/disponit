@@ -4654,7 +4654,17 @@ LESEROLLER = frozenset({"bruker"})
 #: menneskelige unntaksbehandlingen. CSRF håndheves i selve endepunktet
 #: (dobbel-innsending); carve-outen her slipper dem bare forbi den generelle
 #: «browsersesjon når aldri et muterende scope»-porten.
-BROWSER_MUTASJONSSCOPES = frozenset({"exceptions:approve", "exceptions:reject",
+BROWSER_MUTASJONSSCOPES = frozenset({
+                                     # `firma:blimed` — innløsning av en
+                                     # invitasjon. Den MUTERER (skriver et
+                                     # medlemskap), så den må stå her, ikke
+                                     # i LESESCOPES: `app.py` avviser blankt
+                                     # ethvert scope en browsersesjon ber om
+                                     # som verken står i LESESCOPES eller
+                                     # her. Endepunktet håndhever CSRF selv
+                                     # gjennom `_browserkontekst`.
+                                     "firma:blimed",
+                                     "exceptions:approve", "exceptions:reject",
                                      "exceptions:escalate",
                                      # PR-013: policyadministrasjon. `write`
                                      # (redigere utkast) og `activate` (attestere
@@ -6221,7 +6231,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # 196 (firmavelgeren) fjernet utestengelsen; igjen står en funksjonell
     # begrensning — en ansatt i et annet firma kan ikke innløse. Løftes i
     # egen PR (nytt scope hos alle roller + rolleguiden).
-    ("POST", "/v1/invitasjoner/innloes"):    "firma:opprett",
+    ("POST", "/v1/invitasjoner/innloes"):    "firma:blimed",
     ("GET",  "/v1/parter"):                  "part:read",
     ("POST", "/v1/parter"):                  "part:administrer",
     ("POST", "/v1/parter/import"):           "part:administrer",
