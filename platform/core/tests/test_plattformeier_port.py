@@ -254,9 +254,12 @@ def test_tabellen_starter_tom_i_en_fersk_base(migrator):  # noqa: F811
     #
     # Kilden kan ikke forurenses av en testkjoering.
     from pathlib import Path
-    kilde = (Path(__file__).resolve().parents[1]
-             / "db/migrations/199_plattformeier.sql").read_text(
-                 encoding="utf-8").lower()
+    sti = (Path(__file__).resolve().parents[1]
+           / "db/migrations/199_plattformeier.sql")
+    # `encoding` paa SAMME LINJE som `read_text`: porten i `test_engine` er
+    # linjebasert, og et linjeskift mellom dem defeater den. Koden var riktig,
+    # formen var det ikke — og det er formen kontrakten kan haandheve.
+    kilde = sti.read_text(encoding="utf-8").lower()
     assert "insert into plattformeier" not in kilde, \
         "migrasjonen skriver en innebygget plattformeier — det er en bakdoer"
     assert "insert into public.plattformeier" not in kilde
