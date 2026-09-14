@@ -366,6 +366,21 @@ export const slettVarsel = (id, idem = nyIdempotensnokkel()) =>
 // ingenting andre gang.
 export const slettAlleVarsler = (ider, idem = nyIdempotensnokkel()) =>
   _muter("/v1/varsel/slett-alle", "POST", { ider }, idem);
+// PLATTFORMEIEREN (199). Autoriteten er raden i `plattformeier`, ikke scopet:
+// dørene slår opp kalleren selv og svarer 403 uansett hva flaten tror.
+// Derfor spør flaten først — og tegner ingenting hvis svaret er nei.
+export const erPlattformeier = () => hentJson("/v1/plattform/meg");
+export const hentPlattformFirmaer = () => hentJson("/v1/plattform/firmaer");
+export const opprettPlattformFirma = (kropp, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/firmaer", "POST", kropp, idem);
+export const oppdaterPlattformFirma = (tenant, kropp,
+                                       idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/plattform/firmaer/${encodeURIComponent(tenant)}/oppdater`,
+         "POST", kropp, idem);
+export const settPlattformFirmastatus = (tenant, status,
+                                         idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/plattform/firmaer/${encodeURIComponent(tenant)}/status`,
+         "POST", { status }, idem);
 export const settVarselkanal = (kanal, sprak, idem = nyIdempotensnokkel()) =>
   _muter("/v1/varselvalg", "POST", { kanal, sprak }, idem);
 export const forkastUtkast = (uid, utkastversjon, idem = nyIdempotensnokkel()) =>
