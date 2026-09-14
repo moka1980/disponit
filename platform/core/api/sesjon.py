@@ -411,6 +411,8 @@ def oidc_callback(tjeneste, request: Request) -> Response:
         if not code or not state or not binding:
             _rate(conn, "callback_ugyldig", ip)
             conn.commit()
+            # Ingen tenant ennå — den bor i logintransaksjonen vi ikke fant.
+            _logg_callbackfeil(tjeneste, rid, None, "mangler_parametere")
             return _feil_side(rid)
 
         # ATOMISK NY→KONSUMERT med binding-sjekk (v4 §3), committes FØR
@@ -425,6 +427,11 @@ def oidc_callback(tjeneste, request: Request) -> Response:
         if rad is None:
             _rate(conn, "callback_ugyldig", ip)
             conn.commit()
+            # Ukjent, utløpt, allerede konsumert, eller feil binding — de
+            # fire ser like ut HER med vilje (samme UPDATE-betingelse), og å
+            # skille dem i loggen ville krevd fire oppslag på nettopp den
+            # veien en angriper banker på.
+            _logg_callbackfeil(tjeneste, rid, None, "state_ikke_gyldig")
             return _feil_side(rid)
         (provider_id, tenant, nonce, ct, pnonce, pkey_id, retursti,
          firma_onske) = rad
@@ -444,11 +451,17 @@ def oidc_callback(tjeneste, request: Request) -> Response:
                 if _sett_ctx(conn, tenant, rid) else (None, None)
             ident = oidc.veksle_og_valider(
                 provider, redirect_uris[0], code, verifier, nonce)
-        except (oidc.OidcFeil, SesjonFeil, Exception):
+        except (oidc.OidcFeil, SesjonFeil, Exception) as e:
             _terminer(conn, _hash(state), "FEILET", tenant, rid)
             sett_tenant(conn, "_oidc")
             _rate(conn, "callback_token", ip)
             conn.commit()
+            # TYPENAVNET, ikke meldingen. En `OidcFeil` sier gjerne hvilken
+            # claim som spriker; en vilkårlig `Exception` kan bære et token
+            # eller en URL. Typen skiller «signatur» fra «nettverk» — og kan
+            # ikke lekke en hemmelighet.
+            _logg_callbackfeil(tjeneste, rid, tenant,
+                               f"token_{type(e).__name__}")
             return _feil_side(rid)
 
         # Medlemskap må finnes (ingen JIT, v3 §2). Sesjon opprettes
@@ -459,6 +472,11 @@ def oidc_callback(tjeneste, request: Request) -> Response:
                 firma_onske=firma_onske)
         except SesjonFeil as f:
             conn.rollback()
+            # DEN PRESISE KODEN, der den finnes. `ingen_tilgang` er ikke
+            # aggregert, så hver hendelse får sin egen linje — og det var
+            # nettopp den som var usynlig 13/9: en autentisert identitet uten
+            # medlemskap, avvist som den skal, uten et eneste spor.
+            _logg_callbackfeil(tjeneste, rid, tenant, "sesjon", f.kode)
             # `firma_ikke_valgt` er ikke en feilet innlogging — det er en
             # innlogging som mangler ett svar brukeren selv må gi. Uten dette
             # ville hun fått nøyaktig samme generiske side som en avvist
@@ -631,6 +649,40 @@ def _opprett_sesjon(conn, tenant, ident: oidc.Identitet, state_hash, rid, ip,
 # `firma_ikke_valgt` lekker ingenting av det — brukeren har ALLEREDE bevist
 # hvem hun er hos leverandøren, og får vite noe bare om sin egen konto.
 SYNLIGE_CALLBACKFEIL = frozenset({"firma_ikke_valgt"})
+
+
+def _logg_callbackfeil(tjeneste, rid: str, tenant: str | None, grunn: str,
+                       kode: str = "innlogging_feilet") -> None:
+    """Skriv HVORFOR en callback feilet — utad er svaret fortsatt generisk.
+
+    MÅLT 13/9: en ekte innlogging feilet i prod, og journalen hadde IKKE ÉN
+    LINJE. Ingen av de fem `_feil_side`-veiene kalte loggeren. Svaret måtte
+    graves ut av `oidc_logintransaksjon` i databasen — og det er en vei som
+    finnes for meg, ikke for den som drifter klokka tre om natta.
+
+    TO ULIKE TING, OG DE SKAL VÆRE ULIKE:
+    Brukeren får `innlogging_feilet` uansett (v5 §6 — svaret gjengir aldri
+    URL-parametere, og skiller aldri «ukjent bruker» fra «feil token»; å
+    skille dem er å la noen prøve seg fram). LOGGEN skal si nøyaktig hva som
+    skjedde. Det er hele grunnen til at de to er skilt.
+
+    KODEN BÆRER AGGREGERINGEN. `innlogging_feilet` er `aggregert=True` —
+    «samles i metric, aldri én sak per treff» — nettopp fordi hvem som helst
+    kan utløse den fra utsiden; én linje per forsøk ville vært en
+    loggflom-vektor. Der det finnes en PRESIS kode (`ingen_tilgang`), brukes
+    den, og den er ikke aggregert: da skriver hver hendelse sin egen linje,
+    slik den skal.
+
+    `grunn` er en LUKKET streng fra koden — aldri en unntaksmelding, aldri
+    noe fra URL-en. En melding kan bære et token; et ord kan ikke.
+    """
+    try:
+        tjeneste.logg.hendelse(kode, rid, tenant, grunn=grunn)
+    except Exception:
+        # Loggingen skal ALDRI velte innloggingsveien. Feiler den, er
+        # feilsiden fortsatt riktig svar — og en tapt linje er mindre verdt
+        # enn en tapt innlogging.
+        pass
 
 
 def _feil_side(rid: str, kode: str = "innlogging_feilet") -> Response:
