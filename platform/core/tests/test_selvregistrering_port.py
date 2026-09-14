@@ -414,3 +414,95 @@ def test_feil_orgnummer_sier_orgnummer_ikke_tak_naadd(miljo, migrator, klient):
                              "Idempotency-Key": secrets.token_hex(16)})
     assert r.status_code == 400, r.text
     assert "orgnummer" in r.json().get("detalj", ""), r.text
+
+
+# ---------------------------------------------------------------------------
+# 10. Kortnavnet kan VELGES — og et valg skal aldri bli stille om til noe annet.
+#
+# Eier, etter å ha registrert seg selv: «kortnavn feltet er ikke med i
+# registrering når kunden selv registrerer seg». Flaten foreslår nå ett fra
+# firmanavnet, og rører hun det, sendes det MED.
+#
+# Hvorfor skillet betyr noe: kortnavnet er PERMANENT. Det står som kolonne i
+# 328 tabeller og er nøkkelen som holder kundene fra hverandre;
+# `firma_oppdater` kan endre navn og orgnummer, ikke dette.
+# ---------------------------------------------------------------------------
+
+def test_formen_er_den_samme_som_basen_krever():
+    """`FORM` speiler `firma_tenant_form` (190).
+
+    Den finnes i Python fordi et valgt kortnavn skal avvises med
+    `request_feilformet` og et tydelig felt — ikke som en CheckViolation,
+    som er SAMME unntaksklasse som firmataket og derfor ville gitt henne
+    «taket er nådd» for en bindestrek på feil plass.
+    """
+    from api.firmaregistrering import FORM
+
+    for gyldig in ("wcagvakt", "a1", "bolig-nord-2", "x" * 63):
+        assert FORM.match(gyldig), gyldig
+    for ugyldig in ("", "a", "-start", "STORE", "med_understrek", "æøå",
+                    "x" * 64, "med mellomrom"):
+        assert not FORM.match(ugyldig), ugyldig
+
+
+def test_reserverte_kontekster_avvises():
+    """`_plattform`, `_registrering`, `_oidc` er plattformens egne.
+
+    FORM-en avviser dem allerede — understrek er ikke i mønsteret — så dette
+    er et belte til seler. Åpnes mønsteret en dag, skal ikke en kunde kunne
+    registrere seg som en reservert kontekst i samme slengen.
+    """
+    from api.firmaregistrering import er_reservert
+
+    assert er_reservert("_plattform")
+    assert er_reservert("_registrering")
+    assert not er_reservert("wcagvakt")
+
+
+@pg
+def test_et_VALGT_kortnavn_brukes_ordrett(migrator):  # noqa: F811
+    """MUTASJON SOM FELLER: la `grunn` alltid være `slug_av(navn)`."""
+    from api.firmaregistrering import slug_av
+
+    valgt = _slug()
+    # Navnet ville gitt en HELT annen slug — det er nettopp poenget.
+    navn = "Helt Annet Navn AS"
+    assert slug_av(navn) != valgt
+    bid = _bruker(migrator)
+    _registrer(migrator, valgt, bid, navn=navn)
+    migrator.commit()
+    _sett_kontekst(migrator, valgt)
+    rad = migrator.execute("SELECT tenant, navn FROM firma WHERE tenant=%s",
+                           (valgt,)).fetchone()
+    assert rad == (valgt, navn), \
+        "det valgte kortnavnet ble ikke brukt ordrett"
+    migrator.execute("DELETE FROM firma WHERE tenant=%s", (valgt,))
+    migrator.commit()
+
+
+def test_et_valgt_kortnavn_faar_IKKE_en_stille_2():
+    """SELVE SKILLET.
+
+    Et UTLEDET kortnavn kan trygt bli `-2`: hun var likegyldig til det. Et
+    VALGT skal aldri stille bli til noe annet — da får hun beskjed, og velger
+    selv. Her måles at kandidatlista er ETT ledd lang når kortnavnet er valgt.
+
+    MUTASJON SOM FELLER: bruk `_kandidater(grunn)` også for et valgt navn.
+    """
+    from api.firmaregistrering import _kandidater
+
+    # Den utledede veien: tjue kandidater, `-2` og oppover.
+    utledet = list(_kandidater("fjordlys-as"))
+    assert len(utledet) > 1 and utledet[1].endswith("-2")
+    # DEN EKTE FUNKSJONEN endepunktet bruker — ikke kilden lest som tekst.
+    # Første utkast grep etter en linje i fila; det måler at en streng finnes,
+    # ikke at koden oppfører seg. Og testen over gikk rett på basedøra, altså
+    # forbi hele beslutningen: mutasjonen «ignorer det valgte kortnavnet»
+    # sto GRØNN. Derfor er beslutningen nå en funksjon med et navn.
+    from api.firmaregistrering import kandidater_for
+
+    assert kandidater_for("Helt Annet Navn AS", "fjordlys") == ["fjordlys"], \
+        "et valgt kortnavn går mer enn ETT forsøk"
+    utledet2 = kandidater_for("Fjordlys AS", None)
+    assert utledet2[0] == "fjordlys-as" and len(utledet2) > 1, \
+        "den utledede veien mistet kandidatlista si"

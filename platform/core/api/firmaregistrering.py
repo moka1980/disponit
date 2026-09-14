@@ -47,6 +47,22 @@ BRANSJEMALER = {
 
 _UGYLDIG = re.compile(r"[^a-z0-9]+")
 
+#: SAMME FORM SOM BASEN krever (`firma_tenant_form`, 190), skrevet her fordi
+#: et valgt kortnavn skal avvises med `request_feilformet` og et tydelig felt
+#: — ikke som en CheckViolation, som er samme unntaksklasse som firmataket og
+#: derfor ville gitt henne «taket er nådd» for en bindestrek på feil plass.
+FORM = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
+
+
+def er_reservert(kortnavn: str) -> bool:
+    """`_plattform`, `_registrering`, `_oidc` er plattformens egne kontekster.
+
+    FORM-en avviser dem allerede (understrek er ikke med i mønsteret), så
+    dette er et belte til seler: skulle mønsteret en dag åpnes, skal ikke en
+    kunde kunne registrere seg som en reservert kontekst i samme slengen.
+    """
+    return kortnavn.startswith("_")
+
 
 def slug_av(navn: str) -> str:
     """Firmanavn → tenant-slug, på formen `firma_tenant_form` krever
@@ -65,6 +81,25 @@ def slug_av(navn: str) -> str:
     s = _UGYLDIG.sub("-", s).strip("-")
     s = s[:MAKS_SLUG].rstrip("-")
     return s
+
+
+def kandidater_for(navn: str, valgt: str | None) -> list[str]:
+    """Kortnavnene vi skal prøve, i rekkefølge.
+
+    ET VALGT KORTNAVN GÅR ETT FORSØK. Et utledet kan trygt bli `-2`: hun var
+    likegyldig til det. Et valgt skal aldri stille bli til noe annet — da får
+    hun beskjed, og velger selv. Kortnavnet er permanent (kolonne i 328
+    tabeller; `firma_oppdater` kan ikke endre det), så en `-2` hun aldri ba om
+    ville fulgt firmaet for alltid.
+
+    SKILT UT SOM EGEN FUNKSJON fordi porten ellers måtte gå gjennom en hel
+    browserøkt for å nå beslutningen — og min første test gikk i stedet rett
+    på basedøra, altså forbi denne linja. Mutasjonen «ignorer det valgte
+    kortnavnet» sto da grønn. En test som ikke går kallerens vei, måler en
+    annen vei.
+    """
+    grunn = valgt or slug_av(navn)
+    return [grunn] if valgt else list(_kandidater(grunn))
 
 
 def _kandidater(grunn: str):
@@ -123,16 +158,40 @@ def registrer_firma(tjeneste, request):
         if bransje not in BRANSJEMALER:
             return _feil("request_feilformet", rid, 400, detalj="bransje")
 
-        grunn = slug_av(navn)
-        if len(grunn) < 2:
+        # KORTNAVNET KAN VELGES, OG DA ER DET ET VALG.
+        #
+        # Eier, etter å ha registrert seg selv: «kortnavn feltet er ikke med i
+        # registrering når kunden selv registrerer seg». Flaten fyller det nå
+        # ut fra firmanavnet mens hun skriver — men rører hun feltet, sendes
+        # det MED, og da er det hennes.
+        #
+        # Hvorfor forskjellen betyr noe: kortnavnet er PERMANENT. Det står
+        # som kolonne i 328 tabeller (målt) og er nøkkelen som holder kundene
+        # fra hverandre; `firma_oppdater` kan endre navn og orgnummer, ikke
+        # dette. Et utledet kortnavn kan derfor få en `-2` uten at noen
+        # merker det — det var hun uansett likegyldig til. Et VALGT kortnavn
+        # skal aldri stille bli til noe annet: da får hun beskjed, og velger
+        # selv.
+        valgt = k.get("kortnavn")
+        if valgt is not None:
+            if not isinstance(valgt, str) or not FORM.match(valgt.strip()):
+                return _feil("request_feilformet", rid, 400, detalj="kortnavn")
+            valgt = valgt.strip()
+            if er_reservert(valgt):
+                return _feil("request_feilformet", rid, 400, detalj="kortnavn")
+
+        kandidater = kandidater_for(navn, valgt)
+        if len(kandidater[0]) < 2:
             # Et navn som bare består av tegn slugen ikke tar imot.
             return _feil("request_feilformet", rid, 400, detalj="navn")
 
-        # STEG 1: firma + admin-medlemskap, atomisk. Kollisjon på slugen er
-        # ikke en feil — vi prøver neste kandidat.
+        # STEG 1: firma + admin-medlemskap, atomisk. For et UTLEDET kortnavn
+        # er kollisjon ikke en feil — vi prøver neste kandidat. For et VALGT
+        # er det ett forsøk: hun skal vite at navnet var opptatt, ikke oppdage
+        # en `-2` hun aldri ba om.
         tenant = None
         frist = None
-        for kandidat in _kandidater(grunn):
+        for kandidat in kandidater:
             try:
                 with conn.transaction():
                     frist = conn.execute(
@@ -149,7 +208,11 @@ def registrer_firma(tjeneste, request):
             except psycopg.errors.InvalidParameterValue:
                 return _feil("request_feilformet", rid, 400)
         if tenant is None:
-            return _feil("firma_navn_opptatt", rid, 409)
+            # ULIKE KODER, fordi de krever ulik handling av henne: et opptatt
+            # VALGT kortnavn retter hun selv i feltet; et utledet som ikke fant
+            # plass på tjue forsøk er noe helt annet.
+            return _feil("kortnavn_opptatt" if valgt else "firma_navn_opptatt",
+                         rid, 409)
 
         # STEG 2-3: nøkkel og policy hører til det NYE firmaet, så
         # konteksten flyttes dit. Feiler noe her, står firmaet igjen uten

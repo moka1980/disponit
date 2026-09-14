@@ -54,8 +54,29 @@ function _hash(tekst, frø, faktor) {
   return (h ^ (h >>> 15)) >>> 0;
 }
 
-export function idempotensnokkelFor(navn, orgnummer, bransje) {
-  const raa = JSON.stringify([navn, orgnummer ?? null, bransje]);
+// SLUGEN SPEILER SERVERENS `slug_av` (firmaregistrering.py). Forslaget må
+// være nøyaktig det serveren VILLE valgt — ellers viser feltet ett kortnavn
+// og firmaet får et annet, og da er forslaget en løgn.
+//
+// Æ/Ø/Å oversettes FØR normaliseringen, av samme grunn som på serveren: NFD
+// splitter ikke Ø i O + ring, så «Øre AS» ville blitt «re-as».
+export function slugAv(navn) {
+  let s = String(navn || "").trim().toLowerCase();
+  for (const [fra, til] of [["æ", "ae"], ["ø", "oe"], ["å", "aa"],
+                            ["ä", "ae"], ["ö", "oe"], ["ü", "ue"]]) {
+    s = s.split(fra).join(til);
+  }
+  s = s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  s = s.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return s.slice(0, 63).replace(/-+$/, "");
+}
+
+export function idempotensnokkelFor(navn, orgnummer, bransje, kortnavn) {
+  // KORTNAVNET INN I NØKKELEN. Retter hun et opptatt kortnavn og prøver på
+  // nytt, er det en NY handling — med den gamle nøkkelen ville hun fått det
+  // første forsøkets svar tilbake, altså «opptatt», uansett hva hun skrev.
+  const raa = JSON.stringify([navn, orgnummer ?? null, bransje,
+                              kortnavn ?? null]);
   const a = _hash(raa, 0x811c9dc5, 0x01000193);
   const b = _hash(raa, 0xdeadbeef, 0x85ebca6b);
   return `firmareg-${a.toString(16).padStart(8, "0")}`
@@ -96,6 +117,19 @@ export function visFirmaregistrering(hoved, ctx) {
                             role: "alert" });
   org.rad.append(orgFeil);
 
+  // KORTNAVNET. Fylles ut fra firmanavnet mens hun skriver — og slutter å
+  // gjøre det i det hun rører feltet selv. Da er det hennes, og sendes MED:
+  // serveren skiller et VALGT kortnavn fra et utledet, fordi et valgt aldri
+  // skal bli stille om til noe annet.
+  const kort = felt("firmareg-kortnavn", "ui.firmareg.kortnavn");
+  let kortRortAvHenne = false;
+  kort.inp.addEventListener("input", () => { kortRortAvHenne = true; });
+  navn.inp.addEventListener("input", () => {
+    if (!kortRortAvHenne) kort.inp.value = slugAv(navn.inp.value);
+  });
+  kort.rad.append(el("p", { class: "hjelpetekst",
+    text: t("ui.firmareg.kortnavn_hjelp") }));
+
   const valg = el("select", { id: "firmareg-bransje", class: "felt-inp" });
   for (const b of BRANSJER) {
     valg.append(el("option", { value: b, text: t(`ui.firmareg.bransje.${b}`) }));
@@ -112,7 +146,7 @@ export function visFirmaregistrering(hoved, ctx) {
   // `novalidate`: nettleserens egen boble er ikke oversatt og kan ikke
   // knyttes til feltet med aria-errormessage.
   const skjema = el("form", { class: "kv-skjema", novalidate: "" },
-    navn.rad, org.rad, bransjerad,
+    navn.rad, kort.rad, org.rad, bransjerad,
     el("div", { class: "knapperad" }, knapp), melding);
 
   const visFeil = (nokkel) => {
@@ -153,9 +187,21 @@ export function visFirmaregistrering(hoved, ctx) {
     const bransje = valg.value;
     knapp.disabled = true;
     try {
+      // BARE NÅR HUN HAR RØRT DET. Sendes feltet alltid, kan serveren ikke
+      // skille et valg fra et forslag — og da ville en kollisjon på et
+      // kortnavn hun var likegyldig til stoppet registreringen i stedet for
+      // å ta neste ledige.
+      // NORMALISERT ÉN GANG, brukt begge steder (CodeRabbit). Rører hun
+      // feltet og TØMMER det, er verdien `""` — falsy, så kroppen utelot
+      // `kortnavn`, mens nøkkelen fikk `""`. To identiske kropper ville da
+      // hatt ulik idempotensnøkkel, og et gjentatt klikk blitt firma nummer
+      // to i stedet for en replay.
+      const kortnavn =
+        (kortRortAvHenne ? kort.inp.value.trim() : "") || null;
       const svar = await registrerFirma(
-        { navn: n, orgnummer, bransje },
-        idempotensnokkelFor(n, orgnummer, bransje));
+        kortnavn ? { navn: n, kortnavn, orgnummer, bransje }
+          : { navn: n, orgnummer, bransje },
+        idempotensnokkelFor(n, orgnummer, bransje, kortnavn));
       // FERDIG — OG HUN MÅ LOGGE INN PÅ NYTT. Sesjonen hennes peker på
       // registreringskonteksten, som ikke lenger har et medlemskap.
       sett(hoved, ...flateHode(t("ui.firmareg.ferdig_tittel"),
@@ -172,6 +218,10 @@ export function visFirmaregistrering(hoved, ctx) {
       knapp.disabled = false;
       if (f instanceof UautorisertFeil) {
         visFeil("ui.firmareg.feil.okt");
+      } else if (f instanceof ApiFeil && f.kode === "kortnavn_opptatt") {
+        kort.inp.setAttribute("aria-invalid", "true");
+        kort.inp.focus();
+        visFeil("ui.firmareg.feil.kortnavn_opptatt");
       } else if (f instanceof ApiFeil && f.kode === "firma_tak_naadd") {
         visFeil("ui.firmareg.feil.tak");
       } else if (f instanceof ApiFeil && f.kode === "firma_navn_opptatt") {

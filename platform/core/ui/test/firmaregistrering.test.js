@@ -71,10 +71,22 @@ test("Registrering: skjemaet er kort, merket og axe-rent", async () => {
   const h = nyHoved();
   visFirmaregistrering(h, ctx());
 
-  // TRE FELTER, ikke flere. Et registreringsskjema som spør om alt, er
+  // FIRE FELTER, ikke flere. Et registreringsskjema som spør om alt, er
   // grunnen til at folk ikke fullfører det.
+  //
+  // TALLET GIKK FRA TRE TIL FIRE, og det er et EIERVEDTAK 14/9 — ikke en
+  // grense som sakte skled. Eier registrerte seg selv og så at kortnavnet
+  // manglet: det er PERMANENT (kolonne i 328 tabeller, og `firma_oppdater`
+  // kan ikke endre det), så et firma kunne sitte for alltid med et kortnavn
+  // det ikke hadde valgt.
+  //
+  // Prisen er holdt nede: feltet fylles ut automatisk fra firmanavnet, så
+  // hun kan la det stå. Det er et felt hun KAN bruke, ikke et hun MÅ.
+  //
+  // Neste som vil legge til et felt nummer fem: dette tallet er en grense,
+  // ikke en telling. Endre det bare med en grunn som står skrevet her.
   const felter = h.querySelectorAll("input, select");
-  assert.equal(felter.length, 3, "skjemaet har vokst forbi tre felter");
+  assert.equal(felter.length, 4, "skjemaet har vokst forbi fire felter");
   for (const f of felter) {
     assert.ok(h.querySelector(`label[for="${f.id}"]`),
       `feltet ${f.id} mangler en label`);
@@ -203,4 +215,138 @@ test("Registrering: en ukjent feil sier noe, ikke ingenting", async () => {
   fyll(h);
   await vent(() => h.textContent.includes(t("ui.firmareg.feil.ukjent")));
   assert.equal(h.querySelector("button[type=submit]").disabled, false);
+});
+
+// ---------------------------------------------------------------------------
+// Kortnavnet. Eier, etter å ha registrert seg selv: «kortnavn feltet er ikke
+// med i registrering når kunden selv registrerer seg».
+//
+// Det er PERMANENT — kolonne i 328 tabeller, og `firma_oppdater` kan ikke
+// endre det. Derfor foreslås det, men kan rettes: hun trenger ikke tenke på
+// det, men får se hva hun ender opp med.
+// ---------------------------------------------------------------------------
+
+const skriv = (inp, verdi) => {
+  inp.value = verdi;
+  inp.dispatchEvent(new window.Event("input", { bubbles: true }));
+};
+
+test("Registrering: kortnavnet foreslås mens hun skriver firmanavnet",
+  async () => {
+    SVAR = {};
+    const h = nyHoved();
+    visFirmaregistrering(h, ctx());
+    skriv(h.querySelector("#firmareg-navn"), "Øre & Nese AS");
+    // Forslaget må være NØYAKTIG det serveren ville valgt. Æ/Ø/Å oversettes
+    // FØR normaliseringen — ellers ville «Øre AS» blitt «re-as».
+    assert.equal(h.querySelector("#firmareg-kortnavn").value, "oere-nese-as");
+  });
+
+test("Registrering: rører hun kortnavnet, slutter forslaget å overstyre",
+  async () => {
+    // MUTASJON SOM FELLER: fyll alltid ut, uansett om hun har rørt feltet.
+    SVAR = {};
+    const h = nyHoved();
+    visFirmaregistrering(h, ctx());
+    const navn = h.querySelector("#firmareg-navn");
+    const kort = h.querySelector("#firmareg-kortnavn");
+    skriv(navn, "Fjordlys Elektro AS");
+    assert.equal(kort.value, "fjordlys-elektro-as");
+    skriv(kort, "fjordlys");
+    skriv(navn, "Fjordlys Elektro Holding AS");
+    assert.equal(kort.value, "fjordlys",
+      "forslaget overstyrte det hun selv hadde skrevet");
+  });
+
+test("Registrering: et URØRT kortnavn sendes IKKE med", async () => {
+  // Sendes feltet alltid, kan serveren ikke skille et valg fra et forslag —
+  // og en kollisjon på et kortnavn hun var likegyldig til ville stoppet
+  // registreringen i stedet for å ta neste ledige.
+  //
+  // MUTASJON SOM FELLER: send `kortnavn` uansett.
+  SVAR = { "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
+    navn: "Fjordlys Elektro AS", prove_utloper: "2026-10-12",
+    bransje: "tjenestebedrift" } };
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  skriv(h.querySelector("#firmareg-navn"), "Fjordlys Elektro AS");
+  h.querySelector("#firmareg-orgnr").value = "923609016";
+  h.querySelector("form").dispatchEvent(
+    new window.Event("submit", { cancelable: true, bubbles: true }));
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  const kropp = KALL.find((k) => k.metode === "POST").kropp;
+  assert.ok(!("kortnavn" in kropp),
+    `et urørt kortnavn ble sendt med: ${JSON.stringify(kropp)}`);
+});
+
+test("Registrering: et RØRT kortnavn sendes med", async () => {
+  SVAR = { "/v1/firma/registrer": { tenant: "fjordlys", navn: "Fjordlys AS",
+    prove_utloper: "2026-10-12", bransje: "tjenestebedrift" } };
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  skriv(h.querySelector("#firmareg-navn"), "Fjordlys Elektro AS");
+  skriv(h.querySelector("#firmareg-kortnavn"), "fjordlys");
+  h.querySelector("#firmareg-orgnr").value = "923609016";
+  h.querySelector("form").dispatchEvent(
+    new window.Event("submit", { cancelable: true, bubbles: true }));
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  assert.equal(KALL.find((k) => k.metode === "POST").kropp.kortnavn,
+    "fjordlys");
+});
+
+test("Registrering: et TØMT kortnavn oppfører seg som et urørt", async () => {
+  // Rører hun feltet og tømmer det, er verdien `""`. Uten normalisering ble
+  // kroppen uten `kortnavn`, mens nøkkelen fikk `""` — to identiske kropper
+  // med ulik idempotensnøkkel, altså firma nummer to i stedet for en replay.
+  //
+  // MUTASJON SOM FELLER: send `kort.inp.value.trim()` rått til begge.
+  SVAR = { "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
+    navn: "Fjordlys Elektro AS", prove_utloper: "2026-10-12",
+    bransje: "tjenestebedrift" } };
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  skriv(h.querySelector("#firmareg-navn"), "Fjordlys Elektro AS");
+  skriv(h.querySelector("#firmareg-kortnavn"), "");
+  h.querySelector("#firmareg-orgnr").value = "923609016";
+  h.querySelector("form").dispatchEvent(
+    new window.Event("submit", { cancelable: true, bubbles: true }));
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  const post = KALL.find((k) => k.metode === "POST");
+  assert.ok(!("kortnavn" in post.kropp), "et tømt kortnavn ble sendt med");
+  assert.equal(post.idem,
+    idempotensnokkelFor("Fjordlys Elektro AS", "923609016",
+                        "tjenestebedrift", null),
+    "nøkkelen skilte et tømt felt fra et urørt");
+});
+
+test("Registrering: nøkkelen skiller to ULIKE kortnavn", () => {
+  // Retter hun et opptatt kortnavn og prøver på nytt, er det en NY handling.
+  // Med den gamle nøkkelen ville hun fått det første forsøkets svar tilbake
+  // — altså «opptatt» — uansett hva hun skrev.
+  const a = idempotensnokkelFor("Fjordlys AS", "923609016", "netthandel",
+                                "fjordlys");
+  const b = idempotensnokkelFor("Fjordlys AS", "923609016", "netthandel",
+                                "fjordlys-2");
+  assert.notEqual(a, b, "to ulike kortnavn ga samme idempotensnøkkel");
+  const c = idempotensnokkelFor("Fjordlys AS", "923609016", "netthandel",
+                                "fjordlys");
+  assert.equal(a, c, "samme innhold ga ulik nøkkel");
+});
+
+test("Registrering: et opptatt kortnavn sies ved FELTET", async () => {
+  // Fila haaner feil med et TALL som verdi + `_feilkode` — jeg fant foerst
+  // paa et `FEILSVAR` som ikke finnes. Speil naboen, ikke hukommelsen.
+  SVAR = { "/v1/firma/registrer": 409, _feilkode: "kortnavn_opptatt" };
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  skriv(h.querySelector("#firmareg-navn"), "Fjordlys Elektro AS");
+  skriv(h.querySelector("#firmareg-kortnavn"), "fjordlys");
+  h.querySelector("#firmareg-orgnr").value = "923609016";
+  h.querySelector("form").dispatchEvent(
+    new window.Event("submit", { cancelable: true, bubbles: true }));
+  await vent(() => h.textContent.includes(
+    t("ui.firmareg.feil.kortnavn_opptatt")));
+  assert.equal(h.querySelector("#firmareg-kortnavn")
+    .getAttribute("aria-invalid"), "true",
+    "feltet er ikke merket som ugyldig");
 });
