@@ -14,6 +14,15 @@ import assert from "node:assert/strict";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visAdmin } from "../static/js/flater/admin.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const HER = dirname(fileURLToPath(import.meta.url));
+const CSS = readdirSync(join(HER, "..", "static", "css"))
+  .filter((f) => f.endsWith(".css"))
+  .map((f) => readFileSync(join(HER, "..", "static", "css", f), "utf-8"))
+  .join("\n");
 
 settI18nForTest(NB, "nb");
 
@@ -230,6 +239,38 @@ test("Plattform: hele radens handlinger låses mens kallet er ute", async () => 
   // Umiddelbart etter klikket, FØR svaret: alle skal være låst.
   assert.ok(knapper.every((b) => b.disabled),
     "en handling sto åpen mens en annen var ute");
+});
+
+test("Plattform: klassene som skal GJØRE noe finnes faktisk i CSS", async () => {
+  // FEILEN EIER SÅ PÅ SKJERMEN, og som ingen test kunne se.
+  //
+  // Jeg skrev `visuelt-skjult` og `tabellramme`. Ingen av dem finnes i noen
+  // CSS-fil — huset heter `sr-only` og `tablewrap`, og BEGGE sto allerede i
+  // samme fil jeg redigerte. Utslaget: bildeteksten som skulle vært skjult
+  // sto synlig og gjentok overskriften rett over, og tabellen mistet sin
+  // vannrette rulling på smal skjerm.
+  //
+  // jsdom laster ikke CSS, så ingen vanlig flatetest kan se dette. Men
+  // NAVNET kan måles: en klasse som skal skjule eller rulle, må finnes et
+  // sted som faktisk skjuler eller ruller. En ren beholderklasse uten stil
+  // er derimot helt legitim — 18 slike finnes i kodebasen — så porten går
+  // bare på de to som bærer en OPPFØRSEL.
+  //
+  // MUTASJON SOM FELLER: bytt tilbake til `visuelt-skjult`/`tabellramme`.
+  const h = await tegn(true);
+
+  const caption = h.querySelector("table caption");
+  assert.ok(caption, "tabellen mangler bildetekst");
+  assert.ok(caption.classList.contains("sr-only"),
+    `bildeteksten er ikke skjult for øyet: class="${caption.className}"`);
+  assert.ok(/\.sr-only\b/.test(CSS),
+    "`sr-only` finnes ikke i CSS — da skjuler den ingenting");
+
+  const omslag = h.querySelector("table").parentElement;
+  assert.ok(omslag.classList.contains("tablewrap"),
+    `tabellen mangler rulleomslag: class="${omslag.className}"`);
+  assert.ok(/\.tablewrap\b/.test(CSS),
+    "`tablewrap` finnes ikke i CSS — da ruller ingenting");
 });
 
 test("Plattform: seksjonen er axe-ren", async () => {
