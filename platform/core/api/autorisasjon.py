@@ -99,7 +99,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # hemmelighet i firmaet — den er selve arbeidsgrunnlaget, og en
     # saksbehandler som ikke ser kundene sine kan ikke gjøre jobben.
     # Å ENDRE den er `part:administrer`, og de to gis hver for seg.
-    "leser": frozenset({"part:read",
+    "leser": frozenset({"firma:blimed",
+                        "part:read",
                         "decisions:read", "exceptions:read", "policy:read",
                         "epost:read", "kontinuitet:read",
                         "kundeservice:innhold"}),
@@ -111,7 +112,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # saklig: en henvendelse klassifisert som `mistenkelig` blir en
     # SIKKERHETSSAK i M-37s kø, og den som skal behandle den må kunne
     # lese hva som faktisk sto der.
-    "sikkerhet": frozenset({"part:read",
+    "sikkerhet": frozenset({"firma:blimed",
+                            "part:read",
                             "decisions:read", "exceptions:read",
                             "policy:read", "security:read",
                             "epost:read", "kontinuitet:read",
@@ -132,7 +134,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # hendelseshåndteringen — write dekker kartinnslag, kontakter,
     # hendelser, tidslinjeposter og lukking (dørene håndhever resten:
     # append-only, etteranalyse-kravet, SP-2).
-    "admin": frozenset({"decisions:read", "exceptions:read", "policy:read",
+    "admin": frozenset({"firma:blimed",
+                        "decisions:read", "exceptions:read", "policy:read",
                         "security:read", "bestilling:opprett",
                         "plan:opprett", "plan:aktiver", "plan:gjenoppta",
                         "epost:read", "epost:kilde:administrer",
@@ -178,7 +181,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # PR-012: godkjenner kan behandle unntakskøen — den FØRSTE muterende
     # browserrollen. Scopene er per-handling (approve/reject/escalate) så et
     # reject-scope aldri kan godkjenne (v3-test).
-    "godkjenner": frozenset({"decisions:read", "exceptions:read",
+    "godkjenner": frozenset({"firma:blimed",
+                             "decisions:read", "exceptions:read",
                              "exceptions:approve", "exceptions:reject",
                              "exceptions:escalate"}),
     # 194/195: `firma:inviter` — å slippe inn en kollega er å dele ut
@@ -186,22 +190,30 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # kunne invitere, kunne invitert seg selv en ny konto med flere roller
     # enn hun har.
     #
-    # INNLØSNINGEN krever `firma:opprett` (`RUTESCOPE`), altså REGISTRANTENS
-    # scope — ikke fordi autoriteten ligger der, men fordi `_autentiser` er
-    # bygget for ett påkrevd scope og avviser `None`. Autoriteten er TOKENET;
-    # sesjonen beviser bare hvem hun er, og CSRF at det er hennes egen
-    # nettleser.
+    # INNLØSNINGEN har sitt EGET scope: `firma:blimed`, og det har HVER
+    # rolle. Autoriteten er TOKENET; sesjonen beviser bare hvem hun er, og
+    # CSRF at det er hennes egen nettleser. Scopet finnes utelukkende fordi
+    # `_autentiser` er bygget for ett påkrevd scope og avviser `None`.
     #
-    # KRAVET VAR ET VERN — to medlemskap låste ute av BEGGE — og 196
-    # (firmavelgeren) fjernet den utestengelsen. Igjen står en funksjonell
-    # begrensning: en ansatt i et annet firma har ikke `firma:opprett` og
-    # kan ikke innløse en invitasjon. Løftes i egen PR.
+    # VEIEN HIT, fordi den forklarer hvorfor det ikke bare er `policy:read`:
+    # ruten krevde lenge `firma:opprett`, altså REGISTRANTENS scope. Det var
+    # et vern så lenge to medlemskap låste en bruker ute av BEGGE firmaene;
+    # 196 (firmavelgeren) fjernet den utestengelsen, og igjen sto en ren
+    # funksjonell begrensning: en ansatt i firma A kunne ikke innløse en
+    # invitasjon til firma B, fordi hun ikke er registrant.
+    #
+    # ET LÅNT SCOPE LYVER OM HVA DET GJELDER. `firma:opprett` betyr «kan
+    # opprette et firma på plattformen» — en langt større fullmakt enn «kan
+    # ta imot en invitasjon». At de falt sammen var en tilfeldighet i
+    # `_autentiser`s form, ikke en vurdering. Et eget scope sier sannheten,
+    # og kan gis til alle uten å gi bort noe annet.
     # PR-013: policyforvalteren redigerer utkast OG attesterer aktivering.
     # `policy:write` og `policy:activate` er adskilte scopes: fire-øyne (V6)
     # hviler på at aktivering krever attestasjoner, ikke på at rollen mangler
     # skrivetilgang — men en tenant KAN gi to ulike personer hver sin rolle
     # (kun-skrive vs. kun-aktivere) ved å definere snevrere roller senere.
-    "policyforvalter": frozenset({"decisions:read", "policy:read",
+    "policyforvalter": frozenset({"firma:blimed",
+                                  "decisions:read", "policy:read",
                                   "policy:write", "policy:activate"}),
     # PR-015 §3: cross-tenant domeneautoritet er sin EGEN rolle, og den bærer
     # BEVISST ikke `exceptions:approve`/`reject`/`escalate`. En som kan behandle
@@ -209,7 +221,8 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # autoriserer for et domene — «`exceptions:handle` alene gir aldri
     # cross-tenant domeneautoritet». Rollen leser saken (`exceptions:read`) og
     # attesterer utfallet; motoren gjør overgangen.
-    "domeneadjudikator": frozenset({"decisions:read", "exceptions:read",
+    "domeneadjudikator": frozenset({"firma:blimed",
+                                    "decisions:read", "exceptions:read",
                                     "domains:adjudicate"}),
     # 192: REGISTRANTEN — den eneste rollen som ikke tilhører et firma.
     #
@@ -220,14 +233,20 @@ ROLLE_TIL_SCOPES: dict[str, frozenset[str]] = {
     # tenanten `_registrering`, og da virker resten av autorisasjonen
     # uendret — ingen særtilfeller i sesjonsveien.
     #
-    # ETT SCOPE, OG INGEN LESESCOPES. Hun skal kunne opprette et firma og
-    # ingenting annet; `decisions:read` her ville gitt henne en tom
-    # beslutningsflate å vandre rundt i mens hun ennå ikke er kunde.
+    # TO SCOPES, OG INGEN LESESCOPES. Hun skal kunne opprette et firma og
+    # ta imot en invitasjon — ingenting annet; `decisions:read` her ville
+    # gitt henne en tom beslutningsflate å vandre rundt i mens hun ennå ikke
+    # er kunde.
+    #
+    # (`firma:blimed` har hun av samme grunn som alle andre: en invitasjon
+    # skal kunne innløses av hvem som helst som er logget inn. Tallet gikk
+    # fra ett til to da det scopet ble innført.)
     #
     # Rollen står BEVISST utenfor `KUNDEROLLER` (plattformdata.js): en kunde
     # som kunne tildelt den, ville gitt bort retten til å opprette firmaer
     # på plattformen.
-    "registrant": frozenset({"firma:opprett"}),
+    "registrant": frozenset({"firma:blimed",
+                             "firma:opprett"}),
 }
 
 

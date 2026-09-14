@@ -673,7 +673,8 @@ export const KUNDEROLLER = [
     // hemmelighet i firmaet. Guiden er kundens grunnlag for å TILDELE
     // roller, så et scope som mangler her er en rolle kunden tror er
     // snevrere enn den er.
-    scopes: ["decisions:read", "exceptions:read", "policy:read",
+    scopes: ["firma:blimed",
+             "decisions:read", "exceptions:read", "policy:read",
              "epost:read", "kontinuitet:read",
              "kundeservice:innhold", "part:read"],
   },
@@ -681,14 +682,16 @@ export const KUNDEROLLER = [
     id: "godkjenner",
     navn_nokkel: "ui.kundeadmin.rolle.godkjenner",
     tekst_nokkel: "ui.kundeadmin.rolle.godkjenner_tekst",
-    scopes: ["decisions:read", "exceptions:read", "exceptions:approve",
+    scopes: ["firma:blimed",
+             "decisions:read", "exceptions:read", "exceptions:approve",
              "exceptions:reject", "exceptions:escalate"],
   },
   {
     id: "policyforvalter",
     navn_nokkel: "ui.kundeadmin.rolle.policyforvalter",
     tekst_nokkel: "ui.kundeadmin.rolle.policyforvalter_tekst",
-    scopes: ["decisions:read", "policy:read", "policy:write", "policy:activate"],
+    scopes: ["firma:blimed",
+             "decisions:read", "policy:read", "policy:write", "policy:activate"],
   },
 ];
 
