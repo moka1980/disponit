@@ -42,32 +42,114 @@ i18n_prefiks: fordring
 staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
+    krav_id: m23-suite-v1
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      NOTATET VAR UTDATERT: «Ingen kode finnes» ble skrevet ved fødselen,
+      og modulen har siden fått migrasjonene 104/146/150/151, ti
+      HTTP-ruter, en sveip med egen rolle og timer, og 101 egne tester i
+      tolv filer. KREVER FORTSATT: en suitekjøring PÅ STAGING med
+      modulens andel pinnet og målt for seg — en grønn lokal suite er
+      ikke den målingen. Andelen er nå PINNET
+      (`manifestskjema.M23_SUITE_ANDEL`: tolv filer, 101 tester, null
+      hoppede påkrevd), og produsenten er
+      `deploy/staging/m23-suite-artefakt.py`.
   syntetisk_datasett_likt_lokalt:
+    # SETTET FINNES NÅ: `deploy/staging/m23_fasit.py` — 21 fordringer
+    # over to tenanter (en med purreplan, en uten), med en fordring på
+    # NØYAKTIG hver kant og én på hver side: bøttekantene 0/1, 30/31,
+    # 60/61, 90/91, og trinnkantene 2/3, 13/14, 27/28. To fasiter,
+    # begge skrevet FØR kjøringen. CI driver samme sett mot lokal base
+    # (`test_m23_fasit_port.py`), så «likt lokalt» er en STÅENDE
+    # måling, ikke et minne fra en runde.
+    #
+    # NI MUTASJONER KJØRT MOT BASEN, ni fall, hver på sin navngitte rad
+    # — de tre funnoperatorene (`>=`, `<`, `> 90`), `AND f.trinn = 0`,
+    # de fire bøttekantene, og et fjernet evidenskall.
+    #
+    # STÅR LIKEVEL `nei`: staging-leddet er ikke kjørt. Punktet krever
+    # settet drevet PÅ STAGING, og artefaktet finnes ikke ennå.
     status: nei
+    krav_id: m23-fasit-v1
     notat: >-
-      KREVER: et fordringssett med KJENT fasit for aldersbøttene og
-      for hvilke fordringer som skal bli funn, kjørt likt lokalt og på
-      staging. Settet må inneholde grensetilfellene på bøttekantene —
-      en aldersfordeling som er feil på kanten er feil overalt der det
-      betyr noe.
+      Settet, fasiten og porten er bygget og målt lokalt. Gjenstår:
+      kjøringen på staging (`deploy/staging/m23-fasit-artefakt.py`) og
+      artefaktet den skriver.
   revisjonslogg_korrekt:
+    # MÅLES I SAMME KJØRING som fasiten, og på de samme radene: 21
+    # `fordring.registrert`, 21 `fordring.trinn` (trinnet flyttes ETT om
+    # gangen, så en fordring på trinn 3 er tre hendelser) og 1
+    # `purreplan.satt`. «Med identitet» er målt bokstavelig: hver
+    # registrering må ha SIN EGEN `input_hash` — en kjede som skrev samme
+    # hash for alle 21 ville hatt riktig antall rader og null sporbarhet.
     status: nei
+    krav_id: m23-fasit-v1
     notat: >-
-      KREVER: at hver fordring og hver trinnendring faktisk står i
-      evidenskjeden, målt som hendelser med identitet.
+      Målingen er bygget og felt av en mutasjon (evidenskallet fjernet
+      fra `m23_neste_trinn`: 21 hendelser ble 0 mens funnene sto
+      uendret). Gjenstår: kjøringen på staging.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET. Bevisrunden 9/9 gikk mot
+    # disponit.com med Fjordlys Elektro AS og injiserte fire ekte feil —
+    # men `m23-purring-v1` hadde tom `punktbinding`, så ingen av tallene
+    # kunne flippe et punkt. Evidensen lå ubrukt i fire døgn.
+    #
+    # KRAVET, ORDRETT: «at en feil i den ALDRI kan etterlate en fordring
+    # merket purret uten at trinnet ble registrert.» Det er nettopp
+    # `kvittering_uten_bokforing` (1 forsøk, 0 brudd): kvitteringen nådde
+    # registeret, fordringen står på trinnet som ble purret, hendelsen i
+    # historikken, evidensen i loggen.
+    status: ja
+    krav_id: m23-purring-v1
+    bevismaalinger:
+      - maalt.policygrense_omgaatt_brudd
+      - maalt.kvittering_uten_bokforing_brudd
+      - maalt.kill_switch_konsumerte_trinn_brudd
+      - maalt.sending_uten_mottaker_brudd
+    artefakt: deploy/staging/artefakter/m23-purring-v1-20260909T113000Z.json
+    artefakt_sha256: f6ffd1773b23cec51a62c062e83e8bff9991d836efc494255a061842265acdac
     notat: >-
-      KREVER: fordringssveipen bygget, og at en feil i den ALDRI kan
-      etterlate en fordring merket purret uten at trinnet ble registrert.
+      Fire injiserte feil mot disponit.com, alle fire havnet der de
+      skulle: policygrensen og vilkåret stoppet i UNNTAKSKØEN som sak
+      121/122/123 (aldri stille, aldri tillat); kvitteringen nådde
+      registeret; kill-switch midt i kjeden stoppet UTEN å brenne
+      trinnet — fordringen var kandidat igjen da bryteren kom på; og
+      uten adresse ble det verken bestilt eller sendt. 0 brudd på alle
+      fire. Ekte oppdrag gjennom modulen, ikke stub-SMTP.
   ytelse_bestatt:
+    # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000` i KRAVGRENSER, og
+    # porten avviser 0 — en sveip ingen tok tiden på er ikke en
+    # ytelsesmåling, og 0 ville bestått ethvert tak.
     status: nei
+    krav_id: m23-fasit-v1
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Grensen er pinnet og måles av samme artefakt som fasiten.
+      Gjenstår: den målte kjøringen på staging.
   rollback_testet:
+    # NOTATET VAR UTDATERT: «Modulen har ingen release.» M-23 er
+    # registrert gjennom `deploy/staging/registrer-m23-fordring.py`, har
+    # kontrakt, releaser og artifact-digest, og en arbeider som claimer
+    # oppdrag over API-et med modultoken (035). Livsløpet finnes.
+    #
+    # PUNKTET STÅR LIKEVEL `nei`, og grunnen er en annen enn før:
+    # drillen er ikke kjørt. Grensen `m23-rollback-v1` er registrert FØR
+    # den, i `rollback-m56-v1`s form, så drillen måles mot krav noen
+    # skrev før utfallet var kjent (§0).
+    #
+    # DRILLEN SENDER EKTE PURRE-E-POST til en ekte kunde gjennom
+    # modulen — en utgående handling som ikke kan trekkes tilbake.
+    # Det er eierens beslutning å utløse, ikke noe som skal skje som
+    # bieffekt av en sertifiseringsrunde.
+    #
+    # OG `m23-purring-v1` LÅNES IKKE. Den bevisrunden målte at
+    # purrekjeden holder under feilinjisering; den rullet ingen release
+    # tilbake og drenerte ingen kø. Å binde punktet til de tallene ville
+    # vært å låne en konklusjon fra en måling som stilte et annet
+    # spørsmål — samme grunn som m37 oppgir for `rollback-m01-v1`.
     status: nei
+    krav_id: m23-rollback-v1
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Grensen er registrert og punktet er flippbart den dagen drillen
+      kjøres. Gjenstår: å drenere m23-releasen med et purreoppdrag
+      underveis, måle at den drenerte ikke claimer mer, at oppdraget får
+      en ren signert kvittering, og at rullbakken — med FORGJENGERENS
+      bytes — booter og plukker det ventende oppdraget.

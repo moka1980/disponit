@@ -104,7 +104,36 @@ def test_bevisgrensen_har_ti_punkter_med_navngitte_porter():
     assert g["invarianter"] is M23_PURRING_INVARIANTER
     assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
     assert g["krav_ja"] == ("rundtur_paa_disponit_com",)
-    assert g["punktbinding"] == {}
+    # BINDINGEN VAR TOM, OG DET VAR ET HULL — ikke en egenskap.
+    #
+    # Denne linjen sto som `== {}` og festet nettopp den tilstanden: 21
+    # målte tall fra bevisrunden 9/9, og ingen av dem kunne flippe et
+    # eneste sjekklistepunkt. Et punkt uten binding er UFLIPPBART (#166),
+    # så evidensen lå ubrukt bak en port som bekreftet at den lå ubrukt.
+    #
+    # Nå måles bindingen på det den SKAL kunne bevise, og hvorfor akkurat
+    # disse fire: de svarer på «hvor havner en feil». De sytten andre
+    # tallene er sanne og viktige — adressevern, trinnvalg,
+    # dobbeltbestilling — men svarer på et annet spørsmål, og et punkt
+    # bevist av feil måling er verre enn et upflippet punkt.
+    binding = g["punktbinding"]
+    assert set(binding) == {"feilinjisering_til_unntakskø"}, \
+        "bindingen dekker et annet punkt enn feilinjiseringen"
+    bundet = set(binding["feilinjisering_til_unntakskø"])
+    for navn in ("policygrense_omgaatt",          # -> unntakskøen, sak 121/122/123
+                 "kvittering_uten_bokforing",     # -> purret uten registrert trinn
+                 "kill_switch_konsumerte_trinn",  # -> nødstopp uten å brenne trinnet
+                 "sending_uten_mottaker"):        # -> ingen adresse, ingen sending
+        assert navn in M23_PURRING_INVARIANTER, f"{navn} er ikke en invariant"
+        # PARFORMEN, BEGGE HALVDELER: null brudd beviser ingenting uten
+        # minst ett forsøk, så bindingen må bære begge — ellers kunne
+        # punktet flippes på en feil som aldri ble injisert.
+        for halvdel in ("forsok", "brudd"):
+            assert f"maalt.{navn}_{halvdel}" in bundet, \
+                f"{navn}_{halvdel} mangler i bindingen"
+    # ...og INGENTING MER: en binding som vokser stilltiende slipper
+    # målinger som svarer på andre spørsmål inn i punktets bevis.
+    assert len(bundet) == 8, sorted(bundet)
     egen = Path(__file__).read_text(encoding="utf-8")
     for inv in M23_PURRING_INVARIANTER:
         assert inv in egen, f"punktet {inv} har ingen navngitt port"
