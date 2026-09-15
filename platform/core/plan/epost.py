@@ -98,6 +98,88 @@ def _adresse(p) -> tuple[str, str]:
     return str(e.get("address") or ""), str(e.get("name") or "")
 
 
+#: Kill-switch for broen til kundeserviceregisteret. `av` slår den av;
+#: innhentingen fortsetter uendret. Formen er `DISPONIT_EPOST_INNTAK` sin.
+def _bro_pa() -> bool:
+    return (os.environ.get("DISPONIT_EPOST_TIL_KUNDESERVICE", "")
+            .strip().lower() != "av")
+
+
+def _til_kundeservice(conn, tenant, m, fra, emne, kropp, dek, key_id) -> bool:
+    """Innkommen e-post → henvendelse i M-17. -> ny henvendelse?
+
+    HVORFOR DENNE FINNES. Målt 15/9: en kunde hadde 18 innkomne e-poster
+    og NULL henvendelser. Innhenteren la dem i `epost_melding`, og der
+    ble de liggende — mens hele kjeden videre (sveipen som finner de
+    oversette, klassifiseringen, svarutkastet, og utsendingen som alt
+    kjører i denne samme planrunden) sto ferdig i M-17 uten noe å jobbe
+    på. Basen var til og med bygget for det: `henvendelse_inntak_unik`
+    på (tenant, kanal, ekstern_ref) bærer en kommentar om «to samtidige
+    innlesinger av den samme innboksen» — en innboksimport som aldri ble
+    skrevet.
+
+    BROEN DØMMER IKKE. Den slipper hver innkommen melding inn i
+    registeret og lar KLASSIFISERINGEN avgjøre om den krever svar —
+    samme arbeidsdeling som sveipen bygger på («en `til_info`-henvendelse
+    blir aldri et `ubesvart`-funn»). Å filtrere nyhetsbrev her ville vært
+    å legge dømmekraft i et transportledd, og da ville regelen bodd to
+    steder.
+
+    IDEMPOTENSEN ER LEVERANDØRENS MELDING-ID, i BÅDE nøkkelen og
+    `ekstern_ref`: samme e-post lest to ganger blir én henvendelse, og
+    døra returnerer den som alt står der.
+
+    KJENT SVAKHET, NAVNGITT (CodeRabbit 15/9): Graphs melding-id er IKKE
+    stabil over en FLYTTING mellom mapper — den blir det først med
+    `Prefer: IdType="ImmutableId"` på delta- og meldingskallene. En
+    melding som flyttes ut av innboksen og inn igjen får derfor ny id, og
+    blir en ny henvendelse.
+
+    DET ER IKKE NOE DENNE BROEN INNFØRER: `epost_melding` deduplikerer på
+    NØYAKTIG samme id `(tenant, kilde_id, leverandor_melding_id)`, så
+    innhenteren har hatt egenskapen siden 175. Broen arver den.
+
+    OG DEN RETTES IKKE HER, med vilje: å be om immutable id-er endrer
+    id-ene Graph returnerer, så hver ALLEREDE hentet melding ville sett
+    ny ut — en engangs dobbeltimport i hver kundes register. Det er en
+    datamigrering med sin egen dom, ikke en bieffekt av en bro.
+
+    M-17s EGNE HJELPERE BRUKES, ikke kopier av dem. Avsenderhashen er
+    gjenkjenningen på tvers av henvendelser, og to normaliseringer ville
+    gjort den samme kunden til to — nøyaktig det `_avsenderhash` er
+    skrevet for å hindre.
+    """
+    from api.kundeservice import (_AAD_AVSENDER, _avsenderhash,
+                                  _avsendermaske, _krypter, _utled)
+    ref = str(m["id"])
+    # HUSETS EGEN UTLEDER, ikke en kopi av formen: `_utled` er den
+    # samme funksjonen HTTP-inntaket bruker, så en e-post som kommer
+    # begge veier får samme id. To utledninger som «skal være like» er
+    # før eller siden to ulike.
+    hid = _utled("henvendelse", tenant, f"epost:{ref}")
+    e_ct, e_n = _krypter(dek, key_id, tenant, emne or "(uten emne)")
+    k_ct, k_n = _krypter(dek, key_id, tenant, kropp or "(uten innhold)")
+    mottatt = m.get("receivedDateTime")
+    if fra and "@" in fra:
+        a_ct, a_n = _krypter(dek, key_id, tenant, fra.strip(),
+                             aad=_AAD_AVSENDER)
+        rad = conn.execute(
+            "SELECT * FROM m17_ta_imot(%s,%s,'epost',%s,%s::timestamptz,"
+            "                          %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (tenant, hid, ref, mottatt, _avsenderhash(fra), e_ct, e_n,
+             k_ct, k_n, key_id, AKTOR, _avsendermaske(fra), a_ct,
+             a_n)).fetchone()
+    else:
+        # Uten adresse finnes ingen svarvei — meldingen hører likevel
+        # hjemme i registeret, og 12-arg-formen tar den.
+        rad = conn.execute(
+            "SELECT * FROM m17_ta_imot(%s,%s,'epost',%s,%s::timestamptz,"
+            "                          %s,%s,%s,%s,%s,%s,%s)",
+            (tenant, hid, ref, mottatt, _avsenderhash(fra or ""), e_ct,
+             e_n, k_ct, k_n, key_id, AKTOR)).fetchone()
+    return bool(rad and rad[0])
+
+
 def _lagre(conn, tenant, kilde_id, m, kropp: str | None, kropp_type) -> bool:
     """Én melding → én rad (ON CONFLICT DO NOTHING). -> ny?"""
     from db import kryptering
@@ -121,7 +203,27 @@ def _lagre(conn, tenant, kilde_id, m, kropp: str | None, kropp_type) -> bool:
         (tenant, kilde_id, str(m["id"]), m.get("conversationId"),
          m.get("receivedDateTime"), _hash(fra), _hash(emne), ct, nonce,
          key_id, bool(m.get("hasAttachments")))).fetchone()
-    return rad is not None
+    if rad is None:
+        return False
+    # BROEN STÅR I SITT EGET SAVEPOINT. Runden committer én gang per
+    # SIDE, så et unntak herfra ville rullet tilbake hele sidens
+    # meldinger — innhentingen ville tapt data fordi et LEDD ETTER den
+    # feilet. Feiler broen, står e-posten der den skal, og linjen sier
+    # hvorfor. En henvendelse kan alltid lages senere; en tapt melding
+    # kommer aldri tilbake (delta-cursoren har gått videre).
+    if _bro_pa():
+        try:
+            with conn.transaction():
+                if _til_kundeservice(conn, tenant, m, fra, emne,
+                                     payload["kropp"], dek, key_id):
+                    _log("epost_til_kundeservice", tenant=tenant,
+                         melding=str(m["id"])[:12])
+        except Exception as e:                    # noqa: BLE001
+            # TYPENAVNET, ikke meldingen: et unntak kan bære emne eller
+            # adresse, og loggen her skal aldri gjøre det.
+            _log("epost_til_kundeservice_feilet", tenant=tenant,
+                 melding=str(m["id"])[:12], feil=type(e).__name__)
+    return True
 
 
 def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
