@@ -80,13 +80,44 @@ export function klassifiseringTekst(h) {
           t(`ui.kundeservice.handlingstype.${h.handlingstype}`)].join(" · ");
 }
 
+/** Kort gjenkjennelsesmerke av en leverandørreferanse.
+ *
+ * SETT PÅ SKJERMEN 15/9: Graphs melding-id-er er ~150 tegn base64, og
+ * `celle-id` (22ch, `overflow-wrap: anywhere`) rakk ikke over dem —
+ * kolonnen veltet inn i Kanal, Mottatt og Alder, og køen ble uleselig.
+ * Testfixturen hadde `MSG-2026-0001`, tretten tegn; porten hadde aldri
+ * sett en ekte id.
+ *
+ * Ingen leser 150 tegn; de MATCHER dem. Derfor hode + hale, som en
+ * git-sha: nok til å kjenne igjen, aldri nok til å fylle en rad. Hele
+ * verdien står i `title` og i detaljpanelet.
+ */
+export function kortref(ref) {
+  const r = String(ref ?? "");
+  if (r.length <= 24) return r;
+  return `${r.slice(0, 10)}…${r.slice(-8)}`;
+}
+
+/** Avsenderen slik listen kan vise den: masken, aldri adressen. */
+export function avsenderTekst(h) {
+  return h.har_avsender && h.avsender_maske
+    ? h.avsender_maske
+    : t("ui.kundeservice.avsender.ukjent");
+}
+
 function korad(h, ctx, apneDetalj) {
   const rad = el("tr", {});
   // REFERANSEN NAVNGIR raden — det er den et menneske slår opp i
   // innboksen. `celle-id` står på <th>, ikke på et <span> inni, fordi
   // `max-width` ikke gjør noe på et inline-element.
-  rad.append(el("th", { scope: "row", class: "celle-id",
-                        text: h.ekstern_ref }));
+  // AVSENDEREN FØRST. Det et menneske skanner en kø etter er HVEM —
+  // ikke leverandørens nøkkel. Masken er alt listen får lov å bære
+  // (listen bærer aldri kundeteksten); adressen og emnet kommer først
+  // når raden åpnes.
+  rad.append(el("th", { scope: "row", class: "celle-tekst",
+                        text: avsenderTekst(h) }));
+  rad.append(el("td", { class: "celle-id", title: h.ekstern_ref,
+                        text: kortref(h.ekstern_ref) }));
   rad.append(el("td", { text: t(`ui.kundeservice.kanal.${h.kanal}`) }));
   rad.append(el("td", { text: h.mottatt.slice(0, 10) }));
 
@@ -128,6 +159,8 @@ function koTabell(koe, ctx, apneDetalj) {
   const tb = el("table", { class: "kpi-tabell" },
     el("caption", { text: t("ui.kundeservice.koe.caption") }));
   tb.append(el("thead", {}, el("tr", {},
+    el("th", { scope: "col",
+               text: t("ui.kundeservice.kolonne.avsender") }),
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.referanse") }),
     el("th", { scope: "col", text: t("ui.kundeservice.kolonne.kanal") }),
