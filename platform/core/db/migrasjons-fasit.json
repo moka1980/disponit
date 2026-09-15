@@ -200,5 +200,6 @@
   "199_plattformeier.sql": "c9f64356dfed3cf7e35b0afa30f49ef75114df6d7292edc18f8e1f3eaf25675e",
   "200_blimed_scope.sql": "2515af104d289d6318de6dc045c6d2221e35236bde7506cb788392d4d7f2b439",
   "201_kunden_kan_si_opp.sql": "ec528fd6921dc5d30c2f142f3499c2224dfd2b4200536600d6a5211c644b3c9e",
-  "202_avslutt_scope.sql": "5867d1391f225d8a03921c78d37f547a1de83dca213a9c712c0ca2e410e99f34"
+  "202_avslutt_scope.sql": "5867d1391f225d8a03921c78d37f547a1de83dca213a9c712c0ca2e410e99f34",
+  "203_innboksen_naar_kundeservice.sql": "2c70f404e8d2e0d3d4d26f82c69c1a6d30faa47fe56da673d5f5015470377e88"
 }
