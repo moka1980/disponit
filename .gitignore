@@ -65,3 +65,7 @@ deploy/staging/artefakter/*.json
 # samme sett mot lokal base (`test_m23_fasit_port`) — `sett_sha256` må
 # stemme i begge ledd, så en JSON fra en tilfeldig maskin passerer ikke.
 !deploy/staging/artefakter/m23-fasit-v1-20260914T164015Z.json
+# M-23-sertifiseringen: suiteartefaktet manifestet sha256-binder. Kjørt på
+# disponit-srv fra et FULLT utsjekk av commiten mot en FERSK testbase —
+# release-treet er beskåret, og en gjenbrukt base driver.
+!deploy/staging/artefakter/m23-suite-v1-20260915T072002Z.json

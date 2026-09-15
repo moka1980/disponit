@@ -41,18 +41,42 @@ i18n_prefiks: fordring
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # NOTATET VAR UTDATERT VED FØDSELEN: «Ingen kode finnes». Modulen har
+    # siden fått migrasjonene 104/146/150/151, ti HTTP-ruter, en sveip med
+    # egen rolle og timer, og 101 egne tester i tolv filer.
+    #
+    # TRE TING MÅTTE STEMME FØR MÅLINGEN VAR ÆRLIG, og hver av dem ga
+    # først røde tall som ikke var produktets:
+    #   * FULLT UTSJEKK, ikke release-treet: utrullingen er beskåret (144
+    #     av 187 docs-filer), og `test_katalog` feiler der av konstruksjon.
+    #   * FERSK BASE per kjøring: en gjenbrukt testbase driver, og
+    #     driften ser ut som regresjoner (58 → 5 → 3 feil over tre
+    #     kjøringer mot samme base).
+    #   * ARBEIDERROLLENS DSN: migrasjon 039 forgrener på om
+    #     `disponit_arbeider` finnes i KLYNGEN, og REVOKEr da
+    #     `ventende_overtakelseskonflikter` fra `disponit`. Riggen har
+    #     rollen, CI har den ikke. Uten `DISPONIT_TEST_ARBEIDER_DSN` går
+    #     testen runtime-veien mot en funksjon den nettopp mistet — den
+    #     halvferdige rolleutrullingen migrasjonen selv advarer mot, og
+    #     grunnen til at `opp.sh` har preflighten `vurder_arbeiderskille`.
+    status: ja
     krav_id: m23-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.m23_tester
+      - maalt.m23_feilet
+      - maalt.m23_hoppet
+    artefakt: deploy/staging/artefakter/m23-suite-v1-20260915T072002Z.json
+    artefakt_sha256: 3e7dea65356996fcea3fcb3d86a58951fefa70bd68e45e23fed929c220bbda5c
     notat: >-
-      NOTATET VAR UTDATERT: «Ingen kode finnes» ble skrevet ved fødselen,
-      og modulen har siden fått migrasjonene 104/146/150/151, ti
-      HTTP-ruter, en sveip med egen rolle og timer, og 101 egne tester i
-      tolv filer. KREVER FORTSATT: en suitekjøring PÅ STAGING med
-      modulens andel pinnet og målt for seg — en grønn lokal suite er
-      ikke den målingen. Andelen er nå PINNET
-      (`manifestskjema.M23_SUITE_ANDEL`: tolv filer, 101 tester, null
-      hoppede påkrevd), og produsenten er
-      `deploy/staging/m23-suite-artefakt.py`.
+      5409 av 5409 tester KJØRT på disponit-srv, null feilet, null
+      hoppet, exit 0. M-23s egen andel er PINNET
+      (`manifestskjema.M23_SUITE_ANDEL`: tolv filer modulen eier i sin
+      helhet) og målt for seg: 101 av 101 kjørt, null feilet, NULL
+      HOPPET. Det siste er det som skiller «bestått» fra «ikke forsøkt»
+      — hele andelen er `skipif(not DSN)`, og fasitporten krever i
+      tillegg sveiperollens egen DSN.
   syntetisk_datasett_likt_lokalt:
     # SETTET FINNES NÅ: `deploy/staging/m23_fasit.py` — 21 fordringer
     # over to tenanter (en med purreplan, en uten), med en fordring på
