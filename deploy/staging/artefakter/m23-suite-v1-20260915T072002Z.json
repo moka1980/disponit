@@ -1,0 +1,35 @@
+{
+  "bestatt": true,
+  "krav_id": "m23-suite-v1",
+  "maalt": {
+    "m23_exitkode": 0,
+    "m23_feilet": 0,
+    "m23_hoppet": 0,
+    "m23_tester": 101,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5409
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f33a08b8b271deeaf20b67462a80d9c8492488855f53c87596e4d70d902d2a6f",
+    "commit": "8c889ca1ea02f41629160cbe75027de4aee46f74",
+    "m23_filer": [
+      "platform/core/tests/test_bestilling_purring_port.py",
+      "platform/core/tests/test_fordring_backfill_port.py",
+      "platform/core/tests/test_fordring_part_port.py",
+      "platform/core/tests/test_m23_bokforing_port.py",
+      "platform/core/tests/test_m23_controller.py",
+      "platform/core/tests/test_m23_fasit_port.py",
+      "platform/core/tests/test_m23_flate_port.py",
+      "platform/core/tests/test_m23_fordring.py",
+      "platform/core/tests/test_m23_inkassovarsel_port.py",
+      "platform/core/tests/test_m23_mottaker_port.py",
+      "platform/core/tests/test_m23_purringsutloser_port.py",
+      "platform/core/tests/test_m23_sending_port.py"
+    ],
+    "modul": "m23_fordring",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-15T07:19:01.201382+00:00"
+}
