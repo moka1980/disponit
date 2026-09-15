@@ -202,5 +202,6 @@
   "201_kunden_kan_si_opp.sql": "ec528fd6921dc5d30c2f142f3499c2224dfd2b4200536600d6a5211c644b3c9e",
   "202_avslutt_scope.sql": "5867d1391f225d8a03921c78d37f547a1de83dca213a9c712c0ca2e410e99f34",
   "203_innboksen_naar_kundeservice.sql": "2c70f404e8d2e0d3d4d26f82c69c1a6d30faa47fe56da673d5f5015470377e88",
-  "204_stille_avsendere.sql": "608c6afa2dfca7c4a24ed07c44022f5bb24149df2dbc6602d8ca182d8e2b8041"
+  "204_stille_avsendere.sql": "608c6afa2dfca7c4a24ed07c44022f5bb24149df2dbc6602d8ca182d8e2b8041",
+  "205_domeneregler_tar_underdomener.sql": "9054aeb3a638636d662e1894ab969ea9e49bbba18c6ad5388aa14af4004efb54"
 }
