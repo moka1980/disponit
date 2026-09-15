@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
-  alderTekst, klassifiseringTekst, visKundeservice,
+  alderTekst, avsenderTekst, klassifiseringTekst, kortref, visKundeservice,
 } from "../static/js/flater/kundeservice.js";
 
 settI18nForTest(NB, "nb");
@@ -503,3 +503,57 @@ test("Kundeservice: statusen som ord og plattformens utfall per utkast",
     const brudd = await alvorligeBrudd(h);
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });
+
+// EN EKTE LEVERANDØR-ID, ikke fixturens `MSG-2026-0001`. Graphs
+// melding-id-er er ~150 tegn base64; med tretten tegn i fixturen hadde
+// porten aldri sett det som veltet køen på skjermen 15/9.
+// Lengden er en del av fixturen og MÅLES under: første utkast limte
+// sammen ~140 tegn og trodde det var «ekte»; skjermen hadde 152.
+const GRAPH_ID = "AQMkADAwATM3ZmYBLWI5MWQtZjE3My0wMAItMDAKAEYAAAPy22ernEP6TLc"
+  + "AmqUD2XICBwAniNzSc1IFQ53ctzagMWr5AAACAQwAAAAniNzSc1IFQ53ctzagMWr5AAAAB"
+  + "WXdfQAAAAniNzSc1IFQ53ctzagMWr5AAAABWXdfQAAAA==";
+const MASKE = "a****@accountprotection.microsoft.com";
+
+test("Kundeservice: køen er lesbar med ekte id-er — avsender først, kort"
+  + " referanse, hele verdien i title", async () => {
+  assert.ok(GRAPH_ID.length > 140, "fixturen har ikke en ekte lengde");
+  // Enhetene først: kort merke er hode + hale, korte verdier røres ikke.
+  assert.equal(kortref("MSG-2026-0001"), "MSG-2026-0001");
+  const k = kortref(GRAPH_ID);
+  assert.ok(k.length < 24, `kortref ga ${k.length} tegn`);
+  assert.ok(k.startsWith(GRAPH_ID.slice(0, 10)) && k.endsWith(GRAPH_ID.slice(-8)));
+  assert.equal(avsenderTekst({ har_avsender: true, avsender_maske: MASKE }),
+    MASKE);
+  assert.equal(avsenderTekst({ har_avsender: false }),
+    t("ui.kundeservice.avsender.ukjent"));
+
+  SVAR = fullSvar();
+  const koe = structuredClone(KOEN);
+  koe.koe[0] = { ...koe.koe[0], ekstern_ref: GRAPH_ID,
+                 har_avsender: true, avsender_maske: MASKE };
+  koe.koe[1] = { ...koe.koe[1], har_avsender: false, avsender_maske: null };
+  SVAR["/v1/kundeservice"] = koe;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+
+  const rader = h.querySelectorAll("table tbody tr");
+  // HVEM står først, som radens navn for skjermleseren.
+  assert.equal(rader[0].cells[0].tagName, "TH");
+  assert.equal(rader[0].cells[0].textContent, MASKE);
+  assert.equal(rader[1].cells[0].textContent,
+    t("ui.kundeservice.avsender.ukjent"));
+  // Referansen er kort på skjermen og hel i title — aldri 150 tegn i
+  // en celle. MUTASJONEN SOM DREPER DENNE: sett `h.ekstern_ref` tilbake
+  // som celletekst.
+  const ref = rader[0].cells[1];
+  assert.ok(ref.textContent.length < 24,
+    `referansecellen er ${ref.textContent.length} tegn`);
+  assert.equal(ref.getAttribute("title"), GRAPH_ID);
+  assert.equal(rader[1].cells[1].textContent, "MSG-2026-0002");
+  // Kolonneoverskriften finnes, oversatt.
+  assert.ok(h.textContent.includes(t("ui.kundeservice.kolonne.avsender")));
+
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
