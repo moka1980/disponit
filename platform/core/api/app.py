@@ -1288,6 +1288,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.avsenderprofil_endepunkt(tjeneste, request)
 
+    def kundeservice_stilleregler(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.stillereglene_endepunkt(tjeneste, request)
+
+    def kundeservice_sett_stilleregler(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.sett_stilleregler_endepunkt(tjeneste, request)
+
     def kundeservice_unntakskoe(request: Request) -> Response:
         from . import kundeservice as ksmodul
         return ksmodul.unntakskoe_endepunkt(tjeneste, request)
@@ -3768,6 +3776,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/tilbud/avsender", tilbud_avsenderprofil, methods=["POST"]),
         Route("/v1/kundeservice/avsender", kundeservice_avsenderprofil,
               methods=["POST"]),
+        # 204: stille avsendere — tenantens egen liste, hele settet.
+        Route("/v1/kundeservice/stilleregler", kundeservice_stilleregler,
+              methods=["GET"]),
+        Route("/v1/kundeservice/stilleregler",
+              kundeservice_sett_stilleregler, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
               kundeservice_unntakskoe, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
@@ -5294,6 +5307,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender"):
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/avsender"):      "bestilling:opprett",
+    ("GET",  "/v1/kundeservice/stilleregler"):  "decisions:read",
+    ("POST", "/v1/kundeservice/stilleregler"):  "bestilling:opprett",
     # 169 (M-26, ARC B tilbud): tilbudsregisteret — lesingen bærer
     # okonomi:read som prisboka, skrivingen bestilling:opprett.
     ("GET",  "/v1/tilbud"):                       "okonomi:read",

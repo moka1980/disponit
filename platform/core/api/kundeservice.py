@@ -398,6 +398,82 @@ def avsenderprofil_endepunkt(tjeneste, request):
     return _skriv(tjeneste, request, bygg)
 
 
+#: Stille avsendere (204): det tenanten kan si om en avsender.
+REGELARTER = ("domene", "adresse")
+REGELHANDLINGER = ("til_info", "nyhetsbrev", "oppgave", "mistenkelig")
+PRIORITETER = ("kritisk", "hoy", "normal", "lav")
+TEMAER = ("faktura", "leveranse", "teknisk", "salg", "klage", "annet")
+MAKS_REGLER = 200
+_DOMENE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
+
+
+def stillereglene_endepunkt(tjeneste, request):
+    """GET /v1/kundeservice/stilleregler (decisions:read).
+
+    Domener står som tekst; en adresseregel bærer BARE hashen — adressen
+    ble aldri lagret, og kan derfor ikke vises igjen. Flaten viser den
+    som «adresse (hash …)» og lar kunden slette og legge inn på nytt.
+    """
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        rader = conn.execute("SELECT * FROM m17_stillereglene(%s)",
+                             (auth.tenant,)).fetchall()
+        return kanonisk_json({"regler": [
+            {"regel_id": str(r[0]), "art": r[1], "monster": r[2],
+             "handlingstype": r[3], "prioritet": r[4], "tema": r[5],
+             "opprettet": r[6].isoformat()} for r in rader],
+            "request_id": rid}, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def sett_stilleregler_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/stilleregler (bestilling:opprett, idem).
+
+    HELE SETTET i én transaksjon, som purreplanen: en dør som la til én
+    regel om gangen ville latt listen stå halvferdig mellom to kall.
+    ADRESSER HASHES HER og forlater aldri funksjonen — samme
+    normalisering som henvendelsens `avsender_hash`, ellers ville en
+    regel for «Kunde@X.no» aldri truffet «kunde@x.no».
+    """
+    def bygg(_conn, tenant, bid, _nokkel, kropp, rid, _request):
+        from .policyadmin_http import _Avbrudd, _feil
+        regler = kropp.get("regler")
+        if not isinstance(regler, list) or len(regler) > MAKS_REGLER:
+            raise _Avbrudd(_feil("request_feilformet", rid,
+                detalj=f"«regler»: liste med maks {MAKS_REGLER}"))
+        ut = []
+        for i, r in enumerate(regler):
+            if not isinstance(r, dict):
+                raise _Avbrudd(_feil("request_feilformet", rid,
+                                     detalj=f"regler[{i}]"))
+            art = _valg(r, "art", rid, REGELARTER)
+            monster = _tekst(r, "monster", rid, MAKS_AVSENDER)
+            if art == "domene":
+                monster = monster.strip().lower().lstrip("@")
+                if not _DOMENE.fullmatch(monster):
+                    raise _Avbrudd(_feil("request_feilformet", rid,
+                        detalj=f"regler[{i}].monster: ikke et domene"))
+            else:
+                if "@" not in monster or monster.index("@") == 0:
+                    raise _Avbrudd(_feil("request_feilformet", rid,
+                        detalj=f"regler[{i}].monster: ikke en adresse"))
+                monster = _avsenderhash(monster)
+            ut.append({
+                "art": art, "monster": monster,
+                "handlingstype": _valg(
+                    {"h": r.get("handlingstype", "til_info")},
+                    "h", rid, REGELHANDLINGER),
+                "prioritet": _valg({"p": r.get("prioritet", "lav")},
+                                   "p", rid, PRIORITETER),
+                "tema": _valg({"t": r.get("tema", "annet")},
+                              "t", rid, TEMAER)})
+        return ("SELECT m17_sett_stilleregler(%s,%s::jsonb,%s)",
+                (tenant, json.dumps(ut), bid),
+                {"antall": len(ut)})
+    return _skriv(tjeneste, request, bygg)
+
+
 def utforelse_for_sending(conn, tenant: str, henvendelse_id, utkast_id) -> dict:
     """Det claim-veien gir svarmodulen ved siden av payloaden (163).
 
