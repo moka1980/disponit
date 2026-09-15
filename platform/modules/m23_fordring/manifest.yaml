@@ -178,31 +178,33 @@ staging_sjekkliste:
       purrerunden 9/9 brukte. Kostnaden skal måles over alt sveipen
       faktisk rører, ikke bare over det denne runden la inn.
   rollback_testet:
-    # NOTATET VAR UTDATERT: «Modulen har ingen release.» M-23 er
-    # registrert gjennom `deploy/staging/registrer-m23-fordring.py`, har
-    # kontrakt, releaser og artifact-digest, og en arbeider som claimer
-    # oppdrag over API-et med modultoken (035). Livsløpet finnes.
+    # BLOKKERT, IKKE «NEI» — og forskjellen er at blokkeringen har en
+    # navngitt årsak som lar seg måle bort.
     #
-    # PUNKTET STÅR LIKEVEL `nei`, og grunnen er en annen enn før:
-    # drillen er ikke kjørt. Grensen `m23-rollback-v1` er registrert FØR
-    # den, i `rollback-m56-v1`s form, så drillen måles mot krav noen
-    # skrev før utfallet var kjent (§0).
+    # MÅLT 15/9 i modulregisteret på disponit-srv: `m23_fordring` har
+    # NØYAKTIG ÉN release, `m23-r1` (digest 5824bca07eae, registrert
+    # 9/9), og én deployment i livsløpet `claiming`. En flippedrill må
+    # rulle tilbake TIL forgjengerens bytes — `krev_release_digest_bundet`
+    # i `m23-rollback-v1` håndhever nettopp det. Det finnes ingen
+    # forgjenger.
     #
-    # DRILLEN SENDER EKTE PURRE-E-POST til en ekte kunde gjennom
-    # modulen — en utgående handling som ikke kan trekkes tilbake.
-    # Det er eierens beslutning å utløse, ikke noe som skal skje som
-    # bieffekt av en sertifiseringsrunde.
+    # Å REGISTRERE EN «RULLBAKK» NÅ VILLE VÆRT BEDRAGERIET PORTEN FINNES
+    # FOR Å FANGE. Med bare én bygging ville rullbakkens digest vært
+    # kandidatens egen under et nytt navn, og drillen ville stått grønn
+    # uten at det man ruller tilbake TIL noen gang var prøvd — ordrett
+    # funnet Codex gjorde på m56 (#117 runde 6).
     #
-    # OG `m23-purring-v1` LÅNES IKKE. Den bevisrunden målte at
-    # purrekjeden holder under feilinjisering; den rullet ingen release
-    # tilbake og drenerte ingen kø. Å binde punktet til de tallene ville
-    # vært å låne en konklusjon fra en måling som stilte et annet
-    # spørsmål — samme grunn som m37 oppgir for `rollback-m01-v1`.
-    status: nei
+    # SAMME FORM SOM m56 HADDE: den bar «kan ikke kjøres (forrige release
+    # før 039)» til forutsetningen fantes, og ble så flippet. Dette
+    # punktet flippes den dagen M-23 får sin andre release — altså ved
+    # neste ekte endring i modulen — og drillen kjøres mot den.
+    #
+    # ARBEIDEREN ER INSTALLERT OG KJØRER (`disponit-m23.service`: enabled,
+    # active), så blokkeringen er IKKE at maskineriet mangler. Det er
+    # historikken som mangler.
+    status: blokkert
+    blokkert_av: >-
+      m23_fordring har én release (m23-r1). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
     krav_id: m23-rollback-v1
-    notat: >-
-      Grensen er registrert og punktet er flippbart den dagen drillen
-      kjøres. Gjenstår: å drenere m23-releasen med et purreoppdrag
-      underveis, måle at den drenerte ikke claimer mer, at oppdraget får
-      en ren signert kvittering, og at rullbakken — med FORGJENGERENS
-      bytes — booter og plukker det ventende oppdraget.
