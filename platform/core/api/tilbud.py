@@ -311,8 +311,12 @@ def avsenderprofil_for(conn, tenant: str):
                        (tenant,)).fetchone()
     if rad is None:
         return None
+    # SAMME HULL SOM M-17 (målt 15/9): 191 ga døra en LEFT JOIN mot
+    # `firma`, så den returnerer en rad så snart FIRMAET finnes — med
+    # `oppdatert` NULL til noen setter en profil. Uten denne vakten får
+    # hver nyregistrert kunde 500 på hele tilbudsflaten.
     return {"avsender_navn": rad[0], "svar_til": rad[1], "signatur": rad[2],
-            "oppdatert": rad[3].isoformat()}
+            "oppdatert": rad[3].isoformat() if rad[3] else None}
 
 
 def utforelse_for_sending(conn, tenant: str, tilbud_id) -> dict:
