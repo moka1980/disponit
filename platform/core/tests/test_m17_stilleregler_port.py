@@ -250,6 +250,35 @@ def test_kill_switch(migrator, miljo, monkeypatch):  # noqa: F811
     assert _klassifisering(migrator, t, h) is None
 
 
+@pg
+def test_domeneregel_tar_underdomener_men_ikke_naboer(  # noqa: F811
+        migrator, miljo, monkeypatch):
+    """205. MÅLT PÅ VERTEN: en regel for «microsoft.com» lot
+    «emailnotifications.microsoft.com» stå uklassifisert. Suffikset
+    krever punktumet foran: «notmicrosoft.com» er et annet domene.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `OR … LIKE '%.' || r.monster`
+    (underdomenet står uklassifisert), eller slipp punktumet i LIKE-en
+    (naboen blir klassifisert).
+    """
+    monkeypatch.delenv("DISPONIT_STILLEREGLER", raising=False)
+    t = _tenant("sub")
+    c = _rt()
+    try:
+        kid, dek = _nokkel(c, t)
+        _regler(c, t, [{"art": "domene", "monster": "microsoft.com"}])
+        under = _henvendelse(c, t, kid, dek,
+                             "no-reply@emailnotifications.microsoft.com")
+        nabo = _henvendelse(c, t, kid, dek, "noen@notmicrosoft.com")
+    finally:
+        c.close()
+    _runde()
+    assert _klassifisering(migrator, t, under) is not None, \
+        "underdomenet ble ikke klassifisert"
+    assert _klassifisering(migrator, t, nabo) is None, \
+        "et nabodomene uten punktum foran ble klassifisert"
+
+
 def test_rutene_er_registrert_med_scope():
     """Begge rutene finnes med scope — GET med et LESESCOPE
     (`test_pr008` håndhever den regelen for alle GET-er)."""
