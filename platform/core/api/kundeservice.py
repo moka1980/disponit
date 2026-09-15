@@ -227,9 +227,17 @@ def svar_for(conn, tenant: str) -> dict:
             # LISTEN ER AVKORTET, OG FLATEN SKAL KUNNE SI DET.
             "vist": len(koe)},
         "koe": koe,
+        # RADEN FINNES FØR PROFILEN GJØR DET. `m17_avsenderprofilen`
+        # LEFT JOIN-er mot `firma` og faller tilbake på firmanavnet, så
+        # den gir en rad så snart FIRMAET finnes — med `svar_til`,
+        # `signatur` og `oppdatert` NULL til noen faktisk setter en
+        # profil. `a is None` er derfor ikke nok: hver nyregistrert kunde
+        # traff `None.isoformat()` og fikk 500 på hele kundeservicekøen.
+        # Målt i produksjon 15/9 (wcagvakt). Den gamle tenanten hadde en
+        # profilrad, så feilen fantes ikke der den ble sett etter.
         "avsenderprofil": None if a is None else {
             "avsender_navn": a[0], "svar_til": a[1], "signatur": a[2],
-            "oppdatert": a[3].isoformat()}}
+            "oppdatert": a[3].isoformat() if a[3] else None}}
 
 
 def kobilde(tjeneste, request):

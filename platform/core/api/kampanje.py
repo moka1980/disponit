@@ -247,9 +247,12 @@ def svar_for(conn, tenant: str) -> dict:
         kmp["leveranse"] = status.get(kmp["kampanje_id"]) or {
             "bestilt": 0, "tillat": 0, "brudd": 0, "feil": 0, "levert": 0}
     return {
+        # SAMME HULL SOM M-17 OG M-26 (målt 15/9): 191s LEFT JOIN mot
+        # `firma` gir en rad så snart firmaet finnes, med `oppdatert`
+        # NULL til en profil er satt.
         "avsender": None if a is None else {
             "avsender_navn": a[0], "svar_til": a[1],
-            "oppdatert": a[2].isoformat()},
+            "oppdatert": a[2].isoformat() if a[2] else None},
         "sammendrag": {
             "mottakere": s[0], "aktive": s[1], "med_samtykke": s[2],
             "kampanjer": s[3], "planlagte": s[4], "apne_funn": s[5],
