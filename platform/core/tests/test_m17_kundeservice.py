@@ -258,6 +258,11 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
+        # 204: stille avsendere — tenantens regelliste, GET og POST på
+        # samme sti (to Route-objekter, som /v1/fordring). REGISTER, ikke
+        # sending: reglene klassifiserer, de sender ingenting.
+        "/v1/kundeservice/stilleregler",
+        "/v1/kundeservice/stilleregler",
         "/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
     ], mine
 

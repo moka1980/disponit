@@ -341,10 +341,16 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # bestilling, ingen policyport her: dette er inntak, ikke handling.
     from plan.epost import kjor_en_runde as epostrunde
     epost = epostrunde(tjeneste, conn)
+    # M-17 (204): stille avsendere — ETTER innhentingen og broen, så
+    # rundens nye henvendelser klassifiseres i samme runde. Én definer,
+    # to tall; regelen eies av basen.
+    from plan.stilleregler import kjor_en_runde as stillerunde
+    stille = stillerunde(conn)
     res = {"plukket": len(forfalte), "pausete": pausete,
            "resultater": resultater, "klassifisering": klassifisering,
            "purring": purring, "kampanje": kampanje, "svar": svar,
-           "bokforing": bokforing, "tilbud": tilbud, "epost": epost}
+           "bokforing": bokforing, "tilbud": tilbud, "epost": epost,
+           "stilleregler": stille}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)

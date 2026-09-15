@@ -397,6 +397,12 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_sett_avsenderprofil(text,text,text,text,text)',   'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_avsenderprofilen(text)',                          'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_for_sending(text,uuid,uuid)',                     'disponit_kundeservice_eier'),
+    -- 204 (M-17): stille avsendere — tenantens regelliste og planrundens
+    -- definer. Regelen eies av basen, funksjonene av modulens eier.
+    -- (Ingen semikolon i kommentarer her: test_eierskap splitter på dem.)
+    ('FUNCTION', 'm17_sett_stilleregler(text,jsonb,text)',             'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_stillereglene(text)',                             'disponit_kundeservice_eier'),
+    ('FUNCTION', 'm17_klassifiser_etter_regel(integer)',                'disponit_kundeservice_eier'),
     -- 164 (M-17, ARC B): kvitteringen når registeret.
     ('FUNCTION', 'm17_svar_sendt(text,uuid,uuid,bigint,timestamp with time zone,text,text,text)', 'disponit_kundeservice_eier'),
     -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.
