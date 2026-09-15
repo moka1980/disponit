@@ -49,6 +49,14 @@ sys.path.insert(0, str(REPO / "platform"))
 #: en driftsrolles fullmakt permanent.
 CREDFIL = "/etc/disponit/api/DATABASE_URL"
 
+#: …OG NØKKELEN. Kroppene er kryptert med tenantens DEK, som selv er
+#: pakket med KEK-en. Under systemd kommer begge via `LoadCredential`;
+#: utenfor finnes ingen `$CREDENTIALS_DIRECTORY`, og da må de hentes
+#: her. Første kjøring lastet BARE DSN-en og feilet på alle 36
+#: meldingene med «DISPONIT_KEK mangler» — en halv credential-lasting er
+#: verre enn ingen, for den ser ut som en datafeil.
+KEKFIL = "/etc/disponit/api/DISPONIT_KEK"
+
 
 def _dsn() -> str | None:
     if os.environ.get("DISPONIT_ETTERSLEP_DSN"):
@@ -166,6 +174,25 @@ def main() -> int:
                           "grunn": f"fant ingen DSN ({CREDFIL})"}),
               file=sys.stderr)
         return 2
+    # KEK-EN KREVES BARE NÅR DET SKAL SKRIVES (CodeRabbit): `--torr`
+    # teller rader og dekrypterer ingenting, og en tørrkjøring som
+    # nektet uten nøkkelen ville gjort det umulig å SE etterslepet fra
+    # en maskin uten tilgang til den.
+    if not a.torr:
+        if not os.environ.get("DISPONIT_KEK"):
+            k = Path(KEKFIL)
+            if k.exists():
+                os.environ["DISPONIT_KEK"] = k.read_text(
+                    encoding="utf-8").strip()
+        if not os.environ.get("DISPONIT_KEK"):
+            # NEKTER Å STARTE framfor å feile på hver melding: uten
+            # KEK-en kan ingen kropp dekrypteres, og kjøringen ville
+            # rapportert 36 «feilet» som så ut som ødelagte data.
+            print(json.dumps(
+                {"hendelse": "oppstart_nektet",
+                 "grunn": f"fant ingen DISPONIT_KEK ({KEKFIL})"}),
+                file=sys.stderr)
+            return 2
     from db.pg import koble
     conn = koble(dsn)
     try:
