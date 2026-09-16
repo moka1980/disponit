@@ -406,3 +406,127 @@ def avslutt_endepunkt(tjeneste, request):
 
 #: Regnet én gang ved import (tolv små valideringer av innsjekkede filer).
 FULLMAKTER_FOR_BRANSJE: dict[str, list[str]] = _fullmakter_for_bransje()
+
+
+# ---------------------------------------------------------------------
+# GJENVALG (208): fullmaktene kan velges om så lenge policyen er den
+# urørte bootstrap-raden. Den dagen firmaet har gått den styrte veien, er
+# det den som gjelder.
+# ---------------------------------------------------------------------
+
+def _bransje_for_policy_id() -> dict[str, str]:
+    """{meta.policy_id: bransje} for malene som følger med appen."""
+    import yaml
+    rot = Path(__file__).resolve().parents[3] / "policies"
+    ut = {}
+    for bransje, fil in BRANSJEMALER.items():
+        meta = yaml.safe_load((rot / fil).read_text(encoding="utf-8"))["meta"]
+        ut[meta["policy_id"]] = bransje
+    return ut
+
+
+def fullmakter_i(policy: dict) -> list[str]:
+    """Hvilke fullmakter policyen BÆRER — en fullmakt er på når alle
+    utvidelsens handlinger står der. Målt på innholdet, ikke husket."""
+    import yaml
+    rot = Path(__file__).resolve().parents[3] / "policies" / "utvidelser"
+    # PÅ ID ALENE ER IKKE NOK: `tilbud-generer` ERSTATTER en handling
+    # malen alt har (samme id, andre vilkår). Fullmakten er på når hver av
+    # utvidelsens handlinger står i policyen SLIK utvidelsen skrev den.
+    per_id = {h.get("id"): h for h in (policy.get("handlinger") or [])}
+    ut = []
+    for navn, fil in FULLMAKTER.items():
+        utv = yaml.safe_load((rot / fil).read_text(encoding="utf-8"))
+        krav = utv.get("handlinger") or []
+        if krav and all(per_id.get(h.get("id")) == h for h in krav):
+            ut.append(navn)
+    return sorted(ut)
+
+
+def _fullmakttilstand(conn, tenant: str) -> dict:
+    """Tilstanden flaten viser: bransje, valgte, lovlige, og om gjenvalget
+    fortsatt er åpent (én bootstrap-rad, ingen utkast, ingen attestasjon)."""
+    rader = conn.execute(
+        "SELECT policy_id, innhold, aktiv, aktiveringskilde FROM policyer"
+        " WHERE tenant=%s", (tenant,)).fetchall()
+    aktive = [r for r in rader if r[2]]
+    if len(rader) != 1 or len(aktive) != 1:
+        return {"bransje": None, "valgte": [], "lov": [],
+                "kan_velge_om": False}
+    policy_id, innhold, _aktiv, kilde = aktive[0]
+    if isinstance(innhold, (str, bytes)):
+        innhold = json.loads(innhold)
+    bransje = BRANSJE_FOR_POLICY_ID.get(policy_id)
+    historikk = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM policyutkast WHERE tenant=%s)"
+        " OR EXISTS (SELECT 1 FROM aktiveringsattestasjon WHERE tenant=%s)",
+        (tenant, tenant)).fetchone()[0]
+    return {"bransje": bransje,
+            "valgte": fullmakter_i(innhold or {}),
+            "lov": FULLMAKTER_FOR_BRANSJE.get(bransje, []),
+            "kan_velge_om": bool(bransje) and kilde == "bootstrap"
+                            and not historikk}
+
+
+def fullmakter_endepunkt(tjeneste, request):
+    """GET /v1/firma/fullmakter (policy:read) — hva plattformen har
+    fullmakt til, og om valget kan gjøres om."""
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        svar = _fullmakttilstand(conn, auth.tenant)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "policy:read", _fn)
+
+
+def sett_fullmakter_endepunkt(tjeneste, request):
+    """POST /v1/firma/fullmakter (policy:activate, idem) — gjenvalget.
+
+    Bygger policyen på nytt av MALEN pluss de valgte utvidelsene (aldri av
+    innholdet klienten sender — hun velger navn, ikke policy), validerer
+    som registreringen, og skriver gjennom `firma_bootstrap_gjenvalg`, som
+    nekter så snart policyen har historikk.
+    """
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _feil, _kropp,
+                                   _krev_idem, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        import psycopg
+        from api.policyregister import innholds_hash
+        from policy_validator.schema import valider_ny_policy
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:activate")
+        _krev_idem(request, rid)
+        k = _kropp(request)
+        valgte = k.get("fullmakter")
+        if not isinstance(valgte, list) or not all(
+                isinstance(x, str) and x in FULLMAKTER for x in valgte):
+            return _feil("request_feilformet", rid, 400, detalj="fullmakter")
+        valgte = sorted(set(valgte))
+        tilstand = _fullmakttilstand(conn, tenant)
+        if not tilstand["kan_velge_om"]:
+            return _feil("policy_har_historikk", rid, 409)
+        utenfor = [n for n in valgte if n not in tilstand["lov"]]
+        if utenfor:
+            return _feil("request_feilformet", rid, 400,
+                         detalj=f"fullmakter: {', '.join(utenfor)} passer"
+                                f" ikke bransjen {tilstand['bransje']}")
+        policy = bygg_bootstrap_policy(tilstand["bransje"], valgte)
+        feil = valider_ny_policy(policy)
+        if feil:
+            raise RuntimeError(f"gjenvalg ga ugyldig policy: {feil}")
+        try:
+            conn.execute("SELECT firma_bootstrap_gjenvalg(%s,%s,%s)",
+                         (tenant, innholds_hash(policy),
+                          json.dumps(policy, ensure_ascii=False)))
+        except psycopg.errors.IntegrityConstraintViolation:
+            return _feil("policy_har_historikk", rid, 409)
+        conn.commit()
+        return _ok_lagret(conn, {"fullmakter": valgte}, rid)
+    return _med_conn(tjeneste, rid, kjor)
+
+
+BRANSJE_FOR_POLICY_ID: dict[str, str] = _bransje_for_policy_id()

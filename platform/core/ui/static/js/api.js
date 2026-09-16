@@ -431,6 +431,10 @@ export const registrerPart = (part, idem) =>
 // ikke et stille duplikat.
 export const registrerFirma = (firma, idem) =>
   _muter("/v1/firma/registrer", "POST", firma, idem);
+// 208: fullmaktene — lest, og valgt om mens policyen er urørt.
+export const hentFullmakter = () => hentJson("/v1/firma/fullmakter");
+export const settFullmakter = (fullmakter, idem) =>
+  _muter("/v1/firma/fullmakter", "POST", { fullmakter }, idem);
 
 // 194/195: invitasjon av kolleger.
 //

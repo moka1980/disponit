@@ -1041,3 +1041,57 @@ test("Kundeservice: uten fullmakt sier avsenderfanen det høyt; med, stille"
     assert.ok(!KALL.some((k) => k.sti.endsWith("/dom")));
   }
 });
+
+// 208: GJENVALGET der varsellinjen står — for den med policy:activate,
+// bare mens policyen er urørt; sender de valgte navnene, aldri policy.
+test("Kundeservice: uten fullmakt og med policy:activate står boksene der,"
+  + " og «Gi fullmakten» sender de valgte navnene", async () => {
+  SVAR = fullSvar();
+  const koe = structuredClone(KOEN);
+  koe.sammendrag.svar_fullmakt = false;
+  SVAR["/v1/kundeservice"] = koe;
+  SVAR["/v1/firma/fullmakter"] = { bransje: "tjenestebedrift", valgte: [],
+    lov: ["kampanje-send", "kundeservice-svar", "purring-inkassovarsel",
+          "tilbud-generer"], kan_velge_om: true, request_id: "r-f" };
+  const h = nyHoved();
+  visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold",
+                         "bestilling:opprett", "policy:activate"]));
+  assert.ok(await vent(() => h.querySelector("#ks-fm-kundeservice-svar")));
+  const kunde = h.querySelector("#ks-fm-kundeservice-svar");
+  assert.equal(kunde.checked, true);
+  assert.equal(h.querySelectorAll('input[name="fullmakter"]').length, 4);
+  h.querySelector("#ks-fm-kampanje-send").checked = true;
+  const skjema = kunde.closest("form");
+  skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.metode === "POST" && k.sti === "/v1/firma/fullmakter")));
+  assert.deepEqual(SISTE.kropp, { fullmakter: ["kundeservice-svar",
+                                               "kampanje-send"] });
+  assert.ok(await vent(() => h.textContent.includes(
+    t("ui.kundeservice.fullmakt.ok"))));
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: med historikk vises ingen bokser — bare veien via"
+  + " policyen; uten policy:activate hentes ingenting", async () => {
+  SVAR = fullSvar();
+  const koe = structuredClone(KOEN);
+  koe.sammendrag.svar_fullmakt = false;
+  SVAR["/v1/kundeservice"] = koe;
+  SVAR["/v1/firma/fullmakter"] = { bransje: "tjenestebedrift",
+    valgte: [], lov: [], kan_velge_om: false, request_id: "r-f" };
+  let h = nyHoved();
+  visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold",
+                         "bestilling:opprett", "policy:activate"]));
+  assert.ok(await vent(() => h.textContent.includes(
+    t("ui.kundeservice.fullmakt.historikk"))));
+  assert.equal(h.querySelectorAll('input[name="fullmakter"]').length, 0);
+  h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(!KALL.some((k) => k.sti === "/v1/firma/fullmakter"),
+    "fullmaktene ble hentet uten scope for å sette dem");
+});

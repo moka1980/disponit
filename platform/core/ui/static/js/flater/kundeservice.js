@@ -33,8 +33,8 @@ import { t } from "../i18n.js";
 import {
   UautorisertFeil, avgjorUtkast, hentJson, henvendelseTilUnntakskoe,
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
-  hentStilleregler, nyIdempotensnokkel,
-  settKundeserviceavsender, settStilleregler,
+  hentFullmakter, hentStilleregler, nyIdempotensnokkel,
+  settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
@@ -331,7 +331,61 @@ export function bestillingstekst(b) {
 
 // AVSENDEREN ER DET KUNDEN SER. Uten profil sies det høyt — før det
 // første svaret går ut i tenantens id i stedet for et navn.
-function avsenderSeksjon(a, s) {
+//: Fullmaktene i samme rekkefølge som registreringsskjemaet (207).
+const FULLMAKTER = ["kundeservice-svar", "kampanje-send",
+                    "purring-inkassovarsel", "tilbud-generer"];
+
+// GJENVALGET (208): der varsellinjen står, står også veien ut av den —
+// for den som har `policy:activate`, og bare mens policyen er den urørte
+// bootstrap-raden. Listen hentes FØRST (aldri «[] + den nye», 204s
+// lærdom), og boksene er de samme som ved registreringen.
+function fullmaktSkjema(ctx, last, kvitter) {
+  const boks = el("div", { class: "fullmakt-gjenvalg" },
+    el("p", { class: "muted", text: t("ui.kundeservice.fullmakt.laster") }));
+  (async () => {
+    let d;
+    try { d = await hentFullmakter(); } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(boks, el("p", { role: "alert",
+        text: t("ui.kundeservice.feil.generell") }));
+      return;
+    }
+    if (!d.kan_velge_om) {
+      sett(boks, el("p", { class: "muted",
+        text: t("ui.kundeservice.fullmakt.historikk") }));
+      return;
+    }
+    const skjema = el("form", { class: "kv-skjema" });
+    const bokser = FULLMAKTER.filter((n) => d.lov.includes(n)).map((navn) => {
+      const b = el("input", { type: "checkbox", id: `ks-fm-${navn}`,
+                              name: "fullmakter", value: navn });
+      b.checked = d.valgte.includes(navn) || navn === "kundeservice-svar";
+      return el("label", { class: "avkryssing", for: `ks-fm-${navn}` },
+        b, el("span", { text: t(`ui.firmareg.fullmakt.${navn}`) }));
+    });
+    const utfall = el("p", { "aria-live": "polite" });
+    const knapp = el("button", { type: "submit", class: "knapp primar",
+      text: t("ui.kundeservice.fullmakt.knapp") });
+    skjema.append(
+      el("fieldset", { class: "fullmakter" },
+        el("legend", { text: t("ui.kundeservice.fullmakt.tittel") }),
+        ...bokser,
+        el("p", { class: "muted skjema-hjelp",
+                  text: t("ui.kundeservice.fullmakt.hjelp") })),
+      el("div", { class: "skjema-bunn" }, knapp), utfall);
+    skjemaramme(ctx, last, {
+      skjema, knapp, utfall, kvitter,
+      okNokkel: "ui.kundeservice.fullmakt.ok",
+      send: (idem) => settFullmakter(
+        bokser.map((l) => l.querySelector("input"))
+          .filter((b) => b.checked).map((b) => b.value), idem),
+    });
+    sett(boks, skjema);
+  })();
+  return boks;
+}
+
+function avsenderSeksjon(a, s, ctx, last, kvitter) {
   const boks = el("section", { class: "kpi-kort" },
     el("h2", { text: t("ui.kundeservice.avsender.tittel") }));
   // HAR PLATTFORMEN FULLMAKT? (207) Uten den sender planrunden ingenting,
@@ -343,6 +397,9 @@ function avsenderSeksjon(a, s) {
       el("strong", { text: t(s.svar_fullmakt
         ? "ui.kundeservice.avsender.fullmakt_ja"
         : "ui.kundeservice.avsender.fullmakt_nei") })));
+    if (!s.svar_fullmakt && harScope(ctx, "policy:activate")) {
+      boks.append(fullmaktSkjema(ctx, last, kvitter));
+    }
   }
   if (!a || !a.avsender_navn) {
     boks.append(el("p", {}, el("strong", {
@@ -1016,7 +1073,8 @@ export function visKundeservice(hoved, ctx) {
       const koseksjon = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.koe.tittel") }),
         koblokk, detalj.node);
-      const deler = [oversikt, koseksjon, avsenderSeksjon(d.avsenderprofil, s),
+      const deler = [oversikt, koseksjon,
+                     avsenderSeksjon(d.avsenderprofil, s, ctx, last, kvitter),
                      stilleSeksjon(ctx, last, kvitter)];
       if (harScope(ctx, "bestilling:opprett")) {
         deler.push(avsenderSkjema(ctx, last, kvitter, d.avsenderprofil));

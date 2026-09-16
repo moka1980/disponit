@@ -660,3 +660,136 @@ def test_en_fullmakt_bransjen_ikke_baerer_er_400_med_navnet(
                              "Idempotency-Key": secrets.token_hex(16)})
     assert r.status_code == 400, r.text
     assert "kundeservice-svar" in r.text and "netthandel" in r.text
+
+
+def _tenantokt(migrator, bid, tenant):
+    """En ekte browsersesjon i FIRMAET, slik innloggingen lager den etter
+    registreringen — med rollene medlemskapet bærer."""
+    from api import sesjon as sesjonmodul
+
+    _sett_kontekst(migrator, tenant)
+    ver = migrator.execute(
+        "SELECT authz_version FROM brukermedlemskap WHERE tenant=%s"
+        " AND bruker_id=%s", (tenant, bid)).fetchone()[0]
+    cookie, csrf = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    migrator.execute(
+        "INSERT INTO brukersesjon (sesjon_id_hash, tenant, bruker_id,"
+        " authz_snapshot, csrf_hash, utloper)"
+        " VALUES (%s,%s,%s,%s,%s, now() + interval '10 hours')",
+        (sesjonmodul._hash(cookie), tenant, bid, ver, sesjonmodul._hash(csrf)))
+    migrator.commit()
+    return cookie, csrf
+
+
+def _registrer_http(klient, migrator, bid, bransje="tjenestebedrift",
+                    fullmakter=None):
+    from api import sesjon as sesjonmodul
+    cookie, csrf = _registrantokt(migrator, bid)
+    kropp = {"navn": f"Gjenvalg {secrets.token_hex(3)} AS", "bransje": bransje}
+    if fullmakter is not None:
+        kropp["fullmakter"] = fullmakter
+    r = klient.post("/v1/firma/registrer", json=kropp,
+                    cookies={sesjonmodul.C_SESJON: cookie,
+                             sesjonmodul.C_CSRF: csrf},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code in (200, 201), r.text
+    return r.json()["tenant"]
+
+
+@pg
+def test_gjenvalget_gir_fullmakten_saa_lenge_policyen_er_uroert(
+        miljo, migrator, klient):
+    """wcagvakt-tilfellet (208): registrert uten fullmakter, og valget
+    gjøres om ETTERPÅ av grunnleggeren selv — gjennom bootstrap-døren,
+    som fortsatt er den samme startraden ingen har attestert.
+
+    MUTASJONEN SOM DREPER DENNE: la døren skrive uansett historikk (se
+    porten under), eller la `_fullmakttilstand` alltid si `kan_velge_om`.
+    """
+    from api import sesjon as sesjonmodul
+
+    bid = _bruker(migrator)
+    tenant = _registrer_http(klient, migrator, bid)
+    assert _koens_svar_fullmakt(tenant) is False
+    cookie, csrf = _tenantokt(migrator, bid, tenant)
+    c = {sesjonmodul.C_SESJON: cookie, sesjonmodul.C_CSRF: csrf}
+
+    # Tilstanden: bransjen kjent, ingenting valgt, gjenvalget åpent.
+    r = klient.get("/v1/firma/fullmakter", cookies=c)
+    assert r.status_code == 200, r.text
+    assert r.json()["bransje"] == "tjenestebedrift"
+    assert r.json()["valgte"] == [] and r.json()["kan_velge_om"] is True
+    assert "kundeservice-svar" in r.json()["lov"]
+
+    r = klient.post("/v1/firma/fullmakter",
+                    json={"fullmakter": ["kundeservice-svar"]}, cookies=c,
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["fullmakter"] == ["kundeservice-svar"]
+    # …og køen sier det er på plass — det planrunden spør om.
+    assert _koens_svar_fullmakt(tenant) is True
+    r = klient.get("/v1/firma/fullmakter", cookies=c)
+    assert r.json()["valgte"] == ["kundeservice-svar"]
+    # Raden er fortsatt ÉN, fortsatt bootstrap: gjenvalget lager ingen
+    # historikk — det er det samme valget, tatt senere.
+    _sett_kontekst(migrator, tenant)
+    assert migrator.execute(
+        "SELECT count(*), bool_and(aktiveringskilde = 'bootstrap')"
+        " FROM policyer WHERE tenant=%s", (tenant,)).fetchone() == (1, True)
+    # Et valg bransjen ikke bærer avvises med navnet — også her.
+    r = klient.post("/v1/firma/fullmakter",
+                    json={"fullmakter": ["alt"]}, cookies=c,
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code == 400, r.text
+
+
+@pg
+def test_gjenvalget_nekter_saa_snart_policyen_har_historikk(
+        miljo, migrator, klient):
+    """Ett utkast i den styrte veien, og døren er stengt: da gjelder V6.
+    MUTASJONEN SOM DREPER DENNE: fjern utkast-/attestasjonssjekken i
+    `firma_bootstrap_gjenvalg`."""
+    import psycopg
+
+    from api import sesjon as sesjonmodul
+    from api.firmaregistrering import bygg_bootstrap_policy
+    from api.policyregister import innholds_hash
+
+    bid = _bruker(migrator)
+    tenant = _registrer_http(klient, migrator, bid)
+    cookie, csrf = _tenantokt(migrator, bid, tenant)
+    c = {sesjonmodul.C_SESJON: cookie, sesjonmodul.C_CSRF: csrf}
+    # Et utkast, som den styrte veien ville laget.
+    _sett_kontekst(migrator, tenant)
+    migrator.execute(
+        "INSERT INTO policyutkast (tenant, utkast_id, policy_id, innhold,"
+        " status, opprettet_av) VALUES (%s,%s,%s,%s,'utkast',%s)",
+        (tenant, "u-" + secrets.token_hex(8), "tjenestebedrift-no",
+         psycopg.types.json.Json(bygg_bootstrap_policy("tjenestebedrift", [])),
+         bid))
+    migrator.commit()
+    r = klient.get("/v1/firma/fullmakter", cookies=c)
+    assert r.status_code == 200 and r.json()["kan_velge_om"] is False
+    r = klient.post("/v1/firma/fullmakter",
+                    json={"fullmakter": ["kundeservice-svar"]}, cookies=c,
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code == 409, r.text
+    assert "policy_har_historikk" in r.text
+    # …og døren selv, kalt rett: samme nei.
+    from db.pg import koble
+    rt = koble(DSN)
+    try:
+        _sett_kontekst(rt, tenant)
+        p = bygg_bootstrap_policy("tjenestebedrift", ["kundeservice-svar"])
+        with pytest.raises(psycopg.errors.IntegrityConstraintViolation):
+            rt.execute("SELECT firma_bootstrap_gjenvalg(%s,%s,%s::jsonb)",
+                       (tenant, innholds_hash(p),
+                        psycopg.types.json.Json(p)))
+        rt.rollback()
+    finally:
+        rt.close()
+    assert _koens_svar_fullmakt(tenant) is False
