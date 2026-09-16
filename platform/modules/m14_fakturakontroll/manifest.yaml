@@ -37,7 +37,8 @@
 # MVA-SATSENE ER IKKE MODULENS. En sats kodet inn er en fullmakt
 # modulen ga seg selv over et tall staten setter og som endres.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# TO AKSER, ÆRLIG LEST (17/9): sertifisert mot verten — fasit, suite og
+# bevisrunde bundet under; én release (m14-r1), så rollback er blokkert.
 id: m14_fakturakontroll
 navn: Fakturakontrollagent
 versjon: 0.1.0
@@ -55,32 +56,115 @@ i18n_prefiks: fakturakontroll
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # Samme tre forutsetninger som M-23/M-17/M-6/M-44/M-26: fullt utsjekk,
+    # fersk base, og sveiperollens egen DSN (fakturasveipen kjører som
+    # den). Kjørt som administrator, ikke root.
+    status: ja
+    krav_id: m14-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m14_tester
+      - maalt.m14_feilet
+      - maalt.m14_hoppet
+      - maalt.m14_exitkode
+    artefakt: deploy/staging/artefakter/m14-suite-v1-20260916T234940Z.json
+    artefakt_sha256: 36406681a35eedcfb97bafd7bc2bca21a6e00c4be99d8ce787d1ea1b1bf57d73
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      Kjørt 17/9 på disponit-srv som administrator fra et FULLT utsjekk av b9ce22c1 mot en FERSK testbase med alle rolle-DSN-ene: 5452 tester, 0 feilet, 0 hoppet; M-14-andelen 84 av 84, exitkode 0.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # SETTET FINNES: `deploy/staging/m14_fasit.py` — 19 fakturaer over to
+    # tenanter, én MED terskel og én UTEN. Kantene: mva-avvik 1 øre (=
+    # slingringen, ikke funn) og 2 (funn); ingen sats som gjaldt datoen;
+    # ukjent leverandør (den kjente står i M-24); dublettparet på 3 døgn
+    # (= vinduet, funn for begge) og 4 (ikke); brutto på grensen (ikke)
+    # og over (funn), over men manuelt kontrollert (ikke); mottatt for 7
+    # døgn siden (= fristen, ikke) og 8 (funn); kontrollert og avvist er
+    # ute av sveipen. Uten terskel er hver mottatt faktura et
+    # `ingen_terskel`-funn.
+    #
+    # TERSKELEN STRAMMES ETTER REGISTRERINGEN (beløpsgrense 100 000 →
+    # 25 000 kr, kontrollfrist 30 → 7 døgn): de tre live-typene følger den
+    # GJELDENDE terskelen, de tre frosne (mva, sats, leverandør) står.
+    #
+    # FIRE MUTASJONER KJØRT MOT BASEN som eierrollen, fire fall, hver på
+    # sin navngitte rad: `>` → `>=` på fristkanten («paa_fristen_7») og
+    # beløpskanten («paa_grensen»), `<=` → `<` på dublettvinduet
+    # («dublett_a»/«dublett_b»), faktura-evidensen omdøpt.
+    status: ja
+    krav_id: m14-fasit-v1
+    bevismaalinger:
+      - maalt.fakturaer
+      - maalt.ventede_funn
+      - maalt.funnavvik
+      - maalt.koeavvik
+    artefakt: deploy/staging/artefakter/m14-fasit-v1-20260916T233432Z.json
+    artefakt_sha256: 4268fe3c1c452a0b4092fda032974d0b001812470dfc0167b0693d59fda02355
     notat: >-
-      KREVER: et fakturasett med KJENT fasit for hvilke som er
-      dubletter og hvilke mva-beløp som er gale, kjørt likt lokalt og
-      på staging. Treffraten er hele poenget: en dublettsjekk ingen har
-      målt er ikke en kontroll, det er en påstand.
+      Kjørt 17/9 på disponit-srv som root mot produksjonsbasen med to nye tenanter: 19 fakturaer gjennom dørene (den kjente leverandøren gjennom M-24s dør), 9 ventede funn i sveipen (mva_avvik, ingen_mvasats, ukjent_leverandor, naer_dublett ×2, over_belopsgrense, ukontrollert, ingen_terskel ×2), 0 funnavvik og 0 køavvik. Settets sha256 er bundet i artefaktet og re-regnes av porten.
   revisjonslogg_korrekt:
-    status: nei
+    # MÅLES I SAMME KJØRING, på de samme radene: hver dør skriver sin
+    # hendelse (`terskler.satt`, `mvasats.satt`, `faktura.registrert`,
+    # `kontroll.registrert`, `faktura.avgjort`) — 29 hendelser med hver
+    # sin `input_hash` og aktøren som gikk gjennom døra. OG kontrollene
+    # per faktura (`m14_kontrollene`): hva ble sjekket, med hvilket
+    # utfall, når og av hvem — det et tilsyn spør etter.
+    status: ja
+    krav_id: m14-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m14-fasit-v1-20260916T233432Z.json
+    artefakt_sha256: 4268fe3c1c452a0b4092fda032974d0b001812470dfc0167b0693d59fda02355
     notat: >-
-      KREVER: at hver kontroll faktisk står i evidenskjeden, målt som
-      hendelser med identitet.
+      29 hendelser i revisjonsloggen (kilde `m14_faktura`) fra fem dører, hver med sin input_hash og aktøren som gikk gjennom døra; kontrollene per faktura lest gjennom `m14_kontrollene` med type, utfall, tid og hvem. 0 evidensavvik.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — som m23/m17/m6/m44/m26:
+    # bevisrunden 10/9 injiserte feil mot disponit.com, men
+    # `m14-bokforing-v1` hadde tom `punktbinding`. De fem som beviser
+    # punktet: en faktura med kontrollavvik ble sak, en over
+    # beløpsgrensen ble sak, ingen dobbel bokføring, kvitteringen nådde
+    # registeret, kill-switch konsumerte ingen fakturaer.
+    status: ja
+    krav_id: m14-bokforing-v1
+    bevismaalinger:
+      - maalt.bokforing_med_kontrollavvik_brudd
+      - maalt.bokforing_over_belopsgrense_brudd
+      - maalt.dobbel_bokforing_samme_oppdrag_brudd
+      - maalt.kvittering_uten_bokforing_brudd
+      - maalt.kill_switch_konsumerte_fakturaer_brudd
+    artefakt: deploy/staging/artefakter/m14-bokforing-v1-20260910T104500Z.json
+    artefakt_sha256: 9eeecded78d3c8cb526905aeffe59ff1b1ecddf80745b971f9f55e7aabe0bf39
     notat: >-
-      KREVER: kontrollsveipen bygget, og at en feil i den ikke lar en
-      ukontrollert faktura forsvinne stille.
+      Bevisrunden 10/9 mot disponit.com, ti punkter, null brudd: en
+      faktura med kontrollavvik stoppet som sak i unntakskøen, en over
+      beløpsgrensen likeså, ett oppdrag ga én bokføring også ved dobbel
+      kvittering, bilaget sto i registeret og evidensen i loggen, og
+      kill-switch midt i kjeden konsumerte ingen fakturaer.
+      `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000`, kryss-tenant én gang
+    # i døgnet, med `sveip_tenanter` som nevner. Porten avviser 0.
+    status: ja
+    krav_id: m14-fasit-v1
+    bevismaalinger:
+      - maalt.sveipetid_ms
+      - maalt.sveip_tenanter
+    artefakt: deploy/staging/artefakter/m14-fasit-v1-20260916T233432Z.json
+    artefakt_sha256: 4268fe3c1c452a0b4092fda032974d0b001812470dfc0167b0693d59fda02355
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Kryss-tenant-sveipen over 3 tenanter tok 18 ms mot grensen 30 000 ms.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44/M-26: MÅLT 17/9
+    # i modulregisteret har `m14_fakturakontroll` NØYAKTIG ÉN release,
+    # `m14-r1`. Arbeideren er installert og kjører
+    # (`disponit-m14.service`); det er historikken som mangler, ikke
+    # maskineriet.
+    status: blokkert
+    blokkert_av: >-
+      m14_fakturakontroll har én release (m14-r1). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
+    krav_id: m14-rollback-v1

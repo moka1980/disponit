@@ -1,0 +1,38 @@
+{
+  "avvik": {
+    "med_terskel": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    },
+    "uten_terskel": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m14-fasit-v1",
+  "maalt": {
+    "evidensavvik": 0,
+    "evidenshendelser": 29,
+    "fakturaer": 19,
+    "funnavvik": 0,
+    "koeavvik": 0,
+    "sveip_tenanter": 3,
+    "sveipetid_ms": 18,
+    "ventede_funn": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "d673c9646110c3ab52f95874a51ad1a013b73f93f7edb3be6354cb7655e33ca9",
+    "modul": "m14_fakturakontroll",
+    "sett_sha256": "40c30a6d1d94a50ba8110370561c4efbf5ec3320b2e1d4a1320a20c8cdb8d9e5",
+    "sett_versjon": "m14-fasit-1",
+    "tenanter": [
+      "t-m14fasit-med_terskel-865a5980",
+      "t-m14fasit-uten_terskel-865a5980"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-16T23:34:32.841954+00:00"
+}
