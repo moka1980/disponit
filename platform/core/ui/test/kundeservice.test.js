@@ -587,7 +587,7 @@ test("Kundeservice: stille avsendere — liste, legg til sender HELE settet,"
   SVAR["/v1/kundeservice/stilleregler"] = REGLER;
   const h = nyHoved();
   visKundeservice(h, ctx());
-  await vent(() => h.querySelectorAll(".stille-liste li").length === 2);
+  await vent(() => h.querySelectorAll(".brikkerad .brikke").length === 2);
   const tekst = h.textContent;
   assert.ok(tekst.includes(t("ui.kundeservice.stille.tittel")));
   assert.ok(tekst.includes("microsoft.com"));
@@ -618,9 +618,9 @@ test("Kundeservice: fjern-knappen sender settet UTEN regelen", async () => {
   SVAR["/v1/kundeservice/stilleregler"] = REGLER;
   const h = nyHoved();
   visKundeservice(h, ctx());
-  await vent(() => h.querySelectorAll(".stille-liste li button").length === 2);
+  await vent(() => h.querySelectorAll(".brikkerad .brikke-x").length === 2);
   SISTE = null;
-  h.querySelectorAll(".stille-liste li button")[0].click();
+  h.querySelectorAll(".brikkerad .brikke-x")[0].click();
   await vent(() => SISTE && SISTE.sti === "/v1/kundeservice/stilleregler");
   assert.deepEqual(SISTE.kropp, { regler: [
     { art: "adresse", monster: "a".repeat(64), handlingstype: "nyhetsbrev" },
@@ -633,9 +633,10 @@ test("Kundeservice: en lesende økt ser reglene, men verken skjema eller"
   SVAR["/v1/kundeservice/stilleregler"] = REGLER;
   const h = nyHoved();
   visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold"]));
-  await vent(() => h.querySelectorAll(".stille-liste li").length === 2);
+  assert.ok(await vent(
+    () => h.querySelectorAll(".brikkerad .brikke").length === 2));
   assert.ok(!h.querySelector("#ks-stille-monster"));
-  assert.equal(h.querySelectorAll(".stille-liste li button").length, 0);
+  assert.equal(h.querySelectorAll(".brikkerad .brikke-x").length, 0);
 });
 
 test("Kundeservice: ingen skriving før regellisten er lastet — «[] + den"
