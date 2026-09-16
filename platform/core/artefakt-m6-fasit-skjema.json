@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m6fasitartefakt-v1.json",
+  "title": "m6 fasitartefakt (m6-fasit-v1)",
+  "comment": "Den syntetiske postboksen (deploy/staging/m6_fasit.py) drevet gjennom produktets egne doerer med Graph byttet ut mot en rigget transport: inntak (delta-sider, kropp, kryptering, idempotens), broen til kundeserviceregisteret (203), svaret som reply i traaden, slettingen - og evidenskjeden. Avvikene baeres i artefaktet saa dommen kan RE-REGNES av porten. CI driver samme sett mot lokal base (test_m6_fasit_port). Skrevet av deploy/staging/m6-fasit-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "avvik"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m6-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "sett_versjon",
+        "sett_sha256",
+        "bevisrot_sha256",
+        "tenanter"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m06_epost"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sett_versjon": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m6_fasit.py) slik kjoeringen FAKTISK brukte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "EN digest over hele m6-produsentflaten (manifestskjema.M6_BEVISROT_FILER), re-regnet av porten over sitt eget tre."
+        },
+        "tenanter": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": "Tenantene runden kjoerte mot - en MED sendescope paa postboksen og en UTEN. Begge kreves: uten den scopeloese er det umaalt at samtykket stenger svarveien."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "meldinger",
+        "nye_runde1",
+        "nye_runde2",
+        "henvendelser",
+        "sendt",
+        "evidenshendelser",
+        "inntaksavvik",
+        "broavvik",
+        "svaravvik",
+        "evidensavvik",
+        "innhentingstid_ms"
+      ],
+      "properties": {
+        "meldinger": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Rader i epost_melding for settet - summen over begge tenantene."
+        },
+        "nye_runde1": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Nye meldinger inntaket rapporterte i runde 1 (to delta-sider, ett duplikat, en @removed)."
+        },
+        "nye_runde2": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Nye i runde 2, fra lagret deltaLink (en ny, ett duplikat)."
+        },
+        "henvendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Henvendelser broen (203) skrev i M-17 - en per melding."
+        },
+        "sendt": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Svar som gikk ut som reply i traaden - noeyaktig ett (tenanten med sendescope)."
+        },
+        "evidenshendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Hendelser fasiten venter i evidenskjeden: M-6s egne (utkast, bestilt, sendt, slettet) og broens (mottatt, avsender)."
+        },
+        "inntaksavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "broavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "svaravvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidensavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "innhentingstid_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Veggklokketid for runde 1 av inntaket, summert over tenantene. ytelse_bestatt maales mot dette og per melding."
+        }
+      }
+    },
+    "avvik": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "inntaksavvik",
+          "broavvik",
+          "svaravvik",
+          "evidensavvik"
+        ],
+        "properties": {
+          "inntaksavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "broavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "svaravvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidensavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "comment": "Avvikene per tenantrolle, ordrett. Porten teller dem paa nytt og sammenligner med maalt - en telling som spriker fra listen er to ulike kjoeringer i samme fil."
+    }
+  }
+}
