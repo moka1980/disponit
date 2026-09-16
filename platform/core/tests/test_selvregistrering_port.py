@@ -52,6 +52,19 @@ def _registrer(c, tenant, bid, navn="Nytt Firma AS", dogn=30):
     return frist
 
 
+def _koens_svar_fullmakt(tenant: str) -> bool:
+    """Køens eget svar, lest som RUNTIME — døra `m17_kostatus` er runtimes,
+    ikke migrators, og det er det et menneske ser i flaten."""
+    from api.kundeservice import svar_for
+    from db.pg import koble
+    rt = koble(DSN)
+    try:
+        _sett_kontekst(rt, tenant)
+        return svar_for(rt, tenant)["sammendrag"]["svar_fullmakt"]
+    finally:
+        rt.close()
+
+
 def _medlemskap(c, bid) -> dict[str, list[str]]:
     """Alle medlemskap for en bruker, kryss-tenant.
 
@@ -89,7 +102,7 @@ def test_registrering_gir_firma_og_admin_i_samme_transaksjon(migrator):
     rad = migrator.execute("SELECT navn, status FROM firma_hent(%s)",
                            (t,)).fetchone()
     assert rad == ("Nytt Firma AS", "prove")
-    assert _medlemskap(migrator, bid).get(t) == ["admin"], (
+    assert _medlemskap(migrator, bid).get(t) == ["admin", "policyforvalter"], (
         "et firma uten medlem er et firma ingen kommer inn i")
 
 
@@ -324,7 +337,8 @@ def test_hele_veien_en_bedrift_registrerer_seg_selv(miljo, migrator, klient):
 
     r = klient.post("/v1/firma/registrer",
                     json={"navn": navn, "orgnummer": "923609016",
-                          "bransje": "tjenestebedrift"},
+                          "bransje": "tjenestebedrift",
+                          "fullmakter": ["kundeservice-svar"]},
                     cookies={sesjonmodul.C_SESJON: cookie,
                              sesjonmodul.C_CSRF: csrf},
                     headers={"X-Disponit-CSRF": csrf,
@@ -343,8 +357,10 @@ def test_hele_veien_en_bedrift_registrerer_seg_selv(miljo, migrator, klient):
         (tenant,)).fetchone()
     assert rad == (navn, "923609016", "prove")
 
-    # 2. Hun er admin der, og registrantraden er borte.
-    assert _medlemskap(migrator, bid) == {tenant: ["admin"]}
+    # 2. Hun er admin OG policyforvalter der (207: hun ER firmaet), og
+    #    registrantraden er borte.
+    assert _medlemskap(migrator, bid) == {tenant: ["admin", "policyforvalter"]}
+    assert svar["fullmakter"] == ["kundeservice-svar"]
 
     # 3. Nøkkelen finnes — uten den kan ingen modul kryptere noe.
     _sett_kontekst(migrator, tenant)
@@ -361,6 +377,22 @@ def test_hele_veien_en_bedrift_registrerer_seg_selv(miljo, migrator, klient):
     assert len(aktiv) == 1, f"ingen eller flere aktive policyer: {aktiv}"
     assert aktiv[0][0] == "tjenestebedrift-no"
     assert aktiv[0][2] == "bootstrap"
+
+    # 5. FULLMAKTEN HUN VALGTE STÅR I POLICYEN (207): `kundeservice.svar.send`
+    #    er der, med utvidelsens vitne — og køen sier det med ord. Det er
+    #    dette planrunden spør om før den sender et godkjent svar; uten det
+    #    bestilte den ingenting for wcagvakt, i stillhet (målt 16/9).
+    import json as _json
+    _sett_kontekst(migrator, tenant)
+    innhold = migrator.execute(
+        "SELECT innhold FROM policyer WHERE tenant=%s AND aktiv",
+        (tenant,)).fetchone()[0]
+    if isinstance(innhold, (str, bytes)):
+        innhold = _json.loads(innhold)
+    assert any(h["id"] == "kundeservice.svar.send"
+               for h in innhold["handlinger"]), "fullmakten kom ikke inn"
+    assert "v_kundeservice" in innhold["verifikatorer"]
+    assert _koens_svar_fullmakt(tenant) is True
 
 
 @pg
@@ -506,3 +538,125 @@ def test_et_valgt_kortnavn_faar_IKKE_en_stille_2():
     utledet2 = kandidater_for("Fjordlys AS", None)
     assert utledet2[0] == "fjordlys-as" and len(utledet2) > 1, \
         "den utledede veien mistet kandidatlista si"
+
+
+@pg
+def test_uten_valgte_fullmakter_er_policyen_malen_og_koen_sier_det(
+        miljo, migrator, klient):
+    """Ingen fullmakter valgt: policyen er bransjemalen slik den er, uten
+    `kundeservice.svar.send` — og køens sammendrag sier `svar_fullmakt`
+    usant. MUTASJONEN SOM DREPER DENNE: la `_policy_har_svar` returnere
+    sant, eller flett inn kundesvaret uansett valg."""
+    from api import sesjon as sesjonmodul
+
+    bid = _bruker(migrator)
+    cookie, csrf = _registrantokt(migrator, bid)
+    r = klient.post("/v1/firma/registrer",
+                    json={"navn": f"Stille {secrets.token_hex(3)} AS",
+                          "bransje": "netthandel"},
+                    cookies={sesjonmodul.C_SESJON: cookie,
+                             sesjonmodul.C_CSRF: csrf},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code in (200, 201), r.text
+    tenant = r.json()["tenant"]
+    assert r.json()["fullmakter"] == []
+    assert _koens_svar_fullmakt(tenant) is False
+
+
+@pg
+def test_ukjent_fullmakt_er_feilformet_ikke_stille_hoppet_over(
+        miljo, migrator, klient):
+    """Et navn utenfor det lukkede settet er 400 med feltet navngitt — ellers
+    tror hun at hun ga en fullmakt plattformen aldri fikk."""
+    from api import sesjon as sesjonmodul
+
+    bid = _bruker(migrator)
+    cookie, csrf = _registrantokt(migrator, bid)
+    r = klient.post("/v1/firma/registrer",
+                    json={"navn": f"Feil {secrets.token_hex(3)} AS",
+                          "bransje": "netthandel",
+                          "fullmakter": ["kundeservice-svar", "alt"]},
+                    cookies={sesjonmodul.C_SESJON: cookie,
+                             sesjonmodul.C_CSRF: csrf},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code == 400, r.text
+    assert "fullmakter" in r.text
+
+
+def test_bootstrap_policyen_er_malen_pluss_valgte_utvidelser():
+    """Ren funksjon: malen urørt uten valg; med kundeservice-svar kommer
+    handlingen OG vitnet; `tilbud-generer` ERSTATTER handlingen med samme
+    id (RELEASE-M26) i stedet for å legge til en nummer to."""
+    from api.firmaregistrering import FULLMAKTER, bygg_bootstrap_policy
+    from policy_validator.schema import valider_ny_policy
+
+    ren = bygg_bootstrap_policy("tjenestebedrift", [])
+    assert not any(h["id"] == "kundeservice.svar.send" for h in ren["handlinger"])
+    med = bygg_bootstrap_policy("tjenestebedrift", ["kundeservice-svar"])
+    assert any(h["id"] == "kundeservice.svar.send" for h in med["handlinger"])
+    assert "v_kundeservice" in med["verifikatorer"]
+    assert valider_ny_policy(med) == []
+    alle = bygg_bootstrap_policy("tjenestebedrift", sorted(FULLMAKTER))
+    ider = [h["id"] for h in alle["handlinger"]]
+    assert len(ider) == len(set(ider)), f"dobbel handling: {ider}"
+    assert "tilbud.generer" in ider and ider.count("tilbud.generer") == 1
+    assert valider_ny_policy(alle) == []
+    # Rollen `bestiller` følger inkassovarselet inn (utvidelsen bærer den).
+    assert any(r["id"] == "bestiller" for r in alle["roller"])
+    # …og verifikatorenes tillit UTVIDES, den erstattes ikke: håndverks-
+    # malens eget vilkår på `v_prisbok` overlever tilbudsutvidelsen.
+    hv = bygg_bootstrap_policy("handverk-bygg", ["tilbud-generer"])
+    assert "standard_forbehold_inkludert" in hv["verifikatorer"]["v_prisbok"]["betrodd_for"]
+    assert valider_ny_policy(hv) == []
+
+
+def test_fullmaktkartet_er_regnet_av_malene_og_flaten_baerer_det_samme():
+    """Serverens kart er REGNET (en utvidelse som peker på et vitne malen
+    ikke har, validerer ikke). Flaten bærer et håndskrevet kart — to
+    lister som skal være like, så porten krever det. MUTASJONEN SOM DREPER
+    DENNE: legg «kundeservice-svar» til netthandel i JS."""
+    import json as _json
+    import re
+    from pathlib import Path
+
+    from api.firmaregistrering import (FULLMAKTER, FULLMAKTER_FOR_BRANSJE,
+                                       bygg_bootstrap_policy)
+    from policy_validator.schema import valider_ny_policy
+
+    # Kartet stemmer med valideringen, fullmakt for fullmakt.
+    for bransje, lov in FULLMAKTER_FOR_BRANSJE.items():
+        for navn in FULLMAKTER:
+            gyldig = valider_ny_policy(bygg_bootstrap_policy(bransje, [navn])) == []
+            assert gyldig == (navn in lov), (bransje, navn)
+    assert FULLMAKTER_FOR_BRANSJE["tjenestebedrift"] == sorted(FULLMAKTER)
+    assert "kundeservice-svar" not in FULLMAKTER_FOR_BRANSJE["netthandel"]
+
+    js = (Path(__file__).resolve().parents[1]
+          / "ui/static/js/flater/firmaregistrering.js").read_text("utf-8")
+    m = re.search(r"FULLMAKTER_FOR_BRANSJE = (\{.*?\});", js, re.S)
+    assert m, "flaten mangler kartet"
+    tekst = re.sub(r",\s*([}\]])", r"\1", m.group(1))       # JS-haler → JSON
+    assert _json.loads(tekst) == FULLMAKTER_FOR_BRANSJE
+
+
+@pg
+def test_en_fullmakt_bransjen_ikke_baerer_er_400_med_navnet(
+        miljo, migrator, klient):
+    """Netthandel kan ikke få kundesvaret (malen har ikke DLP-vitnet) — og
+    svaret sier hvilken fullmakt og hvilken bransje, ikke bare 400."""
+    from api import sesjon as sesjonmodul
+
+    bid = _bruker(migrator)
+    cookie, csrf = _registrantokt(migrator, bid)
+    r = klient.post("/v1/firma/registrer",
+                    json={"navn": f"Nett {secrets.token_hex(3)} AS",
+                          "bransje": "netthandel",
+                          "fullmakter": ["kundeservice-svar"]},
+                    cookies={sesjonmodul.C_SESJON: cookie,
+                             sesjonmodul.C_CSRF: csrf},
+                    headers={"X-Disponit-CSRF": csrf,
+                             "Idempotency-Key": secrets.token_hex(16)})
+    assert r.status_code == 400, r.text
+    assert "kundeservice-svar" in r.text and "netthandel" in r.text

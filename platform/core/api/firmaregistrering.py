@@ -30,8 +30,10 @@ aktivere policy uten attestasjon, altså svekket fire-øyne (V6).
 """
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
+from pathlib import Path
 
 MAKS_NAVN = 200
 MAKS_SLUG = 63
@@ -43,6 +45,24 @@ BRANSJEMALER = {
     "tjenestebedrift": "bransjemal-tjenestebedrift.yaml",
     "handverk-bygg":   "bransjemal-handverk-bygg.yaml",
     "netthandel":      "bransjemal-netthandel.yaml",
+}
+
+#: FULLMAKTENE KUNDEN KAN GI PLATTFORMEN VED REGISTRERINGEN (207). Hver er
+#: en utvidelse i `policies/utvidelser/` — de samme filene den styrte veien
+#: limer inn for eierens egne tenanter. Bransjemalen røres ikke (byte-bundet
+#: til M-02s akseptartefakt); utvidelsene flettes inn i KOPIEN som blir
+#: tenantens bootstrap-policy.
+#:
+#: HVORFOR HER OG IKKE ETTERPÅ: V6 krever to attestasjoner for en utvidelse
+#: av fullmaktene, og én fra en annen enn forfatteren. Et enkeltpersonfirma
+#: kan aldri nå det kvorumet — så valget tas der policyen fødes, av den som
+#: registrerer, som del av en policy ingen har attestert ennå. Kunden velger
+#: bare HVILKE av disse; hun leverer aldri policy selv.
+FULLMAKTER = {
+    "kundeservice-svar":     "kundeservice-svar.yaml",
+    "kampanje-send":         "kampanje-send.yaml",
+    "purring-inkassovarsel": "purring-inkassovarsel.yaml",
+    "tilbud-generer":        "tilbud-generer.yaml",
 }
 
 _UGYLDIG = re.compile(r"[^a-z0-9]+")
@@ -157,6 +177,24 @@ def registrer_firma(tjeneste, request):
         bransje = k.get("bransje")
         if bransje not in BRANSJEMALER:
             return _feil("request_feilformet", rid, 400, detalj="bransje")
+        # FULLMAKTENE: en liste av navn fra det LUKKEDE settet, tom om hun
+        # ikke ga noen. Et ukjent navn er en feilformet forespørsel, ikke
+        # noe som stille hoppes over — da ville hun trodd hun ga en
+        # fullmakt plattformen aldri fikk.
+        fullmakter = k.get("fullmakter", [])
+        if not isinstance(fullmakter, list) or not all(
+                isinstance(x, str) and x in FULLMAKTER for x in fullmakter):
+            return _feil("request_feilformet", rid, 400, detalj="fullmakter")
+        fullmakter = sorted(set(fullmakter))
+        # …OG DE MÅ PASSE BRANSJEN: kundesvaret trenger DLP-vitnet, som bare
+        # tjenestebedrift-malen har. Et valg malen ikke bærer er 400 med
+        # navnet — ikke en policy som validerer og stille mangler det.
+        utenfor = [n for n in fullmakter
+                   if n not in FULLMAKTER_FOR_BRANSJE[bransje]]
+        if utenfor:
+            return _feil("request_feilformet", rid, 400,
+                         detalj=f"fullmakter: {', '.join(utenfor)} passer"
+                                f" ikke bransjen {bransje}")
 
         # KORTNAVNET KAN VELGES, OG DA ER DET ET VALG.
         #
@@ -221,36 +259,97 @@ def registrer_firma(tjeneste, request):
         sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
         from db import kryptering
         kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
-        _aktiver_bransjemal(conn, tenant, bransje)
+        _aktiver_bransjemal(conn, tenant, bransje, fullmakter)
         conn.commit()
 
         sett_kontekst(conn, kontekst, f"bruker:{bid}", rid)
         return _ok_lagret(conn, {"tenant": tenant, "navn": navn,
                                  "prove_utloper": frist.isoformat(),
-                                 "bransje": bransje}, rid)
+                                 "bransje": bransje,
+                                 "fullmakter": fullmakter}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
 
-def _aktiver_bransjemal(conn, tenant: str, bransje: str) -> None:
-    """Leser malen som FØLGER MED APPEN, validerer den som oppsettsveien
-    gjør, og skriver den gjennom bootstrap-døra.
+def flett_utvidelse(policy: dict, utvidelse: dict) -> dict:
+    """Utvidelsen inn i policyen, slik den styrte veien gjør det for hånd:
+    verifikatorer legges til (eller erstattes på navn), handlinger
+    erstattes på id eller legges til (`tilbud-generer` ERSTATTER
+    handlingen med samme id, RELEASE-M26). Returnerer en NY dict."""
+    ut = json.loads(json.dumps(policy))
+    # VERIFIKATORENE UTVIDES, DE ERSTATTES IKKE: en utvidelse skrevet mot
+    # tjenestebedrift-malen bærer `v_prisbok` med SINE vilkår, og et
+    # wholesale-bytte ville tatt tilliten fra håndverksmalens egne
+    # (`standard_forbehold_inkludert`). `betrodd_for` er unionen.
+    verifikatorer = ut.setdefault("verifikatorer", {})
+    for navn, ny in (utvidelse.get("verifikatorer") or {}).items():
+        gammel = verifikatorer.get(navn)
+        if not isinstance(gammel, dict):
+            verifikatorer[navn] = ny
+            continue
+        flettet = {**gammel, **ny}
+        betrodd = list(gammel.get("betrodd_for") or [])
+        betrodd += [v for v in (ny.get("betrodd_for") or []) if v not in betrodd]
+        flettet["betrodd_for"] = betrodd
+        verifikatorer[navn] = flettet
+    # Handlinger OG roller flettes på id: `purring-inkassovarsel` bærer
+    # rollen `bestiller` som handlingen tillater, og en utvidelse uten
+    # rollen sin er en handling ingen får utføre.
+    for nokkel in ("handlinger", "roller"):
+        liste = ut.setdefault(nokkel, [])
+        for ny in utvidelse.get(nokkel) or []:
+            for i, h in enumerate(liste):
+                if h.get("id") == ny.get("id"):
+                    liste[i] = ny
+                    break
+            else:
+                liste.append(ny)
+    return ut
 
-    Malen kommer aldri fra forespørselen — kunden velger bare hvilken av
-    tre. En rute som tok imot policy ville vært en vei til å skrive sine
-    egne fullmakter.
-    """
-    import json
-    from pathlib import Path
 
+def bygg_bootstrap_policy(bransje: str, fullmakter: list[str]) -> dict:
+    """Malen som FØLGER MED APPEN pluss de valgte utvidelsene — en ren
+    funksjon, så porten kan måle innholdet uten en base."""
     import yaml
 
+    rot = Path(__file__).resolve().parents[3] / "policies"
+    policy = yaml.safe_load((rot / BRANSJEMALER[bransje])
+                            .read_text(encoding="utf-8"))
+    for navn in fullmakter:
+        utvidelse = yaml.safe_load((rot / "utvidelser" / FULLMAKTER[navn])
+                                   .read_text(encoding="utf-8"))
+        policy = flett_utvidelse(policy, utvidelse)
+    return policy
+
+
+def _fullmakter_for_bransje() -> dict[str, list[str]]:
+    """Hvilke fullmakter hver bransjemal KAN bære — regnet, ikke skrevet:
+    en utvidelse som peker på et vitne malen ikke har (`v_dlp`, `v_fordring`
+    finnes bare i tjenestebedrift-malen) validerer ikke, og tilbys da ikke.
+    Flaten bærer det samme kartet (`FULLMAKTER_FOR_BRANSJE` i
+    firmaregistrering.js), og porten krever likhet."""
+    from policy_validator.schema import valider_ny_policy
+    ut = {}
+    for bransje in BRANSJEMALER:
+        ut[bransje] = [navn for navn in sorted(FULLMAKTER)
+                       if not valider_ny_policy(
+                           bygg_bootstrap_policy(bransje, [navn]))]
+    return ut
+
+
+def _aktiver_bransjemal(conn, tenant: str, bransje: str,
+                        fullmakter: list[str] = ()) -> None:
+    """Leser malen som FØLGER MED APPEN, fletter inn de valgte fullmaktene,
+    validerer som oppsettsveien gjør, og skriver gjennom bootstrap-døra.
+
+    Malen kommer aldri fra forespørselen — kunden velger bare hvilken av
+    tre, og hvilke av fire fullmakter. En rute som tok imot policy ville
+    vært en vei til å skrive sine egne fullmakter.
+    """
     from api.policyregister import innholds_hash
     from policy_validator.schema import valider_ny_policy
 
-    sti = (Path(__file__).resolve().parents[3] / "policies"
-           / BRANSJEMALER[bransje])
-    policy = yaml.safe_load(sti.read_text(encoding="utf-8"))
+    policy = bygg_bootstrap_policy(bransje, list(fullmakter))
     feil = valider_ny_policy(policy)
     if feil:
         # Malene ligger i repoet og valideres i CI; kommer vi hit, er det
@@ -303,3 +402,7 @@ def avslutt_endepunkt(tjeneste, request):
         return _ok_lagret(conn, {"tenant": tenant, "status": "stengt"}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
+
+
+#: Regnet én gang ved import (tolv små valideringer av innsjekkede filer).
+FULLMAKTER_FOR_BRANSJE: dict[str, list[str]] = _fullmakter_for_bransje()

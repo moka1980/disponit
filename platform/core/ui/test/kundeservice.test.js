@@ -999,3 +999,45 @@ test("Kundeservice: med emne på radene er emnet radens navn, avsenderen"
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+// 207: KØEN SIER OM PLATTFORMEN HAR FULLMAKT til å sende — som ord.
+test("Kundeservice: uten fullmakt sier avsenderfanen det høyt; med, stille"
+  + " bekreftelse", async () => {
+  for (const [fullmakt, nokkel] of [
+    [false, "ui.kundeservice.avsender.fullmakt_nei"],
+    [true, "ui.kundeservice.avsender.fullmakt_ja"]]) {
+    SVAR = fullSvar();
+    const koe = structuredClone(KOEN);
+    koe.sammendrag.svar_fullmakt = fullmakt;
+    SVAR["/v1/kundeservice"] = koe;
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    assert.ok(await vent(
+      () => h.querySelectorAll("table tbody tr").length === 2));
+    assert.ok(h.textContent.includes(t(nokkel)), `mangler ${nokkel}`);
+    assert.equal(!!h.querySelector(".kpi-kort .hv-varsel"), !fullmakt);
+    // …og i detaljen: «Godkjenn svaret» er AVSLÅTT uten fullmakt, «Lagre
+    // utkast» står — utkastet er menneskets. MUTASJONEN SOM DREPER DENNE:
+    // fjern `uKnapp.disabled = true` i detaljpanel.
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    assert.ok(await vent(() => h.querySelector("#ks-utkast") !== null));
+    const skjema = h.querySelector("#ks-utkast").closest("form");
+    assert.equal(skjema.querySelector('button[type="submit"]').disabled,
+      !fullmakt);
+    const lagre = [...skjema.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.utkast"));
+    assert.equal(lagre.disabled, false);
+    assert.equal(!!skjema.querySelector(".hv-varsel"), !fullmakt);
+    // …og lagringen VIRKER uten fullmakt (CodeRabbit): handleren venter
+    // ikke på godkjenn-knappen. MUTASJONEN: sjekk `uKnapp.disabled` i
+    // «Lagre utkast»-handleren.
+    KALL.length = 0;
+    h.querySelector("#ks-utkast").value = "Skriver ferdig senere.";
+    lagre.click();
+    assert.ok(await vent(() => KALL.some(
+      (k) => k.metode === "POST" && k.sti.endsWith("/utkast/ny"))),
+      "utkastet ble ikke lagret");
+    assert.ok(!KALL.some((k) => k.sti.endsWith("/dom")));
+  }
+});

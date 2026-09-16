@@ -215,6 +215,21 @@ def _koens_emner(conn, tenant: str) -> dict:
     return ut
 
 
+def _policy_har_svar(conn, tenant: str) -> bool:
+    """Én aktiv policy, og den nevner `kundeservice.svar.send`."""
+    import json as _json
+    rader = conn.execute(
+        "SELECT innhold FROM policyer WHERE tenant=%s AND aktiv",
+        (tenant,)).fetchall()
+    if len(rader) != 1:
+        return False
+    innhold = rader[0][0]
+    if isinstance(innhold, (str, bytes)):
+        innhold = _json.loads(innhold)
+    return any(h.get("id") == "kundeservice.svar.send"
+               for h in (innhold or {}).get("handlinger") or [])
+
+
 def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
     """Køflatens tilstand i én transaksjon, gjennom to lesedører.
 
@@ -247,13 +262,20 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
     # ARC B (163): avsenderprofilen — navnet plattformen svarer i.
     a = conn.execute("SELECT * FROM m17_avsenderprofilen(%s)",
                      (tenant,)).fetchone()
+    # HAR PLATTFORMEN FULLMAKT TIL Å SENDE? (207) Samme prøve som planrunden
+    # gjør før den bestiller (`plan.kundeservice.policy_har_svar`): én aktiv
+    # policy som nevner `kundeservice.svar.send`. Uten dette sto «Godkjenn
+    # svaret» i flaten mens planrunden stille bestilte ingenting — målt på
+    # wcagvakt 16/9.
+    svar_fullmakt = _policy_har_svar(conn, tenant)
     return {
         "sammendrag": {
             "apne": s[0], "uklassifiserte": s[1], "i_unntakskoe": s[2],
             "kritiske": s[3], "apne_funn": s[4],
             "lukkede_siste_30": s[5],
             # LISTEN ER AVKORTET, OG FLATEN SKAL KUNNE SI DET.
-            "vist": len(koe)},
+            "vist": len(koe),
+            "svar_fullmakt": svar_fullmakt},
         "koe": koe,
         # RADEN FINNES FØR PROFILEN GJØR DET. `m17_avsenderprofilen`
         # LEFT JOIN-er mot `firma` og faller tilbake på firmanavnet, så

@@ -331,9 +331,19 @@ export function bestillingstekst(b) {
 
 // AVSENDEREN ER DET KUNDEN SER. Uten profil sies det høyt — før det
 // første svaret går ut i tenantens id i stedet for et navn.
-function avsenderSeksjon(a) {
+function avsenderSeksjon(a, s) {
   const boks = el("section", { class: "kpi-kort" },
     el("h2", { text: t("ui.kundeservice.avsender.tittel") }));
+  // HAR PLATTFORMEN FULLMAKT? (207) Uten den sender planrunden ingenting,
+  // uansett hvor mange svar som godkjennes — og det skal stå HER, som ord,
+  // ikke oppdages ved at ingenting skjer. Fullmakten velges ved
+  // registreringen eller gis gjennom policyen med fire øyne.
+  if (s && "svar_fullmakt" in s) {
+    boks.append(el("p", { class: s.svar_fullmakt ? "" : "hv-varsel" },
+      el("strong", { text: t(s.svar_fullmakt
+        ? "ui.kundeservice.avsender.fullmakt_ja"
+        : "ui.kundeservice.avsender.fullmakt_nei") })));
+  }
   if (!a || !a.avsender_navn) {
     boks.append(el("p", {}, el("strong", {
       text: t("ui.kundeservice.avsender.ingen") })));
@@ -563,7 +573,7 @@ function stilleSeksjon(ctx, last, kvitter) {
   return boks;
 }
 
-function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
+function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
   const boks = el("div", { class: "hv-detalj" });
   const innhold = el("div", { class: "hv-detalj-innhold" });
   const utfall = el("p", { "aria-live": "polite" });
@@ -667,6 +677,14 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
     felt("ks-utkast", "ui.kundeservice.skjema.utkast_tekst", utkasttekst,
          "ui.kundeservice.skjema.utkast_teksthjelp"),
     el("div", { class: "skjema-bunn" }, uKnapp, uLagre));
+  const utenFullmakt = !!(sammendrag && "svar_fullmakt" in sammendrag
+                          && !sammendrag.svar_fullmakt);
+  if (utenFullmakt) {
+    uKnapp.disabled = true;
+    uKnapp.dataset.utenFullmakt = "1";
+    uSkjema.append(el("p", { class: "muted hv-varsel",
+      text: t("ui.kundeservice.avsender.fullmakt_nei") }));
+  }
   // TO KALL, ÉN INTENSJON (CodeRabbit): feiler godkjenningen etter at
   // utkastet er lagret, holder rammen nøkkelen — og neste klikk skal
   // godkjenne DET utkastet, ikke lagre et til. Husket per nøkkel til
@@ -695,20 +713,28 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
     },
     tilbakestill: () => { utkasttekst.value = ""; },
   });
+  // UTEN FULLMAKT ER «GODKJENN» EN LØGN (207, CodeRabbit): planrunden
+  // bestiller ingenting, og en knapp som lover sending skal ikke kunne
+  // trykkes. Utkastet kan fortsatt lagres — det er menneskets, ikke
+  // plattformens. Grunnen står som ord under knappen.
+  // «Lagre utkast» venter bare på et kall i lufta — ikke på en godkjenn-
+  // knapp som er avslått av fullmaktsgrunner (CodeRabbit).
+  const opptatt = () => uLagre.disabled || (uKnapp.disabled && !utenFullmakt);
   uLagre.addEventListener("click", async () => {
-    if (!utkasttekst.value.trim() || uKnapp.disabled) return;
+    if (!utkasttekst.value.trim() || opptatt()) return;
     uLagre.disabled = true; uKnapp.disabled = true;
+    const slipp = () => { uLagre.disabled = false; uKnapp.disabled = utenFullmakt; };
     try {
       await lagreUtkast(gjeldende.henvendelse_id,
                         { tekst: utkasttekst.value }, nyIdempotensnokkel());
     } catch (e) {
-      uLagre.disabled = false; uKnapp.disabled = false;
+      slipp();
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       sett(utfall, el("span", { role: "alert",
         text: t("ui.kundeservice.feil.generell") }));
       return;
     }
-    uLagre.disabled = false; uKnapp.disabled = false;
+    slipp();
     utkasttekst.value = "";
     meldLive(t("ui.kundeservice.skjema.utkast_ok"));
     kvitter(t("ui.kundeservice.skjema.utkast_ok"));
@@ -980,7 +1006,7 @@ export function visKundeservice(hoved, ctx) {
       // Før lå panelet utenfor fanene og hang under hver eneste fane.
       let koblokk = null;
       const visKoe = (synlig) => { if (koblokk) koblokk.hidden = !synlig; };
-      const detalj = detaljpanel(ctx, last, kvitter, settApen, visKoe);
+      const detalj = detaljpanel(ctx, last, kvitter, settApen, visKoe, s);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.oversikt.tittel") }),
@@ -990,7 +1016,7 @@ export function visKundeservice(hoved, ctx) {
       const koseksjon = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.koe.tittel") }),
         koblokk, detalj.node);
-      const deler = [oversikt, koseksjon, avsenderSeksjon(d.avsenderprofil),
+      const deler = [oversikt, koseksjon, avsenderSeksjon(d.avsenderprofil, s),
                      stilleSeksjon(ctx, last, kvitter)];
       if (harScope(ctx, "bestilling:opprett")) {
         deler.push(avsenderSkjema(ctx, last, kvitter, d.avsenderprofil));

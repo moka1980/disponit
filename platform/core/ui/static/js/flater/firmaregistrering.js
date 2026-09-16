@@ -29,6 +29,20 @@ import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
 export const BRANSJER = ["tjenestebedrift", "handverk-bygg", "netthandel"];
+//: Det lukkede settet av fullmakter (207) — samme navn som serveren kjenner.
+export const FULLMAKTER = ["kundeservice-svar", "kampanje-send",
+                           "purring-inkassovarsel", "tilbud-generer"];
+//: HVILKE FULLMAKTER HVER BRANSJE KAN BÆRE — serverens kart
+//: (`api.firmaregistrering.FULLMAKTER_FOR_BRANSJE`, regnet av malene), pinnet
+//: her av `test_selvregistrering_port`. Håndverk og netthandel mangler
+//: DLP- og fordringsvitnet i malen, så kundesvar og inkassovarsel kan ikke
+//: velges der ennå.
+export const FULLMAKTER_FOR_BRANSJE = {
+  "tjenestebedrift": ["kampanje-send", "kundeservice-svar",
+                      "purring-inkassovarsel", "tilbud-generer"],
+  "handverk-bygg": ["kampanje-send", "tilbud-generer"],
+  "netthandel": ["kampanje-send", "tilbud-generer"],
+};
 
 const SIFRE = /^[0-9]{9}$/;
 const MELLOMROM = / /g;
@@ -71,12 +85,15 @@ export function slugAv(navn) {
   return s.slice(0, 63).replace(/-+$/, "");
 }
 
-export function idempotensnokkelFor(navn, orgnummer, bransje, kortnavn) {
+export function idempotensnokkelFor(navn, orgnummer, bransje, kortnavn,
+                                    fullmakter = []) {
   // KORTNAVNET INN I NØKKELEN. Retter hun et opptatt kortnavn og prøver på
   // nytt, er det en NY handling — med den gamle nøkkelen ville hun fått det
   // første forsøkets svar tilbake, altså «opptatt», uansett hva hun skrev.
+  // FULLMAKTENE INN I NØKKELEN (207): to like kropper med ulikt valg av
+  // fullmakter er to ulike registreringer, ikke en replay.
   const raa = JSON.stringify([navn, orgnummer ?? null, bransje,
-                              kortnavn ?? null]);
+                              kortnavn ?? null, [...fullmakter].sort()]);
   const a = _hash(raa, 0x811c9dc5, 0x01000193);
   const b = _hash(raa, 0xdeadbeef, 0x85ebca6b);
   return `firmareg-${a.toString(16).padStart(8, "0")}`
@@ -139,6 +156,42 @@ export function visFirmaregistrering(hoved, ctx) {
     valg,
     el("p", { class: "hjelpetekst", text: t("ui.firmareg.bransje_hjelp") }));
 
+  // FULLMAKTENE (207): hva plattformen får utføre innenfor policyen.
+  // Velges HER, av den som registrerer, som del av startpolicyen — etterpå
+  // krever en utvidelse fire øyne (V6), og et enkeltpersonfirma har ikke
+  // det. Kundesvaret er forhåndsvalgt: det er reisen som finnes i dag, og
+  // hvert svar krever fortsatt et menneskes godkjenning.
+  const fullmaktbokser = FULLMAKTER.map((navn) => {
+    const boks = el("input", { type: "checkbox", id: `firmareg-fm-${navn}`,
+                               name: "fullmakter", value: navn });
+    if (navn === "kundeservice-svar") boks.checked = true;
+    return el("label", { class: "avkryssing", for: `firmareg-fm-${navn}` },
+      boks, el("span", { text: t(`ui.firmareg.fullmakt.${navn}`) }),
+      el("span", { class: "muted fullmakt-merknad", hidden: true,
+                   text: t("ui.firmareg.fullmakt_ikke_i_bransjen") }));
+  });
+  // BRANSJEN STYRER HVA SOM KAN VELGES: en boks malen ikke bærer slås av og
+  // tømmes, med grunnen som ord ved siden av — aldri en stille 400.
+  const tilpassBransje = () => {
+    const lov = FULLMAKTER_FOR_BRANSJE[valg.value] || [];
+    for (const l of fullmaktbokser) {
+      const b = l.querySelector("input");
+      const ok = lov.includes(b.value);
+      b.disabled = !ok;
+      if (!ok) b.checked = false;
+      l.querySelector(".fullmakt-merknad").hidden = ok;
+    }
+  };
+  valg.addEventListener("change", tilpassBransje);
+  tilpassBransje();
+  const fullmaktrad = el("fieldset", { class: "felt fullmakter" },
+    el("legend", { text: t("ui.firmareg.fullmakter") }),
+    ...fullmaktbokser,
+    el("p", { class: "hjelpetekst", text: t("ui.firmareg.fullmakter_hjelp") }));
+  const valgteFullmakter = () => fullmaktbokser
+    .map((l) => l.querySelector("input")).filter((b) => b.checked)
+    .map((b) => b.value);
+
   const knapp = el("button", { type: "submit", class: "knapp primar",
                                text: t("ui.firmareg.send") });
   const melding = el("p", { class: "melding", hidden: true, role: "status" });
@@ -146,7 +199,7 @@ export function visFirmaregistrering(hoved, ctx) {
   // `novalidate`: nettleserens egen boble er ikke oversatt og kan ikke
   // knyttes til feltet med aria-errormessage.
   const skjema = el("form", { class: "kv-skjema", novalidate: "" },
-    navn.rad, kort.rad, org.rad, bransjerad,
+    navn.rad, kort.rad, org.rad, bransjerad, fullmaktrad,
     el("div", { class: "knapperad" }, knapp), melding);
 
   const visFeil = (nokkel) => {
@@ -198,10 +251,11 @@ export function visFirmaregistrering(hoved, ctx) {
       // to i stedet for en replay.
       const kortnavn =
         (kortRortAvHenne ? kort.inp.value.trim() : "") || null;
+      const fullmakter = valgteFullmakter();
       const svar = await registrerFirma(
-        kortnavn ? { navn: n, kortnavn, orgnummer, bransje }
-          : { navn: n, orgnummer, bransje },
-        idempotensnokkelFor(n, orgnummer, bransje, kortnavn));
+        kortnavn ? { navn: n, kortnavn, orgnummer, bransje, fullmakter }
+          : { navn: n, orgnummer, bransje, fullmakter },
+        idempotensnokkelFor(n, orgnummer, bransje, kortnavn, fullmakter));
       // FERDIG — OG HUN MÅ LOGGE INN PÅ NYTT. Sesjonen hennes peker på
       // registreringskonteksten, som ikke lenger har et medlemskap.
       sett(hoved, ...flateHode(t("ui.firmareg.ferdig_tittel"),
