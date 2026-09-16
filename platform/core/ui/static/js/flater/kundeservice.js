@@ -130,13 +130,21 @@ export function trengerMenneske(h) {
     || !STILLE.has(h.handlingstype);
 }
 
-function korad(h, ctx, apneDetalj) {
+function korad(h, ctx, apneDetalj, medEmne) {
   const rad = el("tr", {});
-  // AVSENDEREN NAVNGIR raden — det et menneske skanner en kø etter er
-  // HVEM. Masken er alt listen får lov å bære (listen bærer aldri
-  // kundeteksten); adressen, emnet og referansen kommer når raden åpnes.
-  rad.append(el("th", { scope: "row", class: "celle-tekst",
-                        text: avsenderTekst(h) }));
+  if (medEmne) {
+    // EMNET NAVNGIR RADEN (eiers beslutning 16/9, som #490 i innboksen):
+    // det er det man skanner en kø etter. Det følger bare med for en økt
+    // som har innholdsscopet (206) — ellers står avsenderen som før.
+    rad.append(el("th", { scope: "row", class: "celle-tekst",
+                          text: h.emne || "—" }));
+    rad.append(el("td", { class: "celle-tekst", text: avsenderTekst(h) }));
+  } else {
+    // AVSENDEREN NAVNGIR raden. Masken er alt listen får lov å bære;
+    // adressen, emnet og referansen kommer når raden åpnes.
+    rad.append(el("th", { scope: "row", class: "celle-tekst",
+                          text: avsenderTekst(h) }));
+  }
   // NÅR, som én celle: dato, kanal og alder — og merkene som TEKST
   // (WCAG 1.4.1), for de er flatens viktigste opplysning på raden.
   const mottatt = el("td", { class: "celle-tekst" },
@@ -175,10 +183,12 @@ function korad(h, ctx, apneDetalj) {
   return rad;
 }
 
-function koTabell(koe, ctx, apneDetalj, captionNokkel) {
+function koTabell(koe, ctx, apneDetalj, captionNokkel, medEmne) {
   const tb = el("table", { class: "kpi-tabell" },
     el("caption", { text: t(captionNokkel) }));
   tb.append(el("thead", {}, el("tr", {},
+    medEmne ? el("th", { scope: "col",
+                         text: t("ui.kundeservice.detalj.emne") }) : null,
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.avsender") }),
     el("th", { scope: "col",
@@ -189,7 +199,7 @@ function koTabell(koe, ctx, apneDetalj, captionNokkel) {
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.handling") }))));
   const tbody = el("tbody");
-  for (const h of koe) tbody.append(korad(h, ctx, apneDetalj));
+  for (const h of koe) tbody.append(korad(h, ctx, apneDetalj, medEmne));
   tb.append(tbody);
   return el("div", { class: "tablewrap" }, tb);
 }
@@ -206,9 +216,11 @@ function koBlokk(koe, ctx, apneDetalj) {
   }
   const trenger = koe.filter(trengerMenneske);
   const stille = koe.filter((h) => !trengerMenneske(h));
+  // Emnet finnes på radene bare når økten har innholdsscopet (206).
+  const medEmne = koe.some((h) => "emne" in h);
   if (trenger.length) {
     blokk.append(koTabell(trenger, ctx, apneDetalj,
-                          "ui.kundeservice.koe.caption"));
+                          "ui.kundeservice.koe.caption", medEmne));
   } else {
     blokk.append(el("p", { class: "muted",
       text: t("ui.kundeservice.koe.trenger_ingen") }));
@@ -218,7 +230,7 @@ function koBlokk(koe, ctx, apneDetalj) {
       el("summary", { text: t("ui.kundeservice.koe.stille_gruppe")
         .replace("{antall}", String(stille.length)) }),
       koTabell(stille, ctx, apneDetalj,
-               "ui.kundeservice.koe.stille_caption")));
+               "ui.kundeservice.koe.stille_caption", medEmne)));
   }
   return blokk;
 }
