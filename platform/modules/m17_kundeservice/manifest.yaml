@@ -41,35 +41,164 @@ i18n_prefiks: kundeservice
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # NOTATET VAR UTDATERT VED FØDSELEN: «Ingen kode finnes». Modulen har
+    # migrasjonene 102/160–164/203–206, femten HTTP-ruter, en sveip med
+    # egen rolle og timer, en regelrunde i planrunden, en arbeider
+    # (`disponit-m17.service`) og 76 egne tester i ti filer.
+    #
+    # SAMME TRE FORUTSETNINGER SOM M-23 (15/9): fullt utsjekk (ikke det
+    # beskårne release-treet), fersk base per kjøring, og arbeider-,
+    # sveipe- og planrollens egne DSN-er satt — uten dem hopper andelen,
+    # og porten krever null hoppede.
+    status: ja
+    krav_id: m17-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m17_tester
+      - maalt.m17_feilet
+      - maalt.m17_hoppet
+      - maalt.m17_exitkode
+    artefakt: deploy/staging/artefakter/m17-suite-v1-20260916T141547Z.json
+    artefakt_sha256: d31ee79b4f1abf9f7623a57c577de7e73242afbe2200e2e98a6b4e7035ec662a
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5429 av 5429 tester KJØRT på disponit-srv fra et fullt
+      utsjekk av 04fba400 mot en fersk testbase, null feilet, null
+      hoppet, exit 0. M-17s egen andel er PINNET
+      (`manifestskjema.M17_SUITE_ANDEL`: ti filer modulen eier i sin
+      helhet) og målt for seg: 76 av 76 kjørt, null feilet,
+      NULL HOPPET — hele andelen er `skipif(not DSN)`, og fasitporten
+      krever i tillegg sveiperollens og planarbeiderens egne DSN-er.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # SETTET FINNES: `deploy/staging/m17_fasit.py` — 21 henvendelser over
+    # to tenanter, én MED stilleregler og én UTEN, med en henvendelse på
+    # hver kant og én på hver side: uklassifisert 2/3 døgn, ubesvart 5/6
+    # døgn, mistenkelig på dag 0 (med og uten sak), en lukket som ikke
+    # skal stå i køen — og regelen målt på domene, underdomene (205),
+    # LIGNENDE domene som ikke skal treffe, adresse og annen adresse på
+    # samme domene som ikke skal treffe, pluss et menneskes dom som står.
+    #
+    # KLASSIFISERINGEN ER EN REGEL, IKKE EN MODELL («regel først, modell
+    # senere», eier 15/9). Settet er golden-settet for regelen, og den
+    # dagen en modell kommer, måles den mot de samme radene.
+    #
+    # FEM MUTASJONER KJØRT MOT BASEN som eierrollen, fem fall, hver på
+    # sin navngitte rad: `>` → `>=` på uklassifisert-kanten
+    # («dagen_for_uklassifisert_kant») og på ubesvart-kanten
+    # («svar_kreves_dagen_for»), `unntak_id IS NULL` fjernet
+    # («svar_kreves_i_unntakskoe»), `%.` → `%` i domeneregelen
+    # («lignende_domene_treffer_ikke»), regelens evidens omdøpt (køen
+    # riktig, kjeden mangler tre dommer).
+    status: ja
+    krav_id: m17-fasit-v1
+    bevismaalinger:
+      - maalt.henvendelser
+      - maalt.ventede_funn
+      - maalt.regelklassifisert
+      - maalt.funnavvik
+      - maalt.klassifiseringsavvik
+      - maalt.koeavvik
+    artefakt: deploy/staging/artefakter/m17-fasit-v1-20260916T140045Z.json
+    artefakt_sha256: a0fcde19143dce5e604166e5c9b585f9c38d3cb4674b93ddf7cdde4f79ce07bb
     notat: >-
-      KREVER: et henvendelsessett med KJENT fasit for klassifiseringen,
-      kjørt likt lokalt og på staging. Settet er også et golden-sett i
-      M-31s forstand — klassifiseringen er en modell, og en modell som
-      byttes uten en målt fasit er et bytte ingen kan bedømme.
+      21 henvendelser, 9 ventede funn, 3 regeldommer, NULL avvik på alle
+      fire aksene — kjørt mot disponit.com 16/9 gjennom kundens egne
+      dører (`m17_ta_imot`, samme dør som innboksbroen), regelrunden som
+      planarbeideren, sveipet av `henvendelsessveip.kjor()` som
+      sveiperollen, og lest gjennom `api.kundeservice.svar_for`. Samme
+      sett kjøres mot lokal base ved hver CI-runde
+      (`test_m17_fasit_port`), og bindingen er BYTENE: `sett_sha256` må
+      stemme i begge ledd. `koeavvik` er manifestets egen setning målt:
+      to saker til unntakskøen, henvendelsen lest tilbake bit for bit.
   revisjonslogg_korrekt:
-    status: nei
+    # MÅLES I SAMME KJØRING som fasiten, på de samme radene: 21
+    # `henvendelse.mottatt`, 21 `avsender.satt`, 13
+    # `henvendelse.klassifisert` (ti av et menneske, tre av regelen), 2
+    # `henvendelse.til_unntakskoe`, 1 `henvendelse.lukket`, 1
+    # `utkast.lagret`, 1 `utkast.forkastet` og 1 `stilleregler.satt`.
+    # «Med identitet» er målt bokstavelig: hver hendelse har SIN EGEN
+    # `input_hash`.
+    status: ja
+    krav_id: m17-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m17-fasit-v1-20260916T140045Z.json
+    artefakt_sha256: a0fcde19143dce5e604166e5c9b585f9c38d3cb4674b93ddf7cdde4f79ce07bb
     notat: >-
-      KREVER: at hver henvendelse, hver klassifisering og hvert utkast
-      faktisk står i evidenskjeden, målt som hendelser med identitet.
+      61 hendelser i kjeden, null avvik, hver med aktør og hver med sin
+      egen `input_hash`. Målingen er felt av en mutasjon — døpes
+      regelens evidens om, står køen riktig mens kjeden mangler tre
+      dommer og bærer en handling fasiten ikke kjenner. Det er den
+      stille varianten punktet finnes for.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — ordrett samme funn som
+    # m23-purring: bevisrunden 10/9 gikk mot disponit.com og injiserte
+    # ekte feil i svarkjeden, men `m17-svar-v1` hadde tom
+    # `punktbinding`, så ingen av tallene kunne flippe et punkt.
+    #
+    # KRAVET, ORDRETT: «en feilet klassifisering havner i M-37s kø som et
+    # unntak MED henvendelsen intakt». Det måles fra to kanter:
+    # svarkjeden her (fem injiserte feil, null brudd — et svar policyen
+    # stopper blir en SAK, aldri en tapt henvendelse), og fasitsettet
+    # (`maalt.koeavvik`: to saker til køen, teksten intakt).
+    status: ja
+    krav_id: m17-svar-v1
+    bevismaalinger:
+      - maalt.personopplysning_i_svaret_brudd
+      - maalt.okonomisk_lofte_i_svaret_brudd
+      - maalt.svar_uten_mottaker_eller_svarvei_brudd
+      - maalt.kvittering_uten_bokforing_brudd
+      - maalt.kill_switch_konsumerte_utkast_brudd
+    artefakt: deploy/staging/artefakter/m17-svar-v1-20260910T051000Z.json
+    artefakt_sha256: 9423e8a23946646bde812b003e63188cfd91c773d01b5674cd1466d2ad0445b0
     notat: >-
-      KREVER: at en feilet klassifisering havner i M-37s kø som et
-      unntak MED henvendelsen intakt — ikke som en tapt henvendelse.
-      Dette er modulens skarpeste port: en henvendelse som forsvinner
-      er verre enn en som ikke ble klassifisert.
+      Bevisrunden 10/9 mot disponit.com: et fødselsnummer og et
+      økonomisk løfte i svaret stoppet i unntakskøen som sak (1+1
+      forsøk, 0 brudd); lukket, i køen, uten adresse og uten svarvei ga
+      409 og `feilet` (4 forsøk, 0 brudd); kvitteringen nådde registeret
+      (1, 0); kill-switch midt i kjeden stoppet uten å brenne utkastet
+      (1, 0). Ekte oppdrag gjennom modulen, `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000` i KRAVGRENSER, og
+    # porten avviser 0 — en sveip ingen tok tiden på er ikke en
+    # ytelsesmåling. Nevneren står i artefaktet (`sveip_tenanter`).
+    #
+    # MANIFESTET BA OM «klassifiseringskostnad per henvendelse», og det
+    # er REGELRUNDEN (`m17_klassifiser_etter_regel`, planarbeideren) som
+    # er klassifiseringen i dag. Den tas tiden på for seg, og taket per
+    # dom er rundetiden delt på `regelklassifisert` — sveipen alene
+    # måler ikke klassifiseringen (CodeRabbit 16/9).
+    status: ja
+    krav_id: m17-fasit-v1
+    bevismaalinger:
+      - maalt.sveipetid_ms
+      - maalt.regelrundetid_ms
+      - maalt.regelklassifisert
+    artefakt: deploy/staging/artefakter/m17-fasit-v1-20260916T140045Z.json
+    artefakt_sha256: a0fcde19143dce5e604166e5c9b585f9c38d3cb4674b93ddf7cdde4f79ce07bb
     notat: >-
-      KREVER: pinnet grense for klassifiseringskostnad per henvendelse
-      og en målt kjøring mot den.
+      Sveipen 18 ms mot taket på 30 000, over 6 tenanter
+      (kryss-tenant — settets to, forrige rundes to, og kundene). Regelrunden
+      10 ms for 3 dommer: 3.3 ms per henvendelse mot taket på
+      10 000. Begge tidene er målt av produsenten med veggklokke, og
+      porten avviser 0.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+    # BLOKKERT, IKKE «NEI» — samme dom som M-23 (15/9), og av samme
+    # grunn: MÅLT 16/9 i modulregisteret på disponit-srv har
+    # `m17_kundeservice` NØYAKTIG ÉN release, `m17-r1`. En flippedrill
+    # må rulle tilbake TIL forgjengerens bytes
+    # (`krev_release_digest_bundet` i `m17-rollback-v1`), og det finnes
+    # ingen forgjenger. Å registrere en «rullbakk» nå ville vært
+    # bedrageriet porten finnes for å fange (m56, #117 runde 6).
+    #
+    # Arbeideren er installert og kjører (`disponit-m17.service`), så
+    # blokkeringen er ikke at maskineriet mangler — det er historikken.
+    status: blokkert
+    blokkert_av: >-
+      m17_kundeservice har én release (m17-r1). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
+    krav_id: m17-rollback-v1

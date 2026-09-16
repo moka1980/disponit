@@ -1,0 +1,43 @@
+{
+  "avvik": {
+    "med_regler": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "klassifiseringsavvik": [],
+      "koeavvik": []
+    },
+    "uten_regler": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "klassifiseringsavvik": [],
+      "koeavvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m17-fasit-v1",
+  "maalt": {
+    "evidensavvik": 0,
+    "evidenshendelser": 61,
+    "funnavvik": 0,
+    "henvendelser": 21,
+    "klassifiseringsavvik": 0,
+    "koeavvik": 0,
+    "regelklassifisert": 3,
+    "regelrundetid_ms": 10,
+    "sveip_tenanter": 6,
+    "sveipetid_ms": 18,
+    "ventede_funn": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "92b59f9e445a8b8f7e0ada6fe933cc644ca7fabfd69efb36bcc13b78d4de7f62",
+    "modul": "m17_kundeservice",
+    "sett_sha256": "b85dc12dd2906c6878cab89a6d7e4cf30e6a324ba7424de076105c94081fa8bf",
+    "sett_versjon": "m17-fasit-1",
+    "tenanter": [
+      "t-m17fasit-med_regler-ad0bef88",
+      "t-m17fasit-uten_regler-ad0bef88"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-16T14:00:45.719864+00:00"
+}

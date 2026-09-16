@@ -1,0 +1,33 @@
+{
+  "bestatt": true,
+  "krav_id": "m17-suite-v1",
+  "maalt": {
+    "m17_exitkode": 0,
+    "m17_feilet": 0,
+    "m17_hoppet": 0,
+    "m17_tester": 76,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5429
+  },
+  "oppsett": {
+    "bevisrot_sha256": "92b59f9e445a8b8f7e0ada6fe933cc644ca7fabfd69efb36bcc13b78d4de7f62",
+    "commit": "04fba40010f49596d429e647e6bbc74fbba1cf4c",
+    "m17_filer": [
+      "platform/core/tests/test_epost_til_kundeservice_port.py",
+      "platform/core/tests/test_m17_avsender_port.py",
+      "platform/core/tests/test_m17_bokforing_port.py",
+      "platform/core/tests/test_m17_controller.py",
+      "platform/core/tests/test_m17_fasit_port.py",
+      "platform/core/tests/test_m17_flate_port.py",
+      "platform/core/tests/test_m17_kundeservice.py",
+      "platform/core/tests/test_m17_sending_port.py",
+      "platform/core/tests/test_m17_stilleregler_port.py",
+      "platform/core/tests/test_m17_svarutloser_port.py"
+    ],
+    "modul": "m17_kundeservice",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-16T14:15:47.818916+00:00"
+}
