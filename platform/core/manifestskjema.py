@@ -1552,6 +1552,125 @@ KRAVGRENSER["m23-fasit-v1"] = {
     },
 }
 
+#: M-17 SERTIFISERING (16/9) — samme lest som M-23 (14/9). Andelen er
+#: FILER modulen eier i sin helhet, av samme grunn som m23s: en liste
+#: over node-id-er ville vært brutt av den første testen noen legger til.
+M17_SUITE_ANDEL: tuple[str, ...] = (
+    "platform/core/tests/test_epost_til_kundeservice_port.py",
+    "platform/core/tests/test_m17_avsender_port.py",
+    "platform/core/tests/test_m17_bokforing_port.py",
+    "platform/core/tests/test_m17_controller.py",
+    "platform/core/tests/test_m17_fasit_port.py",
+    "platform/core/tests/test_m17_flate_port.py",
+    "platform/core/tests/test_m17_kundeservice.py",
+    "platform/core/tests/test_m17_sending_port.py",
+    "platform/core/tests/test_m17_stilleregler_port.py",
+    "platform/core/tests/test_m17_svarutloser_port.py",
+)
+
+#: M-17 FLIPPEDRILLEN, registrert FØR drillen er kjørt (§0), i
+#: `rollback-m56-v1`s form som `m23-rollback-v1`: M-17 er en registrert
+#: modul med én release (`m17-r1`) og en arbeider (`disponit-m17.service`)
+#: som claimer oppdrag over API-et med modultoken. Punktet er BLOKKERT
+#: til modulen har en forgjenger å rulle tilbake til — samme dom som
+#: m23. Skjemaet og porten følger med drillen.
+KRAVGRENSER["m17-rollback-v1"] = {
+    "maks_claims_etter_drenering": 0,
+    "min_inflight": 1,
+    "maks_falske_verdikter": 0,
+    "min_rullback_claims": 1,
+    "min_rullback_promoterte": 0,
+    "krev_release_digest_bundet": True,
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.claims_etter_drenering",
+            "maalt.inflight_oppdrag",
+            "maalt.falske_verdikter",
+            "maalt.rullback_claimet_oppdrag",
+            "maalt.release_digest_bundet",
+        ),
+    },
+}
+
+KRAVGRENSER["m17-suite-v1"] = {
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    # Andelens gulv er MÅLT: 76 tester i de ti filene, null hoppede
+    # (lokalt 16/9, med fasitportens fire). Gulvet står litt under, så en fjernet test ikke
+    # feller punktet, men en HALVERT andel gjør det.
+    "min_m17_tester": 65,
+    "maks_m17_feilet": 0,
+    # NULL HOPPEDE: hele andelen er `skipif(not DSN)`, og fasitporten
+    # krever i tillegg sveiperollens og planarbeiderens egne DSN-er.
+    "maks_m17_hoppet": 0,
+    "m17_andel_pakrevd": M17_SUITE_ANDEL,
+    "punktbinding": {
+        "tester_gronne_pa_staging": (
+            "maalt.m17_feilet",
+            "maalt.m17_tester",
+            "maalt.m17_hoppet",
+            "maalt.tester_feilet",
+            "maalt.tester_totalt",
+        ),
+    },
+}
+
+M17_SETT_STI = REPOROT / "deploy/staging/m17_fasit.py"
+
+#: Produsentflaten for M-17s fasitartefakt. SVEIPEDRIVEREN OG REGELRUNDEN
+#: ER MED: funnene er skrevet av `henvendelsessveip.kjor()` og dommene av
+#: `stilleregler.kjor_en_runde()`, så en kjøring med en annen av dem er
+#: en annen kjøring.
+M17_BEVISROT_FILER = (
+    "deploy/staging/m17_fasit.py",
+    "deploy/staging/m17-fasit-artefakt.py",
+    "deploy/staging/m17-suite-artefakt.py",
+    "platform/drift/henvendelsessveip.py",
+    "platform/drift/kjor_henvendelsessveip.py",
+    "platform/core/plan/stilleregler.py",
+)
+
+KRAVGRENSER["m17-fasit-v1"] = {
+    # SETTET ER EKSAKT: 21 henvendelser, 9 ventede funn, 3 regeldommer,
+    # 61 evidenshendelser — nøyaktig de radene `m17_fasit.py` bærer, og
+    # porten `test_settet_er_fasiten` leser tallene fra settet.
+    #
+    # TALLET 9 ER TELT: sju i regel-tenanten (uklassifisert på 3 og 10
+    # døgn, ubesvart på 6, mistenkelig på 0, det lignende domenet, den
+    # andre adressen, og menneskets `svar_kreves` på en stille avsender)
+    # pluss to i den regelløse (den stille avsenderen uklassifisert, og
+    # ubesvart på 6).
+    "henvendelser_eksakt": 21,
+    "ventede_funn_eksakt": 9,
+    "regelklassifisert_eksakt": 3,
+    "evidenshendelser_eksakt": 61,
+    "maks_funnavvik": 0,
+    "maks_klassifiseringsavvik": 0,
+    "maks_koeavvik": 0,
+    "maks_evidensavvik": 0,
+    "krev_sett_sha_lik_innsjekket": True,
+    # YTELSE: taket for én sveipekjøring, kryss-tenant, én gang i døgnet.
+    "maks_sveipetid_ms": 30_000,
+    "min_sveip_tenanter": 2,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.henvendelser",
+            "maalt.ventede_funn",
+            "maalt.regelklassifisert",
+            "maalt.funnavvik",
+            "maalt.klassifiseringsavvik",
+            "maalt.koeavvik",
+        ),
+        "revisjonslogg_korrekt": (
+            "maalt.evidenshendelser",
+            "maalt.evidensavvik",
+        ),
+        "ytelse_bestatt": (
+            "maalt.sveipetid_ms",
+        ),
+    },
+}
+
 M24_INVARIANTER: tuple[str, ...] = (
     # V1-DOMMEN: modulen BETALER INGENTING. En utgående betaling er den
     # ene handlingen i katalogen som er umulig å angre.
@@ -1955,7 +2074,35 @@ KRAVGRENSER["m17-svar-v1"] = {
     "maks_brudd": 0,
     "min_forsok": 1,
     "krav_ja": ("rundtur_paa_disponit_com",),
-    "punktbinding": {},
+    # PUNKTBINDING (#166), lagt til 16/9 — samme historie som
+    # `m23-purring-v1`: bevisrunden 10/9 injiserte ekte feil mot
+    # disponit.com og målte hvor de havnet, men uten binding kunne ingen
+    # av tallene flippe et punkt.
+    #
+    # HVORFOR NETTOPP DISSE FEM beviser `feilinjisering_til_unntakskø`:
+    #   * `personopplysning_i_svaret` og `okonomisk_lofte_i_svaret` —
+    #     et svar policyen ikke slipper ut stoppet i UNNTAKSKØEN som sak,
+    #     med henvendelsen intakt. Aldri stille, aldri tillat.
+    #   * `svar_uten_mottaker_eller_svarvei` — lukket, i køen, uten
+    #     adresse: 409 fra bestillingsveien og `feilet` fra modulen, aldri
+    #     en henvendelse som forsvant.
+    #   * `kvittering_uten_bokforing` — kvitteringen nådde registeret:
+    #     utkastet `sendt`, henvendelsen lukket, evidensen `svar.sendt`.
+    #   * `kill_switch_konsumerte_utkast` — bryteren midt i kjeden stoppet
+    #     uten å brenne utkastet.
+    # Manifestets ord «en feilet klassifisering havner i M-37s kø MED
+    # henvendelsen intakt» måles i tillegg av fasitsettet
+    # (`m17-fasit-v1`, `maalt.koeavvik`) — to saker til køen, teksten
+    # lest tilbake bit for bit.
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.personopplysning_i_svaret_brudd",
+            "maalt.okonomisk_lofte_i_svaret_brudd",
+            "maalt.svar_uten_mottaker_eller_svarvei_brudd",
+            "maalt.kvittering_uten_bokforing_brudd",
+            "maalt.kill_switch_konsumerte_utkast_brudd",
+        ),
+    },
 }
 
 M14_BOKFORING_INVARIANTER: tuple[str, ...] = (
@@ -2710,6 +2857,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m23-purring-v1": "artefakt-m23-purring-skjema.json",
     "m23-fasit-v1": "artefakt-m23-fasit-skjema.json",
     "m23-suite-v1": "artefakt-m23-suite-skjema.json",
+    "m17-fasit-v1": "artefakt-m17-fasit-skjema.json",
+    "m17-suite-v1": "artefakt-m17-suite-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
@@ -2963,6 +3112,17 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m6(grense, art)
     if krav_id == "m35-v1":
         return feil + _grenser_m35(grense, art)
+    if krav_id == "m17-fasit-v1":
+        return feil + _grenser_m17_fasit(grense, art)
+    if krav_id == "m17-suite-v1":
+        return feil + _grenser_m17_suite(grense, art)
+    if krav_id == "m17-rollback-v1":
+        # FEILER LUKKET, som m23-rollback-v1: grensen er registrert (§0),
+        # produsent og skjema finnes ikke før drillen kan kjøres.
+        return feil + ["m17-rollback-v1: flippedrillen er ikke bygget —"
+                       " grensen er registrert (§0), men verken"
+                       " produsent eller artefaktskjema finnes, så et"
+                       " artefakt kan ikke måles mot den ennå"]
     if krav_id == "m23-fasit-v1":
         return feil + _grenser_m23_fasit(grense, art)
     if krav_id == "m23-suite-v1":
@@ -3684,6 +3844,188 @@ def _m23_bevisrot_feil(art: dict) -> list[str]:
                 f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
                 " produsentflate enn treet porten står i"]
     return []
+
+
+def m17_bevisrot_sha256() -> str:
+    """ÉN digest over hele M-17-produsentflaten (samme form som m23)."""
+    h = hashlib.sha256()
+    for rel in M17_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m17_bevisrot_feil(art: dict) -> list[str]:
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                " ubundet, og artefaktet beviser da en kjøring av"
+                " ukjente bytes"]
+    try:
+        lokal = m17_bevisrot_sha256()
+    except OSError as e:
+        return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"bevisrot_sha256={sha[:12]}… er ikke de innsjekkede"
+                f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
+                " produsentflate enn treet porten står i"]
+    return []
+
+
+def _grenser_m17_suite(grense: dict, art: dict) -> list[str]:
+    """`m17-suite-v1` — hele suiten på staging, M-17s andel for seg.
+    Formen er `_grenser_m23_suite` sin, av de samme grunnene."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    tall = {}
+    for navn in ("tester_totalt", "tester_feilet", "tester_hoppet",
+                 "m17_tester", "m17_feilet", "m17_hoppet",
+                 "suite_exitkode", "m17_exitkode"):
+        verdi, melding = _teller(m, navn, navn)
+        if melding:
+            feil.append(melding)
+        tall[navn] = verdi
+    if any(v is None for v in tall.values()):
+        return feil
+    kjorte = tall["tester_totalt"] - tall["tester_hoppet"]
+    if kjorte < grense["min_tester"]:
+        feil.append(f"tester_totalt={tall['tester_totalt']} minus"
+                    f" tester_hoppet={tall['tester_hoppet']} = {kjorte}"
+                    f" kjørte, krever >= {grense['min_tester']}")
+    if tall["tester_feilet"] > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={tall['tester_feilet']}, krever <="
+                    f" {grense['maks_feilet']}")
+    m17_kjorte = tall["m17_tester"] - tall["m17_hoppet"]
+    if m17_kjorte < grense["min_m17_tester"]:
+        feil.append(f"m17_tester={tall['m17_tester']} minus"
+                    f" m17_hoppet={tall['m17_hoppet']} = {m17_kjorte}"
+                    f" kjørte, krever >= {grense['min_m17_tester']}")
+    if tall["m17_feilet"] > grense["maks_m17_feilet"]:
+        feil.append(f"m17_feilet={tall['m17_feilet']}, krever <="
+                    f" {grense['maks_m17_feilet']}")
+    if tall["m17_hoppet"] > grense["maks_m17_hoppet"]:
+        feil.append(f"m17_hoppet={tall['m17_hoppet']}, krever <="
+                    f" {grense['maks_m17_hoppet']} — M-17s navngitte"
+                    " andel skal være KJØRT, ikke hoppet over")
+    if tall["m17_tester"] > tall["tester_totalt"]:
+        feil.append(f"m17_tester={tall['m17_tester']} >"
+                    f" tester_totalt={tall['tester_totalt']} — andelen"
+                    " kan ikke overstige helheten")
+    for navn in ("suite_exitkode", "m17_exitkode"):
+        if tall[navn] != 0:
+            feil.append(f"{navn}={tall[navn]} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige")
+    oppsett = art.get("oppsett")
+    feil += _m17_bevisrot_feil(art)
+    filer = oppsett.get("m17_filer") if isinstance(oppsett, dict) else None
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m17_filer mangler — M-17s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    elif sorted(filer) != sorted(grense["m17_andel_pakrevd"]):
+        mangler = sorted(set(grense["m17_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m17_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m17_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene")
+    return feil
+
+
+M17_AKSER = ("funnavvik", "klassifiseringsavvik", "koeavvik", "evidensavvik")
+
+
+def _grenser_m17_fasit(grense: dict, art: dict) -> list[str]:
+    """`m17-fasit-v1` — henvendelsessettet mot KJENT fasit. Dommen
+    RE-REGNES av avvikslistene artefaktet selv bærer (som m23)."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    oppsett = art.get("oppsett")
+    if not isinstance(oppsett, dict):
+        return ["artefaktet mangler `oppsett` — settet er ukjent"]
+    feil += _m17_bevisrot_feil(art)
+    sha = oppsett.get("sett_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.sett_sha256 mangler — uten driverens bytes er"
+                    " «samme sett» en påstand, ikke en måling")
+    elif grense.get("krev_sett_sha_lik_innsjekket"):
+        try:
+            lokal = hashlib.sha256(M17_SETT_STI.read_bytes()).hexdigest()
+        except OSError as e:
+            feil.append(f"settdriveren lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(
+                    f"sett_sha256={sha[:12]}… er ikke de innsjekkede"
+                    f" bytenes {lokal[:12]}… — settet kjøringen drev er"
+                    " ikke settet CI driver")
+    tenanter = oppsett.get("tenanter")
+    if not (isinstance(tenanter, list) and len(tenanter) >= 2):
+        feil.append("oppsett.tenanter har færre enn to — uten den"
+                    " regelløse tenanten er det umålt at regelen er"
+                    " grunnen til klassifiseringen")
+    avvik = art.get("avvik")
+    if not isinstance(avvik, dict) or not avvik:
+        return feil + ["artefaktet mangler `avvik` — en dom uten listene"
+                       " sine kan ikke re-regnes"]
+    talt = {akse: 0 for akse in M17_AKSER}
+    for rolle, d in avvik.items():
+        if not isinstance(d, dict):
+            return feil + [f"avvik[{rolle!r}] er ikke et oppslag"]
+        for nokkel in talt:
+            liste = d.get(nokkel)
+            if not isinstance(liste, list):
+                return feil + [f"avvik[{rolle!r}].{nokkel} mangler"]
+            talt[nokkel] += len(liste)
+    for nokkel in M17_AKSER:
+        tak = grense[f"maks_{nokkel}"]
+        oppgitt, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif oppgitt != talt[nokkel]:
+            feil.append(f"maalt.{nokkel}={oppgitt} spriker fra de"
+                        f" {talt[nokkel]} avvikene artefaktet lister")
+        if talt[nokkel] > tak:
+            feil.append(f"{talt[nokkel]} {nokkel} re-talt av listene,"
+                        f" taket er {tak}")
+    for nokkel, fasit in (
+            ("henvendelser", grense["henvendelser_eksakt"]),
+            ("ventede_funn", grense["ventede_funn_eksakt"]),
+            ("regelklassifisert", grense["regelklassifisert_eksakt"]),
+            ("evidenshendelser", grense["evidenshendelser_eksakt"])):
+        verdi, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif verdi != fasit:
+            feil.append(f"{nokkel}={verdi}, fasiten er {fasit} — eksakt,"
+                        " aldri «nesten»")
+    ms, melding = _teller(m, "sveipetid_ms", "sveipetid_ms")
+    if melding:
+        feil.append(melding)
+    elif ms < 1:
+        feil.append("sveipetid_ms=0 — en sveip ingen tok tiden på er"
+                    " ikke en ytelsesmåling, og 0 består ethvert tak")
+    elif ms > grense["maks_sveipetid_ms"]:
+        feil.append(f"sveipetid_ms={ms}, taket er"
+                    f" {grense['maks_sveipetid_ms']}")
+    tenanter, melding = _teller(m, "sveip_tenanter", "sveip_tenanter")
+    if melding:
+        feil.append(melding)
+    elif tenanter < grense["min_sveip_tenanter"]:
+        feil.append(f"sveip_tenanter={tenanter}, krever >="
+                    f" {grense['min_sveip_tenanter']} — settet lager to"
+                    " tenanter, så en sveip som så færre har ikke rørt"
+                    " dem, og tiden er da tiden det tok å gjøre ingenting")
+    return feil
 
 
 def _grenser_m02_suite(grense: dict, art: dict) -> list[str]:

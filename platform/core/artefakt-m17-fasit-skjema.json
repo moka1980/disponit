@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m17fasitartefakt-v1.json",
+  "title": "m17 fasitartefakt (m17-fasit-v1)",
+  "comment": "Det syntetiske henvendelsessettet (deploy/staging/m17_fasit.py) drevet gjennom kundens egne doerer, regelklassifisert som planarbeideren, sveipet av drift/henvendelsessveip.kjor() som sveiperollen, og maalt mot TRE haandskrevne fasiter: funnene, klassifiseringen (regelen) og evidenskjeden - pluss at en sak til unntakskoeen etterlater henvendelsen intakt. Avvikene baeres i artefaktet saa dommen kan RE-REGNES av porten. CI driver samme sett mot lokal base (test_m17_fasit_port). Skrevet av deploy/staging/m17-fasit-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "avvik"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m17-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "sett_versjon",
+        "sett_sha256",
+        "bevisrot_sha256",
+        "tenanter"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m17_kundeservice"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sett_versjon": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m17_fasit.py) slik kjoeringen FAKTISK brukte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "EN digest over hele m17-produsentflaten (manifestskjema.M17_BEVISROT_FILER), re-regnet av porten over sitt eget tre."
+        },
+        "tenanter": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": "Tenantene runden kjoerte mot - en MED stilleregler og en UTEN. Begge kreves: uten den regelloese er det umaalt at regelen er grunnen til klassifiseringen."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "henvendelser",
+        "ventede_funn",
+        "regelklassifisert",
+        "evidenshendelser",
+        "funnavvik",
+        "klassifiseringsavvik",
+        "koeavvik",
+        "evidensavvik",
+        "sveipetid_ms",
+        "sveip_tenanter"
+      ],
+      "properties": {
+        "ventede_funn": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall funn fasiten venter. En fasit som ikke venter et eneste funn maaler ingen funnkant."
+        },
+        "funnavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveipetid_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Veggklokketid for henvendelsessveipen i denne runden."
+        },
+        "evidenshendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall hendelser fasiten venter i evidenskjeden: mottatt og avsender per rad, en dom per klassifisering (menneske og regel), sak, lukking, utkast lagret og forkastet, og reglene satt."
+        },
+        "evidensavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip_tenanter": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall tenanter henvendelsessveipen rapporterte at den gikk gjennom - nevneren til sveipetid_ms. Sveipen er kryss-tenant og teller ALLE basens tenanter med henvendelser, ikke bare settets to."
+        },
+        "henvendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall henvendelser i settet - summen over begge tenantene."
+        },
+        "regelklassifisert": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall rader koeen viser som klassifisert av regelen (klassifisert_av=regel) i settets tenanter. Uten dette kunne en regelrunde som aldri kjoerte gi null klassifiseringsavvik paa en fasit uten regelrader."
+        },
+        "klassifiseringsavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "koeavvik": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Rader som skulle staa i unntakskoeen og ikke gjoer det, eller staar der uten aa skulle - og tekst som ikke er intakt etter saken. Manifestets skarpeste port: en henvendelse som forsvinner er verre enn en som ikke ble klassifisert."
+        }
+      }
+    },
+    "avvik": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "funnavvik",
+          "klassifiseringsavvik",
+          "koeavvik",
+          "evidensavvik"
+        ],
+        "properties": {
+          "funnavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidensavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "klassifiseringsavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "koeavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "comment": "Avvikene per tenantrolle, ordrett. Porten teller dem paa nytt og sammenligner med maalt - en telling som spriker fra listen er to ulike kjoeringer i samme fil."
+    }
+  }
+}
