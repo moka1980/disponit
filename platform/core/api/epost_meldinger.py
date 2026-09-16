@@ -306,23 +306,32 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
                                  or MAKS_MELDINGER), 1), MAKS_MELDINGER)
         except ValueError:
             return _feil("request_feilformet", rid, 400)
-        if kid is not None:
-            rader = conn.execute(
-                _SELECT + " WHERE tenant=%s AND kilde_id=%s"
-                " ORDER BY mottatt_ts DESC, melding_id LIMIT %s",
-                (tenant, kid, grense + 1)).fetchall()
-        else:
-            rader = conn.execute(
-                _SELECT + " WHERE tenant=%s"
-                " ORDER BY mottatt_ts DESC, melding_id LIMIT %s",
-                (tenant, grense + 1)).fetchall()
-        avkortet = len(rader) > grense
-        rader = rader[:grense]
-        return _ok({"meldinger": [_rad(conn, tenant, r, med_kropp=False)
-                                  for r in rader],
-                    "vist": len(rader), "avkortet": avkortet}, rid)
+        return _ok(meldinger_for(conn, tenant, kid, grense), rid)
 
     return _med_conn(tjeneste, rid, kjor)
+
+
+def meldinger_for(conn, tenant: str, kilde_id=None,
+                  grense: int = MAKS_MELDINGER) -> dict:
+    """Innboksens eget svar — det `GET /v1/epost/meldinger` gir. Trukket ut
+    av endepunktet (M-6-sertifiseringen 16/9) så fasiten kan måle på det
+    MENNESKET ser, ikke på et indre ledd; samme form som
+    `api.kundeservice.svar_for`."""
+    if kilde_id is not None:
+        rader = conn.execute(
+            _SELECT + " WHERE tenant=%s AND kilde_id=%s"
+            " ORDER BY mottatt_ts DESC, melding_id LIMIT %s",
+            (tenant, kilde_id, grense + 1)).fetchall()
+    else:
+        rader = conn.execute(
+            _SELECT + " WHERE tenant=%s"
+            " ORDER BY mottatt_ts DESC, melding_id LIMIT %s",
+            (tenant, grense + 1)).fetchall()
+    avkortet = len(rader) > grense
+    rader = rader[:grense]
+    return {"meldinger": [_rad(conn, tenant, r, med_kropp=False)
+                          for r in rader],
+            "vist": len(rader), "avkortet": avkortet}
 
 
 def slett_endepunkt(tjeneste, request: Request) -> Response:

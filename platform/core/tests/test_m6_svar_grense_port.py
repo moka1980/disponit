@@ -68,7 +68,20 @@ def test_bevisgrensen_har_elleve_punkter_med_navngitte_porter():
     # De to eldre M-6-grensene er urørt: svararmen flipper ingenting.
     assert len(M6_INVARIANTER) == 7 and KRAVGRENSER["m6-v1"]["punktbinding"] == {}
     assert len(M6_INNTAK_INVARIANTER) == 10
-    assert KRAVGRENSER["m6-inntak-v1"]["punktbinding"] == {}
+    # INNTAKSGRENSEN BINDER (16/9, M-6-sertifiseringen): bevisrunden 10/9
+    # flipper `feilinjisering_til_unntakskø` gjennom fem av sine ti
+    # brudd-tall — og bare dem. Svararmen binder fortsatt ingenting.
+    assert KRAVGRENSER["m6-inntak-v1"]["punktbinding"] == {
+        "feilinjisering_til_unntakskø": (
+            "maalt.autfeil_uten_feilet_kilde_brudd",
+            "maalt.forbigaende_feil_konsumerte_kilden_brudd",
+            "maalt.kill_switch_konsumerte_kilder_brudd",
+            "maalt.deaktivert_kilde_hentet_brudd",
+            "maalt.innhenting_duplikatmelding_brudd")}
+    for navn in KRAVGRENSER["m6-inntak-v1"]["punktbinding"].values():
+        for n in navn:
+            assert n.removeprefix("maalt.").removesuffix("_brudd") \
+                in M6_INNTAK_INVARIANTER, n
 
     def art(**over):
         m = {f"{n}_forsok": 1 for n in M6_SVAR_INVARIANTER}

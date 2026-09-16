@@ -43,44 +43,142 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # NOTATET VAR UTDATERT: «modulens andel» finnes — elleve filer modulen
+    # eier i sin helhet, pinnet i `manifestskjema.M6_SUITE_ANDEL`. Samme tre
+    # forutsetninger som M-23/M-17: fullt utsjekk, fersk base, og
+    # planarbeiderens egen DSN (inntaket og utsendingen kjører som den).
+    status: ja
+    krav_id: m6-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m6_tester
+      - maalt.m6_feilet
+      - maalt.m6_hoppet
+      - maalt.m6_exitkode
+    artefakt: deploy/staging/artefakter/m6-suite-v1-20260916T194247Z.json
+    artefakt_sha256: bc52250ee380c211c0a9c46932be674f181171dd022ed627b780bf7e001b9d18
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet (m02-suite-formen). PR-A-portene
-      (test_m6_epost.py: idempotens, ciphertext, immutabel frist,
-      samlet reaping, statisk sendeveisport) kjører i CI, men det er
-      ikke denne portens måling.
+      5440 av 5440 tester KJØRT på disponit-srv fra et fullt
+      utsjekk av 8916b01d mot en fersk testbase, null feilet, null
+      hoppet, exit 0. M-6s egen andel er PINNET
+      (`manifestskjema.M6_SUITE_ANDEL`: elleve filer modulen eier i sin
+      helhet) og målt for seg: 85 av 85 kjørt, null feilet,
+      NULL HOPPET — andelen er `skipif(not DSN)`, og fasitporten krever
+      i tillegg planarbeiderens egen DSN.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
+    # og alt annet er produktets eget: tokenutpakking, delta-paging (to
+    # sider i runde 1, én i runde 2 fra lagret deltaLink), kroppshenting
+    # (én gir 404 → forhåndsvisningen står), kryptering, idempotens (samme
+    # melding to ganger → én rad), `@removed`, en uten avsender, broen til
+    # kundeserviceregisteret (203), svaret som REPLY i tråden nøyaktig én
+    # gang, og slettingen. To tenanter: med og uten sendescope.
+    #
+    # «FASIT-KLASSIFISERINGER» (manifestets ord fra fødselen) finnes ikke
+    # som modell — M-6 klassifiserer ikke selv; broen gir meldingen til
+    # M-17, som klassifiserer etter REGEL (204). Fasiten måler derfor
+    # broen: én henvendelse per melding, masken der adressen finnes.
+    #
+    # FIRE MUTASJONER KJØRT, fire fall, hver på sin navngitte rad: broen
+    # av (`_bro_pa`: 0 henvendelser for 6 meldinger), sendescope-sjekken
+    # bort (tenanten uten scope fikk «sendes» og Graph en POST),
+    # `epost.svar_sendt` omdøpt (kjeden mangler den), `ON CONFLICT`
+    # fjernet.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.meldinger
+      - maalt.nye_runde1
+      - maalt.nye_runde2
+      - maalt.henvendelser
+      - maalt.sendt
+      - maalt.inntaksavvik
+      - maalt.broavvik
+      - maalt.svaravvik
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
+    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
     notat: >-
-      KREVER: syntetisk postboks med fasit-klassifiseringer målt både
-      lokalt og på staging, med begge datasett-identitetene bundet
-      (wcag-kontroll-v2-formen). Datasettet bygges med innhenteren
-      (PR-C); ingen måling finnes.
+      12 meldinger av 16 inntaket så (fire duplikater ble ikke nye rader;
+      de to @removed telles ikke som sett),
+      10 nye i runde 1 og 2 i runde 2, 12 henvendelser i M-17,
+      1 svar sendt som reply i tråden — NULL avvik på alle fire aksene,
+      kjørt mot disponit.com 16/9 gjennom produktets egne dører med
+      Graph byttet ut. Samme sett kjøres mot lokal base ved hver CI-runde
+      (`test_m6_fasit_port`), og bindingen er BYTENE: `sett_sha256` må
+      stemme i begge ledd.
   revisjonslogg_korrekt:
-    status: nei
+    # NOTATET VAR UTDATERT: M-6 skriver evidens selv (`m6_evidens`, kilde
+    # `m06_epost`) for utkastet, bestillingen, sendingen og slettingen —
+    # og broen skriver M-17s `henvendelse.mottatt`/`avsender.satt`. Målt i
+    # samme kjøring, på de samme radene: 6 M-6-hendelser (fire i tenanten
+    # med sendescope, to i den uten) og 22 broens. «Med identitet»: hver
+    # hendelse har SIN EGEN `input_hash`.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
+    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
     notat: >-
-      M-6s skrivevei til evidenskjeden er bestillingsveiens (m01/m02) —
-      modulen selv skriver aldri revisjonslogg direkte (den statiske
-      porten i test_m6_epost.py måler fraværet). Punktet flippes når
-      utførelsesarmen (PR-C) finnes og kjeden er målt ende til ende.
+      28 hendelser i kjeden, null avvik, hver med aktør og sin egen
+      `input_hash`. Målingen er felt av en mutasjon — døpes
+      `epost.svar_sendt` om, står svaret sendt mens kjeden mangler
+      hendelsen og bærer en fasiten ikke kjenner.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — som m23-purring og m17-svar:
+    # bevisrunden 10/9 injiserte ti feil i innhenteren mot disponit.com,
+    # men `m6-inntak-v1` hadde tom `punktbinding`. De fem som beviser
+    # punktet: autentiseringsfeil gjør kilden `feilet` (aldri stille),
+    # forbigående feil konsumerer ingenting, kill-switch konsumerer ingen
+    # kilder, en deaktivert kilde hentes ikke, et duplikat blir aldri to.
+    status: ja
+    krav_id: m6-inntak-v1
+    bevismaalinger:
+      - maalt.autfeil_uten_feilet_kilde_brudd
+      - maalt.forbigaende_feil_konsumerte_kilden_brudd
+      - maalt.kill_switch_konsumerte_kilder_brudd
+      - maalt.deaktivert_kilde_hentet_brudd
+      - maalt.innhenting_duplikatmelding_brudd
+    artefakt: deploy/staging/artefakter/m6-inntak-v1-20260910T164000Z.json
+    artefakt_sha256: 3452e4370f75c33a57dcda417790865bc8f98941a55d7733ad92c0d5dc68f1c5
     notat: >-
-      KREVER: arbeider og kø å injisere feil i — de kommer med PR-C
-      (innhenteren). Feilveiene (kilde feilet, token utløpt,
-      klassifisering utenfor lukket sett) måles da mot m6-v1-grensen.
+      Bevisrunden 10/9 mot disponit.com: ti injiserte feil, null brudd —
+      401 fra Graph satte kilden `feilet`, 503 rørte ingenting og kilden
+      var kandidat igjen, kill-switch hentet ingenting og konsumerte
+      ingen kilder, den deaktiverte kilden sto urørt, og den samme
+      meldingen to ganger ble én rad. `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_innhentingstid_ms: 30000` for runde 1 over
+    # begge postboksene, og per melding `5000` med `meldinger` som nevner.
+    # Porten avviser 0. Manifestet ba om «meldinger per hentevindu» —
+    # settet ER hentevinduet: to delta-sider, sju sett, seks lagret.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.innhentingstid_ms
+      - maalt.meldinger
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
+    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
     notat: >-
-      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring mot
-      den. m6-v1 bærer invariantparene og ddl-ja-punktet, men ingen
-      ytelsestall ennå — tallet pinnes når innhenterens arbeidsprofil
-      (meldinger per hentevindu) er kjent (PR-C), FØR målingen kjøres.
+      84 ms for runde 1 over begge postboksene mot taket på 30 000 —
+      7.0 ms per melding mot taket på 5 000. Målt med veggklokke av
+      produsenten; porten avviser 0.
   rollback_testet:
-    status: nei
-    notat: >-
-      M-6 har ingen egen release å rulle tilbake ennå — PR-A skipper med
-      kjernen (088 er en migrasjon i kjernens kjede). Punktet får
-      mening når modulen får release/arbeider (PR-C) og drilles da på
-      rollback-m56-formen.
+    # BLOKKERT, IKKE «NEI» — og av en annen grunn enn M-17/M-23: M-6 har
+    # INGEN egen release og ingen egen arbeider. Innhenteren og
+    # utsendingen kjører i planarbeideren (kjernen, `disponit-plan`), og
+    # ruller med kjernen — det finnes ingen modulrelease å drille i
+    # `rollback-m56-v1`s form. Grensen `m6-rollback-v1` er registrert
+    # (§0) og feiler lukket til den dagen M-6 får en egen release og en
+    # forgjenger til den.
+    status: blokkert
+    blokkert_av: >-
+      m06_epost har ingen egen release — innhenteren og utsendingen kjører
+      i planarbeideren og ruller med kjernen. En flippedrill må rulle en
+      MODULRELEASE tilbake til forgjengerens bytes, og ingen av delene
+      finnes. Låses opp når M-6 får egen release og arbeider.
+    krav_id: m6-rollback-v1
