@@ -1,0 +1,32 @@
+{
+  "bestatt": true,
+  "krav_id": "m26-suite-v1",
+  "maalt": {
+    "m26_exitkode": 0,
+    "m26_feilet": 0,
+    "m26_hoppet": 0,
+    "m26_tester": 75,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5448
+  },
+  "oppsett": {
+    "bevisrot_sha256": "327072a79c5a5c049fce7f271843f4803fa4a55b611f24d1da1606c0c36226ee",
+    "commit": "09bcc222b34ef3fcfcc053000f7c839f3f401610",
+    "m26_filer": [
+      "platform/core/tests/test_bestilling_tilbud_port.py",
+      "platform/core/tests/test_m26_bokforing_port.py",
+      "platform/core/tests/test_m26_controller.py",
+      "platform/core/tests/test_m26_fasit_port.py",
+      "platform/core/tests/test_m26_flate_port.py",
+      "platform/core/tests/test_m26_prisbok.py",
+      "platform/core/tests/test_m26_sending_port.py",
+      "platform/core/tests/test_m26_tilbud_port.py",
+      "platform/core/tests/test_m26_tilbudsutloser_port.py"
+    ],
+    "modul": "m26_prisbok",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-16T22:55:56.170023+00:00"
+}

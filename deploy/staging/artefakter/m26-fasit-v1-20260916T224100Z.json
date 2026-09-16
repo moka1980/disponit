@@ -1,0 +1,38 @@
+{
+  "avvik": {
+    "med_terskel": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    },
+    "uten_terskel": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m26-fasit-v1",
+  "maalt": {
+    "evidensavvik": 0,
+    "evidenshendelser": 35,
+    "funnavvik": 0,
+    "koeavvik": 0,
+    "produkter": 12,
+    "sveip_tenanter": 3,
+    "sveipetid_ms": 13,
+    "ventede_funn": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "327072a79c5a5c049fce7f271843f4803fa4a55b611f24d1da1606c0c36226ee",
+    "modul": "m26_prisbok",
+    "sett_sha256": "ef3a490f1bca941c0c95137d9f8cb2c6ba15f1c3afeb7753e716e32371a748b8",
+    "sett_versjon": "m26-fasit-1",
+    "tenanter": [
+      "t-m26fasit-med_terskel-1207cf55",
+      "t-m26fasit-uten_terskel-1207cf55"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-16T22:41:00.344777+00:00"
+}
