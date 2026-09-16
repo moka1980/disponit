@@ -403,6 +403,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_sett_stilleregler(text,jsonb,text)',             'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_stillereglene(text)',                             'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_klassifiser_etter_regel(integer)',                'disponit_kundeservice_eier'),
+    -- 206 (M-17): emnet i køen, kryptert, for de samme radene som m17_koen
+    ('FUNCTION', 'm17_koens_emner(text,integer)',                       'disponit_kundeservice_eier'),
     -- 164 (M-17, ARC B): kvitteringen når registeret.
     ('FUNCTION', 'm17_svar_sendt(text,uuid,uuid,bigint,timestamp with time zone,text,text,text)', 'disponit_kundeservice_eier'),
     -- 103 (M-18): onboardingregisterets doerer og onboardingsveipen.

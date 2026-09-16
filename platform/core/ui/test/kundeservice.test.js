@@ -973,3 +973,29 @@ test("Kundeservice: feiler godkjenningen etter lagringen, godkjenner"
     "et utkast til ble lagret");
   assert.equal(KALL.filter((k) => k.sti === DOM).length, 2);
 });
+
+// 206: EMNET I KØEN — som radens navn, når økten har innholdsscopet.
+test("Kundeservice: med emne på radene er emnet radens navn, avsenderen"
+  + " ved siden av", async () => {
+  SVAR = fullSvar();
+  const koe = structuredClone(KOEN);
+  koe.koe[0].emne = "Faktura stemmer ikke";
+  koe.koe[1].emne = null;
+  SVAR["/v1/kundeservice"] = koe;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  const rader = h.querySelectorAll("table tbody tr");
+  assert.equal(rader[0].cells[0].tagName, "TH");
+  assert.equal(rader[0].cells[0].getAttribute("scope"), "row");
+  assert.equal(rader[0].cells[0].textContent, "Faktura stemmer ikke");
+  assert.equal(rader[0].cells[1].textContent, avsenderTekst(koe.koe[0]));
+  // Et emne som ikke lot seg lese står som strek, ikke som avsenderen
+  // to ganger.
+  assert.equal(rader[1].cells[0].textContent, "—");
+  assert.equal(h.querySelector('th[scope="col"]').textContent,
+    t("ui.kundeservice.detalj.emne"));
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});

@@ -1070,6 +1070,19 @@ def test_http_innholdet_krever_sitt_eget_scope(migrator, klient):
                    cookies={_C_SESJON(): cookie2})
     assert r.status_code == 403, r.text
 
+    # 206: EMNET I KØEN — for den som har innholdsscopet, og bare da.
+    # MUTASJONEN SOM DREPER DENNE: send `med_emne=True` uansett scope.
+    r = klient.get("/v1/kundeservice", cookies={_C_SESJON(): cookie})
+    assert r.status_code == 200, r.text
+    rad = next(x for x in r.json()["koe"] if x["henvendelse_id"] == hid)
+    assert rad["emne"] == "Emnet"
+    assert "kropp" not in rad and "Selve teksten" not in r.text
+    r = klient.get("/v1/kundeservice", cookies={_C_SESJON(): cookie2})
+    assert r.status_code == 200, r.text
+    rad2 = next(x for x in r.json()["koe"] if x["henvendelse_id"] == hid)
+    assert "emne" not in rad2, rad2
+    assert "Emnet" not in r.text
+
 
 # ---------------------------------------------------------------------------
 # §0: grensen ble registrert FØR koden

@@ -194,14 +194,38 @@ def _krypter(dek, key_id, tenant, tekst, *, aad=None):
                               ekstra_aad=aad)
 
 
-def svar_for(conn, tenant: str) -> dict:
+def _koens_emner(conn, tenant: str) -> dict:
+    """{henvendelse_id: emne} for køens rader (206). Én DEK per key_id,
+    og én uleselig rad feller ikke køen — den står uten emne."""
+    from db import kryptering
+    deker, ut = {}, {}
+    for hid, ct, nonce, key_id in conn.execute(
+            "SELECT * FROM m17_koens_emner(%s,%s)",
+            (tenant, MAKS_KOE)).fetchall():
+        try:
+            dek = deker.get(key_id)
+            if dek is None:
+                dek = deker[key_id] = kryptering.hent_dek(conn, tenant, key_id)
+            ut[str(hid)] = kryptering.dekrypter(
+                dek, bytes(ct), bytes(nonce), tenant, key_id)["t"]
+        except psycopg.Error:
+            raise                   # basen svikter — driftsfeil, ikke en dom
+        except Exception:                                   # noqa: BLE001
+            ut[str(hid)] = None
+    return ut
+
+
+def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
     """Køflatens tilstand i én transaksjon, gjennom to lesedører.
 
-    INNHOLDET FØLGER IKKE MED. Emne og kropp hentes av en EGEN dør per
-    henvendelse, bak sitt eget scope og med sitt eget evidensspor. Et
-    listekall som dro med seg hver eneste kundetekst ville gjort ett
-    skjermbilde til en full eksport av persondata — og det er en helt
-    annen handling enn å se køen.
+    KROPPEN FØLGER IKKE MED. Den hentes av en EGEN dør per henvendelse,
+    bak sitt eget scope. Et listekall som dro med seg hver eneste
+    kundetekst ville gjort ett skjermbilde til en full eksport av
+    persondata — og det er en helt annen handling enn å se køen.
+
+    EMNET FØLGER MED BARE FOR DEN SOM HAR INNHOLDSSCOPET (206, eiers
+    beslutning 16/9): nøkkelen `emne` finnes da på hver rad. Uten scopet
+    finnes den ikke — køen er som før.
     """
     s = conn.execute("SELECT * FROM m17_kostatus(%s)", (tenant,)).fetchone()
     koe = [
@@ -216,6 +240,10 @@ def svar_for(conn, tenant: str) -> dict:
          "godkjent_utkast": bool(r[16])}
         for r in conn.execute("SELECT * FROM m17_koen(%s,%s)",
                               (tenant, MAKS_KOE)).fetchall()]
+    if med_emne:
+        emner = _koens_emner(conn, tenant)
+        for rad in koe:
+            rad["emne"] = emner.get(rad["henvendelse_id"])
     # ARC B (163): avsenderprofilen — navnet plattformen svarer i.
     a = conn.execute("SELECT * FROM m17_avsenderprofilen(%s)",
                      (tenant,)).fetchone()
@@ -245,7 +273,8 @@ def kobilde(tjeneste, request):
     from .lesing import _les, kanonisk_json
 
     def _fn(conn, auth, rid):
-        svar = svar_for(conn, auth.tenant)
+        svar = svar_for(conn, auth.tenant,
+                        med_emne="kundeservice:innhold" in auth.scopes)
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "decisions:read", _fn)
