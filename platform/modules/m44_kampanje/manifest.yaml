@@ -65,34 +65,114 @@ i18n_prefiks: kampanje
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # Samme tre forutsetninger som M-23/M-17/M-6: fullt utsjekk, fersk
+    # base, og sveiperollens egen DSN (kampanjesveipen kjører som den).
+    status: ja
+    krav_id: m44-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m44_tester
+      - maalt.m44_feilet
+      - maalt.m44_hoppet
+      - maalt.m44_exitkode
+    artefakt: deploy/staging/artefakter/m44-suite-v1-20260916T215715Z.json
+    artefakt_sha256: 0e27ef9baaf180135a84b2fa170426c688dab3a1d58a2c2323cac00113274cec
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet. Modulen finnes (ARC B, release m44-r1
-      registreres med m44-oppsett.sh); kjøringen er ikke gjort.
+      Kjørt 16/9 på disponit-srv som administrator fra et FULLT utsjekk av b0442fc4 mot en FERSK testbase med alle rolle-DSN-ene: 5444 tester, 0 feilet, 0 hoppet; M-44-andelen 87 av 87, exitkode 0. Første kjøring som root falt på én test utenfor modulen (en stengt fil er lesbar for root) — den kjøringen er forkastet, ikke beviset.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # SETTET FINNES: `deploy/staging/m44_fasit.py` — 14 mottakere over to
+    # tenanter, én MED grense og én UTEN. Kantene: samtykke 365 døgn (ikke
+    # funn) og 366 (funn), 2 i perioden (ikke funn) og 3 (funn), trukket
+    # etter plassering, avlyst kampanje (ingen plan), fremtidig kampanje
+    # (ikke ennå), deaktivert mottaker, gitt-så-bekreftet; uten grense er
+    # hver aktiv mottaker et `ingen_grense`-funn.
+    #
+    # DØRENE NEKTER DET SVEIPEN SKAL FINNE (142), så funnene lages slik de
+    # oppstår i virkeligheten: samtykket trekkes ETTER plasseringen, og
+    # grensen STRAMMES etter plasseringen (730 → 365 døgn, 3 → 2 i
+    # perioden). `uten_samtykke` kan ikke lages gjennom dørene og måles
+    # av dørens egen port, ikke her.
+    #
+    # FIRE MUTASJONER KJØRT MOT BASEN som eierrollen, fire fall, hver på
+    # sin navngitte rad: `>` → `>=` på utløpskanten («utlopt_kant_365»)
+    # og frekvenskanten («paa_frekvenskanten_2»), avlyst-filteret fjernet
+    # («i_avlyst_kampanje» blir utløpt), samtykke-evidensen omdøpt.
+    status: ja
+    krav_id: m44-fasit-v1
+    bevismaalinger:
+      - maalt.mottakere
+      - maalt.ventede_funn
+      - maalt.funnavvik
+      - maalt.koeavvik
+    artefakt: deploy/staging/artefakter/m44-fasit-v1-20260916T210353Z.json
+    artefakt_sha256: b5c0f2e3e05b7af01ba3fad0c8f34ecb467c4591ba5779c87bd1b4fd212016f3
     notat: >-
-      KREVER: en mottakerliste med KJENT fasit for hvem som har gyldig
-      samtykke når, og hvem som er over frekvenstaket, kjørt likt
-      lokalt og på staging.
+      Kjørt 16/9 på disponit-srv som root mot produksjonsbasen med to nye tenanter: 14 mottakere gjennom dørene, 6 ventede funn i sveipen (over_frekvensgrense, samtykke_utlopt, samtykke_trukket, ingen_grense ×3), 0 funnavvik og 0 køavvik. Settets sha256 er bundet i artefaktet og re-regnes av porten.
   revisjonslogg_korrekt:
-    status: nei
+    # MÅLES I SAMME KJØRING, på de samme radene: hver dør skriver sin
+    # hendelse (`kampanjemottaker_opprettet`, `kontakt_satt`,
+    # `samtykke_registrert`, `kampanje_registrert`, `lagt_i_kampanjeplan`,
+    # `kampanjegrense_satt`, `kampanje_avlyst`,
+    # `kampanjemottaker_aktiv_satt`, `avsender.satt`) — 77 hendelser med
+    # hver sin `input_hash`. OG samtykkehistorikken per mottaker
+    # (`m44_samtykkehistorikken`): hver hendelse med dato, kanal og hvem —
+    # det et tilsyn spør etter.
+    status: ja
+    krav_id: m44-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m44-fasit-v1-20260916T210353Z.json
+    artefakt_sha256: b5c0f2e3e05b7af01ba3fad0c8f34ecb467c4591ba5779c87bd1b4fd212016f3
     notat: >-
-      KREVER: at hvert samtykke og hver avmelding står i evidenskjeden,
-      med dato og kanal. Det er dette et tilsyn spør etter.
+      77 hendelser i revisjonsloggen fra ni dører, hver med sin input_hash og aktøren som gikk gjennom døra; samtykkehistorikken per mottaker lest gjennom `m44_samtykkehistorikken` med dato, kanal og hvem. 0 evidensavvik.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — som m23-purring/m17-svar/
+    # m6-inntak: bevisrunden 9/9 injiserte feil mot disponit.com, men
+    # `m44-kampanje-v1` hadde tom `punktbinding`. De fem som beviser
+    # punktet: policygrensen stoppet i unntakskøen, ingen levering uten
+    # samtykke, ingen dobbel levering, kvitteringen nådde registeret,
+    # kill-switch konsumerte ingen par.
+    status: ja
+    krav_id: m44-kampanje-v1
+    bevismaalinger:
+      - maalt.policygrense_omgaatt_brudd
+      - maalt.levering_uten_samtykke_brudd
+      - maalt.dobbel_levering_samme_oppdrag_brudd
+      - maalt.kvittering_uten_bokforing_brudd
+      - maalt.kill_switch_konsumerte_par_brudd
+    artefakt: deploy/staging/artefakter/m44-kampanje-v1-20260909T163500Z.json
+    artefakt_sha256: d82d5a02be336b7499d4d0a84eb5e3866c0b3f171b5e0d4b5e6d05230a7e71e5
     notat: >-
-      KREVER: kampanjesveipen bygget, og at en feil i den ikke lar en
-      mottaker uten gyldig samtykke se sendbar ut.
+      Bevisrunden 9/9 mot disponit.com, ti punkter, null brudd: policyens
+      frekvensgrense stoppet i unntakskøen som sak, en mottaker uten
+      samtykke ble aldri levert til, ett oppdrag ga én levering også ved
+      dobbel kvittering, kvitteringen sto i registeret og evidensen i
+      loggen, og kill-switch midt i kjeden konsumerte ingen par.
+      `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000`, kryss-tenant én gang
+    # i døgnet, med `sveip_tenanter` som nevner. Porten avviser 0.
+    status: ja
+    krav_id: m44-fasit-v1
+    bevismaalinger:
+      - maalt.sveipetid_ms
+      - maalt.sveip_tenanter
+    artefakt: deploy/staging/artefakter/m44-fasit-v1-20260916T210353Z.json
+    artefakt_sha256: b5c0f2e3e05b7af01ba3fad0c8f34ecb467c4591ba5779c87bd1b4fd212016f3
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Kryss-tenant-sveipen over 3 tenanter tok 25 ms mot grensen 30 000 ms.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake fra, og en målt tilbakerulling
-      (bytt_release til forrige). m44-r1 er den første — ingenting å
-      rulle tilbake til ennå.
+    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17: MÅLT 16/9 i
+    # modulregisteret har `m44_kampanje` NØYAKTIG ÉN release, `m44-r1`.
+    # Arbeideren er installert og kjører (`disponit-m44.service`); det er
+    # historikken som mangler, ikke maskineriet.
+    status: blokkert
+    blokkert_av: >-
+      m44_kampanje har én release (m44-r1). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
+    krav_id: m44-rollback-v1

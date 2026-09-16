@@ -1,0 +1,38 @@
+{
+  "avvik": {
+    "med_grense": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    },
+    "uten_grense": {
+      "evidensavvik": [],
+      "funnavvik": [],
+      "koeavvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m44-fasit-v1",
+  "maalt": {
+    "evidensavvik": 0,
+    "evidenshendelser": 77,
+    "funnavvik": 0,
+    "koeavvik": 0,
+    "mottakere": 14,
+    "sveip_tenanter": 3,
+    "sveipetid_ms": 25,
+    "ventede_funn": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "4bb54df9df12ff5235f95608bc1f6dcd67caaf67fb035b63c04eb3e0156304b4",
+    "modul": "m44_kampanje",
+    "sett_sha256": "ba3f4f8b59c6711f35bebe963a646d659b6b6320025318eeca52488026ac174a",
+    "sett_versjon": "m44-fasit-1",
+    "tenanter": [
+      "t-m44fasit-med_grense-966dbcd6",
+      "t-m44fasit-uten_grense-966dbcd6"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-16T21:03:53.678849+00:00"
+}

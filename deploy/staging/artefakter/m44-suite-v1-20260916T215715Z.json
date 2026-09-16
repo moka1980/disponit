@@ -1,0 +1,33 @@
+{
+  "bestatt": true,
+  "krav_id": "m44-suite-v1",
+  "maalt": {
+    "m44_exitkode": 0,
+    "m44_feilet": 0,
+    "m44_hoppet": 0,
+    "m44_tester": 87,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5444
+  },
+  "oppsett": {
+    "bevisrot_sha256": "4bb54df9df12ff5235f95608bc1f6dcd67caaf67fb035b63c04eb3e0156304b4",
+    "commit": "b0442fc4ee3923c1379fee636d846c23e66ba994",
+    "m44_filer": [
+      "platform/core/tests/test_bestilling_kampanje_port.py",
+      "platform/core/tests/test_m44_bokforing_port.py",
+      "platform/core/tests/test_m44_controller.py",
+      "platform/core/tests/test_m44_fasit_port.py",
+      "platform/core/tests/test_m44_flate_port.py",
+      "platform/core/tests/test_m44_kampanje.py",
+      "platform/core/tests/test_m44_kampanjeutloser_port.py",
+      "platform/core/tests/test_m44_kontakt_port.py",
+      "platform/core/tests/test_m44_samtykke_i_doera_port.py",
+      "platform/core/tests/test_m44_sending_port.py"
+    ],
+    "modul": "m44_kampanje",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-16T21:57:15.546992+00:00"
+}
