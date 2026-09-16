@@ -85,7 +85,9 @@ test("Registrering: skjemaet er kort, merket og axe-rent", async () => {
   //
   // Neste som vil legge til et felt nummer fem: dette tallet er en grense,
   // ikke en telling. Endre det bare med en grunn som står skrevet her.
-  const felter = h.querySelectorAll("input, select");
+  // FIRE FELT HUN FYLLER UT. Avkryssingene for fullmakter (207) er valg,
+  // ikke felt — de har hver sin label og måles for seg under.
+  const felter = h.querySelectorAll('input:not([type="checkbox"]), select');
   assert.equal(felter.length, 4, "skjemaet har vokst forbi fire felter");
   for (const f of felter) {
     assert.ok(h.querySelector(`label[for="${f.id}"]`),
@@ -123,8 +125,10 @@ test("Registrering: hele veien, og hun får VITE at hun må logge inn på nytt",
 
   const kall = KALL.filter((k) => k.metode === "POST");
   assert.equal(kall.length, 1);
+  // FULLMAKTEN ER MED (207): kundesvaret er forhåndsvalgt.
   assert.deepEqual(kall[0].kropp, { navn: "Fjordlys Elektro AS",
-    orgnummer: "923609016", bransje: "tjenestebedrift" });
+    orgnummer: "923609016", bransje: "tjenestebedrift",
+    fullmakter: ["kundeservice-svar"] });
   // Skjemaet er BORTE: ingenting å klikke to ganger på.
   assert.equal(h.querySelector("form"), null);
 
@@ -315,7 +319,7 @@ test("Registrering: et TØMT kortnavn oppfører seg som et urørt", async () => 
   assert.ok(!("kortnavn" in post.kropp), "et tømt kortnavn ble sendt med");
   assert.equal(post.idem,
     idempotensnokkelFor("Fjordlys Elektro AS", "923609016",
-                        "tjenestebedrift", null),
+                        "tjenestebedrift", null, ["kundeservice-svar"]),
     "nøkkelen skilte et tømt felt fra et urørt");
 });
 
@@ -349,4 +353,56 @@ test("Registrering: et opptatt kortnavn sies ved FELTET", async () => {
   assert.equal(h.querySelector("#firmareg-kortnavn")
     .getAttribute("aria-invalid"), "true",
     "feltet er ikke merket som ugyldig");
+});
+
+// 207: FULLMAKTENE velges ved registreringen — forhåndsvalgt kundesvar,
+// og et fravalg sendes som en tom liste, ikke som ingenting.
+test("Registrering: fullmaktene står som avkryssinger, og fravalget sendes",
+  async () => {
+    const h = nyHoved();
+    visFirmaregistrering(h, ctx());
+    const bokser = h.querySelectorAll('input[name="fullmakter"]');
+    assert.equal(bokser.length, 4);
+    const kunde = h.querySelector("#firmareg-fm-kundeservice-svar");
+    assert.equal(kunde.checked, true, "kundesvaret er ikke forhåndsvalgt");
+    for (const b of bokser) {
+      assert.ok(h.querySelector(`label[for="${b.id}"]`), `${b.id} uten label`);
+      if (b !== kunde) assert.equal(b.checked, false);
+    }
+    kunde.checked = false;
+    skriv(h.querySelector("#firmareg-navn"), "Fjordlys Elektro AS");
+    h.querySelector("form").dispatchEvent(
+      new window.Event("submit", { cancelable: true, bubbles: true }));
+    await vent(() => KALL.some((k) => k.metode === "POST"));
+    assert.deepEqual(KALL.find((k) => k.metode === "POST").kropp.fullmakter,
+      []);
+    // …og nøkkelen skiller valgene: samme kropp, annet valg = ny nøkkel.
+    assert.notEqual(
+      idempotensnokkelFor("A", null, "netthandel", null, []),
+      idempotensnokkelFor("A", null, "netthandel", null, ["kundeservice-svar"]));
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Registrering: bransjen styrer fullmaktene — netthandel slår av"
+  + " kundesvaret med grunnen som ord", async () => {
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  const kunde = h.querySelector("#firmareg-fm-kundeservice-svar");
+  const kampanje = h.querySelector("#firmareg-fm-kampanje-send");
+  const valg = h.querySelector("#firmareg-bransje");
+  valg.value = "netthandel";
+  valg.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(kunde.disabled, true);
+  assert.equal(kunde.checked, false, "en avslått boks skal ikke stå valgt");
+  assert.equal(kampanje.disabled, false);
+  assert.equal(kunde.closest("label").querySelector(".fullmakt-merknad").hidden,
+    false);
+  // Tilbake til tjenestebedrift: boksen er valgbar igjen (men ikke valgt —
+  // hun tok den bort selv ved byttet, og flaten velger ikke for henne).
+  valg.value = "tjenestebedrift";
+  valg.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(kunde.disabled, false);
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });

@@ -68,7 +68,12 @@ test("Registrant: skallet bygges, og hun lander på registreringsflaten",
   window.history.replaceState({}, "", "/?visning=firmaregistrering&sprak=nb");
 
   await import("../static/js/app.js");
-  await vent(() => app.textContent.includes(NB["ui.firmareg.tittel"]));
+  // VENT PÅ SKJEMAET, ikke på tittelen: nav-lenken bærer nøyaktig samme
+  // streng som flatens tittel (porten «lenketekst = tittel» krever det),
+  // så teksten står i skallet før flaten er tegnet.
+  assert.ok(await vent(() => app.querySelector("#firmareg-bransje")),
+    "registreringsflaten ble aldri tegnet");
+  assert.ok(app.textContent.includes(NB["ui.firmareg.tittel"]));
 
   // 1. Utrullingen BLE forsøkt, og 403-en drepte ikke oppstarten.
   assert.ok(utrullingKall >= 1, "skallet spurte aldri om utrulling");
