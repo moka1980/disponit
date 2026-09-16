@@ -81,3 +81,7 @@ deploy/staging/artefakter/*.json
 # med sha256 og re-regnet av `m44-fasit-v1`/`m44-suite-v1`-portene.
 !deploy/staging/artefakter/m44-fasit-v1-20260916T210353Z.json
 !deploy/staging/artefakter/m44-suite-v1-20260916T215715Z.json
+# M-26 sertifisering 17/9: fasit- og suiteartefaktet, bundet i manifestet
+# med sha256 og re-regnet av `m26-fasit-v1`/`m26-suite-v1`-portene.
+!deploy/staging/artefakter/m26-fasit-v1-20260916T224100Z.json
+!deploy/staging/artefakter/m26-suite-v1-20260916T225556Z.json

@@ -36,7 +36,8 @@
 # GRENSEN MOT M-24: M-24 eier PRISEN VI BETALER. M-26 eier PRISEN VI
 # TAR. De to møtes i marginen, og ingen av dem regner den ut.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# TO AKSER, ÆRLIG LEST (17/9): sertifisert mot verten — fasit, suite og
+# bevisrunde bundet under; én release (m26-r1), så rollback er blokkert.
 id: m26_prisbok
 navn: Prisbok- og tilbudsagent
 versjon: 0.1.0
@@ -53,31 +54,115 @@ i18n_prefiks: prisbok
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # Samme tre forutsetninger som M-23/M-17/M-6/M-44: fullt utsjekk,
+    # fersk base, og sveiperollens egen DSN (prisboksveipen kjører som
+    # den). Kjørt som administrator, ikke root: en stengt fil er lesbar
+    # for root, og én test utenfor modulen måler nettopp det.
+    status: ja
+    krav_id: m26-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m26_tester
+      - maalt.m26_feilet
+      - maalt.m26_hoppet
+      - maalt.m26_exitkode
+    artefakt: deploy/staging/artefakter/m26-suite-v1-20260916T225556Z.json
+    artefakt_sha256: 443afe010294cc2784639c4e9126d4362132eb1db241b4408608f0c6612c75fd
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      Kjørt 17/9 på disponit-srv som administrator fra et FULLT utsjekk av 09bcc222 mot en FERSK testbase med alle rolle-DSN-ene: 5448 tester, 0 feilet, 0 hoppet; M-26-andelen 75 av 75, exitkode 0.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # SETTET FINNES: `deploy/staging/m26_fasit.py` — 12 produkter over to
+    # tenanter, én MED terskel og én UTEN. Kantene: neste prisversjon om
+    # 31 døgn gir «utløper om 30» (funn, `<=`) og om 32 gir 31 (ikke
+    # funn); i dag; om fem; deaktivert produkt (ingen funn); uten pris;
+    # kun framtidig pris; tre versjoner. Uten terskel er hvert aktivt
+    # produkt et `ingen_terskel`-funn.
+    #
+    # TERSKELEN STRAMMES ETTER PRISENE (varsel 10 → 30 døgn): funnene
+    # følger den GJELDENDE terskelen, ikke den prisen ble satt under.
+    # `uten_gyldig_pris` kan ikke oppstå samme dag som produktet
+    # registreres (regelen teller døgn fra registreringen) og måles av
+    # modulens egen port; her måles at raden uten pris IKKE er et funn.
+    #
+    # FIRE MUTASJONER KJØRT MOT BASEN som eierrollen, fire fall, hver på
+    # sin navngitte rad: `<=` → `<` på utløpskanten («utloper_kant_30»),
+    # `p.aktiv` fjernet i utløpsgrenen («deaktivert_utloper») og i
+    # terskelgrenen («deaktivert_uten_terskel»), pris-evidensen omdøpt.
+    status: ja
+    krav_id: m26-fasit-v1
+    bevismaalinger:
+      - maalt.produkter
+      - maalt.ventede_funn
+      - maalt.funnavvik
+      - maalt.koeavvik
+    artefakt: deploy/staging/artefakter/m26-fasit-v1-20260916T224100Z.json
+    artefakt_sha256: 6497ae0f22da7c0fb413629cc6a7a06e3d77b84877f0f2ebb3e85d4a7440ff30
     notat: >-
-      KREVER: en prisbok med KJENT fasit for hvilke versjoner som gjaldt
-      når, kjørt likt lokalt og på staging. «Hva sto her da» er hele
-      spørsmålet modulen finnes for å svare på.
+      Kjørt 17/9 på disponit-srv som root mot produksjonsbasen med to nye tenanter: 12 produkter gjennom dørene, 5 ventede funn i sveipen (pris_utloper_snart ×3, ingen_terskel ×2), 0 funnavvik og 0 køavvik. Settets sha256 er bundet i artefaktet og re-regnes av porten.
   revisjonslogg_korrekt:
-    status: nei
+    # MÅLES I SAMME KJØRING, på de samme radene: hver dør skriver sin
+    # hendelse (`terskler.satt`, `klausul.satt`, `produkt.registrert`,
+    # `pris.satt`, `produkt.aktiv`) — 35 hendelser med hver sin
+    # `input_hash` og aktøren som gikk gjennom døra. OG prishistorikken
+    # per produkt (`m26_prishistorikken`): hver versjon med pris, fra/til,
+    # begrunnelse og hvem — «hva sto her da», som er det modulen finnes
+    # for å svare på.
+    status: ja
+    krav_id: m26-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m26-fasit-v1-20260916T224100Z.json
+    artefakt_sha256: 6497ae0f22da7c0fb413629cc6a7a06e3d77b84877f0f2ebb3e85d4a7440ff30
     notat: >-
-      KREVER: at hver prisendring og hver klausulendring faktisk står i
-      evidenskjeden, med hvem som gjorde den.
+      35 hendelser i revisjonsloggen fra fem dører, hver med sin input_hash og aktøren som gikk gjennom døra; prishistorikken per produkt lest gjennom `m26_prishistorikken` med pris, fra/til, begrunnelse og hvem. 0 evidensavvik.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — som m23/m17/m6/m44:
+    # bevisrunden 10/9 injiserte feil mot disponit.com, men
+    # `m26-tilbud-v1` hadde tom `punktbinding`. De fem som beviser
+    # punktet: en linje under rabattgrensen ble sak, en erstattet
+    # klausul ble sak, summen over policyens tak ble sak, ingen dobbel
+    # sending, kill-switch konsumerte ingen tilbud.
+    status: ja
+    krav_id: m26-tilbud-v1
+    bevismaalinger:
+      - maalt.priser_utenfor_boka_brudd
+      - maalt.klausul_erstattet_brudd
+      - maalt.belop_over_policyens_tak_brudd
+      - maalt.dobbel_sending_samme_oppdrag_brudd
+      - maalt.kill_switch_konsumerte_tilbud_brudd
+    artefakt: deploy/staging/artefakter/m26-tilbud-v1-20260910T144500Z.json
+    artefakt_sha256: cffd0494164b7b202e512643c5bfa01633efd9214f04f845277b555a862ce24a
     notat: >-
-      KREVER: prisboksveipen bygget, og at en feil i den ikke lar en
-      utløpt pris forsvinne stille.
+      Bevisrunden 10/9 mot disponit.com, ti punkter, null brudd: en
+      linje under rabattgrensen stoppet som sak i unntakskøen, en klausul
+      erstattet etter binding likeså, en sum over `belop_maks` likeså,
+      ett oppdrag ga én sending også ved dobbel kvittering, og
+      kill-switch midt i kjeden konsumerte ingen tilbud.
+      `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_sveipetid_ms: 30000`, kryss-tenant én gang
+    # i døgnet, med `sveip_tenanter` som nevner. Porten avviser 0.
+    status: ja
+    krav_id: m26-fasit-v1
+    bevismaalinger:
+      - maalt.sveipetid_ms
+      - maalt.sveip_tenanter
+    artefakt: deploy/staging/artefakter/m26-fasit-v1-20260916T224100Z.json
+    artefakt_sha256: 6497ae0f22da7c0fb413629cc6a7a06e3d77b84877f0f2ebb3e85d4a7440ff30
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Kryss-tenant-sveipen over 3 tenanter tok 13 ms mot grensen 30 000 ms.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44: MÅLT 17/9 i
+    # modulregisteret har `m26_prisbok` NØYAKTIG ÉN release, `m26-r1`.
+    # Arbeideren er installert og kjører (`disponit-m26.service`); det er
+    # historikken som mangler, ikke maskineriet.
+    status: blokkert
+    blokkert_av: >-
+      m26_prisbok har én release (m26-r1). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
+    krav_id: m26-rollback-v1
