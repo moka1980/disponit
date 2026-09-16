@@ -100,13 +100,17 @@ def main() -> int:
     from plan import stilleregler
     sveipetid_ms = 0
     sveip_tenanter = 0
+    regelrundetid_ms = 0
 
     def regelrunde():
+        nonlocal regelrundetid_ms
         v = _koble(dsn["DISPONIT_PLAN_URL"])
+        t0 = time.monotonic()
         try:
             r = stilleregler.kjor_en_runde(v)
         finally:
             v.close()
+        regelrundetid_ms = max(1, int((time.monotonic() - t0) * 1000))
         if r.get("av"):
             raise SystemExit("AVBRUTT: regelrunden er slått av"
                              " (DISPONIT_STILLEREGLER=av) — en fasit uten"
@@ -137,7 +141,8 @@ def main() -> int:
     from manifestskjema import m17_bevisrot_sha256
     ts = datetime.now(timezone.utc)
     art = lib.artefakt(kjoring, a.vert, ts.isoformat(), sveipetid_ms,
-                       sveip_tenanter, m17_bevisrot_sha256())
+                       sveip_tenanter, m17_bevisrot_sha256(),
+                       regelrundetid_ms)
     ut = Path(a.ut) if a.ut else (
         REPO / "deploy/staging/artefakter"
         / f"m17-fasit-v1-{ts.strftime('%Y%m%dT%H%M%SZ')}.json")
@@ -148,7 +153,8 @@ def main() -> int:
                       "bestatt": art["bestatt"],
                       **{k: art["maalt"][k] for k in lib.AKSER},
                       "sveipetid_ms": sveipetid_ms,
-                      "sveip_tenanter": sveip_tenanter},
+                      "sveip_tenanter": sveip_tenanter,
+                      "regelrundetid_ms": regelrundetid_ms},
                      ensure_ascii=False))
     # EXIT 1 VED RØDT: filen skrives likevel — et rødt artefakt som
     # finnes er ærligere enn et grønt som ble valgt.

@@ -171,7 +171,7 @@ def test_artefaktet_bestar_sitt_eget_skjema(migrator):  # noqa: F811
     m = _lib()
     kjoring, tenanter = _kjor(m)
     art = m.artefakt(kjoring, "lokal", "2026-09-16T00:00:00+00:00", 12,
-                     tenanter, m17_bevisrot_sha256())
+                     tenanter, m17_bevisrot_sha256(), 7)
     assert art["bestatt"] is True, art["avvik"]
     assert valider_artefaktformat(art, "m17-fasit-v1") == []
     assert _sjekk_grenser("m17-fasit-v1", art) == []
@@ -201,3 +201,13 @@ def test_artefaktet_bestar_sitt_eget_skjema(migrator):  # noqa: F811
     tom = dict(art, maalt=dict(art["maalt"], sveip_tenanter=1))
     assert any("gjøre ingenting" in f
                for f in _sjekk_grenser("m17-fasit-v1", tom))
+    # …og regelrunden må være tatt tiden på, og under taket per dom.
+    uregel = dict(art, maalt=dict(art["maalt"], regelrundetid_ms=0))
+    assert any("regelrunde ingen tok tiden" in f
+               for f in _sjekk_grenser("m17-fasit-v1", uregel))
+    # 20 s på én dom er 20 000 ms per henvendelse — over taket, selv om
+    # rundetiden i seg selv er under sitt.
+    treg = dict(art, maalt=dict(art["maalt"], regelrundetid_ms=20_000,
+                                regelklassifisert=1))
+    assert any("per henvendelse" in f
+               for f in _sjekk_grenser("m17-fasit-v1", treg))

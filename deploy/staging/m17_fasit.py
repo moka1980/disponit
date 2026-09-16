@@ -427,8 +427,14 @@ AKSER = ("funnavvik", "klassifiseringsavvik", "koeavvik", "evidensavvik")
 
 
 def artefakt(kjoring: dict, vert: str, ts: str, sveipetid_ms: int,
-             sveip_tenanter: int, bevisrot: str) -> dict:
-    """Artefaktet, med dommen REGNET AV AVVIKENE — aldri av driveren."""
+             sveip_tenanter: int, bevisrot: str,
+             regelrundetid_ms: int) -> dict:
+    """Artefaktet, med dommen REGNET AV AVVIKENE — aldri av driveren.
+
+    TO TIDER: sveipen (kryss-tenant, én gang i døgnet) og REGELRUNDEN —
+    klassifiseringen selv, den kostnaden manifestet ba om «per
+    henvendelse». Nevneren er `regelklassifisert`.
+    """
     talt = {akse: sum(len(d["avvik"][akse]) for d in kjoring.values())
             for akse in AKSER}
     henvendelser = sum(len(d["rader"]) for d in kjoring.values())
@@ -458,6 +464,7 @@ def artefakt(kjoring: dict, vert: str, ts: str, sveipetid_ms: int,
             **talt,
             "sveipetid_ms": sveipetid_ms,
             "sveip_tenanter": sveip_tenanter,
+            "regelrundetid_ms": regelrundetid_ms,
         },
         "avvik": {rolle: d["avvik"] for rolle, d in sorted(kjoring.items())},
     }

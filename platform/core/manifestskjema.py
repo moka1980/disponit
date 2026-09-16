@@ -1604,13 +1604,19 @@ KRAVGRENSER["m17-suite-v1"] = {
     # krever i tillegg sveiperollens og planarbeiderens egne DSN-er.
     "maks_m17_hoppet": 0,
     "m17_andel_pakrevd": M17_SUITE_ANDEL,
+    # Bindingen dekker OGSÅ hoppede i helheten og begge exitkodene
+    # (CodeRabbit 16/9): en avbrutt pytest skriver en junit-XML som bare
+    # teller testene som rakk å bli ferdige.
     "punktbinding": {
         "tester_gronne_pa_staging": (
             "maalt.m17_feilet",
             "maalt.m17_tester",
             "maalt.m17_hoppet",
+            "maalt.m17_exitkode",
             "maalt.tester_feilet",
             "maalt.tester_totalt",
+            "maalt.tester_hoppet",
+            "maalt.suite_exitkode",
         ),
     },
 }
@@ -1649,9 +1655,15 @@ KRAVGRENSER["m17-fasit-v1"] = {
     "maks_koeavvik": 0,
     "maks_evidensavvik": 0,
     "krev_sett_sha_lik_innsjekket": True,
-    # YTELSE: taket for én sveipekjøring, kryss-tenant, én gang i døgnet.
+    # YTELSE, TO TIDER: sveipen (kryss-tenant, én gang i døgnet) og
+    # REGELRUNDEN — klassifiseringen selv. Manifestet ba om
+    # «klassifiseringskostnad per henvendelse»: taket per dom er
+    # regelrundens tid delt på `regelklassifisert` (CodeRabbit 16/9 —
+    # sveipetiden alene måler ikke klassifiseringen).
     "maks_sveipetid_ms": 30_000,
     "min_sveip_tenanter": 2,
+    "maks_regelrundetid_ms": 30_000,
+    "maks_regelrundetid_ms_per_dom": 10_000,
     "punktbinding": {
         "syntetisk_datasett_likt_lokalt": (
             "maalt.henvendelser",
@@ -1667,6 +1679,8 @@ KRAVGRENSER["m17-fasit-v1"] = {
         ),
         "ytelse_bestatt": (
             "maalt.sveipetid_ms",
+            "maalt.regelrundetid_ms",
+            "maalt.regelklassifisert",
         ),
     },
 }
@@ -4025,6 +4039,22 @@ def _grenser_m17_fasit(grense: dict, art: dict) -> list[str]:
                     f" {grense['min_sveip_tenanter']} — settet lager to"
                     " tenanter, så en sveip som så færre har ikke rørt"
                     " dem, og tiden er da tiden det tok å gjøre ingenting")
+    # REGELRUNDEN — klassifiseringens egen kostnad, og per dom.
+    rms, melding = _teller(m, "regelrundetid_ms", "regelrundetid_ms")
+    if melding:
+        feil.append(melding)
+    elif rms < 1:
+        feil.append("regelrundetid_ms=0 — en regelrunde ingen tok tiden"
+                    " på er ikke en ytelsesmåling")
+    elif rms > grense["maks_regelrundetid_ms"]:
+        feil.append(f"regelrundetid_ms={rms}, taket er"
+                    f" {grense['maks_regelrundetid_ms']}")
+    else:
+        dommer, _ = _teller(m, "regelklassifisert", "regelklassifisert")
+        if dommer and rms / dommer > grense["maks_regelrundetid_ms_per_dom"]:
+            feil.append(f"regelrundetid_ms={rms} over {dommer} dommer er"
+                        f" {rms / dommer:.0f} ms per henvendelse, taket er"
+                        f" {grense['maks_regelrundetid_ms_per_dom']}")
     return feil
 
 

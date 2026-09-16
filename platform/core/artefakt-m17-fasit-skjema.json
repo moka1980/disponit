@@ -82,7 +82,8 @@
         "koeavvik",
         "evidensavvik",
         "sveipetid_ms",
-        "sveip_tenanter"
+        "sveip_tenanter",
+        "regelrundetid_ms"
       ],
       "properties": {
         "ventede_funn": {
@@ -131,6 +132,11 @@
           "type": "integer",
           "minimum": 0,
           "comment": "Rader som skulle staa i unntakskoeen og ikke gjoer det, eller staar der uten aa skulle - og tekst som ikke er intakt etter saken. Manifestets skarpeste port: en henvendelse som forsvinner er verre enn en som ikke ble klassifisert."
+        },
+        "regelrundetid_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Veggklokketid for regelrunden (m17_klassifiser_etter_regel som planarbeideren) i denne runden - klassifiseringens egen kostnad. Punktet ytelse_bestatt maales mot denne OG sveipetid_ms, og per dom med regelklassifisert som nevner."
         }
       }
     },
