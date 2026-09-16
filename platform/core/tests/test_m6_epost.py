@@ -1004,6 +1004,28 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
     assert m["driftstilstand"] == "ikke_i_drift"
     assert m["avhengigheter"] == ["m01_policy", "m02_revisjonslogg"]
     assert m["i18n_prefiks"] == "m06epost"
+    # SERTIFISERT 16/9 (#537): hvert «ja» er BUNDET — grensen finnes,
+    # artefaktet finnes med nøyaktig den sha256 manifestet bærer, og hver
+    # bevismåling står i grensens punktbinding for nettopp det punktet. Et
+    # «blokkert» navngir grunnen. Ingen «nei» står igjen — og ingen «ja»
+    # uten måling (det fødselsporten voktet).
+    import hashlib
+
+    from manifestskjema import KRAVGRENSER
+    rot = MODULROT.parents[2]
     for punkt, innhold in m["staging_sjekkliste"].items():
-        assert innhold["status"] == "nei", \
-            f"{punkt} er flippet uten at noen måling finnes"
+        assert innhold["status"] in ("ja", "blokkert"), \
+            f"{punkt} står som {innhold['status']}"
+        grense = KRAVGRENSER[innhold["krav_id"]]
+        if innhold["status"] == "blokkert":
+            assert innhold["blokkert_av"].strip(), f"{punkt}: blokkert uten grunn"
+            assert punkt in grense["punktbinding"], punkt
+            continue
+        fil = rot / innhold["artefakt"]
+        assert fil.exists(), f"{punkt}: artefaktet {fil.name} finnes ikke"
+        assert hashlib.sha256(fil.read_bytes()).hexdigest() \
+            == innhold["artefakt_sha256"], f"{punkt}: sha256 stemmer ikke"
+        lov = set(grense["punktbinding"].get(punkt, ()))
+        for maaling in innhold["bevismaalinger"]:
+            assert maaling in lov, f"{punkt}: {maaling} er ikke bundet"
+    assert m["staging_sjekkliste"]["rollback_testet"]["status"] == "blokkert"
