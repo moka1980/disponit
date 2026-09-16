@@ -845,6 +845,13 @@ export const settKundeserviceavsender = (profil, idem) =>
   _muter("/v1/kundeservice/avsender", "POST", profil,
          idem || nyIdempotensnokkel());
 
+// 204: stille avsendere — tenantens regelliste. HELE settet sendes hver
+// gang (purreplanformen); adresser sendes som tekst og hashes i API-et.
+export const hentStilleregler = () => hentJson("/v1/kundeservice/stilleregler");
+export const settStilleregler = (regler, idem) =>
+  _muter("/v1/kundeservice/stilleregler", "POST", { regler },
+         idem || nyIdempotensnokkel());
+
 export const settMalsteg = (malId, steg, idem) =>
   _muter(`/v1/onboarding/mal/${encodeURIComponent(malId)}/steg`,
          "POST", { steg }, idem || nyIdempotensnokkel());

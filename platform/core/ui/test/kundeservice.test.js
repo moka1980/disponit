@@ -24,7 +24,8 @@ import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
-  alderTekst, avsenderTekst, klassifiseringTekst, kortref, visKundeservice,
+  alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
+  visKundeservice,
 } from "../static/js/flater/kundeservice.js";
 
 settI18nForTest(NB, "nb");
@@ -184,8 +185,15 @@ test("Kundeservice: listen bærer ALDRI kundeteksten", async () => {
   visKundeservice(h, ctx());
   await vent(() => h.querySelectorAll("table tbody tr").length === 2);
   // KØEN OG INNHOLDET ER TO KALL. Så lenge ingen har åpnet en rad, er
-  // det ETT kall gjort — og teksten finnes ikke på skjermen.
-  assert.deepEqual(KALL.map((k) => k.sti), ["/v1/kundeservice"]);
+  // det INGEN innholdskall gjort — og teksten finnes ikke på skjermen.
+  // Ved tegning hentes køen og (204) regellisten for stille avsendere;
+  // den bærer domener og hasher, aldri kundetekst. Settet er PINNET, så
+  // et tredje kall ved tegning må begrunnes her.
+  await vent(() => KALL.length >= 2);
+  assert.deepEqual([...new Set(KALL.map((k) => k.sti))].sort(),
+    ["/v1/kundeservice", "/v1/kundeservice/stilleregler"]);
+  assert.ok(!KALL.some((k) => k.sti.includes("/innhold")),
+    "innholdet ble hentet uten at noen åpnet en rad");
   assert.ok(!h.textContent.includes(INNHOLD.kropp));
   assert.ok(!h.textContent.includes(INNHOLD.emne));
 });
@@ -556,4 +564,112 @@ test("Kundeservice: køen er lesbar med ekte id-er — avsender først, kort"
 
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+// STILLE AVSENDERE (204): listen, skjemaet, fjerningen — og at hele settet
+// sendes hver gang.
+const REGLER = { regler: [
+  { regel_id: "r-1", art: "domene", monster: "microsoft.com",
+    handlingstype: "til_info", prioritet: "lav", tema: "annet",
+    opprettet: "2026-09-15T17:40:00+00:00" },
+  { regel_id: "r-2", art: "adresse", monster: "a".repeat(64),
+    handlingstype: "nyhetsbrev", prioritet: "lav", tema: "annet",
+    opprettet: "2026-09-15T17:41:00+00:00" },
+], request_id: "r-s" };
+
+test("Kundeservice: stille avsendere — liste, legg til sender HELE settet,"
+  + " adressen vises bare som hash", async () => {
+  assert.equal(regelTekst(REGLER.regler[0]),
+    `microsoft.com → ${t("ui.kundeservice.handlingstype.til_info")}`);
+  assert.ok(!regelTekst(REGLER.regler[1]).includes("a".repeat(20)),
+    "en adresseregel viser hele hashen");
+  SVAR = fullSvar();
+  SVAR["/v1/kundeservice/stilleregler"] = REGLER;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelectorAll(".stille-liste li").length === 2);
+  const tekst = h.textContent;
+  assert.ok(tekst.includes(t("ui.kundeservice.stille.tittel")));
+  assert.ok(tekst.includes("microsoft.com"));
+
+  h.querySelector("#ks-stille-art").value = "adresse";
+  h.querySelector("#ks-stille-monster").value = "NoReply@Leverandor.no";
+  h.querySelector("#ks-stille-handling").value = "nyhetsbrev";
+  SISTE = null;
+  h.querySelector("#ks-stille-monster").closest("form")
+    .dispatchEvent(new window.Event("submit", { cancelable: true }));
+  await vent(() => SISTE && SISTE.sti === "/v1/kundeservice/stilleregler");
+  // HELE SETTET: de to som fantes + den nye. Adressen sendes som TEKST —
+  // API-et hasher; den eksisterende adresseregelen går som hash.
+  assert.deepEqual(SISTE.kropp, { regler: [
+    { art: "domene", monster: "microsoft.com", handlingstype: "til_info" },
+    { art: "adresse", monster: "a".repeat(64), handlingstype: "nyhetsbrev" },
+    { art: "adresse", monster: "NoReply@Leverandor.no",
+      handlingstype: "nyhetsbrev" },
+  ] });
+  assert.ok(SISTE.headers["Idempotency-Key"]);
+
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: fjern-knappen sender settet UTEN regelen", async () => {
+  SVAR = fullSvar();
+  SVAR["/v1/kundeservice/stilleregler"] = REGLER;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelectorAll(".stille-liste li button").length === 2);
+  SISTE = null;
+  h.querySelectorAll(".stille-liste li button")[0].click();
+  await vent(() => SISTE && SISTE.sti === "/v1/kundeservice/stilleregler");
+  assert.deepEqual(SISTE.kropp, { regler: [
+    { art: "adresse", monster: "a".repeat(64), handlingstype: "nyhetsbrev" },
+  ] });
+});
+
+test("Kundeservice: en lesende økt ser reglene, men verken skjema eller"
+  + " fjern-knapp", async () => {
+  SVAR = fullSvar();
+  SVAR["/v1/kundeservice/stilleregler"] = REGLER;
+  const h = nyHoved();
+  visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold"]));
+  await vent(() => h.querySelectorAll(".stille-liste li").length === 2);
+  assert.ok(!h.querySelector("#ks-stille-monster"));
+  assert.equal(h.querySelectorAll(".stille-liste li button").length, 0);
+});
+
+test("Kundeservice: ingen skriving før regellisten er lastet — «[] + den"
+  + " nye» skal aldri sendes", async () => {
+  // GET-en for reglene henger til vi slipper den.
+  let slipp;
+  const henger = new Promise((r) => { slipp = r; });
+  SVAR = fullSvar();
+  const opprinnelig = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.split("?")[0] === "/v1/kundeservice/stilleregler"
+        && !(opts && opts.method === "POST")) {
+      await henger;
+      return { ok: true, status: 200, json: async () => REGLER };
+    }
+    return opprinnelig(url, opts);
+  };
+  try {
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => !!h.querySelector("#ks-stille-monster"));
+    const knapp = h.querySelector("#ks-stille-monster").closest("form")
+      .querySelector('button[type="submit"]');
+    assert.ok(knapp.disabled, "knappen er åpen før listen er lastet");
+    h.querySelector("#ks-stille-monster").value = "x.no";
+    SISTE = null;
+    h.querySelector("#ks-stille-monster").closest("form")
+      .dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => false, 10);
+    assert.equal(SISTE, null, "en innsending gikk før listen var lastet");
+    slipp();
+    await vent(() => !knapp.disabled);
+    assert.ok(!knapp.disabled, "knappen låses ikke opp etter lasting");
+  } finally {
+    globalThis.fetch = opprinnelig;
+  }
 });
