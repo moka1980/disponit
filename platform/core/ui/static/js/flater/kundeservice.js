@@ -39,12 +39,18 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+// LESEVISNINGEN ER E-POSTMODULENS (#475): samme tekst, samme rensing,
+// samme bryter. En egen variant her var feilen eier meldte 16/9.
+import { lesbarTekst } from "./epost.js";
 
 const PRIORITETER = ["kritisk", "hoy", "normal", "lav"];
 const TEMAER = ["faktura", "leveranse", "teknisk", "salg", "klage",
                 "annet"];
 const HANDLINGSTYPER = ["svar_kreves", "til_info", "oppgave", "mote",
                         "nyhetsbrev", "mistenkelig"];
+// ET UTKAST VENTER så lenge det er foreslått (på et menneske) eller
+// godkjent (på plattformen). Alt annet er spor.
+const VENTER = ["foreslatt", "godkjent"];
 
 // FUNNTYPE → MERKETEKST. Kartet er en LUKKET tabell og ikke en
 // strengbygging: en funntype flaten ikke kjenner skal ikke bli et merke
@@ -105,36 +111,50 @@ export function avsenderTekst(h) {
     : t("ui.kundeservice.avsender.ukjent");
 }
 
+// FUNNENE SOM FORTSATT GJELDER. Sveipen lukker et funn først i NESTE
+// runde (én gang i døgnet); en rad som ble klassifisert etter forrige
+// sveip — av en regel (204) eller et menneske — bar ellers «over
+// klassifiseringsfristen» et døgn etter at grunnen forsvant. SETT PÅ
+// SKJERMEN 16/9 på tolv rader. Ingen utregning: raden vet alt selv.
+export function funnFor(h) {
+  return (h.apne_funn || []).filter(
+    (f) => !(f === "uklassifisert_over_grense" && h.prioritet));
+}
+
+// HVEM TRENGER ET MENNESKE. Det uklassifiserte, det i unntakskøen, det
+// med et åpent funn, og alt et menneske må gjøre noe med. Resten — til
+// info og nyhetsbrev — er stille og står samlet under køen, med tallet.
+const STILLE = new Set(["til_info", "nyhetsbrev"]);
+export function trengerMenneske(h) {
+  return !h.prioritet || !!h.i_unntakskoe || funnFor(h).length > 0
+    || !STILLE.has(h.handlingstype);
+}
+
 function korad(h, ctx, apneDetalj) {
   const rad = el("tr", {});
-  // REFERANSEN NAVNGIR raden — det er den et menneske slår opp i
-  // innboksen. `celle-id` står på <th>, ikke på et <span> inni, fordi
-  // `max-width` ikke gjør noe på et inline-element.
-  // AVSENDEREN FØRST. Det et menneske skanner en kø etter er HVEM —
-  // ikke leverandørens nøkkel. Masken er alt listen får lov å bære
-  // (listen bærer aldri kundeteksten); adressen og emnet kommer først
-  // når raden åpnes.
+  // AVSENDEREN NAVNGIR raden — det et menneske skanner en kø etter er
+  // HVEM. Masken er alt listen får lov å bære (listen bærer aldri
+  // kundeteksten); adressen, emnet og referansen kommer når raden åpnes.
   rad.append(el("th", { scope: "row", class: "celle-tekst",
                         text: avsenderTekst(h) }));
-  rad.append(el("td", { class: "celle-id", title: h.ekstern_ref,
-                        text: kortref(h.ekstern_ref) }));
-  rad.append(el("td", { text: t(`ui.kundeservice.kanal.${h.kanal}`) }));
-  rad.append(el("td", { text: h.mottatt.slice(0, 10) }));
-
-  const alderscelle = el("td", {},
-    el("span", { text: alderTekst(h.alder_dogn) }));
-  for (const funn of h.apne_funn || []) {
-    // MERKENE ER TEKST. Dette er flatens viktigste opplysning på raden.
+  // NÅR, som én celle: dato, kanal og alder — og merkene som TEKST
+  // (WCAG 1.4.1), for de er flatens viktigste opplysning på raden.
+  const mottatt = el("td", { class: "celle-tekst" },
+    el("span", { text: h.mottatt.slice(0, 10) }), " ",
+    el("span", { class: "muted",
+      text: `${t(`ui.kundeservice.kanal.${h.kanal}`)} · `
+        + alderTekst(h.alder_dogn) }));
+  for (const funn of funnFor(h)) {
     if (MERKE[funn]) {
-      alderscelle.append(" ", el("strong", { class: "merke",
+      mottatt.append(" ", el("strong", { class: "merke",
         text: t(MERKE[funn]) }));
     }
   }
   if (h.i_unntakskoe) {
-    alderscelle.append(" ", el("strong", { class: "merke",
+    mottatt.append(" ", el("strong", { class: "merke",
       text: t("ui.kundeservice.merke_i_koe") }));
   }
-  rad.append(alderscelle);
+  rad.append(mottatt);
 
   rad.append(el("td", { class: "celle-tekst",
                         text: klassifiseringTekst(h) }));
@@ -147,7 +167,7 @@ function korad(h, ctx, apneDetalj) {
   rad.append(utkastcelle);
 
   const handling = el("td", {});
-  const knapp = el("button", { type: "button",
+  const knapp = el("button", { type: "button", class: "knapp liten",
     text: t("ui.kundeservice.knapp.apne") });
   knapp.addEventListener("click", () => apneDetalj(h));
   handling.append(knapp);
@@ -155,18 +175,14 @@ function korad(h, ctx, apneDetalj) {
   return rad;
 }
 
-function koTabell(koe, ctx, apneDetalj) {
+function koTabell(koe, ctx, apneDetalj, captionNokkel) {
   const tb = el("table", { class: "kpi-tabell" },
-    el("caption", { text: t("ui.kundeservice.koe.caption") }));
+    el("caption", { text: t(captionNokkel) }));
   tb.append(el("thead", {}, el("tr", {},
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.avsender") }),
     el("th", { scope: "col",
-               text: t("ui.kundeservice.kolonne.referanse") }),
-    el("th", { scope: "col", text: t("ui.kundeservice.kolonne.kanal") }),
-    el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.mottatt") }),
-    el("th", { scope: "col", text: t("ui.kundeservice.kolonne.alder") }),
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.klassifisering") }),
     el("th", { scope: "col", text: t("ui.kundeservice.kolonne.utkast") }),
@@ -176,6 +192,61 @@ function koTabell(koe, ctx, apneDetalj) {
   for (const h of koe) tbody.append(korad(h, ctx, apneDetalj));
   tb.append(tbody);
   return el("div", { class: "tablewrap" }, tb);
+}
+
+// KØBLOKKEN: det som trenger et menneske øverst; det stille samlet under
+// én åpne/lukke-linje med tallet i, så tolv «til info» aldri skyver den
+// ene kunden som venter på svar ut av skjermen.
+function koBlokk(koe, ctx, apneDetalj) {
+  const blokk = el("div", { class: "ks-koe" });
+  if (!koe.length) {
+    blokk.append(el("p", { class: "muted",
+      text: t("ui.kundeservice.koe.ingen") }));
+    return blokk;
+  }
+  const trenger = koe.filter(trengerMenneske);
+  const stille = koe.filter((h) => !trengerMenneske(h));
+  if (trenger.length) {
+    blokk.append(koTabell(trenger, ctx, apneDetalj,
+                          "ui.kundeservice.koe.caption"));
+  } else {
+    blokk.append(el("p", { class: "muted",
+      text: t("ui.kundeservice.koe.trenger_ingen") }));
+  }
+  if (stille.length) {
+    blokk.append(el("details", { class: "ks-stille-gruppe" },
+      el("summary", { text: t("ui.kundeservice.koe.stille_gruppe")
+        .replace("{antall}", String(stille.length)) }),
+      koTabell(stille, ctx, apneDetalj,
+               "ui.kundeservice.koe.stille_caption")));
+  }
+  return blokk;
+}
+
+// HODETS BRIKKER: hvem (masken, eller adressens fravær som ord), når,
+// dommen — og merkene som tekst.
+function metaBrikker(h) {
+  const brikke = (tekst) => el("li", { class: "brikke brikke-tekst",
+                                       text: tekst });
+  const ut = [
+    brikke(h.har_avsender && h.avsender_maske
+      ? h.avsender_maske : t("ui.kundeservice.avsender.mangler")),
+    brikke(`${t(`ui.kundeservice.kanal.${h.kanal}`)} · `
+      + `${h.mottatt.slice(0, 10)} · ${alderTekst(h.alder_dogn)}`),
+    brikke(klassifiseringTekst(h)),
+  ];
+  for (const funn of funnFor(h)) {
+    if (MERKE[funn]) {
+      ut.push(el("li", { class: "brikke-fri" },
+        el("strong", { class: "merke", text: t(MERKE[funn]) })));
+    }
+  }
+  if (h.i_unntakskoe) {
+    ut.push(el("li", { class: "brikke-fri" },
+      el("strong", { class: "merke",
+                     text: t("ui.kundeservice.merke_i_koe") })));
+  }
+  return ut;
 }
 
 function felt(id, tekst, kontroll, hjelp) {
@@ -480,20 +551,50 @@ function stilleSeksjon(ctx, last, kvitter) {
   return boks;
 }
 
-function detaljpanel(ctx, last, kvitter, settApen) {
-  const boks = el("div", { class: "skjemaboks" });
-  const innhold = el("div", {});
+function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
+  const boks = el("div", { class: "hv-detalj" });
+  const innhold = el("div", { class: "hv-detalj-innhold" });
   const utfall = el("p", { "aria-live": "polite" });
   let gjeldende = null;
 
-  const overskrift = el("h3", { text: t("ui.kundeservice.detalj.tittel") });
-  const merkelinje = el("p", { class: "muted" });
-  const emne = el("p", {});
-  const kropp = el("p", { class: "celle-tekst" });
-  const utkastliste = el("div", {});
+  // HODET: emnet som det store, resten som brikker. Emnet er kundens
+  // tekst, ikke flatens — derfor en `p`, ikke en overskrift; flatens
+  // egen overskrift står som en liten linje over. Referansen står kort
+  // (`kortref`) og hel i title.
+  const overskrift = el("h3", { class: "hv-eyebrow",
+                                text: t("ui.kundeservice.detalj.tittel") });
+  const emne = el("p", { class: "hv-emne" });
+  const meta = el("ul", { class: "brikkerad" });
+  const ref = el("p", { class: "muted hv-ref" });
+  const kropp = el("pre", { class: "epost-kropp hv-tekst" });
+  // BRYTEREN VEKSLER, den legger ikke til (#475): én tekst på skjermen,
+  // knappen bytter hvilken av de to man ser. Den finnes bare når
+  // rensingen faktisk tok noe.
+  const bytt = el("button", { type: "button", class: "knapp liten",
+    text: t("ui.epost.meldinger.vis_raa"), "aria-pressed": "false" });
+  const bytterad = el("div", { class: "knapperad" }, bytt);
+  bytterad.hidden = true;
+  let raaTekst = "";
+  let renTekst = "";
+  let raatt = false;
+  const visKropp = () => {
+    kropp.textContent = raatt
+      ? raaTekst : (renTekst || t("ui.epost.meldinger.tom_kropp"));
+    bytt.textContent = t(raatt ? "ui.epost.meldinger.vis_lesbar"
+                               : "ui.epost.meldinger.vis_raa");
+    bytt.setAttribute("aria-pressed", String(raatt));
+  };
+  bytt.addEventListener("click", () => { raatt = !raatt; visKropp(); });
+  const utkastliste = el("div", { class: "hv-utkast" });
+  // VEIEN TILBAKE. Detaljen bytter plass med køen (se visKundeservice),
+  // så den må selv kunne gi plassen fra seg.
+  const lukk = () => { innhold.hidden = true; settApen(null); visKoe(true); };
+  const tilbake = el("button", { type: "button",
+    class: "knapp liten hv-tilbake", text: t("ui.kundeservice.koe.tilbake") });
+  tilbake.addEventListener("click", lukk);
 
   // --- klassifisering ---
-  const kSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const kSkjema = el("form", { class: "kv-skjema kv-skjema-linje" });
   const prioritet = el("select", { id: "ks-prioritet", name: "prioritet",
     required: true });
   for (const v of PRIORITETER) {
@@ -518,12 +619,14 @@ function detaljpanel(ctx, last, kvitter, settApen) {
   kSkjema.append(
     felt("ks-prioritet", "ui.kundeservice.skjema.prioritet", prioritet),
     felt("ks-tema", "ui.kundeservice.skjema.tema", tema),
+    felt("ks-handlingstype", "ui.kundeservice.skjema.handlingstype",
+         handlingstype),
+    el("div", { class: "felt" }, kKnapp),
     // HJELPETEKSTEN SIER HVA VALGET GJØR. «Svar kreves» er det som gjør
     // en ubesvart henvendelse til et funn; uten forklaringen ville
-    // valget sett ut som en etikett.
-    felt("ks-handlingstype", "ui.kundeservice.skjema.handlingstype",
-         handlingstype, "ui.kundeservice.skjema.handlingstypehjelp"),
-    el("div", { class: "skjema-bunn" }, kKnapp));
+    // valget sett ut som en etikett. Én linje under hele raden.
+    el("p", { class: "muted skjema-hjelp",
+      text: t("ui.kundeservice.skjema.handlingstypehjelp") }));
   skjemaramme(ctx, last, {
     skjema: kSkjema, knapp: kKnapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.skjema.klassifisering_ok",
@@ -537,18 +640,67 @@ function detaljpanel(ctx, last, kvitter, settApen) {
   const uSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const utkasttekst = el("textarea", { id: "ks-utkast", name: "tekst",
     required: true, rows: "6" });
-  const uKnapp = el("button", { type: "submit",
+  // Å GODKJENNE ER ETT KLIKK (#490 speilet): før måtte man skrive,
+  // «Lagre utkast», finne utkastet i lista og «Godkjenn». Primærknappen
+  // gjør begge stegene; utkastet er fortsatt sannheten i basen, og
+  // godkjenningen er fortsatt et menneskes ja til at PLATTFORMEN sender
+  // innenfor policyen — flaten sender ingenting, og knappen sier det
+  // (porten «utkastets tre dommer» måler ordet). «Lagre utkast» står
+  // ved siden av for det man vil skrive ferdig senere.
+  const uKnapp = el("button", { type: "submit", class: "knapp primar",
+    text: t("ui.kundeservice.knapp.godkjenn_svar") });
+  const uLagre = el("button", { type: "button",
     text: t("ui.kundeservice.knapp.utkast") });
   uSkjema.append(
     felt("ks-utkast", "ui.kundeservice.skjema.utkast_tekst", utkasttekst,
          "ui.kundeservice.skjema.utkast_teksthjelp"),
-    el("div", { class: "skjema-bunn" }, uKnapp));
+    el("div", { class: "skjema-bunn" }, uKnapp, uLagre));
+  // TO KALL, ÉN INTENSJON (CodeRabbit): feiler godkjenningen etter at
+  // utkastet er lagret, holder rammen nøkkelen — og neste klikk skal
+  // godkjenne DET utkastet, ikke lagre et til. Husket per nøkkel til
+  // godkjenningen lykkes; en endret tekst er en ny nøkkel og et nytt
+  // utkast.
+  let lagret = null;
   skjemaramme(ctx, last, {
     skjema: uSkjema, knapp: uKnapp, utfall, kvitter,
-    okNokkel: "ui.kundeservice.skjema.utkast_ok",
-    send: (idem) => lagreUtkast(gjeldende.henvendelse_id,
-                                { tekst: utkasttekst.value }, idem),
+    okNokkel: "ui.kundeservice.svar.sendt_ok",
+    send: async (idem) => {
+      let svar;
+      if (lagret && lagret.idem === idem) {
+        svar = { utkast_id: lagret.utkast_id };
+      } else {
+        svar = await lagreUtkast(gjeldende.henvendelse_id,
+                                 { tekst: utkasttekst.value }, idem);
+        if (svar && svar.utkast_id) {
+          lagret = { idem, utkast_id: svar.utkast_id };
+        }
+      }
+      if (svar && svar.utkast_id) {
+        await avgjorUtkast(svar.utkast_id, "godkjent", nyIdempotensnokkel());
+      }
+      lagret = null;
+      return svar;
+    },
     tilbakestill: () => { utkasttekst.value = ""; },
+  });
+  uLagre.addEventListener("click", async () => {
+    if (!utkasttekst.value.trim() || uKnapp.disabled) return;
+    uLagre.disabled = true; uKnapp.disabled = true;
+    try {
+      await lagreUtkast(gjeldende.henvendelse_id,
+                        { tekst: utkasttekst.value }, nyIdempotensnokkel());
+    } catch (e) {
+      uLagre.disabled = false; uKnapp.disabled = false;
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(utfall, el("span", { role: "alert",
+        text: t("ui.kundeservice.feil.generell") }));
+      return;
+    }
+    uLagre.disabled = false; uKnapp.disabled = false;
+    utkasttekst.value = "";
+    meldLive(t("ui.kundeservice.skjema.utkast_ok"));
+    kvitter(t("ui.kundeservice.skjema.utkast_ok"));
+    await last();
   });
 
   // --- unntakskø ---
@@ -588,8 +740,7 @@ function detaljpanel(ctx, last, kvitter, settApen) {
         return;
       }
       b.disabled = false;
-      innhold.hidden = true;
-      settApen(null);
+      lukk();
       meldLive(t("ui.kundeservice.lukk_ok"));
       // SAMME DOM SOM I `skjemaramme`: kvitteringen hører til flaten,
       // ikke til panelet som lukker seg i neste linje.
@@ -604,29 +755,42 @@ function detaljpanel(ctx, last, kvitter, settApen) {
 
   const skriver = harScope(ctx, "bestilling:opprett");
   const leser = harScope(ctx, "kundeservice:innhold");
-  innhold.append(overskrift, merkelinje);
+  // LESEFELT TIL VENSTRE, HANDLINGER TIL HØYRE fra 64rem; under
+  // hverandre på en telefon (`.hv-rutenett`).
+  const melding = el("article", { class: "hv-melding" });
   if (leser) {
-    innhold.append(el("h4", { text: t("ui.kundeservice.detalj.emne") }),
-      emne, el("h4", { text: t("ui.kundeservice.detalj.innhold") }),
-      kropp, el("h4", { text: t("ui.kundeservice.detalj.utkast") }),
-      utkastliste);
+    melding.append(kropp, bytterad,
+      el("h4", { text: t("ui.kundeservice.detalj.utkast") }), utkastliste);
   } else {
     // ÆRLIG OM HVA SOM MANGLER: ikke en tom boks, men en setning om at
     // køen er synlig og teksten ikke.
-    innhold.append(el("p", { class: "muted",
+    melding.append(el("p", { class: "muted",
       text: t("ui.kundeservice.detalj.uten_innsyn") }));
   }
+  const rutenett = el("div", { class: "hv-rutenett" }, melding);
+  const hode = el("header", { class: "hv-hode" }, overskrift, emne, meta, ref);
   if (skriver) {
-    innhold.append(
-      el("h4", { text: t("ui.kundeservice.skjema.klassifisering") }),
-      kSkjema,
+    // DOMMEN ER ÉN LINJE UNDER HODET: prioritet · tema · handlingstype ·
+    // lagre. Svaret er det man gjør oftest og står øverst til høyre;
+    // det sjeldne — unntakskøen og lukkingen — ligger sammenklappet.
+    hode.append(el("h4", { text: t("ui.kundeservice.skjema.klassifisering") }),
+                kSkjema);
+    rutenett.append(el("aside", { class: "hv-handlinger" },
       el("h4", { text: t("ui.kundeservice.skjema.utkast_tittel") }),
       uSkjema,
-      el("h4", { text: t("ui.kundeservice.skjema.unntakskoe") }),
-      qSkjema, lukkerad);
+      el("details", { class: "hv-flere" },
+        el("summary", { text: t("ui.kundeservice.detalj.flere") }),
+        el("h4", { text: t("ui.kundeservice.skjema.unntakskoe") }),
+        qSkjema, lukkerad)));
   }
+  innhold.append(el("div", { class: "hv-topp" }, tilbake), hode, rutenett);
   boks.append(innhold, utfall);
   innhold.hidden = true;
+
+  // ER RADEN FORTSATT DEN ÅPNE? To klikk rett etter hverandre gir to
+  // svar i vilkårlig rekkefølge; det som kom sist for A skal ikke stå
+  // under B. (CodeRabbit 16/9.)
+  const fortsatt = (hid) => gjeldende && gjeldende.henvendelse_id === hid;
 
   async function tegnUtkast(hid) {
     sett(utkastliste);
@@ -638,13 +802,26 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
       return;
     }
-    const liste = d.utkast || [];
-    if (!liste.length) {
+    if (!fortsatt(hid)) return;
+    sett(utkastliste);
+    const alle = d.utkast || [];
+    if (!alle.length) {
       utkastliste.append(el("p", { class: "muted",
         text: t("ui.kundeservice.detalj.ingen_utkast") }));
       return;
     }
-    for (const u of liste) {
+    // Utkast man er ferdig med er SPOR, ikke arbeid (#490): de ligger
+    // sammenklappet under det som venter, ikke ved siden av med samme vekt.
+    const avsluttede = alle.filter((u) => !VENTER.includes(u.status));
+    let mal = utkastliste;
+    if (avsluttede.length) {
+      mal = el("div", {});
+      utkastliste.append(mal, el("details", { class: "hv-flere" },
+        el("summary", { text: t("ui.kundeservice.detalj.avsluttede")
+          .replace("{n}", String(avsluttede.length)) })));
+    }
+    const detaljer = utkastliste.querySelector("details");
+    for (const u of alle) {
       // ARC B: statusen som ord, og hva plattformen gjorde med et
       // godkjent utkast (bestilt, i unntakskøen, sendt) — som tekst.
       const kort = el("div", { class: "skjemaboks" },
@@ -682,7 +859,7 @@ function detaljpanel(ctx, last, kvitter, settApen) {
           kort.append(b);
         }
       }
-      utkastliste.append(kort);
+      (VENTER.includes(u.status) ? mal : detaljer).append(kort);
     }
   }
 
@@ -690,16 +867,15 @@ function detaljpanel(ctx, last, kvitter, settApen) {
     node: boks,
     async apne(h) {
       gjeldende = h;
+      lagret = null;
       settApen(h.henvendelse_id);
+      visKoe(false);
       sett(utfall);
-      // 160: adressen finnes eller mangler — masken, aldri adressen.
-      merkelinje.textContent = `${h.ekstern_ref} · `
-        + `${t(`ui.kundeservice.kanal.${h.kanal}`)} · `
-        + `${alderTekst(h.alder_dogn)} · `
-        + (h.har_avsender
-          ? t("ui.kundeservice.avsender.satt")
-            .replace("{maske}", h.avsender_maske || "")
-          : t("ui.kundeservice.avsender.mangler"));
+      // 160: masken, aldri adressen — og adressens fravær som ord.
+      sett(meta, ...metaBrikker(h));
+      ref.textContent = `${t("ui.kundeservice.kolonne.referanse")}: `
+        + kortref(h.ekstern_ref);
+      ref.setAttribute("title", h.ekstern_ref);
       if (h.prioritet) {
         prioritet.value = h.prioritet;
         tema.value = h.tema;
@@ -716,20 +892,28 @@ function detaljpanel(ctx, last, kvitter, settApen) {
       innhold.hidden = false;
       if (!leser) return;
       emne.textContent = "";
-      kropp.textContent = "";
+      raaTekst = ""; renTekst = ""; raatt = false;
+      sett(kropp);
+      bytterad.hidden = true;
+      sett(utkastliste);
+      const hid = h.henvendelse_id;
       try {
         const d = await hentJson(
-          "/v1/kundeservice/henvendelse/"
-          + `${encodeURIComponent(h.henvendelse_id)}/innhold`);
+          `/v1/kundeservice/henvendelse/${encodeURIComponent(hid)}/innhold`);
+        if (!fortsatt(hid)) return;
         emne.textContent = d.emne;
-        kropp.textContent = d.kropp;
+        raaTekst = d.kropp || "";
+        renTekst = lesbarTekst(raaTekst);
+        visKropp();
+        bytterad.hidden = renTekst === raaTekst.trim();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (!fortsatt(hid)) return;
         sett(utfall, el("span", { role: "alert",
           text: t("ui.kundeservice.feil.generell") }));
         return;
       }
-      await tegnUtkast(h.henvendelse_id);
+      await tegnUtkast(hid);
     },
   };
 }
@@ -779,23 +963,23 @@ export function visKundeservice(hoved, ctx) {
       sett(hoved, ...hode(), kvittering, kropp);
       const s = d.sammendrag || {};
       const koe = d.koe || [];
-      const detalj = detaljpanel(ctx, last, kvitter, settApen);
+      // DETALJEN BOR I KØSEKSJONEN og bytter plass med køen: åpnes en
+      // rad, står henvendelsen der køen sto, med veien tilbake øverst.
+      // Før lå panelet utenfor fanene og hang under hver eneste fane.
+      let koblokk = null;
+      const visKoe = (synlig) => { if (koblokk) koblokk.hidden = !synlig; };
+      const detalj = detaljpanel(ctx, last, kvitter, settApen, visKoe);
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.oversikt.tittel") }),
         sammendrag(s));
 
+      koblokk = koBlokk(koe, ctx, detalj.apne);
       const koseksjon = el("section", { class: "kpi-kort" },
-        el("h2", { text: t("ui.kundeservice.koe.tittel") }));
-      if (!koe.length) {
-        koseksjon.append(el("p", { class: "muted",
-          text: t("ui.kundeservice.koe.ingen") }));
-      } else {
-        koseksjon.append(koTabell(koe, ctx, detalj.apne));
-      }
+        el("h2", { text: t("ui.kundeservice.koe.tittel") }),
+        koblokk, detalj.node);
       const deler = [oversikt, koseksjon, avsenderSeksjon(d.avsenderprofil),
-                     stilleSeksjon(ctx, last, kvitter),
-                     detalj.node];
+                     stilleSeksjon(ctx, last, kvitter)];
       if (harScope(ctx, "bestilling:opprett")) {
         deler.push(avsenderSkjema(ctx, last, kvitter, d.avsenderprofil));
       }
