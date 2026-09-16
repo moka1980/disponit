@@ -1,0 +1,43 @@
+{
+  "avvik": {
+    "med_sendescope": {
+      "broavvik": [],
+      "evidensavvik": [],
+      "inntaksavvik": [],
+      "svaravvik": []
+    },
+    "uten_sendescope": {
+      "broavvik": [],
+      "evidensavvik": [],
+      "inntaksavvik": [],
+      "svaravvik": []
+    }
+  },
+  "bestatt": true,
+  "krav_id": "m6-fasit-v1",
+  "maalt": {
+    "broavvik": 0,
+    "evidensavvik": 0,
+    "evidenshendelser": 28,
+    "henvendelser": 12,
+    "innhentingstid_ms": 84,
+    "inntaksavvik": 0,
+    "meldinger": 12,
+    "nye_runde1": 10,
+    "nye_runde2": 2,
+    "sendt": 1,
+    "svaravvik": 0
+  },
+  "oppsett": {
+    "bevisrot_sha256": "597b2736308e04b3f23946c7863603105ba2790c08e7a90bbc816466c206cd97",
+    "modul": "m06_epost",
+    "sett_sha256": "3341ce2d8d7aca533ff52113de0835e767aa5a6709cbb1d2d8b85b4216c3f4f6",
+    "sett_versjon": "m6-fasit-1",
+    "tenanter": [
+      "t-m6fasit-med_sendescope-560f3f94",
+      "t-m6fasit-uten_sendescope-560f3f94"
+    ],
+    "vert": "https://disponit.com"
+  },
+  "ts": "2026-09-16T19:27:31.231508+00:00"
+}

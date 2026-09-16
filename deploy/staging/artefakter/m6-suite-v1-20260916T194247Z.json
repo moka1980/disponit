@@ -1,0 +1,34 @@
+{
+  "bestatt": true,
+  "krav_id": "m6-suite-v1",
+  "maalt": {
+    "m6_exitkode": 0,
+    "m6_feilet": 0,
+    "m6_hoppet": 0,
+    "m6_tester": 85,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5440
+  },
+  "oppsett": {
+    "bevisrot_sha256": "597b2736308e04b3f23946c7863603105ba2790c08e7a90bbc816466c206cd97",
+    "commit": "8916b01df43e4eb2c6655f768d5038234239a7b3",
+    "m6_filer": [
+      "platform/core/tests/test_epost_til_kundeservice_port.py",
+      "platform/core/tests/test_m6_epost.py",
+      "platform/core/tests/test_m6_fasit_port.py",
+      "platform/core/tests/test_m6_inntak_grense_port.py",
+      "platform/core/tests/test_m6_inntak_port.py",
+      "platform/core/tests/test_m6_kilde.py",
+      "platform/core/tests/test_m6_meldinger_port.py",
+      "platform/core/tests/test_m6_slett_port.py",
+      "platform/core/tests/test_m6_svar_grense_port.py",
+      "platform/core/tests/test_m6_svarutkast_port.py",
+      "platform/core/tests/test_m6_utsending_port.py"
+    ],
+    "modul": "m06_epost",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-16T19:42:47.168087+00:00"
+}
