@@ -3386,6 +3386,14 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import firmaregistrering
         return firmaregistrering.registrer_firma(tjeneste, request)
 
+    def firma_fullmakter(request: Request) -> Response:
+        from . import firmaregistrering
+        return firmaregistrering.fullmakter_endepunkt(tjeneste, request)
+
+    def firma_sett_fullmakter(request: Request) -> Response:
+        from . import firmaregistrering
+        return firmaregistrering.sett_fullmakter_endepunkt(tjeneste, request)
+
     def invitasjon_opprett(request: Request) -> Response:
         from . import invitasjon
         return invitasjon.opprett_endepunkt(tjeneste, request)
@@ -4535,6 +4543,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/epost/utkast/{utkast_id:uuid}/send", epost_utkast_send,
               methods=["POST"]),
         Route("/v1/firma/registrer", firma_registrer, methods=["POST"]),
+        # 208: fullmaktene — lest, og valgt om mens policyen er urørt.
+        Route("/v1/firma/fullmakter", firma_fullmakter, methods=["GET"]),
+        Route("/v1/firma/fullmakter", firma_sett_fullmakter,
+              methods=["POST"]),
         Route("/v1/invitasjoner", invitasjon_liste, methods=["GET"]),
         Route("/v1/invitasjoner", invitasjon_opprett, methods=["POST"]),
         Route("/v1/invitasjoner/innloes", invitasjon_innloes,
@@ -6244,6 +6256,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # så det må også stå i BROWSER_MUTASJONSSCOPES — og endepunktet
     # håndhever CSRF selv gjennom `_browserkontekst`.
     ("POST", "/v1/firma/registrer"):         "firma:opprett",
+    ("GET",  "/v1/firma/fullmakter"):        "policy:read",
+    ("POST", "/v1/firma/fullmakter"):        "policy:activate",
     # 194/195: å invitere er administratorens handling — men Å SE LISTA er
     # en LESERUTE, og `test_pr008` håndhever at en GET har et scope fra
     # `LESESCOPES`. `security:read` er riktig og ikke bare tilgjengelig:
