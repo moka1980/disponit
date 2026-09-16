@@ -1908,6 +1908,106 @@ KRAVGRENSER["m44-fasit-v1"] = {
     },
 }
 
+#: M-26 SERTIFISERING (17/9, natt) — samme lest som M-44/M-17/M-6/M-23.
+M26_SUITE_ANDEL: tuple[str, ...] = (
+    "platform/core/tests/test_bestilling_tilbud_port.py",
+    "platform/core/tests/test_m26_bokforing_port.py",
+    "platform/core/tests/test_m26_controller.py",
+    "platform/core/tests/test_m26_fasit_port.py",
+    "platform/core/tests/test_m26_flate_port.py",
+    "platform/core/tests/test_m26_prisbok.py",
+    "platform/core/tests/test_m26_sending_port.py",
+    "platform/core/tests/test_m26_tilbud_port.py",
+    "platform/core/tests/test_m26_tilbudsutloser_port.py",
+)
+
+#: M-26 FLIPPEDRILLEN (§0, `rollback-m56-v1`s form): M-26 har én release
+#: (`m26-r1`) og en arbeider (`disponit-m26.service`). Blokkert til
+#: modulen har en forgjenger.
+KRAVGRENSER["m26-rollback-v1"] = {
+    "maks_claims_etter_drenering": 0,
+    "min_inflight": 1,
+    "maks_falske_verdikter": 0,
+    "min_rullback_claims": 1,
+    "min_rullback_promoterte": 0,
+    "krev_release_digest_bundet": True,
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.claims_etter_drenering",
+            "maalt.inflight_oppdrag",
+            "maalt.falske_verdikter",
+            "maalt.rullback_claimet_oppdrag",
+            "maalt.release_digest_bundet",
+        ),
+    },
+}
+
+KRAVGRENSER["m26-suite-v1"] = {
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    # Andelens gulv er MÅLT: 71 tester i de åtte eksisterende filene pluss
+    # fasitportens fire (17/9). Gulvet står litt under.
+    "min_m26_tester": 68,
+    "maks_m26_feilet": 0,
+    "maks_m26_hoppet": 0,
+    "m26_andel_pakrevd": M26_SUITE_ANDEL,
+    "punktbinding": {
+        "tester_gronne_pa_staging": (
+            "maalt.m26_feilet",
+            "maalt.m26_tester",
+            "maalt.m26_hoppet",
+            "maalt.m26_exitkode",
+            "maalt.tester_feilet",
+            "maalt.tester_totalt",
+            "maalt.tester_hoppet",
+            "maalt.suite_exitkode",
+        ),
+    },
+}
+
+M26_SETT_STI = REPOROT / "deploy/staging/m26_fasit.py"
+
+#: Produsentflaten for M-26s fasitartefakt — sveipedriveren er med.
+M26_BEVISROT_FILER = (
+    "deploy/staging/m26_fasit.py",
+    "deploy/staging/m26-fasit-artefakt.py",
+    "deploy/staging/m26-suite-artefakt.py",
+    "platform/drift/prisboksveip.py",
+    "platform/drift/kjor_prisboksveip.py",
+)
+
+KRAVGRENSER["m26-fasit-v1"] = {
+    # SETTET ER EKSAKT: 12 produkter, 5 ventede funn (utløper om 30 døgn
+    # — ikke 31 —, om 5, i dag, og to `ingen_terskel`), 35
+    # evidenshendelser — nøyaktig det `m26_fasit.py` bærer, lest av
+    # settet i `test_settet_er_fasiten`.
+    "produkter_eksakt": 12,
+    "ventede_funn_eksakt": 5,
+    "evidenshendelser_eksakt": 35,
+    "maks_funnavvik": 0,
+    "maks_koeavvik": 0,
+    "maks_evidensavvik": 0,
+    "krev_sett_sha_lik_innsjekket": True,
+    "maks_sveipetid_ms": 30_000,
+    "min_sveip_tenanter": 2,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.produkter",
+            "maalt.ventede_funn",
+            "maalt.funnavvik",
+            "maalt.koeavvik",
+        ),
+        "revisjonslogg_korrekt": (
+            "maalt.evidenshendelser",
+            "maalt.evidensavvik",
+        ),
+        "ytelse_bestatt": (
+            "maalt.sveipetid_ms",
+            "maalt.sveip_tenanter",
+        ),
+    },
+}
+
 M24_INVARIANTER: tuple[str, ...] = (
     # V1-DOMMEN: modulen BETALER INGENTING. En utgående betaling er den
     # ene handlingen i katalogen som er umulig å angre.
@@ -2442,7 +2542,17 @@ KRAVGRENSER["m26-tilbud-v1"] = {
     "maks_brudd": 0,
     "min_forsok": 1,
     "krav_ja": ("rundtur_paa_disponit_com",),
-    "punktbinding": {},
+    # Sertifiseringen 17/9: manifestets feilinjiseringspunkt bindes til de
+    # fem målingene som beviser det (samme lest som m44-kampanje-v1).
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.priser_utenfor_boka_brudd",
+            "maalt.klausul_erstattet_brudd",
+            "maalt.belop_over_policyens_tak_brudd",
+            "maalt.dobbel_sending_samme_oppdrag_brudd",
+            "maalt.kill_switch_konsumerte_tilbud_brudd",
+        ),
+    },
 }
 
 M6_INNTAK_INVARIANTER: tuple[str, ...] = (
@@ -3131,6 +3241,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m44-fasit-v1": "artefakt-m44-fasit-skjema.json",
     "m44-suite-v1": "artefakt-m44-suite-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
+    "m26-fasit-v1": "artefakt-m26-fasit-skjema.json",
+    "m26-suite-v1": "artefakt-m26-suite-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
@@ -3392,6 +3504,15 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
                        " grensen er registrert (§0), men verken"
                        " produsent eller artefaktskjema finnes, så et"
                        " artefakt kan ikke måles mot den ennå"]
+    if krav_id == "m26-rollback-v1":
+        return feil + ["m26-rollback-v1: flippedrillen er ikke bygget —"
+                       " grensen er registrert (§0), men verken"
+                       " produsent eller artefaktskjema finnes, så et"
+                       " artefakt kan ikke måles mot den ennå"]
+    if krav_id == "m26-fasit-v1":
+        return feil + _grenser_m26_fasit(grense, art)
+    if krav_id == "m26-suite-v1":
+        return feil + _grenser_m26_suite(grense, art)
     if krav_id == "m6-fasit-v1":
         return feil + _grenser_m6_fasit(grense, art)
     if krav_id == "m6-suite-v1":
@@ -4485,6 +4606,186 @@ def _grenser_m44_fasit(grense: dict, art: dict) -> list[str]:
                         f" taket er {tak}")
     for nokkel, fasit in (
             ("mottakere", grense["mottakere_eksakt"]),
+            ("ventede_funn", grense["ventede_funn_eksakt"]),
+            ("evidenshendelser", grense["evidenshendelser_eksakt"])):
+        verdi, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif verdi != fasit:
+            feil.append(f"{nokkel}={verdi}, fasiten er {fasit} — eksakt,"
+                        " aldri «nesten»")
+    ms, melding = _teller(m, "sveipetid_ms", "sveipetid_ms")
+    if melding:
+        feil.append(melding)
+    elif ms < 1:
+        feil.append("sveipetid_ms=0 — en sveip ingen tok tiden på er"
+                    " ikke en ytelsesmåling, og 0 består ethvert tak")
+    elif ms > grense["maks_sveipetid_ms"]:
+        feil.append(f"sveipetid_ms={ms}, taket er"
+                    f" {grense['maks_sveipetid_ms']}")
+    tenanter, melding = _teller(m, "sveip_tenanter", "sveip_tenanter")
+    if melding:
+        feil.append(melding)
+    elif tenanter < grense["min_sveip_tenanter"]:
+        feil.append(f"sveip_tenanter={tenanter}, krever >="
+                    f" {grense['min_sveip_tenanter']} — settet lager to"
+                    " tenanter, så en sveip som så færre har ikke rørt"
+                    " dem, og tiden er da tiden det tok å gjøre ingenting")
+    return feil
+
+
+def m26_bevisrot_sha256() -> str:
+    """ÉN digest over hele M-26-produsentflaten (samme form som m23)."""
+    h = hashlib.sha256()
+    for rel in M26_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m26_bevisrot_feil(art: dict) -> list[str]:
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                " ubundet, og artefaktet beviser da en kjøring av"
+                " ukjente bytes"]
+    try:
+        lokal = m26_bevisrot_sha256()
+    except OSError as e:
+        return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"bevisrot_sha256={sha[:12]}… er ikke de innsjekkede"
+                f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
+                " produsentflate enn treet porten står i"]
+    return []
+
+
+def _grenser_m26_suite(grense: dict, art: dict) -> list[str]:
+    """`m26-suite-v1` — hele suiten på staging, M-26s andel for seg.
+    Formen er `_grenser_m23_suite` sin, av de samme grunnene."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    tall = {}
+    for navn in ("tester_totalt", "tester_feilet", "tester_hoppet",
+                 "m26_tester", "m26_feilet", "m26_hoppet",
+                 "suite_exitkode", "m26_exitkode"):
+        verdi, melding = _teller(m, navn, navn)
+        if melding:
+            feil.append(melding)
+        tall[navn] = verdi
+    if any(v is None for v in tall.values()):
+        return feil
+    kjorte = tall["tester_totalt"] - tall["tester_hoppet"]
+    if kjorte < grense["min_tester"]:
+        feil.append(f"tester_totalt={tall['tester_totalt']} minus"
+                    f" tester_hoppet={tall['tester_hoppet']} = {kjorte}"
+                    f" kjørte, krever >= {grense['min_tester']}")
+    if tall["tester_feilet"] > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={tall['tester_feilet']}, krever <="
+                    f" {grense['maks_feilet']}")
+    m26_kjorte = tall["m26_tester"] - tall["m26_hoppet"]
+    if m26_kjorte < grense["min_m26_tester"]:
+        feil.append(f"m26_tester={tall['m26_tester']} minus"
+                    f" m26_hoppet={tall['m26_hoppet']} = {m26_kjorte}"
+                    f" kjørte, krever >= {grense['min_m26_tester']}")
+    if tall["m26_feilet"] > grense["maks_m26_feilet"]:
+        feil.append(f"m26_feilet={tall['m26_feilet']}, krever <="
+                    f" {grense['maks_m26_feilet']}")
+    if tall["m26_hoppet"] > grense["maks_m26_hoppet"]:
+        feil.append(f"m26_hoppet={tall['m26_hoppet']}, krever <="
+                    f" {grense['maks_m26_hoppet']} — M-26s navngitte"
+                    " andel skal være KJØRT, ikke hoppet over")
+    if tall["m26_tester"] > tall["tester_totalt"]:
+        feil.append(f"m26_tester={tall['m26_tester']} >"
+                    f" tester_totalt={tall['tester_totalt']} — andelen"
+                    " kan ikke overstige helheten")
+    for navn in ("suite_exitkode", "m26_exitkode"):
+        if tall[navn] != 0:
+            feil.append(f"{navn}={tall[navn]} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige")
+    oppsett = art.get("oppsett")
+    feil += _m26_bevisrot_feil(art)
+    filer = oppsett.get("m26_filer") if isinstance(oppsett, dict) else None
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m26_filer mangler — M-26s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    elif sorted(filer) != sorted(grense["m26_andel_pakrevd"]):
+        mangler = sorted(set(grense["m26_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m26_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m26_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene")
+    return feil
+
+
+M26_AKSER = ("funnavvik", "koeavvik", "evidensavvik")
+
+
+def _grenser_m26_fasit(grense: dict, art: dict) -> list[str]:
+    """`m26-fasit-v1` — prisboksettet mot KJENT fasit. Dommen
+    RE-REGNES av avvikslistene artefaktet selv bærer (som m23)."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    oppsett = art.get("oppsett")
+    if not isinstance(oppsett, dict):
+        return ["artefaktet mangler `oppsett` — settet er ukjent"]
+    feil += _m26_bevisrot_feil(art)
+    sha = oppsett.get("sett_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.sett_sha256 mangler — uten driverens bytes er"
+                    " «samme sett» en påstand, ikke en måling")
+    elif grense.get("krev_sett_sha_lik_innsjekket"):
+        try:
+            lokal = hashlib.sha256(M26_SETT_STI.read_bytes()).hexdigest()
+        except OSError as e:
+            feil.append(f"settdriveren lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(
+                    f"sett_sha256={sha[:12]}… er ikke de innsjekkede"
+                    f" bytenes {lokal[:12]}… — settet kjøringen drev er"
+                    " ikke settet CI driver")
+    tenanter = oppsett.get("tenanter")
+    if not (isinstance(tenanter, list) and len(tenanter) >= 2):
+        feil.append("oppsett.tenanter har færre enn to — uten den"
+                    " terskelløse tenanten er `ingen_terskel` umålt")
+    avvik = art.get("avvik")
+    if not isinstance(avvik, dict) or not avvik:
+        return feil + ["artefaktet mangler `avvik` — en dom uten listene"
+                       " sine kan ikke re-regnes"]
+    talt = {akse: 0 for akse in M26_AKSER}
+    for rolle, d in avvik.items():
+        if not isinstance(d, dict):
+            return feil + [f"avvik[{rolle!r}] er ikke et oppslag"]
+        for nokkel in talt:
+            liste = d.get(nokkel)
+            if not isinstance(liste, list):
+                return feil + [f"avvik[{rolle!r}].{nokkel} mangler"]
+            talt[nokkel] += len(liste)
+    for nokkel in M26_AKSER:
+        tak = grense[f"maks_{nokkel}"]
+        oppgitt, melding = _teller(m, nokkel, nokkel)
+        if melding:
+            feil.append(melding)
+        elif oppgitt != talt[nokkel]:
+            feil.append(f"maalt.{nokkel}={oppgitt} spriker fra de"
+                        f" {talt[nokkel]} avvikene artefaktet lister")
+        if talt[nokkel] > tak:
+            feil.append(f"{talt[nokkel]} {nokkel} re-talt av listene,"
+                        f" taket er {tak}")
+    for nokkel, fasit in (
+            ("produkter", grense["produkter_eksakt"]),
             ("ventede_funn", grense["ventede_funn_eksakt"]),
             ("evidenshendelser", grense["evidenshendelser_eksakt"])):
         verdi, melding = _teller(m, nokkel, nokkel)
