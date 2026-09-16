@@ -69,3 +69,7 @@ deploy/staging/artefakter/*.json
 # disponit-srv fra et FULLT utsjekk av commiten mot en FERSK testbase —
 # release-treet er beskåret, og en gjenbrukt base driver.
 !deploy/staging/artefakter/m23-suite-v1-20260915T072002Z.json
+# M-17 sertifisering 16/9: fasit- og suiteartefaktet, bundet i manifestet
+# med sha256 og re-regnet av `m17-fasit-v1`/`m17-suite-v1`-portene.
+!deploy/staging/artefakter/m17-fasit-v1-20260916T140045Z.json
+!deploy/staging/artefakter/m17-suite-v1-20260916T141547Z.json
