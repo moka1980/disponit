@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m44suiteartefakt-v1.json",
+  "title": "m44 suiteartefakt (m44-suite-v1)",
+  "comment": "Hele testsuiten kjoert paa staging, med M-44s andel (de ti filene modulen eier, pinnet i manifestskjema.M44_SUITE_ANDEL) maalt for seg. Tallene leses av pytests egen junit-XML, aldri av oppsummeringsteksten. Skrevet av deploy/staging/m44-suite-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m44-suite-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "commit",
+        "vert",
+        "m44_filer",
+        "bevisrot_sha256"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m44_kampanje"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "comment": "Tillitsgrensens anker (#131-K2/#132): EN digest over hele m44-produsentflaten (manifestskjema.M44_BEVISROT_FILER), re-regnet av porten over sitt eget tre. Artefaktet beviser KJOERINGEN - verten bindes av deploymentkjeden."
+        },
+        "m44_filer": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": "M-44s PINNEDE andel, navngitt. Porten krever noeyaktig utvalget i KRAVGRENSER - en liste produsenten valgte selv er ikke delingsbetingelsen."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tester_totalt",
+        "tester_feilet",
+        "tester_hoppet",
+        "m44_tester",
+        "m44_feilet",
+        "m44_hoppet",
+        "suite_exitkode",
+        "m44_exitkode"
+      ],
+      "properties": {
+        "tester_totalt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tester_feilet": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tester_hoppet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Hoppede tester. Junit teller dem i `tests` med null failures og null errors, saa gulvet maa maales mot KJOERTE tester - en hoppet test er ikke en bestaatt test."
+        },
+        "suite_exitkode": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "pytests exitkode for hele suiten. Junit-XML skrives ogsaa for en AVBRUTT kjoering, og beskriver da bare testene som rakk aa bli ferdige - alle groenne. Bare 0 er en hel kjoering."
+        },
+        "m44_tester": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "m44_feilet": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "m44_hoppet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Hoppede tester i M-44s PINNEDE andel. Hele andelen er skipif(not DSN), og fasitporten krever i tillegg sveiperollens egen DSN - uten den ville andelen sett groenn ut uten aa ha kjoert. Kravet er null."
+        },
+        "m44_exitkode": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Samme for M-44-andelens egen kjoering."
+        }
+      }
+    }
+  }
+}

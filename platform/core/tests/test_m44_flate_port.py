@@ -113,7 +113,14 @@ def test_bevisgrensen_har_ti_punkter_med_navngitte_porter():
     assert g["invarianter"] is M44_KAMPANJE_INVARIANTER
     assert g["maks_brudd"] == 0 and g["min_forsok"] == 1
     assert g["krav_ja"] == ("rundtur_paa_disponit_com",)
-    assert g["punktbinding"] == {}
+    # Sertifiseringen (16/9) bandt manifestets feilinjiseringspunkt til de
+    # fem målingene som beviser det — hver må være et brudd-tall for et
+    # av de ti punktene, ikke et navn noen fant på.
+    binding = g["punktbinding"]
+    assert set(binding) == {"feilinjisering_til_unntakskø"}
+    lovlige = {f"maalt.{n}_brudd" for n in M44_KAMPANJE_INVARIANTER}
+    assert len(binding["feilinjisering_til_unntakskø"]) == 5
+    assert set(binding["feilinjisering_til_unntakskø"]) <= lovlige
     egen = Path(__file__).read_text(encoding="utf-8")
     for inv in M44_KAMPANJE_INVARIANTER:
         assert inv in egen, f"punktet {inv} har ingen navngitt port"
