@@ -634,7 +634,7 @@ def test_fullmaktkartet_er_regnet_av_malene_og_flaten_baerer_det_samme():
     assert "kundeservice-svar" not in FULLMAKTER_FOR_BRANSJE["netthandel"]
 
     js = (Path(__file__).resolve().parents[1]
-          / "ui/static/js/flater/firmaregistrering.js").read_text("utf-8")
+          / "ui/static/js/flater/firmaregistrering.js").read_text(encoding="utf-8")
     m = re.search(r"FULLMAKTER_FOR_BRANSJE = (\{.*?\});", js, re.S)
     assert m, "flaten mangler kartet"
     tekst = re.sub(r",\s*([}\]])", r"\1", m.group(1))       # JS-haler → JSON
