@@ -26,6 +26,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import {
   alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
   visKundeservice,
+  funnFor, lesbarKropp, trengerMenneske,
 } from "../static/js/flater/kundeservice.js";
 
 settI18nForTest(NB, "nb");
@@ -98,7 +99,8 @@ globalThis.fetch = async (url, opts) => {
     return { ok: false, status: 404,
       json: async () => ({ feil: "ikke_funnet" }) };
   }
-  return { ok: true, status: 200, json: async () => oppf };
+  // Et svar kan være et LØFTE — porten for kappløpet holder A igjen.
+  return { ok: true, status: 200, json: async () => await oppf };
 };
 
 function ctx(scopes = ["decisions:read", "kundeservice:innhold",
@@ -551,14 +553,17 @@ test("Kundeservice: køen er lesbar med ekte id-er — avsender først, kort"
   assert.equal(rader[0].cells[0].textContent, MASKE);
   assert.equal(rader[1].cells[0].textContent,
     t("ui.kundeservice.avsender.ukjent"));
-  // Referansen er kort på skjermen og hel i title — aldri 150 tegn i
-  // en celle. MUTASJONEN SOM DREPER DENNE: sett `h.ekstern_ref` tilbake
-  // som celletekst.
-  const ref = rader[0].cells[1];
-  assert.ok(ref.textContent.length < 24,
-    `referansecellen er ${ref.textContent.length} tegn`);
+  // REFERANSEN STÅR IKKE I KØEN (16/9): den hører til detaljen, kort på
+  // skjermen og hel i title — aldri 150 tegn på en rad eller i et hode.
+  // MUTASJONEN SOM DREPER DENNE: sett `h.ekstern_ref` som tekst.
+  assert.ok(!h.querySelector("table").textContent.includes(GRAPH_ID));
+  rader[0].querySelector("button").click();
+  const ref = h.querySelector(".hv-ref");
+  assert.ok(await vent(() => ref.textContent.includes(kortref(GRAPH_ID))));
+  assert.ok(ref.textContent.length < 40,
+    `referanselinjen er ${ref.textContent.length} tegn`);
   assert.equal(ref.getAttribute("title"), GRAPH_ID);
-  assert.equal(rader[1].cells[1].textContent, "MSG-2026-0002");
+  assert.ok(!h.querySelector(".hv-hode").textContent.includes(GRAPH_ID));
   // Kolonneoverskriften finnes, oversatt.
   assert.ok(h.textContent.includes(t("ui.kundeservice.kolonne.avsender")));
 
@@ -673,4 +678,140 @@ test("Kundeservice: ingen skriving før regellisten er lastet — «[] + den"
   } finally {
     globalThis.fetch = opprinnelig;
   }
+});
+
+// ---------------------------------------------------------------------
+// KØEN OG DETALJEN ETTER 16/9: det stille samlet, gamle funn borte fra
+// klassifiserte rader, detaljen i køens plass, kundeteksten lesbar.
+// ---------------------------------------------------------------------
+
+const H3 = "33333333-3333-3333-3333-333333333333";
+
+test("Kundeservice: til info samles under køen, og et gammelt"
+  + " uklassifisert-funn vises ikke på en klassifisert rad", async () => {
+  // Enhetene først. Funnet fra forrige sveip faller bort når raden har
+  // fått en dom; de andre funnene består.
+  assert.deepEqual(funnFor({ prioritet: "lav",
+    apne_funn: ["uklassifisert_over_grense", "ubesvart_over_grense"] }),
+    ["ubesvart_over_grense"]);
+  assert.deepEqual(funnFor({ prioritet: null,
+    apne_funn: ["uklassifisert_over_grense"] }),
+    ["uklassifisert_over_grense"]);
+  const stille = { prioritet: "lav", tema: "annet", handlingstype: "til_info",
+    i_unntakskoe: false, apne_funn: ["uklassifisert_over_grense"] };
+  assert.equal(trengerMenneske(stille), false);
+  assert.equal(trengerMenneske({ ...stille, handlingstype: "nyhetsbrev" }),
+    false);
+  assert.equal(trengerMenneske({ ...stille, handlingstype: "svar_kreves" }),
+    true);
+  assert.equal(trengerMenneske({ ...stille, i_unntakskoe: true }), true);
+  assert.equal(trengerMenneske({ ...stille,
+    apne_funn: ["ubesvart_over_grense"] }), true);
+  assert.equal(trengerMenneske({ ...stille, prioritet: null }), true);
+
+  SVAR = fullSvar();
+  const koe = structuredClone(KOEN);
+  koe.koe.push({ ...koe.koe[0], henvendelse_id: H3,
+    ekstern_ref: "MSG-2026-0003", prioritet: "lav", tema: "annet",
+    handlingstype: "til_info", klassifisert_av: "regel",
+    apne_funn: ["uklassifisert_over_grense"] });
+  SVAR["/v1/kundeservice"] = koe;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 3));
+  const tabeller = h.querySelectorAll("table");
+  assert.equal(tabeller.length, 2);
+  assert.equal(tabeller[0].querySelectorAll("tbody tr").length, 2);
+  const gruppe = h.querySelector("details.ks-stille-gruppe");
+  assert.ok(gruppe && gruppe.contains(tabeller[1]));
+  assert.ok(gruppe.querySelector("summary").textContent.includes("1"));
+  // MUTASJONEN SOM DREPER DENNE: fjern filteret i `funnFor`.
+  assert.ok(!tabeller[1].textContent.includes(
+    t("ui.kundeservice.merke_uklassifisert")),
+    "et gammelt funn står på en klassifisert rad");
+  // …mens den ekte uklassifiserte raden bærer merket.
+  assert.ok(tabeller[0].textContent.includes(
+    t("ui.kundeservice.merke_uklassifisert")));
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: detaljen bytter plass med køen, og «Tilbake» gir"
+  + " plassen tilbake", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  const koe = h.querySelector(".ks-koe");
+  const detalj = h.querySelector(".hv-detalj-innhold");
+  assert.equal(koe.hidden, false);
+  assert.equal(detalj.hidden, true);
+  // I SAMME SEKSJON som køen — før hang panelet under hver eneste fane.
+  assert.equal(koe.closest("section"), detalj.closest("section"));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => !detalj.hidden && koe.hidden));
+  assert.ok(await vent(() => h.textContent.includes(INNHOLD.emne)));
+  assert.equal(h.querySelector(".hv-emne").textContent, INNHOLD.emne);
+  const tilbake = h.querySelector(".hv-tilbake");
+  assert.equal(tilbake.textContent, t("ui.kundeservice.koe.tilbake"));
+  tilbake.click();
+  assert.equal(detalj.hidden, true);
+  assert.equal(koe.hidden, false);
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: lenker i kundeteksten blir vertsnavn, teksten ellers"
+  + " urørt — og aldri en <a>", () => {
+  const inn = "Hei\r\n\r\n\r\n\r\nSe <https://t.example.com/r/?id=abc&x=1> og"
+    + " https://cdn.example.net/bilde.png [tekst]\nMvh";
+  const div = document.createElement("div");
+  div.append(...lesbarKropp(inn));
+  assert.equal(div.textContent,
+    "Hei\n\nSe ‹t.example.com› og ‹cdn.example.net› [tekst]\nMvh");
+  const lenker = div.querySelectorAll(".hv-lenke");
+  assert.equal(lenker.length, 2);
+  assert.equal(lenker[0].getAttribute("title"),
+    "https://t.example.com/r/?id=abc&x=1");
+  assert.equal(div.querySelectorAll("a").length, 0);
+  assert.deepEqual(lesbarKropp(null), []);
+  // Skilletegnet etter en bar URL er setningens (CodeRabbit).
+  const d2 = document.createElement("div");
+  d2.append(...lesbarKropp("Se https://x.no/side. Og <https://y.no/a.> ok"));
+  assert.equal(d2.textContent, "Se ‹x.no›. Og ‹y.no› ok");
+  assert.equal(d2.querySelector(".hv-lenke").getAttribute("title"),
+    "https://x.no/side");
+});
+
+test("Kundeservice: A åpnet, så B — A-teksten som kom sist står ikke"
+  + " under B", async () => {
+  SVAR = fullSvar();
+  let slippA;
+  SVAR[`/v1/kundeservice/henvendelse/${H1}/innhold`] =
+    new Promise((r) => { slippA = r; });
+  SVAR[`/v1/kundeservice/henvendelse/${H2}/innhold`] =
+    { henvendelse_id: H2, emne: "Emne B", kropp: "Kropp B", request_id: "r" };
+  SVAR[`/v1/kundeservice/henvendelse/${H2}/utkast`] =
+    { henvendelse_id: H2, utkast: [], request_id: "r" };
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  const apne = [...h.querySelectorAll("tbody button")].filter(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne"));
+  apne[0].click();
+  apne[1].click();
+  assert.ok(await vent(() => h.textContent.includes("Kropp B")));
+  // Nå kommer A-svaret — for sent. MUTASJONEN SOM DREPER DENNE: fjern
+  // `fortsatt(hid)`-vernet i `apne`.
+  slippA(INNHOLD);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(h.querySelector(".hv-emne").textContent, "Emne B");
+  assert.ok(!h.textContent.includes(INNHOLD.kropp),
+    "A-teksten står under B");
+  // …og utkastlisten er B sin (tom), ikke A sin.
+  assert.ok(!h.textContent.includes(UTKASTENE.utkast[0].tekst));
 });

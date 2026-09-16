@@ -154,6 +154,40 @@
   .kv-skjema-linje { grid-template-columns: minmax(8rem, 10rem)
     minmax(12rem, 1fr) minmax(9rem, 12rem) auto; }
 }
+/* Henvendelsesdetalj (M-17): emnet stort, brikker for hvem/når/dom,
+   lesefelt til venstre og handlinger til høyre fra 64rem. */
+.brikke.brikke-tekst { padding: 0 var(--sp-3); }
+.brikke-fri { display: inline-flex; align-items: center; }
+.hv-detalj-innhold { display: grid; gap: var(--sp-4); }
+.hv-topp { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; }
+.hv-tilbake::before { content: "\2190\00a0"; }
+.hv-hode { display: grid; gap: var(--sp-2); }
+.hv-eyebrow { margin: 0; font-size: var(--fs-xs); font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.hv-emne { margin: 0; font-size: var(--fs-lg); font-weight: 600;
+  line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
+.hv-emne:empty { display: none; }
+.hv-ref { margin: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.hv-rutenett { display: grid; gap: var(--sp-4); align-items: start; }
+@media (min-width: 64rem) {
+  .hv-rutenett { grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); }
+}
+.hv-melding, .hv-handlinger { display: grid; gap: var(--sp-3); min-width: 0; }
+.hv-melding > h4, .hv-handlinger > h4 { margin: 0; }
+.hv-handlinger > h4:not(:first-child) { margin-top: var(--sp-3); }
+.hv-tekst { max-width: 72ch; padding: var(--sp-3) var(--sp-4);
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); }
+.hv-tekst:empty { display: none; }
+.hv-lenke { font-family: var(--font-mono); font-size: .92em; }
+.hv-handlinger .kv-skjema-rutenett { grid-template-columns: minmax(0, 1fr); }
+.hv-utkast { display: grid; gap: var(--sp-3); }
+/* Det stille under køen: én linje med tallet, tabellen bak den. */
+.ks-koe { display: grid; gap: var(--sp-3); }
+.ks-stille-gruppe > summary { cursor: pointer; padding: var(--sp-2) 0;
+  font-weight: 600; color: var(--muted); }
+.ks-stille-gruppe[open] > summary { color: var(--ink); }
+.ks-stille-gruppe > .tablewrap { margin-top: var(--sp-2); }
 
 /* BegrunnelseKjede / KodeForklaring */
 .kjede { margin: 0; padding-left: var(--sp-6); display: grid;
