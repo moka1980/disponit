@@ -331,23 +331,24 @@ function stilleSeksjon(ctx, last, kvitter) {
   const boks = el("section", { class: "kpi-kort" },
     el("h2", { text: t("ui.kundeservice.stille.tittel") }),
     el("p", { class: "muted", text: t("ui.kundeservice.stille.forklaring") }));
-  const liste = el("ul", { class: "stille-liste" });
+  // BRIKKER, IKKE LISTE. Et sett på 3–30 regler er én flytende rad; en
+  // punktliste med knapper som vandrer etter tekstlengden er en dump.
+  const rad = el("ul", { class: "brikkerad",
+                         "aria-label": t("ui.kundeservice.stille.tittel") });
   const status = el("p", { "aria-live": "polite" });
-  boks.append(liste, status);
+  boks.append(rad, status);
   let regler = [];
   // INGEN SKRIVING FØR LISTEN ER LASTET (CodeRabbit, major). Settet
   // sendes HELT hver gang, så en innsending før GET-en var ferdig ville
   // sendt «[] + den nye» — og slettet alle eksisterende regler i
   // stillhet. Knappene finnes derfor ikke, eller er sperret, til
-  // `lastet` er sann. Og ÉN lagring om gangen: to samtidige ville
-  // konkurrert om hvilket snapshot som vinner.
+  // `lastet` er sann. Og ÉN lagring om gangen.
   let lastet = false;
   let lagrer = false;
   const kanSkrive = harScope(ctx, "bestilling:opprett");
 
-  // HELE SETTET, HVER GANG. Å sende én regel om gangen ville krevd en dør
-  // som lar listen stå halvferdig mellom to kall; purreplanen valgte det
-  // samme. Idempotensnøkkelen er per innsending.
+  // HELE SETTET, HVER GANG (purreplanformen). Idempotensnøkkel per
+  // innsending.
   const lagre = async (nye) => {
     if (!lastet || lagrer) return;
     lagrer = true;
@@ -363,19 +364,26 @@ function stilleSeksjon(ctx, last, kvitter) {
   };
 
   const tegn = () => {
-    sett(liste);
+    sett(rad);
     if (!regler.length) {
-      liste.append(el("li", { class: "muted",
-                              text: t("ui.kundeservice.stille.ingen") }));
+      rad.append(el("li", { class: "muted",
+                            text: t("ui.kundeservice.stille.ingen") }));
       return;
     }
     for (const r of regler) {
-      const li = el("li", {}, el("span", { text: regelTekst(r) }));
+      const navn = r.art === "adresse"
+        ? t("ui.kundeservice.stille.adresse_hash")
+            .replace("{hash}", r.monster.slice(0, 8))
+        : r.monster;
+      const li = el("li", { class: "brikke" },
+        el("span", { class: "brikke-navn", text: navn }),
+        el("span", { class: "muted",
+          text: t(`ui.kundeservice.handlingstype.${r.handlingstype}`) }));
       if (kanSkrive) {
-        const fjern = el("button", { type: "button", class: "knapp",
+        const fjern = el("button", { type: "button", class: "brikke-x",
           "aria-label": t("ui.kundeservice.stille.fjern_aria")
             .replace("{regel}", regelTekst(r)),
-          text: t("ui.kundeservice.stille.fjern") });
+          text: "×" });
         fjern.addEventListener("click", async () => {
           fjern.disabled = true;
           try {
@@ -387,30 +395,31 @@ function stilleSeksjon(ctx, last, kvitter) {
               text: t("ui.kundeservice.feil.generell") }));
           }
         });
-        li.append(" ", fjern);
+        li.append(fjern);
       }
-      liste.append(li);
+      rad.append(li);
     }
   };
 
+  // `knapp` deklareres FØR lastingen fullfører, så den kan låses opp
+  // derfra; uten skriverett finnes den ikke.
+  let knapp = null;
   hentStilleregler().then((d) => {
     regler = d.regler || [];
     lastet = true;
     tegn();
     if (knapp) knapp.disabled = false;
-  })
-    .catch((e) => {
-      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-      sett(status, el("span", { role: "alert",
-        text: t("ui.kundeservice.feil.generell") }));
-    });
+  }).catch((e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+    sett(status, el("span", { role: "alert",
+      text: t("ui.kundeservice.feil.generell") }));
+  });
 
-  // `knapp` deklareres FØR lastingen fullfører (over), så den kan låses
-  // opp derfra; uten skriverett finnes den ikke.
-  let knapp = null;
   if (!kanSkrive) return boks;
 
-  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  // ÉN LINJE: type · verdi · handling · knapp. Etikettene står (WCAG),
+  // hjelpen er én linje under hele raden.
+  const skjema = el("form", { class: "kv-skjema kv-skjema-linje" });
   const art = el("select", { id: "ks-stille-art", name: "art" });
   for (const v of REGELARTER) {
     art.append(el("option", { value: v,
@@ -418,7 +427,8 @@ function stilleSeksjon(ctx, last, kvitter) {
   }
   const monster = el("input", { id: "ks-stille-monster", name: "monster",
                                 type: "text", required: "", maxlength: "400",
-                                autocomplete: "off" });
+                                autocomplete: "off",
+                                "aria-describedby": "ks-stille-hjelp" });
   const handling = el("select", { id: "ks-stille-handling",
                                   name: "handlingstype" });
   for (const v of REGELHANDLINGER) {
@@ -427,7 +437,7 @@ function stilleSeksjon(ctx, last, kvitter) {
   }
   // SPERRET til listen er lastet — `skjemaramme` sender ikke når knappen
   // er disabled, og det er hele vernet mot «[] + den nye».
-  knapp = el("button", { type: "submit", class: "knapp knapp-primaer",
+  knapp = el("button", { type: "submit", class: "knapp primar",
                          disabled: "",
                          text: t("ui.kundeservice.stille.legg_til") });
   const utfall = el("p", { "aria-live": "polite" });
@@ -437,22 +447,19 @@ function stilleSeksjon(ctx, last, kvitter) {
                     text: t("ui.kundeservice.stille.art") }), art),
     el("div", { class: "felt" },
       el("label", { for: "ks-stille-monster",
-                    text: t("ui.kundeservice.stille.monster") }), monster,
-      el("p", { class: "hjelp", id: "ks-stille-monster-hjelp",
-                text: t("ui.kundeservice.stille.monster_hjelp") })),
+                    text: t("ui.kundeservice.stille.monster") }), monster),
     el("div", { class: "felt" },
       el("label", { for: "ks-stille-handling",
                     text: t("ui.kundeservice.skjema.handlingstype") }),
       handling),
-    el("div", { class: "skjema-bunn" }, knapp));
-  monster.setAttribute("aria-describedby", "ks-stille-monster-hjelp");
+    el("div", { class: "felt" }, knapp),
+    el("p", { class: "muted skjema-hjelp", id: "ks-stille-hjelp",
+              text: t("ui.kundeservice.stille.monster_hjelp") }));
   skjemaramme(ctx, last, {
     skjema, knapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.stille.ok",
     send: async (idem) => {
       if (!lastet || lagrer) {
-        // Skal ikke kunne skje (knappen er sperret), men et løp mellom
-        // to hendelser skal aldri koste kundens regler.
         const e = new Error("stilleregler ikke lastet"); e.status = 409;
         throw e;
       }

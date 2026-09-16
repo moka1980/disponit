@@ -126,6 +126,35 @@
   color: var(--info); font-size: var(--fs-sm); font-weight: 600;
 }
 
+/* BRIKKER (204/stille avsendere): et SETT vises som én flytende rad av
+   brikker, ikke som en punktliste. Hver brikke bærer navnet, en dempet
+   handling og én fjern-knapp på fast plass — knappen vandrer aldri med
+   tekstlengden. Fjern-knappen er 2rem: over WCAG 2.5.8s 24 px. */
+.brikkerad { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0;
+  padding: 0; list-style: none; }
+.brikke { display: inline-flex; align-items: center; gap: var(--sp-2);
+  padding: 0 var(--sp-1) 0 var(--sp-3); min-height: 2rem;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+  font-size: var(--fs-sm); max-width: 100%; min-width: 0; }
+.brikke-navn { font-weight: 600; overflow-wrap: anywhere; }
+.brikke > .muted { white-space: nowrap; }
+.brikke-x { border: 0; background: none; color: var(--muted); cursor: pointer;
+  min-width: 2rem; min-height: 2rem; border-radius: 999px; font-size: 1.1rem;
+  line-height: 1; display: inline-grid; place-items: center; }
+.brikke-x:hover, .brikke-x:focus-visible { background: var(--flate);
+  color: var(--ink); }
+/* ÉN LINJE: felt side om side når det er plass, ellers under hverandre.
+   Hjelpeteksten er én linje under hele raden. */
+.kv-skjema-linje { display: grid; gap: var(--sp-2) var(--sp-3);
+  align-items: end; grid-template-columns: 1fr; }
+.kv-skjema-linje .felt { display: grid; gap: var(--sp-1); min-width: 0; }
+.kv-skjema-linje .skjema-hjelp { grid-column: 1 / -1; margin: 0;
+  font-size: var(--fs-sm); }
+@media (min-width: 48rem) {
+  .kv-skjema-linje { grid-template-columns: minmax(8rem, 10rem)
+    minmax(12rem, 1fr) minmax(9rem, 12rem) auto; }
+}
+
 /* BegrunnelseKjede / KodeForklaring */
 .kjede { margin: 0; padding-left: var(--sp-6); display: grid;
   gap: var(--sp-2); }
