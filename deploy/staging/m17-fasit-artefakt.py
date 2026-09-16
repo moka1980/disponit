@@ -53,6 +53,13 @@ CREDFILER = {
         "/etc/disponit/henvendelsessveip/DISPONIT_HENVENDELSESVEIP_URL",
     # disponit-plan.service: LoadCredential=DISPONIT_DATABASE_URL:…
     "DISPONIT_PLAN_URL": "/etc/disponit/plan/DISPONIT_DATABASE_URL",
+    # KEK-EN, og det er forskjellen fra m23: settet skriver KRYPTERT tekst
+    # (emne, kropp, adresse) for to nye tenanter, og hver tenant får sin
+    # DEK pakket under KEK-en (`hent_eller_opprett_aktiv_dek`). Uten den
+    # nekter `kryptering._kek()` å starte. Samme kilde som
+    # `m6-etterslep-til-m17.py`: API-ets egen credential-fil, lest av
+    # root, aldri skrevet ut.
+    "DISPONIT_KEK": "/etc/disponit/api/DISPONIT_KEK",
 }
 
 
@@ -81,6 +88,7 @@ def main() -> int:
     _last_miljo()
     dsn = {n: os.environ.get(n) for n in CREDFILER}
     mangler = [f"{n} ({CREDFILER[n]})" for n, v in dsn.items() if not v]
+    dsn.pop("DISPONIT_KEK")             # bare i miljøet, aldri i hendene
     if mangler:
         # NEKTER Å STARTE framfor å kjøre halve kjeden.
         print(json.dumps({"hendelse": "oppstart_nektet",
