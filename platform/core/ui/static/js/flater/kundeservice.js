@@ -39,12 +39,18 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+// LESEVISNINGEN ER E-POSTMODULENS (#475): samme tekst, samme rensing,
+// samme bryter. En egen variant her var feilen eier meldte 16/9.
+import { lesbarTekst } from "./epost.js";
 
 const PRIORITETER = ["kritisk", "hoy", "normal", "lav"];
 const TEMAER = ["faktura", "leveranse", "teknisk", "salg", "klage",
                 "annet"];
 const HANDLINGSTYPER = ["svar_kreves", "til_info", "oppgave", "mote",
                         "nyhetsbrev", "mistenkelig"];
+// ET UTKAST VENTER så lenge det er foreslått (på et menneske) eller
+// godkjent (på plattformen). Alt annet er spor.
+const VENTER = ["foreslatt", "godkjent"];
 
 // FUNNTYPE → MERKETEKST. Kartet er en LUKKET tabell og ikke en
 // strengbygging: en funntype flaten ikke kjenner skal ikke bli et merke
@@ -215,36 +221,6 @@ function koBlokk(koe, ctx, apneDetalj) {
                "ui.kundeservice.koe.stille_caption")));
   }
   return blokk;
-}
-
-// KUNDETEKSTEN SOM LESBAR TEKST. E-post konvertert fra HTML bærer
-// sporingslenker på 200 tegn i vinkelparenteser; på skjermen ble de
-// halve innholdet. Her står vertsnavnet i stedet, hele URL-en i title —
-// ingen lenke, for flaten sender ingen ut noe sted. Tekstnoder hele
-// veien (V6), linjeskiftene beholdes (`epost-kropp`).
-const URL_RE = /<?(https?:\/\/[^\s<>\]\)"]+)>?/g;
-export function lesbarKropp(tekst) {
-  const s = String(tekst ?? "").replace(/\r\n?/g, "\n")
-    .replace(/\n{3,}/g, "\n\n");
-  const ut = [];
-  let sist = 0;
-  for (const m of s.matchAll(URL_RE)) {
-    if (m.index > sist) ut.push(s.slice(sist, m.index));
-    // «Se https://x.no.» — punktumet er setningens, ikke lenkens. Bare
-    // for bare URL-er; i vinkelparenteser er grensen alt satt.
-    let url = m[1];
-    let hale = "";
-    const skille = m[0].startsWith("<") ? null : url.match(/[.,;:!?]+$/);
-    if (skille) { hale = skille[0]; url = url.slice(0, -hale.length); }
-    let vert = "";
-    try { vert = new URL(url).hostname; } catch { vert = ""; }
-    ut.push(el("span", { class: "muted hv-lenke", title: url,
-                         text: vert ? `‹${vert}›` : url }));
-    if (hale) ut.push(hale);
-    sist = m.index + m[0].length;
-  }
-  if (sist < s.length) ut.push(s.slice(sist));
-  return ut;
 }
 
 // HODETS BRIKKER: hvem (masken, eller adressens fravær som ord), når,
@@ -590,7 +566,25 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
   const emne = el("p", { class: "hv-emne" });
   const meta = el("ul", { class: "brikkerad" });
   const ref = el("p", { class: "muted hv-ref" });
-  const kropp = el("div", { class: "epost-kropp hv-tekst" });
+  const kropp = el("pre", { class: "epost-kropp hv-tekst" });
+  // BRYTEREN VEKSLER, den legger ikke til (#475): én tekst på skjermen,
+  // knappen bytter hvilken av de to man ser. Den finnes bare når
+  // rensingen faktisk tok noe.
+  const bytt = el("button", { type: "button", class: "knapp liten",
+    text: t("ui.epost.meldinger.vis_raa"), "aria-pressed": "false" });
+  const bytterad = el("div", { class: "knapperad" }, bytt);
+  bytterad.hidden = true;
+  let raaTekst = "";
+  let renTekst = "";
+  let raatt = false;
+  const visKropp = () => {
+    kropp.textContent = raatt
+      ? raaTekst : (renTekst || t("ui.epost.meldinger.tom_kropp"));
+    bytt.textContent = t(raatt ? "ui.epost.meldinger.vis_lesbar"
+                               : "ui.epost.meldinger.vis_raa");
+    bytt.setAttribute("aria-pressed", String(raatt));
+  };
+  bytt.addEventListener("click", () => { raatt = !raatt; visKropp(); });
   const utkastliste = el("div", { class: "hv-utkast" });
   // VEIEN TILBAKE. Detaljen bytter plass med køen (se visKundeservice),
   // så den må selv kunne gi plassen fra seg.
@@ -600,7 +594,7 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
   tilbake.addEventListener("click", lukk);
 
   // --- klassifisering ---
-  const kSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
+  const kSkjema = el("form", { class: "kv-skjema kv-skjema-linje" });
   const prioritet = el("select", { id: "ks-prioritet", name: "prioritet",
     required: true });
   for (const v of PRIORITETER) {
@@ -625,12 +619,14 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
   kSkjema.append(
     felt("ks-prioritet", "ui.kundeservice.skjema.prioritet", prioritet),
     felt("ks-tema", "ui.kundeservice.skjema.tema", tema),
+    felt("ks-handlingstype", "ui.kundeservice.skjema.handlingstype",
+         handlingstype),
+    el("div", { class: "felt" }, kKnapp),
     // HJELPETEKSTEN SIER HVA VALGET GJØR. «Svar kreves» er det som gjør
     // en ubesvart henvendelse til et funn; uten forklaringen ville
-    // valget sett ut som en etikett.
-    felt("ks-handlingstype", "ui.kundeservice.skjema.handlingstype",
-         handlingstype, "ui.kundeservice.skjema.handlingstypehjelp"),
-    el("div", { class: "skjema-bunn" }, kKnapp));
+    // valget sett ut som en etikett. Én linje under hele raden.
+    el("p", { class: "muted skjema-hjelp",
+      text: t("ui.kundeservice.skjema.handlingstypehjelp") }));
   skjemaramme(ctx, last, {
     skjema: kSkjema, knapp: kKnapp, utfall, kvitter,
     okNokkel: "ui.kundeservice.skjema.klassifisering_ok",
@@ -644,18 +640,67 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
   const uSkjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const utkasttekst = el("textarea", { id: "ks-utkast", name: "tekst",
     required: true, rows: "6" });
-  const uKnapp = el("button", { type: "submit",
+  // Å GODKJENNE ER ETT KLIKK (#490 speilet): før måtte man skrive,
+  // «Lagre utkast», finne utkastet i lista og «Godkjenn». Primærknappen
+  // gjør begge stegene; utkastet er fortsatt sannheten i basen, og
+  // godkjenningen er fortsatt et menneskes ja til at PLATTFORMEN sender
+  // innenfor policyen — flaten sender ingenting, og knappen sier det
+  // (porten «utkastets tre dommer» måler ordet). «Lagre utkast» står
+  // ved siden av for det man vil skrive ferdig senere.
+  const uKnapp = el("button", { type: "submit", class: "knapp primar",
+    text: t("ui.kundeservice.knapp.godkjenn_svar") });
+  const uLagre = el("button", { type: "button",
     text: t("ui.kundeservice.knapp.utkast") });
   uSkjema.append(
     felt("ks-utkast", "ui.kundeservice.skjema.utkast_tekst", utkasttekst,
          "ui.kundeservice.skjema.utkast_teksthjelp"),
-    el("div", { class: "skjema-bunn" }, uKnapp));
+    el("div", { class: "skjema-bunn" }, uKnapp, uLagre));
+  // TO KALL, ÉN INTENSJON (CodeRabbit): feiler godkjenningen etter at
+  // utkastet er lagret, holder rammen nøkkelen — og neste klikk skal
+  // godkjenne DET utkastet, ikke lagre et til. Husket per nøkkel til
+  // godkjenningen lykkes; en endret tekst er en ny nøkkel og et nytt
+  // utkast.
+  let lagret = null;
   skjemaramme(ctx, last, {
     skjema: uSkjema, knapp: uKnapp, utfall, kvitter,
-    okNokkel: "ui.kundeservice.skjema.utkast_ok",
-    send: (idem) => lagreUtkast(gjeldende.henvendelse_id,
-                                { tekst: utkasttekst.value }, idem),
+    okNokkel: "ui.kundeservice.svar.sendt_ok",
+    send: async (idem) => {
+      let svar;
+      if (lagret && lagret.idem === idem) {
+        svar = { utkast_id: lagret.utkast_id };
+      } else {
+        svar = await lagreUtkast(gjeldende.henvendelse_id,
+                                 { tekst: utkasttekst.value }, idem);
+        if (svar && svar.utkast_id) {
+          lagret = { idem, utkast_id: svar.utkast_id };
+        }
+      }
+      if (svar && svar.utkast_id) {
+        await avgjorUtkast(svar.utkast_id, "godkjent", nyIdempotensnokkel());
+      }
+      lagret = null;
+      return svar;
+    },
     tilbakestill: () => { utkasttekst.value = ""; },
+  });
+  uLagre.addEventListener("click", async () => {
+    if (!utkasttekst.value.trim() || uKnapp.disabled) return;
+    uLagre.disabled = true; uKnapp.disabled = true;
+    try {
+      await lagreUtkast(gjeldende.henvendelse_id,
+                        { tekst: utkasttekst.value }, nyIdempotensnokkel());
+    } catch (e) {
+      uLagre.disabled = false; uKnapp.disabled = false;
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(utfall, el("span", { role: "alert",
+        text: t("ui.kundeservice.feil.generell") }));
+      return;
+    }
+    uLagre.disabled = false; uKnapp.disabled = false;
+    utkasttekst.value = "";
+    meldLive(t("ui.kundeservice.skjema.utkast_ok"));
+    kvitter(t("ui.kundeservice.skjema.utkast_ok"));
+    await last();
   });
 
   // --- unntakskø ---
@@ -714,7 +759,7 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
   // hverandre på en telefon (`.hv-rutenett`).
   const melding = el("article", { class: "hv-melding" });
   if (leser) {
-    melding.append(kropp,
+    melding.append(kropp, bytterad,
       el("h4", { text: t("ui.kundeservice.detalj.utkast") }), utkastliste);
   } else {
     // ÆRLIG OM HVA SOM MANGLER: ikke en tom boks, men en setning om at
@@ -723,18 +768,22 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
       text: t("ui.kundeservice.detalj.uten_innsyn") }));
   }
   const rutenett = el("div", { class: "hv-rutenett" }, melding);
+  const hode = el("header", { class: "hv-hode" }, overskrift, emne, meta, ref);
   if (skriver) {
+    // DOMMEN ER ÉN LINJE UNDER HODET: prioritet · tema · handlingstype ·
+    // lagre. Svaret er det man gjør oftest og står øverst til høyre;
+    // det sjeldne — unntakskøen og lukkingen — ligger sammenklappet.
+    hode.append(el("h4", { text: t("ui.kundeservice.skjema.klassifisering") }),
+                kSkjema);
     rutenett.append(el("aside", { class: "hv-handlinger" },
-      el("h4", { text: t("ui.kundeservice.skjema.klassifisering") }),
-      kSkjema,
       el("h4", { text: t("ui.kundeservice.skjema.utkast_tittel") }),
       uSkjema,
-      el("h4", { text: t("ui.kundeservice.skjema.unntakskoe") }),
-      qSkjema, lukkerad));
+      el("details", { class: "hv-flere" },
+        el("summary", { text: t("ui.kundeservice.detalj.flere") }),
+        el("h4", { text: t("ui.kundeservice.skjema.unntakskoe") }),
+        qSkjema, lukkerad)));
   }
-  innhold.append(el("div", { class: "hv-topp" }, tilbake),
-    el("header", { class: "hv-hode" }, overskrift, emne, meta, ref),
-    rutenett);
+  innhold.append(el("div", { class: "hv-topp" }, tilbake), hode, rutenett);
   boks.append(innhold, utfall);
   innhold.hidden = true;
 
@@ -755,13 +804,24 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
     }
     if (!fortsatt(hid)) return;
     sett(utkastliste);
-    const liste = d.utkast || [];
-    if (!liste.length) {
+    const alle = d.utkast || [];
+    if (!alle.length) {
       utkastliste.append(el("p", { class: "muted",
         text: t("ui.kundeservice.detalj.ingen_utkast") }));
       return;
     }
-    for (const u of liste) {
+    // Utkast man er ferdig med er SPOR, ikke arbeid (#490): de ligger
+    // sammenklappet under det som venter, ikke ved siden av med samme vekt.
+    const avsluttede = alle.filter((u) => !VENTER.includes(u.status));
+    let mal = utkastliste;
+    if (avsluttede.length) {
+      mal = el("div", {});
+      utkastliste.append(mal, el("details", { class: "hv-flere" },
+        el("summary", { text: t("ui.kundeservice.detalj.avsluttede")
+          .replace("{n}", String(avsluttede.length)) })));
+    }
+    const detaljer = utkastliste.querySelector("details");
+    for (const u of alle) {
       // ARC B: statusen som ord, og hva plattformen gjorde med et
       // godkjent utkast (bestilt, i unntakskøen, sendt) — som tekst.
       const kort = el("div", { class: "skjemaboks" },
@@ -799,7 +859,7 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
           kort.append(b);
         }
       }
-      utkastliste.append(kort);
+      (VENTER.includes(u.status) ? mal : detaljer).append(kort);
     }
   }
 
@@ -807,6 +867,7 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
     node: boks,
     async apne(h) {
       gjeldende = h;
+      lagret = null;
       settApen(h.henvendelse_id);
       visKoe(false);
       sett(utfall);
@@ -831,7 +892,9 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
       innhold.hidden = false;
       if (!leser) return;
       emne.textContent = "";
+      raaTekst = ""; renTekst = ""; raatt = false;
       sett(kropp);
+      bytterad.hidden = true;
       sett(utkastliste);
       const hid = h.henvendelse_id;
       try {
@@ -839,7 +902,10 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe) {
           `/v1/kundeservice/henvendelse/${encodeURIComponent(hid)}/innhold`);
         if (!fortsatt(hid)) return;
         emne.textContent = d.emne;
-        sett(kropp, ...lesbarKropp(d.kropp));
+        raaTekst = d.kropp || "";
+        renTekst = lesbarTekst(raaTekst);
+        visKropp();
+        bytterad.hidden = renTekst === raaTekst.trim();
       } catch (e) {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         if (!fortsatt(hid)) return;

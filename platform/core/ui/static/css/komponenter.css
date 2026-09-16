@@ -179,15 +179,18 @@
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius-sm); }
 .hv-tekst:empty { display: none; }
-.hv-lenke { font-family: var(--font-mono); font-size: .92em; }
+.hv-hode > h4 { margin: var(--sp-2) 0 0; }
 .hv-handlinger .kv-skjema-rutenett { grid-template-columns: minmax(0, 1fr); }
 .hv-utkast { display: grid; gap: var(--sp-3); }
 /* Det stille under køen: én linje med tallet, tabellen bak den. */
 .ks-koe { display: grid; gap: var(--sp-3); }
-.ks-stille-gruppe > summary { cursor: pointer; padding: var(--sp-2) 0;
-  font-weight: 600; color: var(--muted); }
-.ks-stille-gruppe[open] > summary { color: var(--ink); }
+.ks-stille-gruppe > summary, .hv-flere > summary { cursor: pointer;
+  padding: var(--sp-2) 0; font-weight: 600; color: var(--muted); }
+.ks-stille-gruppe[open] > summary, .hv-flere[open] > summary {
+  color: var(--ink); }
 .ks-stille-gruppe > .tablewrap { margin-top: var(--sp-2); }
+.hv-flere { display: grid; gap: var(--sp-3); }
+.hv-flere > h4 { margin: 0; }
 
 /* BegrunnelseKjede / KodeForklaring */
 .kjede { margin: 0; padding-left: var(--sp-6); display: grid;

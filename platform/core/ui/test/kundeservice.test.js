@@ -23,10 +23,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
+import { lesbarTekst } from "../static/js/flater/epost.js";
 import {
   alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
   visKundeservice,
-  funnFor, lesbarKropp, trengerMenneske,
+  funnFor, trengerMenneske,
 } from "../static/js/flater/kundeservice.js";
 
 settI18nForTest(NB, "nb");
@@ -85,6 +86,7 @@ const UTKASTENE = {
 };
 
 let SVAR;
+let SVAR_POST = {};
 let SISTE;
 let KALL;
 globalThis.fetch = async (url, opts) => {
@@ -92,7 +94,13 @@ globalThis.fetch = async (url, opts) => {
   KALL.push({ sti, metode: (opts && opts.method) || "GET" });
   if (opts && opts.method === "POST") {
     SISTE = { sti, kropp: JSON.parse(opts.body), headers: opts.headers };
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    const o = SVAR_POST[sti];
+    // `{ __status: 503 }` lar en port la ETT kall feile.
+    if (o && o.__status) {
+      return { ok: false, status: o.__status,
+               json: async () => ({ feil: "midlertidig" }) };
+    }
+    return { ok: true, status: 200, json: async () => (o || { ok: true }) };
   }
   const oppf = SVAR[sti];
   if (!oppf) {
@@ -122,6 +130,7 @@ function nyHoved() {
   m.id = "hovedinnhold"; m.tabIndex = -1;
   brett.append(m);
   KALL = [];
+  SVAR_POST = {};
   return m;
 }
 
@@ -764,28 +773,6 @@ test("Kundeservice: detaljen bytter plass med køen, og «Tilbake» gir"
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
-test("Kundeservice: lenker i kundeteksten blir vertsnavn, teksten ellers"
-  + " urørt — og aldri en <a>", () => {
-  const inn = "Hei\r\n\r\n\r\n\r\nSe <https://t.example.com/r/?id=abc&x=1> og"
-    + " https://cdn.example.net/bilde.png [tekst]\nMvh";
-  const div = document.createElement("div");
-  div.append(...lesbarKropp(inn));
-  assert.equal(div.textContent,
-    "Hei\n\nSe ‹t.example.com› og ‹cdn.example.net› [tekst]\nMvh");
-  const lenker = div.querySelectorAll(".hv-lenke");
-  assert.equal(lenker.length, 2);
-  assert.equal(lenker[0].getAttribute("title"),
-    "https://t.example.com/r/?id=abc&x=1");
-  assert.equal(div.querySelectorAll("a").length, 0);
-  assert.deepEqual(lesbarKropp(null), []);
-  // Skilletegnet etter en bar URL er setningens (CodeRabbit).
-  const d2 = document.createElement("div");
-  d2.append(...lesbarKropp("Se https://x.no/side. Og <https://y.no/a.> ok"));
-  assert.equal(d2.textContent, "Se ‹x.no›. Og ‹y.no› ok");
-  assert.equal(d2.querySelector(".hv-lenke").getAttribute("title"),
-    "https://x.no/side");
-});
-
 test("Kundeservice: A åpnet, så B — A-teksten som kom sist står ikke"
   + " under B", async () => {
   SVAR = fullSvar();
@@ -814,4 +801,175 @@ test("Kundeservice: A åpnet, så B — A-teksten som kom sist står ikke"
     "A-teksten står under B");
   // …og utkastlisten er B sin (tom), ikke A sin.
   assert.ok(!h.textContent.includes(UTKASTENE.utkast[0].tekst));
+});
+
+// E-POSTMODULENS LESEVISNING, SPEILET (#475) — eiers ord 16/9: «samme
+// feil som ble meldt under e-post modulen».
+test("Kundeservice: kundeteksten vises renset som i e-postmodulen, og"
+  + " bryteren viser originalen", async () => {
+  const raa = "Hei\n\n\n\nVis i nettleseren <https://t.example.com/r/?id=1>"
+    + " [https://cdn.example.net/b.png]\n\nDin konto er klar\n"
+    + "https://t.example.com/bare\nMvh";
+  SVAR = fullSvar();
+  SVAR[`/v1/kundeservice/henvendelse/${H1}/innhold`] =
+    { ...INNHOLD, kropp: raa };
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  const kropp = h.querySelector(".hv-tekst");
+  assert.ok(await vent(() => kropp.textContent.includes("Din konto")));
+  // Renset: ingen adresser, ingen bildestøy, malens luft samlet —
+  // NØYAKTIG det e-postmodulen viser for samme tekst.
+  assert.equal(kropp.textContent, lesbarTekst(raa));
+  assert.ok(!kropp.textContent.includes("https://"));
+  assert.equal(kropp.textContent, "Hei\n\nVis i nettleseren\n\nDin konto er klar\nMvh");
+  // Bryteren VEKSLER: originalen, så den rensede igjen — aldri begge.
+  const bytt = [...h.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.meldinger.vis_raa"));
+  assert.ok(bytt, "bryteren mangler selv om rensingen tok noe");
+  bytt.click();
+  assert.equal(kropp.textContent, raa);
+  assert.equal(bytt.getAttribute("aria-pressed"), "true");
+  assert.equal(bytt.textContent, t("ui.epost.meldinger.vis_lesbar"));
+  bytt.click();
+  assert.equal(kropp.textContent, lesbarTekst(raa));
+  assert.equal(h.querySelectorAll(".hv-tekst").length, 1);
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: en tekst uten støy har ingen bryter", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => h.textContent.includes(INNHOLD.kropp)));
+  const bytt = [...h.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.meldinger.vis_raa"));
+  assert.ok(!bytt || bytt.closest("[hidden]"), "bryter uten grunn");
+});
+
+// «GODKJENN SVARET» ER ETT KLIKK (#490 speilet): lagre + godkjenn. Flaten
+// sender fortsatt ingenting — godkjent er en tilstand plattformen leser,
+// og knappen heter det den gjør.
+test("Kundeservice: «Godkjenn svaret» lagrer og godkjenner i ett; «Lagre"
+  + " utkast» lagrer bare", async () => {
+  SVAR = fullSvar();
+  const h = nyHoved();
+  SVAR_POST[`/v1/kundeservice/henvendelse/${H1}/utkast/ny`] =
+    { henvendelse_id: H1, utkast_id: "u-9" };
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => h.querySelector("#ks-utkast") !== null));
+  const felt = h.querySelector("#ks-utkast");
+  const skjema = felt.closest("form");
+  const send = skjema.querySelector('button[type="submit"]');
+  assert.equal(send.textContent, t("ui.kundeservice.knapp.godkjenn_svar"));
+  assert.ok(send.classList.contains("primar"));
+  felt.value = "Vi krediterer 2000.";
+  skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.metode === "POST" && k.sti.endsWith("/utkast/u-9/dom"))),
+    "godkjenningen ble aldri sendt");
+  const dom = KALL.filter((k) => k.sti.endsWith("/utkast/u-9/dom"));
+  assert.equal(dom.length, 1);
+  assert.equal(SISTE.kropp.status, "godkjent");
+  assert.ok(await vent(() => h.textContent.includes(
+    t("ui.kundeservice.svar.sendt_ok"))));
+  // …og «Lagre utkast» ved siden av lagrer UTEN dom.
+  KALL.length = 0;
+  felt.value = "Skriver ferdig senere.";
+  const lagre = [...skjema.querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.utkast"));
+  lagre.click();
+  assert.ok(await vent(() => KALL.some(
+    (k) => k.metode === "POST" && k.sti.endsWith("/utkast/ny"))));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.ok(!KALL.some((k) => k.sti.endsWith("/dom")),
+    "«Lagre utkast» godkjente");
+  assert.equal(felt.value, "");
+});
+
+// AVSLUTTEDE UTKAST ER SPOR (#490 speilet): sammenklappet under det
+// som venter. Unntakskøen og lukkingen ligger også sammenklappet.
+test("Kundeservice: avsluttede utkast og de sjeldne handlingene er"
+  + " sammenklappet", async () => {
+  SVAR = fullSvar();
+  SVAR[`/v1/kundeservice/henvendelse/${H1}/utkast`] = {
+    henvendelse_id: H1, request_id: "r",
+    utkast: [
+      UTKASTENE.utkast[0],
+      { ...UTKASTENE.utkast[0], utkast_id: "u-2", tekst: "Forkastet tekst",
+        status: "forkastet" },
+      { ...UTKASTENE.utkast[0], utkast_id: "u-3", tekst: "Sendt tekst",
+        status: "sendt" },
+    ] };
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => h.textContent.includes("Sendt tekst")));
+  const gruppe = h.querySelector(".hv-utkast details");
+  assert.ok(gruppe, "de avsluttede ligger ikke sammenklappet");
+  assert.ok(gruppe.querySelector("summary").textContent.includes("2"));
+  assert.ok(gruppe.textContent.includes("Forkastet tekst"));
+  assert.ok(gruppe.textContent.includes("Sendt tekst"));
+  assert.ok(!gruppe.textContent.includes(UTKASTENE.utkast[0].tekst),
+    "det som venter ligger sammen med sporene");
+  // Unntakskø og lukking: bak «Flere handlinger».
+  const flere = h.querySelector(".hv-handlinger details.hv-flere");
+  assert.ok(flere && flere.querySelector("#ks-koe"));
+  assert.ok(flere.textContent.includes(
+    t("ui.kundeservice.knapp.lukk_besvart")));
+  // Klassifiseringen står som én linje i hodet, ikke i handlingskolonnen.
+  assert.ok(h.querySelector(".hv-hode form.kv-skjema-linje #ks-prioritet"));
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Kundeservice: feiler godkjenningen etter lagringen, godkjenner"
+  + " neste klikk SAMME utkast — det lagres ikke et til", async () => {
+  SVAR = fullSvar();
+  SVAR["/v1/kundeservice/stilleregler"] = REGLER;
+  const h = nyHoved();
+  const NY = `/v1/kundeservice/henvendelse/${H1}/utkast/ny`;
+  const DOM = "/v1/kundeservice/utkast/u-9/dom";
+  SVAR_POST[NY] = { henvendelse_id: H1, utkast_id: "u-9" };
+  SVAR_POST[DOM] = { __status: 503 };
+  visKundeservice(h, ctx());
+  assert.ok(await vent(
+    () => h.querySelectorAll("table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => h.querySelector("#ks-utkast") !== null));
+  const felt = h.querySelector("#ks-utkast");
+  const skjema = felt.closest("form");
+  felt.value = "Vi krediterer 2000.";
+  skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  // DETALJENS egen feillinje — ikke en hvilken som helst alert i flaten.
+  assert.ok(await vent(
+    () => h.querySelector('.hv-detalj [role="alert"]') !== null),
+    "feilen ble ikke vist");
+  assert.equal(KALL.filter((k) => k.sti === NY).length, 1);
+  assert.equal(KALL.filter((k) => k.sti === DOM).length, 1);
+  // Andre klikk, samme tekst: godkjenningen går igjen — lagringen IKKE.
+  // MUTASJONEN SOM DREPER DENNE: fjern `lagret`-minnet i `send`.
+  SVAR_POST[DOM] = { ok: true };
+  skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  assert.ok(await vent(() => h.textContent.includes(
+    t("ui.kundeservice.svar.sendt_ok"))));
+  assert.equal(KALL.filter((k) => k.sti === NY).length, 1,
+    "et utkast til ble lagret");
+  assert.equal(KALL.filter((k) => k.sti === DOM).length, 2);
 });
