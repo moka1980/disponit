@@ -194,7 +194,7 @@ def _rbart(**over):
             "drillet_digest": "a" * 64, "forgjenger_digest": "a" * 64,
             "drillet_kjernedigest": "c" * 64,
             "forgjenger_kjernedigest": "d" * 64,
-            "arbeidernokkel": 619204773,
+            "arbeidernokkel": 619204773, "avbrutt_backend_pid": 4242,
             "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(),
             "form": "kjerne"},
         "identiteter": {
@@ -205,6 +205,8 @@ def _rbart(**over):
         "maalt": {
             "inflight_drept": True, "inflight_returkode": -9,
             "inflight_blokkerte_paa_laas": True, "inflight_funn": 0,
+            "inflight_backend_levde_etter_drap": True,
+            "inflight_backend_avsluttet": True,
             "arbeidernokkel_fri": True,
             "rullbakk_funn": 6, "rullbakk_rader": 6,
             "dubletter": 0, "kandidat_nye": 0, "kandidat_apne": 6,
@@ -236,6 +238,10 @@ def test_rollbackens_akser_feller():
             # DEN DREPTE KJØRINGEN må faktisk ha nådd skrivingen, ellers
             # måler drillen en prosess som aldri rakk noe.
             ("maalt.inflight_drept", False),
+            ("maalt.inflight_blokkerte_paa_laas", False),
+            # Å DREPE KLIENTEN STOPPER IKKE ARBEIDET: backenden venter
+            # videre på låsen og committer så snart den slipper.
+            ("maalt.inflight_backend_avsluttet", False),
             # …og den må ikke ha skrevet et halvt funn.
             ("maalt.inflight_funn", 1),
             # ARBEIDERNØKKELEN må slippe, ellers er sveipen stengt ute av

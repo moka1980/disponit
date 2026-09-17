@@ -5573,6 +5573,17 @@ def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
     if m.get("inflight_drept") is not True:
         feil.append("inflight_drept er ikke true — kjøringen ble ikke"
                     " avbrutt midt i, og da er det ingen rulling å måle")
+    if m.get("inflight_blokkerte_paa_laas") is not True:
+        feil.append("inflight_blokkerte_paa_laas er ikke true — sveipen"
+                    " nådde aldri skrivingen, og en prosess som ikke rakk"
+                    " noe er ikke avbrutt midt i")
+    # Å DREPE KLIENTEN ER IKKE Å STOPPE ARBEIDET. Backenden står og
+    # venter på låsen uten å merke at klienten er borte, og ville
+    # fullført sveipen så snart låsen slapp. Økten må avsluttes.
+    if m.get("inflight_backend_avsluttet") is not True:
+        feil.append("inflight_backend_avsluttet er ikke true — den"
+                    " foreldreløse økten ble aldri stoppet, og da måler"
+                    " ikke drillen et avbrudd")
     antall, melding = _teller(m, "inflight_funn", "inflight_funn")
     if melding:
         feil.append(melding)

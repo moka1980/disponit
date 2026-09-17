@@ -8,7 +8,12 @@ REGISTERETS tilstand over rullingen, i tre steg:
 
   (a) AVBRUTT: en sveip på de drillede bytene drepes MIDT I skrivingen —
       registeret står urørt (ingen halve funn), og arbeidernøkkelen
-      slippes, så sveipen ikke er stengt ute av sin egen døde sesjon;
+      slippes, så sveipen ikke er stengt ute av sin egen døde sesjon.
+      Å drepe KLIENTEN er ikke nok, og drillen måler nettopp det: en
+      backend som står og venter på lås merker ikke at klienten er borte,
+      og ville fullført og committet sveipen så snart låsen slapp. Økten
+      avsluttes derfor også på serversiden — som når en release rulles og
+      tjenestens tilkoblinger forsvinner;
   (b) RULLBAKK: forgjengerens bytes fullfører den samme sveipen og
       skriver funnene — hvert subjekt nøyaktig én gang;
   (c) KANDIDAT: de drillede bytene kjører igjen og finner INGENTING nytt
@@ -242,6 +247,10 @@ def main() -> int:
     rt = psycopg.connect(rt_dsn)
     m = psycopg.connect(m_dsn)
     laas = psycopg.connect(m_dsn)
+    # ØKTEN AVSLUTTES AV SIN EGEN ROLLE. Migratoren er verken superbruker
+    # eller medlem av `pg_signal_backend`, og kan ikke røre sveipens
+    # backend; sveiperollen kan rydde sine egne.
+    avslutter = psycopg.connect(sv_dsn)
     runde = secrets.token_hex(4)
     rigg = rigg_modul.forbered(rt, runde)
     tenanter = rigg_modul.riggtenanter(rigg)
@@ -271,9 +280,29 @@ def main() -> int:
         raise SystemExit("AVBRUTT: sveipen blokkerte aldri på tabellåsen —"
                          " en drept prosess som ikke rakk å skrive måler"
                          " ingenting")
+    # HVEM VENTER? Backend-pid-en tas FØR drapet: etterpå er det ingen
+    # spørring å kjenne den igjen på.
+    bakgrunn = m.execute(
+        f"SELECT pid FROM pg_locks WHERE relation = %s::regclass"
+        " AND NOT granted AND pid <> pg_backend_pid()",
+        (k["funntabell"],)).fetchone()[0]
+    m.rollback()
     os.kill(p.pid, signal.SIGKILL)
     p.wait(timeout=60)
     drept = p.returncode == -signal.SIGKILL
+    # KLIENTEN ER BORTE — MEN IKKE ØKTEN. En backend som venter på lås
+    # merker ingenting før låsen slipper, og ville da fullført og
+    # committet sveipen mot en klient som ikke finnes. Det måles, og så
+    # avsluttes økten på serversiden, slik en release-rulling gjør.
+    levde = bool(avslutter.execute(
+        "SELECT count(*)>0 FROM pg_stat_activity WHERE pid = %s",
+        (bakgrunn,)).fetchone()[0])
+    avslutter.rollback()
+    avsluttet = bool(avslutter.execute("SELECT pg_terminate_backend(%s)",
+                                       (bakgrunn,)).fetchone()[0])
+    avslutter.commit()
+    _log(f"foreldreløs backend {bakgrunn}: levde={levde}"
+         f" avsluttet={avsluttet}")
     laas.rollback()          # slipper ACCESS EXCLUSIVE
     t1 = maal(m, k, tenanter)
     _log(f"avbrutt (drillet): drept={drept} returkode={p.returncode}"
@@ -317,7 +346,7 @@ def main() -> int:
             "drillet_digest": d_dig, "forgjenger_digest": f_dig,
             "drillet_kjernedigest": d_kjerne,
             "forgjenger_kjernedigest": f_kjerne,
-            "arbeidernokkel": nokkel,
+            "arbeidernokkel": nokkel, "avbrutt_backend_pid": bakgrunn,
             "bevisrot_sha256": sveip_rollback_bevisrot_sha256(),
             "form": "kjerne: sveipen ruller med kjernen — avbruddet tas"
                     " utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base,"
@@ -333,6 +362,8 @@ def main() -> int:
             "inflight_drept": drept,
             "inflight_returkode": p.returncode,
             "inflight_blokkerte_paa_laas": sto_i_lås,
+            "inflight_backend_levde_etter_drap": levde,
+            "inflight_backend_avsluttet": avsluttet,
             "inflight_funn": t1["rader"],
             "arbeidernokkel_fri": bool(fri),
             "rullbakk_funn": t2["apne"],

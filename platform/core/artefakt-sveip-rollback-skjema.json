@@ -52,6 +52,7 @@
         "drillet_kjernedigest",
         "forgjenger_kjernedigest",
         "arbeidernokkel",
+        "avbrutt_backend_pid",
         "bevisrot_sha256",
         "form"
       ],
@@ -130,6 +131,9 @@
         "forgjenger_kjernedigest": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "avbrutt_backend_pid": {
+          "type": "integer"
         }
       }
     },
@@ -175,6 +179,8 @@
         "inflight_drept",
         "inflight_returkode",
         "inflight_blokkerte_paa_laas",
+        "inflight_backend_levde_etter_drap",
+        "inflight_backend_avsluttet",
         "inflight_funn",
         "arbeidernokkel_fri",
         "rullbakk_funn",
@@ -233,6 +239,12 @@
           "type": "boolean"
         },
         "modul_digest_likt": {
+          "type": "boolean"
+        },
+        "inflight_backend_levde_etter_drap": {
+          "type": "boolean"
+        },
+        "inflight_backend_avsluttet": {
           "type": "boolean"
         }
       }
