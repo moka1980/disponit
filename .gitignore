@@ -107,3 +107,4 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/m57-datasett-v1-20260917T172616Z.json
 !deploy/staging/artefakter/m57-rollback-v1-20260917T173014Z.json
 !deploy/staging/artefakter/m57-feilinjisering-v1-20260917T182951Z.json
+!deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json

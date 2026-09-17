@@ -1000,8 +1000,8 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
                        .read_text(encoding="utf-8"))
     assert valider_manifest(m) == []
     assert m["id"] == "m06_epost" == MODULROT.name
-    assert m["status"] == "aktiv"
-    assert m["driftstilstand"] == "produksjon"
+    assert m["status"] == "under_utvikling"   # re-måling etter 210 pågår
+    assert m["driftstilstand"] == "ikke_i_drift"
     assert m["avhengigheter"] == ["m01_policy", "m02_revisjonslogg"]
     assert m["i18n_prefiks"] == "m06epost"
     # SERTIFISERT 16/9 (#537): hvert «ja» er BUNDET — grensen finnes,
@@ -1014,8 +1014,10 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
     from manifestskjema import KRAVGRENSER
     rot = MODULROT.parents[2]
     for punkt, innhold in m["staging_sjekkliste"].items():
-        assert innhold["status"] == "ja", \
-            f"{punkt} står som {innhold['status']} — aktiv krever ja"
+        if innhold["status"] == "nei":
+            assert "kjøres på nytt" in innhold["notat"], punkt
+            continue
+        assert innhold["status"] == "ja", f"{punkt} står som {innhold['status']}"
         grense = KRAVGRENSER[innhold["krav_id"]]
         if innhold["status"] == "blokkert":
             assert innhold["blokkert_av"].strip(), f"{punkt}: blokkert uten grunn"
