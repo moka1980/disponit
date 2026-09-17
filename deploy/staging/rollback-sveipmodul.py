@@ -765,12 +765,15 @@ def nytt_m57(rt, tenant: str, ctx: dict, i: int) -> str:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for j in range(2):
             g = ctx["golden"][(2 * i + j) % len(ctx["golden"])]
-            kid = f"drill-{i}-{j}"
+            kid = f"drill-{i}-{j}"; navn = f"Drillkandidat{i}{j}"
+            # Produksjonsformen: det deklarerte navnet står i teksten —
+            # blindingen krever det (ellers `ugyldig_maskeringsform`).
+            tekst = g["tekst"] + f"\n\nMed vennlig hilsen {navn}"
             z.writestr(f"{kid}/soknad.html", "<html><body><p>"
-                       + html.escape(g["tekst"]).replace("\n", "<br>")
+                       + html.escape(tekst).replace("\n", "<br>")
                        + "</p></body></html>")
             soknader.append({"kandidat_id": kid, "filer": [f"{kid}/soknad.html"],
-                             "felter": {"navn": [f"Drill {i}-{j}"]}})
+                             "felter": {"navn": [navn]}})
         z.writestr("soknader.json", json.dumps({"soknader": soknader}))
     st, sv = _api("POST", "/v1/inndata/reserver", tok, json.dumps(
         {"eiermodul": "m57_ats", "formaal": "soknadsbunt"}).encode())
