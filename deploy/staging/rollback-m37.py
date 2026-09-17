@@ -17,10 +17,11 @@ levende lease). En rollback av arbeideren er derfor et spørsmål om leasen:
       katalogen), og kandidaten (de drillede bytene) overtar etterpå og
       claimer og fullfører sin egen sak.
 
-Sakene lages slik de oppstår i drift: en M-23-tenant med én fordring
-over forfall får purringen sin (planrunden bestiller som agent, M-23
-sender til eiers testadresse), og hver planrunde etterpå gir et
-`frekvensgrense_naadd`-UNNTAK — samme vei som sakene 149–152 kom 17/9.
+Sakene lages slik de oppstår i drift: en M-23-tenant (bransjemalen
+gjennom bootstrap-døra) får én fordring per sak, 5 døgn over forfall —
+purreplanens trinn 1 er forfalt, planrunden bestiller som agent, og
+policyens vilkår `forfall_passert_dager min 14` bryter → UNNTAK gjennom
+`ved_brudd: unntakskø`. Ingen purring sendes; ingen e-post.
 
 «Midt i leasen» ordnes deterministisk, uten å røre koden som måles:
 arbeideren holdes med SIGSTOP mens saken lages, en ACCESS EXCLUSIVE-lås
@@ -211,13 +212,13 @@ def historikk(rt, tenant, sid):
     return rader
 
 
-def ny_sak(rt, tenant, planunit: str) -> int:
-    """Fordringssveip + én planrunde -> det nyeste unntaket for tenanten
-    (som i drift: sveipen lager `trinn_forfalt`-funnet for neste trinn,
-    planrunden bestiller, policyen sier frekvensgrense → UNNTAK)."""
+def ny_sak(D, rt, tenant, planunit: str, i: int) -> int:
+    """Ny fordring (5 døgn over forfall) + fordringssveip + én planrunde
+    -> det nyeste unntaket for tenanten (som i drift: sveipen lager
+    `trinn_forfalt`-funnet, planrunden bestiller som agent, policyens
+    vilkår bryter → UNNTAK)."""
     t0 = db_naa(rt)
-    subprocess.run(["systemctl", "start", "disponit-fordringssveip.service"],
-                   check=True, timeout=600)
+    ny_fordring(D, rt, tenant, i)
     subprocess.run(["systemctl", "start", f"{planunit}.service"],
                    check=True, timeout=600)
     rader, _ = q(rt, tenant,
@@ -270,17 +271,14 @@ def blokkert_paa_policyer(rt) -> int:
 
 
 # ------------------------------------------------------------ sakene
-#: Fire trinn, ikke m23-fasitens tre: purringsutløseren bokfører ETT
-#: forsøk per (fordring, trinn), og hvert trinn etter det første gir et
-#: `frekvensgrense_naadd`-UNNTAK (policyen: maks 1 per 14 døgn per
-#: faktura). Én fordring 30 døgn over forfall = én e-post (trinn 1) og
-#: tre saker (probe, inflight, kandidat).
+#: Purringsutløseren bokfører ETT forsøk per (fordring, trinn), og neste
+#: trinn er sist SENDTE + 1 — så én fordring gir nøyaktig én sak. Trinn 1
+#: ved 3 døgn, fordringen 5 døgn over forfall: kandidat, men policyens
+#: vilkår `forfall_passert_dager min 14` bryter → UNNTAK, ingen sending.
 M37_PLAN = [
     {"navn": "Påminnelse", "dogn_etter_forfall": 3,
      "handling": "paaminnelse", "gebyr_ore": 0},
-    {"navn": "Purring", "dogn_etter_forfall": 7,
-     "handling": "purring", "gebyr_ore": 7000},
-    {"navn": "Purring 2", "dogn_etter_forfall": 14,
+    {"navn": "Purring", "dogn_etter_forfall": 14,
      "handling": "purring", "gebyr_ore": 7000},
     {"navn": "Inkassovarsel", "dogn_etter_forfall": 28,
      "handling": "inkassovarsel", "gebyr_ore": 35000},
@@ -301,15 +299,15 @@ def forbered_tenant(D, rt, tenant: str, k: dict):
     rt.commit()
 
 
-def ny_fordring(D, rt, tenant: str) -> str:
-    """Én fordring 30 døgn over forfall med mottaker (eiers testadresse),
-    så fordringssveipen som lager `trinn_forfalt`-funnene."""
-    fid = uuid.uuid4(); nr = f"M37DRILL-{secrets.token_hex(3)}"
+def ny_fordring(D, rt, tenant: str, i: int) -> str:
+    """Én fordring 5 døgn over forfall med mottaker (eiers testadresse),
+    så fordringssveipen som lager `trinn_forfalt`-funnet."""
+    fid = uuid.uuid4(); nr = f"M37DRILL-{secrets.token_hex(3)}-{i}"
     D._sk(rt, tenant)
     rt.execute(
-        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 60,"
-        " current_date - 30,%s)",
-        (tenant, fid, "Drill Kunde 37", nr, 51_037, D.AKTOR))
+        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 35,"
+        " current_date - 5,%s)",
+        (tenant, fid, f"Drill Kunde {i}", nr, 51_000 + i, D.AKTOR))
     rt.commit()
     h, maske, ct, nonce, key_id = D._epostfelter(rt, tenant, b"m23:mottaker")
     D._sk(rt, tenant)
@@ -374,40 +372,21 @@ def main() -> int:
         raise SystemExit(f"AVBRUTT: tenant {tenant!r} følger ikke drillens"
                          " navneform t-m37drill-<6 hex>")
 
-    # 1. tenanten og purringen — sakene oppstår som i drift. Én purring
-    # per tenant: en gjentatt kjøring (--tenant) sender ikke eiers
-    # testadresse en ny.
-    rader, _ = q(rt, tenant, "SELECT id FROM oppdrag WHERE tenant=%s AND"
-                 " oppdragstype=%s AND status='utfort' ORDER BY id LIMIT 1",
-                 (tenant, k["oppdragstype"]))
-    if rader:
-        oid = int(rader[0][0])
-    else:
+    # 1. tenanten — sakene oppstår som i drift, uten at noe sendes
+    har_policy, _ = q(rt, tenant, "SELECT 1 FROM policyer WHERE tenant=%s"
+                      " LIMIT 1", (tenant,))
+    if not har_policy:
         forbered_tenant(D, rt, tenant, k)
-        fid = ny_fordring(D, rt, tenant)
-        t0 = db_naa(rt)
-        subprocess.run(["systemctl", "start", f"{k['planunit']}.service"],
-                       check=True, timeout=600)
-        rader, _ = q(rt, tenant, "SELECT id FROM oppdrag WHERE tenant=%s"
-                     " AND oppdragstype=%s AND opprettet > %s"
-                     " ORDER BY id DESC LIMIT 1", (tenant, k["oppdragstype"], t0))
-        if not rader:
-            raise SystemExit(f"AVBRUTT: planrunden bestilte ingen purring for {fid}")
-        oid = int(rader[0][0])
-        D.vent_terminal(m, tenant, oid, 600)
-        purring = D.status(m, tenant, oid)[0]
-        if purring != "utfort":
-            raise SystemExit(f"AVBRUTT: purringen endte {purring!r}")
-    _log(f"tenant {tenant}: purring {oid} utført — unntakene kan lages")
+    _log(f"tenant {tenant}: bransjemal og purreplan på plass")
 
     # 2. probe: den drillede arbeideren behandler et unntak herfra
-    probe = ny_sak(rt, tenant, k["planunit"])
+    probe = ny_sak(D, rt, tenant, k["planunit"], 1)
     p = vent_lukket(rt, tenant, probe, LUKKEFRIST_S)
     _log(f"probe {probe}: {p['status']} (generasjon {p['gen']})")
 
     # 3. inflight: claimet, lease levende, blokkert før første skriv
     os.kill(pid0, signal.SIGSTOP); STOPPET_PID = pid0
-    inflight = ny_sak(rt, tenant, k["planunit"])
+    inflight = ny_sak(D, rt, tenant, k["planunit"], 2)
     r0 = sak_rad(rt, tenant, inflight)
     if r0["status"] != "ny":
         raise SystemExit(f"AVBRUTT: inflight-saken er {r0['status']} før"
@@ -467,7 +446,7 @@ def main() -> int:
     restart()
     pid2 = mainpid()
     cwd2 = cwd_av(pid2)
-    kand = ny_sak(rt, tenant, k["planunit"])
+    kand = ny_sak(D, rt, tenant, k["planunit"], 3)
     rk = vent_lukket(rt, tenant, kand, LUKKEFRIST_S)
     _log(f"kandidat pid {pid2} fra {cwd2}: sak {kand} {rk['status']}"
          f" (generasjon {rk['gen']})")
@@ -495,11 +474,10 @@ def main() -> int:
             "instrument": "SIGSTOP/SIGCONT på arbeideren mens saken lages;"
                           " ACCESS EXCLUSIVE på policyer til den drillede"
                           " prosessen er død",
-            "sakskilde": "planrunde → frekvensgrense_naadd (purring.send,"
-                         " trinn 2–4 av drillens purreplan)",
+            "sakskilde": "planrunde → vilkårsbrudd forfall_passert_dager"
+                         " (purring.send, én fordring per sak)",
         },
         "identiteter": {
-            "purring_oppdrag_id": str(oid),
             "probe_sak_id": str(probe), "inflight_sak_id": str(inflight),
             "kandidat_sak_id": str(kand),
             "drillet_pid": pid0, "rullback_pid": pid1, "kandidat_pid": pid2,

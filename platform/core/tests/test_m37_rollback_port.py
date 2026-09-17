@@ -32,7 +32,7 @@ def _art(**over):
                     "kandidat_digest": D1, "lease_s": 120.0,
                     "instrument": "SIGSTOP/SIGCONT; ACCESS EXCLUSIVE på policyer",
                     "sakskilde": "planrunde → frekvensgrense_naadd"},
-        "identiteter": {"purring_oppdrag_id": "200", "probe_sak_id": "301",
+        "identiteter": {"probe_sak_id": "301",
                         "inflight_sak_id": "302", "kandidat_sak_id": "303",
                         "drillet_pid": 1001, "rullback_pid": 1002,
                         "kandidat_pid": 1003,
