@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-sveip-ytelse-v1.json",
+  "title": "<modul>-ytelse-v1 — sveipens kostnad per runde",
+  "comment": "Produsert av deploy/staging/sveip-ytelse.py, samme produsent for alle sveipmoduler. Veggklokke rundt modulens egen kjor(), tre kjøringer, og den DÅRLIGSTE er dommen. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_sveip_ytelse.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt"],
+  "properties": {
+    "krav_id": {"type": "string", "pattern": "^m[0-9]+-ytelse-v1$"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "feil": {"type": "array", "items": {"type": "string"}},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modul", "vert", "sveip", "bevisrot_sha256"],
+      "properties": {
+        "modul": {"type": "string", "minLength": 1},
+        "vert": {"type": "string", "minLength": 1},
+        "sveip": {"type": "string", "minLength": 1},
+        "bevisrot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sekunder", "kjoringer", "tenanter",
+                   "sekunder_per_tenant", "feilet", "per_kjoring"],
+      "properties": {
+        "sekunder": {"type": "number", "exclusiveMinimum": 0},
+        "kjoringer": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "tenanter": {"type": "integer", "minimum": 0},
+        "sekunder_per_tenant": {"type": "number", "minimum": 0},
+        "feilet": {"type": "boolean"},
+        "per_kjoring": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tenanter", "nye", "oppdaterte", "lukkede"],
+            "properties": {
+              "tenanter": {"type": "integer", "minimum": 0},
+              "nye": {"type": "integer", "minimum": 0},
+              "oppdaterte": {"type": "integer", "minimum": 0},
+              "lukkede": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  }
+}
