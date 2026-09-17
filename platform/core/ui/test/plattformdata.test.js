@@ -31,8 +31,8 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
   assert.equal(modulStatus(2), "i_drift");
-  // 6: bygges 31/8 → i_drift 17/9: manifestet (m06_epost) sier
-  // aktiv/produksjon — alle seks punkter ja, rollback i kjerne-form.
+  // 6: i_drift 17/9 — alle seks punkter ja; fasit og suite målt på nytt
+  // etter 210 (slettesynk) mot fersk base på verten.
   assert.equal(modulStatus(6), "i_drift");
   // 35 flippet planlagt → bygges 31/8: manifestet (m35_kontinuitet) er
   // avlesningens kilde — 089-registeret, øvelseslogikken og

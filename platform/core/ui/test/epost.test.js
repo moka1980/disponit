@@ -60,6 +60,15 @@ async function vent(pred, n = 60) {
   return pred();
 }
 
+// MELDINGEN ÅPNES I SKUFFEN (17/9): dialogen henger på document.body,
+// ikke inne i lista. `nyttBrett()` tømmer body mellom flatene, så en
+// skuff lekker aldri fra én test til den neste.
+function skuff() { return document.querySelector(".dialog.skuff"); }
+function skuffinnhold() {
+  const d = skuff();
+  return d && d.querySelector(".skjemaboks");
+}
+
 function nyHoved() {
   const brett = nyttBrett();
   const m = document.createElement("main");
@@ -271,13 +280,15 @@ test("Epost: meldingene vises per aktiv kilde — avsender, emne, slettefrist, r
   assert.equal(knapper.length, 1, "slettede meldinger har ingen handlinger");
   assert.ok(knapper[0].closest(".knapperad"), "handlingene står ikke i én rad");
   knapper[0].click();
-  await vent(() => h.querySelector(".epost-kropp"));
-  assert.ok(h.querySelector(".epost-kropp").textContent.includes("Hilsen Per"));
+  await vent(() => skuff() && skuff().querySelector(".epost-kropp"));
+  assert.ok(skuffinnhold().textContent.includes("Hilsen Per"));
   assert.ok(h.textContent.includes("post@acme.example"));
   // ...og adressen er der, i meldingen.
-  assert.ok(h.querySelector(".skjemaboks").textContent
+  assert.ok(skuffinnhold().textContent
     .includes("per@nordvik.example"), "adressen forsvant helt");
-  const brudd = await alvorligeBrudd(h);
+  // Skuffen måles som eget fragment: `alvorligeBrudd` flytter noden til
+  // et rent brett, og body kan ikke flyttes inn i seg selv.
+  const brudd = await alvorligeBrudd(skuff(), { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
@@ -345,20 +356,33 @@ test("Epost: slettede meldinger er spor — sammenklappet, og teksten sier HVEM 
   assert.ok(rader[0].textContent.includes("Befaring elbillader"));
 });
 
-test("Epost: panelet står i lista og får fokus når en melding åpnes", async () => {
+test("Epost: meldingen åpnes i skuffen til høyre, med emnet som tittel", async () => {
   SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
            [`/v1/epost/meldinger/${M1}`]: MELDING };
   const h = nyHoved();
   visEpost(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 2);
+  // INGEN SKUFF FØR MAN ÅPNER: lista er hele siden til man ber om en
+  // melding (mutasjonen som dreper denne: åpne skuffen ved lasting).
+  assert.equal(skuff(), null, "skuffen sto åpen uten at noen åpnet en melding");
   const liste = h.querySelectorAll("table")[1].closest("section");
-  const panel = liste.querySelector(".skjemaboks");
-  assert.ok(panel, "panelet står ikke i lista det hører til");
-  assert.equal(panel.hidden, true);
-  liste.querySelector("tbody button").click();
-  await vent(() => !panel.hidden);
-  assert.ok(panel.textContent.includes("Hilsen Per"));
-  assert.equal(document.activeElement, panel, "panelet fikk ikke fokus");
+  assert.equal(liste.querySelector(".skjemaboks"), null,
+    "meldingen tegnes fortsatt inne i lista");
+  const apner = liste.querySelector("tbody button");
+  apner.focus();                       // som en ekte bruker: fokus følger klikket
+  apner.click();
+  await vent(() => skuff());
+  assert.ok(skuffinnhold().textContent.includes("Hilsen Per"));
+  // Emnet er skuffens tittel — man ser hva man leser, uten å lete.
+  assert.ok(skuff().querySelector(".dialog-tittel").textContent
+    .includes("Befaring elbillader"), "emnet er ikke skuffens tittel");
+  // Lista står igjen under skuffen, uendret.
+  assert.ok(liste.querySelector("tbody button"), "lista forsvant");
+  // ESC lukker, og fokus går tilbake til knappen som åpnet.
+  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+  await vent(() => !skuff());
+  assert.equal(document.activeElement, apner,
+    "fokus kom ikke tilbake til knappen som åpnet");
 });
 
 test("Epost: lesevisningen fjerner adressestøyen, og originalen ligger bak en bryter", async () => {
@@ -391,8 +415,8 @@ test("Epost: lesevisningen fjerner adressestøyen, og originalen ligger bak en b
   visEpost(h, ctx());
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".epost-kropp"));
-  const panel = h.querySelector(".skjemaboks");
+  await vent(() => skuff() && skuff().querySelector(".epost-kropp"));
+  const panel = skuffinnhold();
   assert.ok(panel.querySelector(".epost-kropp").textContent
     .includes("Din OneDrive er klar"));
   assert.ok(!panel.querySelector(".epost-kropp").textContent.includes("https://"));
@@ -414,7 +438,50 @@ test("Epost: lesevisningen fjerner adressestøyen, og originalen ligger bak en b
   assert.equal(bytt.textContent, t("ui.epost.meldinger.vis_raa"));
 });
 
-test("Epost: med to aktive kilder får hver liste sitt eget panel", async () => {
+test("Epost: et svar som lander etter at en ANNEN melding er åpnet, tegner ingenting", async () => {
+  // Skuffen kan lukkes og en annen melding åpnes mens lagringen er i
+  // lufta. Da skal verken svaret eller feilen fra det forrige valget
+  // røre skjermen (CodeRabbit). MUTASJONEN SOM DREPER DENNE: dropp
+  // generasjonssjekken i `paaEndring`/`hentDetalj`.
+  const M2 = "7a1b2c3d-0000-4000-8000-000000000099";
+  // TO LEVENDE meldinger: den andre i basisfikstursettet er reapet og
+  // står derfor ikke i lista.
+  const TO_LEVENDE = { ...MELDINGER, meldinger: [
+    MELDINGER.meldinger[0],
+    { ...MELDINGER.meldinger[0], melding_id: M2, emne: "Faktura 1002",
+      trad_id: "c-2", har_vedlegg: false }] };
+  let slippLagring = null;
+  const treg = new Promise((r) => { slippLagring = r; });
+  SVAR = { "/v1/epost/kilder": { kilder: [{ ...KILDER.kilder[0], kan_svare: true }] },
+           "/v1/epost/meldinger": TO_LEVENDE,
+           [`/v1/epost/meldinger/${M1}`]: { ...MELDING, utkast: [] },
+           [`/v1/epost/meldinger/${M2}`]: { ...MELDING, melding_id: M2,
+             emne: "Faktura 1002", kropp: "Hei, dette er den andre." },
+           [`/v1/epost/meldinger/${M1}/svarutkast`]: treg.then(
+             () => ({ utkast_id: "u-9", status: "foreslatt" })) };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
+  await vent(() => h.querySelectorAll("table").length >= 2);
+  const knapper = [...h.querySelectorAll("table")[1].querySelectorAll("tbody button")];
+  knapper[0].click();
+  await vent(() => skuffinnhold() && skuffinnhold().querySelector("textarea"));
+  skuffinnhold().querySelector("textarea").value = "Svar på den første.";
+  [...skuffinnhold().querySelectorAll("button")].find(
+    (b) => b.textContent === t("ui.epost.svar.lagre")).click();
+  // Lukk skuffen og åpne den ANDRE meldingen mens lagringen henger.
+  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+  await vent(() => !skuff());
+  knapper[1].click();
+  await vent(() => skuffinnhold()
+    && skuffinnhold().textContent.includes("den andre"));
+  slippLagring();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(skuffinnhold().textContent.includes("den andre"),
+    "det gamle svaret overskrev den nye meldingen");
+  assert.equal(document.querySelectorAll(".dialog.skuff").length, 1);
+});
+
+test("Epost: med to aktive kilder deler listene ÉN skuff", async () => {
   const K2 = "5e0a3f1e-0000-4000-8000-000000000003";
   const TO = { kilder: [KILDER.kilder[0],
     { kilde_id: K2, leverandor: "m365", postboks: "salg@acme.example",
@@ -424,18 +491,20 @@ test("Epost: med to aktive kilder får hver liste sitt eget panel", async () => 
            [`/v1/epost/meldinger/${M1}`]: MELDING };
   const h = nyHoved();
   visEpost(h, ctx());
-  await vent(() => h.querySelectorAll(".skjemaboks").length >= 2);
+  await vent(() => [...h.querySelectorAll("section")].filter(
+    (s) => s.querySelector("tbody button")).length >= 2);
   const seksjoner = [...h.querySelectorAll("section")].filter(
     (s) => s.querySelector("tbody button"));
   assert.equal(seksjoner.length, 2, "begge kildene skal ha en liste");
-  const panel0 = seksjoner[0].querySelector(".skjemaboks");
-  const panel1 = seksjoner[1].querySelector(".skjemaboks");
-  assert.ok(panel0 && panel1 && panel0 !== panel1, "listene deler panel");
-  // Åpner vi i den FØRSTE lista, skal panelet der vise meldingen.
+  // ÉN MELDING OM GANGEN, uansett hvor mange postbokser som listes:
+  // skuffen er flatens, ikke listas. (Det gamle panelet lå inne i hver
+  // liste og måtte derfor finnes i to eksemplarer.)
+  assert.equal(h.querySelectorAll(".skjemaboks").length, 0);
   seksjoner[0].querySelector("tbody button").click();
-  await vent(() => !panel0.hidden);
-  assert.ok(panel0.textContent.includes("Hilsen Per"));
-  assert.equal(panel1.hidden, true, "panelet under feil kilde åpnet seg");
+  await vent(() => skuff());
+  assert.ok(skuffinnhold().textContent.includes("Hilsen Per"));
+  assert.equal(document.querySelectorAll(".dialog.skuff").length, 1,
+    "to skuffer åpne samtidig");
 });
 
 test("Epost: en postboks uten sendetilgang sier det FØR noen skriver et svar", async () => {
@@ -483,8 +552,8 @@ test("Epost: et svar skrives som utkast og sendes — men flaten snakker aldri m
   visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector("textarea"));
-  const panel = h.querySelector(".skjemaboks");
+  await vent(() => document.querySelector(".dialog.skuff textarea"));
+  const panel = skuffinnhold();
   assert.ok(panel.textContent.includes("Vi kommer torsdag."));
   assert.ok(panel.textContent.includes(t("ui.epost.svar.status.foreslatt")));
   // SEND går til send-ruten. Flaten sender ikke selv: den setter
@@ -503,22 +572,22 @@ test("Epost: et svar skrives som utkast og sendes — men flaten snakker aldri m
     { ...medUtkast.utkast[0], status: "sendes",
       avgjort_ts: "2026-09-10T12:01:00+00:00", avgjort_av: "bruker:a" }] };
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".skjemaboks").textContent
+  await vent(() => skuffinnhold() && skuffinnhold().textContent
     .includes(t("ui.epost.svar.i_koe")));
   // UTKASTET I KØ har ingen send-knapp. Målt i UTKASTLISTA, ikke i hele
   // panelet: skrivefeltet har nå sin egen «Send svaret» (ett klikk i
   // stedet for lagre-bla-send), og en assertion over hele panelet ville
   // blandet de to.
-  const utkastlista = h.querySelector(".skjemaboks ul");
+  const utkastlista = skuffinnhold().querySelector("ul");
   assert.ok(![...utkastlista.querySelectorAll("button")]
     .some((b) => b.textContent === t("ui.epost.svar.knapp.send")));
 
   // «LAGRE UTKAST» LAGRER BARE. Det er veien for et svar man vil skrive
   // ferdig senere.
   KALL.length = 0;
-  const felt = h.querySelector(".skjemaboks textarea");
+  const felt = skuffinnhold().querySelector("textarea");
   felt.value = "Takk for beskjeden.";
-  [...h.querySelectorAll(".skjemaboks button")].find(
+  [...skuffinnhold().querySelectorAll("button")].find(
     (b) => b.textContent === t("ui.epost.svar.lagre")).click();
   await vent(() => KALL.some((k) => k.url.endsWith("/svarutkast")));
   const kall = KALL.find((k) => k.url.endsWith("/svarutkast"));
@@ -542,9 +611,9 @@ test("Epost: uten sendetilgang finnes ikke svarfeltet, bare forklaringen", async
   visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".skjemaboks").textContent
+  await vent(() => skuffinnhold() && skuffinnhold().textContent
     .includes(t("ui.epost.svar.uten_tilgang")));
-  assert.equal(h.querySelector(".skjemaboks textarea"), null);
+  assert.equal(skuffinnhold().querySelector("textarea"), null);
 });
 
 test("Epost: et utkast i kø sier at det sendes innen fem minutter", async () => {
@@ -560,9 +629,9 @@ test("Epost: et utkast i kø sier at det sendes innen fem minutter", async () =>
   visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".skjemaboks").textContent
+  await vent(() => skuffinnhold() && skuffinnhold().textContent
     .includes(t("ui.epost.svar.i_koe")));
-  const panel = h.querySelector(".skjemaboks");
+  const panel = skuffinnhold();
   // Et utkast som alt er i kø, har ingen send-knapp igjen — målt i
   // UTKASTLISTA. Skrivefeltet under har sin egen «Send svaret», og den
   // skal finnes: man kan skrive et svar til selv om et annet ligger i kø.
@@ -607,8 +676,8 @@ test("Epost: svarkontrollene følger epost:utkast:behandle, ikke kildescopet", a
   visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".skjemaboks textarea"));
-  let panel = h.querySelector(".skjemaboks");
+  await vent(() => skuffinnhold() && skuffinnhold().querySelector("textarea"));
+  let panel = skuffinnhold();
   assert.ok([...panel.querySelectorAll("button")].some(
     (b) => b.textContent === t("ui.epost.svar.knapp.send")),
     "utkastscopet ga ingen send-knapp");
@@ -619,9 +688,9 @@ test("Epost: svarkontrollene følger epost:utkast:behandle, ikke kildescopet", a
   visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
   await vent(() => h.querySelectorAll("table").length >= 2);
   h.querySelectorAll("table")[1].querySelector("tbody button").click();
-  await vent(() => h.querySelector(".skjemaboks").textContent
+  await vent(() => skuffinnhold() && skuffinnhold().textContent
     .includes("Vi kommer torsdag."));
-  panel = h.querySelector(".skjemaboks");
+  panel = skuffinnhold();
   assert.equal(panel.querySelector("textarea"), null,
     "kildescopet alene ga et svarfelt endepunktet ville nektet");
   assert.ok(![...panel.querySelectorAll("button")].some(
@@ -634,24 +703,30 @@ test("Epost: svarkontrollene følger epost:utkast:behandle, ikke kildescopet", a
 // brukervennlig»). Fire konkrete ting, målt.
 // ---------------------------------------------------------------------------
 
-test("Epost: den åpnede meldingen står OVER lista, ikke under seksten rader",
-  async () => {
-    // Eier måtte bla forbi hele innboksen for å se meldingen han nettopp
-    // åpnet, og skrivefeltet lå enda lenger ned.
-    SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": MELDINGER,
-             [`/v1/epost/meldinger/${M1}`]: MELDING };
-    const h = nyHoved();
-    visEpost(h, ctx());
-    await vent(() => h.querySelectorAll("table").length >= 2);
-    h.querySelectorAll("table")[1].querySelector("tbody button").click();
-    await vent(() => h.querySelector(".epost-kropp"));
-    const panel = h.querySelector(".skjemaboks");
-    const tabell = h.querySelectorAll("table")[1];
-    // DOM-rekkefølge: panelet kommer FØR meldingstabellen.
-    const plass = panel.compareDocumentPosition(tabell);
-    assert.ok(plass & Node.DOCUMENT_POSITION_FOLLOWING,
-      "meldingstabellen står før panelet — da må man bla forbi den");
-  });
+test("Epost: skuffen legger seg over lista uten å flytte den", async () => {
+  // Erstatter «panelet står over lista» (10/9): meldingen åpnes nå i
+  // skuffen til høyre (eiers ønske 17/9), og lista skal stå UENDRET
+  // under — ingen rader flyttes, ingen scrollejakt.
+  const mange = { meldinger: Array.from({ length: 16 }, (_, i) => ({
+    melding_id: `9e0a3f1e-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`,
+    fra: `kunde${i}@nordvik.example`, fra_navn: `Kunde ${i}`,
+    emne: `Sak ${i}`, mottatt_ts: "2026-09-10T10:00:00+00:00",
+    slettes_ts: "2026-12-09T10:00:00+00:00", har_vedlegg: false,
+    reapet: false })), vist: 16, avkortet: false };
+  SVAR = { "/v1/epost/kilder": KILDER, "/v1/epost/meldinger": mange,
+           [`/v1/epost/meldinger/${mange.meldinger[15].melding_id}`]: {
+             ...MELDING, melding_id: mange.meldinger[15].melding_id,
+             emne: "Sak 15" } };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelectorAll("tbody tr").length >= 16);
+  const rader = () => h.querySelectorAll("tbody tr").length;
+  const forFor = rader();
+  [...h.querySelectorAll("tbody button")].at(-1).click();
+  await vent(() => skuff());
+  assert.equal(rader(), forFor, "lista endret seg da meldingen ble åpnet");
+  assert.ok(skuffinnhold().textContent.includes("Hilsen Per"));
+});
 
 test("Epost: skrivefeltet sender i ETT klikk, og lagrer i ett annet",
   async () => {
@@ -667,8 +742,8 @@ test("Epost: skrivefeltet sender i ETT klikk, og lagrer i ett annet",
     visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
     await vent(() => h.querySelectorAll("table").length >= 2);
     h.querySelectorAll("table")[1].querySelector("tbody button").click();
-    await vent(() => h.querySelector(".skjemaboks textarea"));
-    const panel = h.querySelector(".skjemaboks");
+    await vent(() => skuffinnhold() && skuffinnhold().querySelector("textarea"));
+    const panel = skuffinnhold();
     panel.querySelector("textarea").value = "Ja, det passer.";
     KALL.length = 0;
     [...panel.querySelectorAll("button")].find(
@@ -702,8 +777,8 @@ test("Epost: forkastede utkast ligger sammenklappet, ikke ved siden av det som v
     visEpost(h, ctx({ scopes: ["epost:read", "epost:utkast:behandle"] }));
     await vent(() => h.querySelectorAll("table").length >= 2);
     h.querySelectorAll("table")[1].querySelector("tbody button").click();
-    await vent(() => h.querySelector(".skjemaboks ul"));
-    const panel = h.querySelector(".skjemaboks");
+    await vent(() => skuffinnhold() && skuffinnhold().querySelector("ul"));
+    const panel = skuffinnhold();
     // Det som VENTER står i den åpne lista, med knapper.
     const aapen = panel.querySelector("ul");
     assert.ok(aapen.textContent.includes("Det som venter."));

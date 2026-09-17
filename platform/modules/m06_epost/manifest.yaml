@@ -43,31 +43,27 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # NOTATET VAR UTDATERT: «modulens andel» finnes — elleve filer modulen
-    # eier i sin helhet, pinnet i `manifestskjema.M6_SUITE_ANDEL`. Samme tre
-    # forutsetninger som M-23/M-17: fullt utsjekk, fersk base, og
-    # planarbeiderens egen DSN (inntaket og utsendingen kjører som den).
+    # KJØRT PÅ NYTT 17/9 etter 210 (slettesynk): bevisroten dekker
+    # innhenteren, så det forrige artefaktet (16/9) målte en annen
+    # innhenter. Fersk base fra utsjekket på verten, hele suiten.
     status: ja
     krav_id: m6-suite-v1
     bevismaalinger:
-      - maalt.tester_totalt
-      - maalt.tester_feilet
-      - maalt.tester_hoppet
-      - maalt.suite_exitkode
-      - maalt.m6_tester
       - maalt.m6_feilet
+      - maalt.m6_tester
       - maalt.m6_hoppet
       - maalt.m6_exitkode
-    artefakt: deploy/staging/artefakter/m6-suite-v1-20260916T194247Z.json
-    artefakt_sha256: bc52250ee380c211c0a9c46932be674f181171dd022ed627b780bf7e001b9d18
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m6-suite-v1-20260917T200309Z.json
+    artefakt_sha256: 98bf6bad90672c688f11b0170358fb58bb24ce24d0fa695ada727110d34946fc
     notat: >-
-      5440 av 5440 tester KJØRT på disponit-srv fra et fullt
-      utsjekk av 8916b01d mot en fersk testbase, null feilet, null
-      hoppet, exit 0. M-6s egen andel er PINNET
-      (`manifestskjema.M6_SUITE_ANDEL`: elleve filer modulen eier i sin
-      helhet) og målt for seg: 85 av 85 kjørt, null feilet,
-      NULL HOPPET — andelen er `skipif(not DSN)`, og fasitporten krever
-      i tillegg planarbeiderens egen DSN.
+      5478 tester, 0 feilet, 0 hoppet; modulens egen andel
+      85 tester i elleve filer, 0 feilet, 0 hoppet. Kjørt på
+      disponit-srv 17/9 mot fersk base fra utsjekket (samme rigg som
+      CI bygger), som administrator.
   syntetisk_datasett_likt_lokalt:
     # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
     # og alt annet er produktets eget: tokenutpakking, delta-paging (to
@@ -98,15 +94,17 @@ staging_sjekkliste:
       - maalt.inntaksavvik
       - maalt.broavvik
       - maalt.svaravvik
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
-    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
+    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
     notat: >-
       12 meldinger av 16 inntaket så (fire duplikater ble ikke nye rader;
       de to @removed telles ikke som sett),
       10 nye i runde 1 og 2 i runde 2, 12 henvendelser i M-17,
       1 svar sendt som reply i tråden — NULL avvik på alle fire aksene,
-      kjørt mot disponit.com 16/9 gjennom produktets egne dører med
-      Graph byttet ut. Samme sett kjøres mot lokal base ved hver CI-runde
+      kjørt på disponit-srv 17/9 mot en fersk base fra utsjekket gjennom
+      produktets egne dører med Graph byttet ut (16/9-kjøringen gikk mot
+      prod-basen; 210 måtte finnes i basen før innhenteren kunne måles).
+      Samme sett kjøres mot lokal base ved hver CI-runde
       (`test_m6_fasit_port`), og bindingen er BYTENE: `sett_sha256` må
       stemme i begge ledd.
   revisjonslogg_korrekt:
@@ -121,8 +119,8 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.evidenshendelser
       - maalt.evidensavvik
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
-    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
+    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
     notat: >-
       28 hendelser i kjeden, null avvik, hver med aktør og sin egen
       `input_hash`. Målingen er felt av en mutasjon — døpes
@@ -161,12 +159,13 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.innhentingstid_ms
       - maalt.meldinger
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260916T192731Z.json
-    artefakt_sha256: 56e1c2a10bd19bc31db6d01a4592de0fa9fafa7608d62fe5acb29e6e061dee33
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
+    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
     notat: >-
-      84 ms for runde 1 over begge postboksene mot taket på 30 000 —
-      7.0 ms per melding mot taket på 5 000. Målt med veggklokke av
-      produsenten; porten avviser 0.
+      71 ms for runde 1 over begge postboksene mot taket på 30 000 —
+      5,9 ms per melding mot taket på 5 000 (17/9, fersk base; 16/9 mot
+      prod: 84 ms / 7,0). Målt med veggklokke av produsenten; porten
+      avviser 0.
   rollback_testet:
     # DRILLET 17/9 PÅ disponit-srv med `rollback-m6.py` i KJERNE-form: M-6
     # har ingen egen release — innhenteren ruller med kjernen. En
