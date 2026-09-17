@@ -68,10 +68,6 @@ def main(argv: list[str] | None = None, modellfabrikk=None) -> int:
     # for M-57 (målt 17/9 under flippedrillen). Prefikset strippes her,
     # ved registreringen; klienten får det den fikk.
     digest = digest.strip().removeprefix("sha256:")
-    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-        print(f"artifact_digest må være 64 hex (evt. med sha256:-prefiks): {digest[:20]}…",
-              file=sys.stderr)
-        return 2
     try:
         eksempler, innhold_hash = golden.les_sett(Path(sti))
     except golden.Settfeil as feil:
