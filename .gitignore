@@ -102,3 +102,4 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/m26-rollback-v1-20260917T125946Z.json
 !deploy/staging/artefakter/m23-rollback-v1-20260917T130104Z.json
 !deploy/staging/artefakter/m17-rollback-v1-20260917T130239Z.json
+!deploy/staging/artefakter/m37-rollback-v1-20260917T142645Z.json
