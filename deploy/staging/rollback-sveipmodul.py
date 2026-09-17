@@ -116,6 +116,17 @@ MODULER: dict[str, dict] = {
         "forbered": "forbered_m23", "nytt": "nytt_m23",
         "sveipunit": "disponit-fordringssveip",
     },
+    "m17_kundeservice": {
+        "modul": "m17_kundeservice",
+        "unit": "disponit-m17", "prefiks": "m17",
+        "oppdragstype": "kundeservice.svar.send", "bransje": "tjenestebedrift",
+        # `kundeservice.svar.send` er en utvidelse (`tillatt_for: [agent]`).
+        "fullmakter": ["kundeservice-svar"],
+        "planunit": "disponit-plan", "krav_id": "m17-rollback-v1",
+        "tokenfil": "/etc/disponit/m17/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m17",
+        "forbered": "forbered_m17", "nytt": "nytt_m17",
+    },
     "m44_kampanje": {
         "modul": "m44_kampanje",
         "unit": "disponit-m44", "prefiks": "m44",
@@ -575,6 +586,51 @@ def nytt_m26(rt, tenant: str, ctx: dict, i: int) -> str:
     return str(tid)
 
 
+def forbered_m17(rt, tenant: str) -> dict:
+    """Ingenting utover policyen: henvendelsen bærer sin egen avsender."""
+    return {}
+
+
+def nytt_m17(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN henvendelse fra eiers testadresse (m17-fasitens dør
+    `m17_ta_imot`), klassifisert `svar_kreves`, med et utkast som et
+    menneske GODKJENNER — nøyaktig én kandidat for `m17_svarkandidater`."""
+    from api.kundeservice import (_AAD_AVSENDER, _avsenderhash,
+                                  _avsendermaske, _krypter)
+    from db import kryptering
+    _sk(rt, tenant)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(rt, tenant)
+    rt.commit()
+    hid = uuid.uuid4()
+    e_ct, e_n = _krypter(dek, key_id, tenant, f"Drill henvendelse {i}")
+    k_ct, k_n = _krypter(dek, key_id, tenant,
+                         "Teknisk prøve fra flippedrillen. Ingen handling kreves.")
+    a_ct, a_n = _krypter(dek, key_id, tenant, TESTMOTTAKER, aad=_AAD_AVSENDER)
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT * FROM m17_ta_imot(%s,%s,'epost',%s,now() - interval '1 day',"
+        "       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (tenant, hid, f"H-drill-{secrets.token_hex(3)}-{i}",
+         _avsenderhash(TESTMOTTAKER), e_ct, e_n, k_ct, k_n, key_id, AKTOR,
+         _avsendermaske(TESTMOTTAKER), a_ct, a_n))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m17_klassifiser(%s,%s,'normal','teknisk','svar_kreves',"
+               "'menneske',NULL,%s)", (tenant, hid, AKTOR))
+    rt.commit()
+    uid = uuid.uuid4()
+    u_ct, u_n = _krypter(dek, key_id, tenant,
+                         "Hei! Dette er et teknisk prøvesvar fra flippedrillen.")
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m17_lagre_utkast(%s,%s,%s,%s,%s,%s,%s::text[],'menneske',NULL,%s)",
+        (tenant, uid, hid, u_ct, u_n, key_id, [], AKTOR))
+    rt.execute("SELECT m17_avgjor_utkast(%s,%s,'godkjent',%s)",
+               (tenant, uid, AKTOR))
+    rt.commit()
+    return str(hid)
+
+
 M23_PLAN = [
     {"navn": "Påminnelse", "dogn_etter_forfall": 3,
      "handling": "paaminnelse", "gebyr_ore": 0},
@@ -599,14 +655,15 @@ def forbered_m23(rt, tenant: str) -> dict:
 
 
 def nytt_m23(rt, tenant: str, ctx: dict, i: int) -> str:
-    """ÉN fordring 10 døgn over forfall med mottaker (eiers testadresse),
-    så fordringssveipen som lager `trinn_forfalt`-funnet — nøyaktig én
+    """ÉN fordring 20 døgn over forfall (policyens vilkår
+    `forfall_passert_dager min: 14`) med mottaker (eiers testadresse), så
+    fordringssveipen som lager `trinn_forfalt`-funnet — nøyaktig én
     kandidat for `m23_purringskandidater` (trinn 1, påminnelse)."""
     fid = uuid.uuid4(); nr = f"DRILL-{secrets.token_hex(3)}-{i}"
     _sk(rt, tenant)
     rt.execute(
-        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 40,"
-        " current_date - 10,%s)",
+        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 50,"
+        " current_date - 20,%s)",
         (tenant, fid, f"Drill Kunde {i}", nr, 50_000 + i, AKTOR))
     rt.commit()
     h, maske, ct, nonce, key_id = _epostfelter(rt, tenant, b"m23:mottaker")
