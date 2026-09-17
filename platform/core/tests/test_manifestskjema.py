@@ -918,11 +918,11 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     assert st.aktive == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                          "m14_fakturakontroll", "m17_kundeservice",
                          "m23_fordring", "m26_prisbok", "m37_unntak",
-                         "m44_kampanje", "wcag_audit"], st
+                         "m44_kampanje", "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                           "m14_fakturakontroll", "m17_kundeservice",
                           "m23_fordring", "m26_prisbok", "m37_unntak",
-                          "m44_kampanje", "wcag_audit"], (
+                          "m44_kampanje", "m57_ats", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

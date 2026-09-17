@@ -109,3 +109,4 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/m57-feilinjisering-v1-20260917T182951Z.json
 !deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
 !deploy/staging/artefakter/m6-suite-v1-20260917T200309Z.json
+!deploy/staging/artefakter/m57-revisjon-v1-20260917T214741Z.json
