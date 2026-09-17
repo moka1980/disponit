@@ -1,0 +1,55 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "digest_likhet": true,
+    "drillet_livslop": "draining",
+    "kandidat_livslop": "claiming",
+    "modulstatus": "aktiv",
+    "rullback_bytes_er_forgjengerens": true,
+    "rullback_livslop": "draining",
+    "unit_override_fjernet": true
+  },
+  "identiteter": {
+    "inflight_oppdrag_id": "128",
+    "kandidat_oppdrag_id": "130",
+    "probe_oppdrag_id": "127",
+    "rullback_oppdrag_id": "129"
+  },
+  "krav_id": "m44-rollback-v1",
+  "maalt": {
+    "claims_etter_drenering": 0,
+    "falske_verdikter": 0,
+    "inflight_har_signert_kvittering": true,
+    "inflight_oppdrag": 1,
+    "inflight_utfall": "utfort",
+    "kandidat_claimet_oppdrag": 1,
+    "kandidat_har_signert_kvittering": true,
+    "overtakelse_s": 1.0,
+    "release_digest_bundet": true,
+    "rullback_claimet_oppdrag": 1,
+    "rullback_har_signert_kvittering": true,
+    "rullback_overtakelse_s": 1.0,
+    "rullback_promoterte": 0,
+    "ventetid_ubehandlet_s": 25.0
+  },
+  "oppsett": {
+    "drillet_digest": "d18229dbb2645e035f652f7e14f22693750fa2b33a49e938c06dcc2b5c75070f",
+    "drillet_katalog": "/opt/disponit/releases/f0486382c8debdb9a6b32c9a30ef912aa26f0df4",
+    "drillet_release": "m44-drill-rb-20260917T123951",
+    "forgjenger_digest": "d18229dbb2645e035f652f7e14f22693750fa2b33a49e938c06dcc2b5c75070f",
+    "forgjenger_katalog": "/opt/disponit/releases/f0486382c8debdb9a6b32c9a30ef912aa26f0df4",
+    "forgjenger_release": "m44-r3-f0486382",
+    "kandidat_digest": "d18229dbb2645e035f652f7e14f22693750fa2b33a49e938c06dcc2b5c75070f",
+    "kandidat_release": "m44-drill-k-20260917T125029",
+    "kontrakt_hash": "355ad689f6d7f08f94d97bcf195978c8f2a1a31c7fbe9953417caf6920ec9fe6",
+    "kontraktversjon": 1,
+    "miljo": "staging",
+    "modul": "m44_kampanje",
+    "module_epoch": 0,
+    "rullback_digest": "d18229dbb2645e035f652f7e14f22693750fa2b33a49e938c06dcc2b5c75070f",
+    "rullback_release": "m44-drill-rb-20260917T125029",
+    "tenant": "t-m44drill-221fea",
+    "vert": "disponit-srv"
+  },
+  "ts": "2026-09-17T12:51:21.719504+00:00"
+}

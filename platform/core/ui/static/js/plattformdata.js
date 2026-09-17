@@ -103,7 +103,8 @@ export const MODULSTATUS = {
   41: "bygges",     // m41_betaling: under_utvikling, ikke_i_drift
   19: "bygges",     // m19_adresse: under_utvikling, ikke_i_drift
   39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
-  44: "bygges",     // m44_kampanje: under_utvikling, ikke_i_drift
+  44: "i_drift",    // m44_kampanje: aktiv, produksjon — alle seks punkter ja
+                    // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   // KLYNGE 6 (116-120): «de fem som finner noe, og ikke handler på
   // det». Registrert ved fødselen sammen med grensene m46/m48/m49/
   // m51/m55-v1 — se docs/KLYNGE6-FUNDAMENT.md.

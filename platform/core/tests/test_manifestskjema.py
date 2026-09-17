@@ -912,9 +912,11 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # — fasit, suite, bevisrunde, ytelse og flippedrillen
     # (`m14-rollback-v1`, rollback-sveipmodul.py). `aktiv` + `produksjon`.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
-                         "m14_fakturakontroll", "wcag_audit"], st
+                         "m14_fakturakontroll", "m44_kampanje",
+                         "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
-                          "m14_fakturakontroll", "wcag_audit"], (
+                          "m14_fakturakontroll", "m44_kampanje",
+                          "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
