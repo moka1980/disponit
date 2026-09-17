@@ -107,19 +107,25 @@ staging_sjekkliste:
       grense revidert til #159s utfall for avskruingen. Produktet skriver
       ikke disse hendelsene i dag (målt 17/9); en egen arc.
   feilinjisering_til_unntakskø:
-    # GRENSEN ER KONSISTENT (#541): `injisert_jobber`, `unntakskoe_poster`
-    # og `koeposter_uten_jobbinding` står i skjemaet. Første halvdel (SP-3,
-    # rent feilutfall) måles av invarianten
-    # `kjoring_delvis_resultat_promotert`; andre halvdel — at feilen
-    # faktisk ble en post i unntakskøen — er ikke injisert ennå.
-    status: nei
-    krav_id: m57-v1
+    # INJISERT 17/9 PÅ disponit-srv (`m57-feilinjisering.py`): én giftig bunt
+    # (arkivmedlem 8 MiB nuller, over komprimeringsgrensen 100:1) bestilt
+    # som kundens bestilling. Arbeideren reiste Buntfeil → Kjoringsfeil og
+    # kvitterte `feilet` med kode (SP-3: rent utfall, ingen promotert
+    # liste); API-et satte oppdraget `feilet` og — kontrakten er
+    # kompenserende — fødte saken i M-37s kø bundet til oppdraget
+    # (`sak_for_oppdrag`, årsak utforelse_feilet; #552, migrasjon 209).
+    status: ja
+    krav_id: m57-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_jobber
+      - maalt.unntakskoe_poster
+      - maalt.koeposter_uten_jobbinding
+    artefakt: deploy/staging/artefakter/m57-feilinjisering-v1-20260917T182951Z.json
+    artefakt_sha256: a9efd836718cf213d73f9ef3f2d96d9cee6267f0be852d8d734df11dc382744f
     notat: >-
-      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
-      promotert liste (SP-3) OG leverte en post i unntakskøen:
-      min_injiserte_jobber 1, min_unntakskoe_poster 1,
-      maks_koeposter_uten_jobbinding 0. Skjemaet bærer feltene (#541).
-      Statusen er `nei` fordi injiseringen ikke er kjørt.
+      Oppdrag 154 i t-m57fasit, 17/9: feilet (kjoring_avbrutt) etter
+      15 s, 0 promoterte artefakter, 1 køpost bundet
+      til oppdraget (sak 161, oppdrag/utforelse_feilet), 0 uten binding.
   ytelse_bestatt:
     # MÅLT 17/9 PÅ TAKET VERTEN BÆRER (eiers vedtak natt til 17/9: «vi kan
     # gå videre med maks søknader som kan godta den maskinen vi har i
