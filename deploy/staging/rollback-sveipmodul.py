@@ -92,6 +92,30 @@ MODULER: dict[str, dict] = {
         "gruppe": "disponit-m14",
         "forbered": "forbered_m14", "nytt": "nytt_m14",
     },
+    "m26_prisbok": {
+        "modul": "m26_prisbok",
+        "unit": "disponit-m26", "prefiks": "m26",
+        "oppdragstype": "tilbud.generer", "bransje": "tjenestebedrift",
+        # `tilbud.generer` står i bransjemalen (`tillatt_for: [agent]`).
+        "fullmakter": [],
+        "planunit": "disponit-plan", "krav_id": "m26-rollback-v1",
+        "tokenfil": "/etc/disponit/m26/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m26",
+        "forbered": "forbered_m26", "nytt": "nytt_m26",
+    },
+    "m23_fordring": {
+        "modul": "m23_fordring",
+        "unit": "disponit-m23", "prefiks": "m23",
+        "oppdragstype": "purring.send", "bransje": "tjenestebedrift",
+        # `purring.send` står i bransjemalen; kandidaten krever et åpent
+        # `trinn_forfalt`-funn, så fordringssveipen kjøres før planrunden.
+        "fullmakter": [],
+        "planunit": "disponit-plan", "krav_id": "m23-rollback-v1",
+        "tokenfil": "/etc/disponit/m23/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m23",
+        "forbered": "forbered_m23", "nytt": "nytt_m23",
+        "sveipunit": "disponit-fordringssveip",
+    },
     "m44_kampanje": {
         "modul": "m44_kampanje",
         "unit": "disponit-m44", "prefiks": "m44",
@@ -487,6 +511,112 @@ def nytt_m44(rt, tenant: str, ctx: dict, i: int) -> str:
     rt.execute("SELECT m44_legg_i_plan(%s,%s,%s,%s)", (tenant, kid, mid, AKTOR))
     rt.commit()
     return str(kid)
+
+
+def _epostfelter(rt, tenant: str, aad: bytes):
+    """(hash, maske, ct, nonce, key_id) for eiers testadresse — slik
+    API-ene gjør det (tilbud/fordring): sha256 i små bokstaver, maske
+    `x****@…`, kryptert under tenantens DEK med modulens AAD."""
+    import hashlib
+    from db import kryptering
+    e = TESTMOTTAKER.strip().lower()
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(rt, tenant)
+    ct, nonce = kryptering.krypter(dek, {"e": e}, tenant, key_id, ekstra_aad=aad)
+    maske = e[0] + "****" + e[e.index("@"):]
+    return hashlib.sha256(e.encode("utf-8")).hexdigest(), maske, ct, nonce, key_id
+
+
+def forbered_m26(rt, tenant: str) -> dict:
+    """Prisbok med terskler, ett produkt med gjeldende pris, én
+    standardklausul og avsenderprofilen tilbudet sendes i."""
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_terskler(%s,100,30,7,%s)", (tenant, AKTOR))
+    rt.commit()
+    pid = uuid.uuid4()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_registrer_produkt(%s,%s,%s,%s,'time',%s)",
+               (tenant, pid, f"P-drill-{secrets.token_hex(3)}", "Drilltime", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_pris(%s,%s,%s,'NOK',current_date - 30,%s,%s)",
+               (tenant, pid, 120_000, "drill", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_klausul(%s,%s,%s,%s,true,current_date,%s)",
+               (tenant, "DRILL-LEV", "Levering",
+                "Levering skjer innen 30 dager.", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_avsenderprofil(%s,%s,%s,%s,%s)",
+               (tenant, "Drill AS", "post@disponit.com",
+                "Vennlig hilsen Drill AS", AKTOR))
+    rt.commit()
+    return {"pid": pid}
+
+
+def nytt_m26(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN godkjent tilbud med én linje fra boka, gyldig 30 dager, kunden
+    = eiers testadresse — nøyaktig én kandidat for `m26_tilbudskandidater`."""
+    h, maske, ct, nonce, key_id = _epostfelter(rt, tenant, b"m26:kunde")
+    tid = uuid.uuid4()
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT * FROM m26_lag_tilbud(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        "current_date,current_date + 30,%s,%s::jsonb,%s)",
+        (tenant, tid, f"Drill Kunde {i}", None, h, maske, ct, nonce, key_id,
+         "Teknisk prøvetilbud fra flippedrillen.",
+         json.dumps([{"produkt_id": str(ctx["pid"]), "antall": 1,
+                      "enhetspris_ore": None}]), AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_avgjor_tilbud(%s,%s,'godkjent',%s)",
+               (tenant, tid, AKTOR))
+    rt.commit()
+    return str(tid)
+
+
+M23_PLAN = [
+    {"navn": "Påminnelse", "dogn_etter_forfall": 3,
+     "handling": "paaminnelse", "gebyr_ore": 0},
+    {"navn": "Purring", "dogn_etter_forfall": 14,
+     "handling": "purring", "gebyr_ore": 7000},
+    {"navn": "Inkassovarsel", "dogn_etter_forfall": 28,
+     "handling": "inkassovarsel", "gebyr_ore": 35000},
+]
+
+
+def forbered_m23(rt, tenant: str) -> dict:
+    """Purreplanen (m23-fasitens tre trinn) og avsenderen."""
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_purreplan(%s,%s::jsonb,%s)",
+               (tenant, json.dumps(M23_PLAN), AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_avsender(%s,%s,%s,%s)",
+               (tenant, "Drill AS", "post@disponit.com", AKTOR))
+    rt.commit()
+    return {}
+
+
+def nytt_m23(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN fordring 10 døgn over forfall med mottaker (eiers testadresse),
+    så fordringssveipen som lager `trinn_forfalt`-funnet — nøyaktig én
+    kandidat for `m23_purringskandidater` (trinn 1, påminnelse)."""
+    fid = uuid.uuid4(); nr = f"DRILL-{secrets.token_hex(3)}-{i}"
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 40,"
+        " current_date - 10,%s)",
+        (tenant, fid, f"Drill Kunde {i}", nr, 50_000 + i, AKTOR))
+    rt.commit()
+    h, maske, ct, nonce, key_id = _epostfelter(rt, tenant, b"m23:mottaker")
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_mottaker(%s,%s,%s,%s,%s,%s,%s,%s)",
+               (tenant, fid, maske, ct, nonce, key_id, h, AKTOR))
+    rt.commit()
+    subprocess.run(["systemctl", "start", "disponit-fordringssveip.service"],
+                   check=True, timeout=600)
+    return str(fid)
 
 
 def bestill_via_planen(m, rt, k: dict, tenant: str, ctx: dict, i: int,
