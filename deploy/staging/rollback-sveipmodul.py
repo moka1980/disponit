@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import urllib.error
+import urllib.request
 import json
 import os
 import re
@@ -60,6 +62,7 @@ from manifestskjema import (_sjekk_grenser, kanonisk_projeksjon,  # noqa: E402
                             sveipmodul_digest, valider_artefaktformat)
 
 MILJO = "staging"
+API = "https://disponit.com"
 DRILLNOKKEL = 915_774_057          # et annet rom enn m56s 915_774_056
 RESERVASJONSVARIGHET_S = 600
 RESERVASJONSHJERTESLAG_S = 30
@@ -71,12 +74,17 @@ AKTOR = "sveipmodul-drill"
 #: og hvordan tenanten forberedes slik at bestillingene går `tillat`.
 MODULER: dict[str, dict] = {
     "m14_fakturakontroll": {
+        "modul": "m14_fakturakontroll",
         "unit": "disponit-m14", "prefiks": "m14",
         "bestillingstype": "faktura.bokfor", "bransje": "tjenestebedrift",
         # Bransjemalen: `faktura.bokfor` er `tillatt_for: [agent]` —
         # bokføring bestilles av PLANRUNDEN (`plan.faktura`, som
         # `agent:faktura`), aldri av en kunde. Drillen går samme vei.
         "planunit": "disponit-plan", "krav_id": "m14-rollback-v1",
+        # Fase 4 (m56-formen): modultokenet er bundet til (modul, miljø,
+        # RELEASE) — hver boot re-onboardes gjennom den ekte HTTP-veien.
+        "tokenfil": "/etc/disponit/m14/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m14",
     },
 }
 
@@ -237,12 +245,67 @@ def frigi_reservasjonen(m, modul):
              " rydder")
 
 
+# ---------------------------------------------------------- onboarding
+def _post_json(sti: str, kropp: dict, bearer: str | None = None) -> dict:
+    req = urllib.request.Request(API + sti, data=json.dumps(kropp).encode(),
+                                 method="POST")
+    req.add_header("Content-Type", "application/json")
+    if bearer:
+        req.add_header("Authorization", "Bearer " + bearer)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        return {"_status": e.code, "_kropp": e.read().decode("utf-8", "replace")[:200]}
+
+
+def onboard_for(k: dict, release: str) -> None:
+    """Fase 4: arbeiderens modultoken for NØYAKTIG denne releasen —
+    ops-token → engangshemmelighet → modultoken (HTTP, den ekte veien,
+    som m14-oppsett.sh fase 5). Et token bundet til en drenert release
+    fences ved claim-porten; det er selve mekanismen drillen måler, og
+    derfor må hver boot bære sitt eget token."""
+    ut = subprocess.run(
+        [sys.executable, str(REPO / "deploy/staging/token-cli.py"), "opprett",
+         "--tenant", "disponit", "--rolle", "drift", "--scope",
+         "modules:onboard", "--bootstrap"],
+        capture_output=True, text=True, timeout=120)
+    m = re.search(r"^\s*(tk_[A-Za-z0-9_-]+\.[^\s]+)\s*$", ut.stdout, re.M)
+    if not m:
+        raise SystemExit("AVBRUTT: fikk ikke drift-token for onboardingen")
+    drift = m.group(1); drift_id = drift.split(".", 1)[0]
+    try:
+        sv = _post_json("/v1/modul/onboarding",
+                        {"modul_id": k["modul"], "miljo": MILJO,
+                         "release_id": release}, bearer=drift)
+        hem = sv.get("hemmelighet")
+        if not hem:
+            raise SystemExit(f"AVBRUTT: onboarding for {release} avvist:"
+                             f" {json.dumps(sv)[:200]}")
+        sv2 = _post_json("/v1/modul/onboarding/innlos", {"hemmelighet": hem})
+        tok = sv2.get("token")
+        if not tok:
+            raise SystemExit(f"AVBRUTT: innløsning for {release} avvist:"
+                             f" {json.dumps(sv2)[:200]}")
+        fil = Path(k["tokenfil"])
+        tmp = fil.with_name(fil.name + ".ny")
+        tmp.write_text(tok, encoding="utf-8")
+        subprocess.run(["chown", f"root:{k['gruppe']}", str(tmp)], check=True)
+        tmp.chmod(0o640)
+        tmp.replace(fil)
+        _log(f"  onboardet {k['unit']} for {release}")
+    finally:
+        subprocess.run([sys.executable, str(REPO / "deploy/staging/token-cli.py"),
+                        "deaktiver", drift_id], capture_output=True, timeout=120)
+
+
 # ----------------------------------------------------------- unit-override
 def _overridefil(unit: str) -> Path:
     return Path(f"/etc/systemd/system/{unit}.service.d/drill.conf")
 
 
-def boot_fra(unit: str, katalog: Path | None, hva: str) -> float:
+def boot_fra(k: dict, unit: str, katalog: Path | None, release: str,
+             hva: str) -> float:
     """Arbeideren startes fra `katalog` (override) eller fra `aktiv`
     (override fjernet). -> sekunder til unit-en er aktiv."""
     global OVERRIDE_SKREVET
@@ -264,6 +327,7 @@ def boot_fra(unit: str, katalog: Path | None, hva: str) -> float:
             f"Environment=PYTHONPATH={katalog}/platform/core:{katalog}/platform\n",
             encoding="utf-8")
         OVERRIDE_SKREVET = True
+    onboard_for(k, release)
     t0 = time.monotonic()
     subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=60)
     subprocess.run(["systemctl", "restart", f"{unit}.service"], check=True,
@@ -538,7 +602,7 @@ def main() -> int:
 
     # (b2) rullbakken: forgjengerens bytes bootes og claimer.
     krev_reservasjonen("rullbakken")
-    boot_fra(unit, f_kat, "rullbakken")
+    boot_fra(k, unit, f_kat, rb_id, "rullbakken")
     rel2, rb_overtakelse = vent_claimet(m, tenant, o2, OVERTAKELSESFRIST_S)
     st2 = vent_terminal(m, tenant, o2, OVERTAKELSESFRIST_S)
     kv2 = kvittering_ok(m, tenant, o2)
@@ -548,7 +612,7 @@ def main() -> int:
     krev_reservasjonen("kandidaten")
     bytt_release(m, modul, kand_id, kver, khash)      # rb → draining
     o3 = bestill_via_planen(m, rt, tenant, lev, plan, 3, "framigjen")
-    boot_fra(unit, d_kat, "kandidaten")
+    boot_fra(k, unit, d_kat, kand_id, "kandidaten")
     rel3, overtakelse = vent_claimet(m, tenant, o3, OVERTAKELSESFRIST_S)
     st3 = vent_terminal(m, tenant, o3, OVERTAKELSESFRIST_S)
     kv3 = kvittering_ok(m, tenant, o3)
