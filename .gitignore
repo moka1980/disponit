@@ -99,3 +99,6 @@ deploy/staging/artefakter/*.json
 # (`m14-rollback-v1`), re-regnet av porten.
 !deploy/staging/artefakter/m14-rollback-v1-20260917T115853Z.json
 !deploy/staging/artefakter/m44-rollback-v1-20260917T125121Z.json
+!deploy/staging/artefakter/m26-rollback-v1-20260917T125946Z.json
+!deploy/staging/artefakter/m23-rollback-v1-20260917T130104Z.json
+!deploy/staging/artefakter/m17-rollback-v1-20260917T130239Z.json

@@ -92,7 +92,7 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-14 fra 2026-09-17: alle seks punkter ja — fasit, suite, bevisrunde,
     // ytelse og flippedrillen (`m14-rollback-v1`); manifestet flippet til
     // aktiv/produksjon i samme endring.
-    [2, 14, 44, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
+    [2, 14, 23, 26, 44, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
