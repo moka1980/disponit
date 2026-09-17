@@ -37,9 +37,8 @@ export const MODULSTATUS = {
   3: "bygges",      // m03_datakvalitet: under_utvikling, ikke_i_drift
   4: "bygges",      // m04_dataforvalter: under_utvikling, ikke_i_drift
   5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
-  6: "bygges",      // m06_epost: under_utvikling, ikke_i_drift — PR-A
-                    // (datamodell + retensjon) er fundamentet; flippes
-                    // av en M-6-aksept, aldri av en byggemilepæl
+  6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
+                    // (rollback i kjerne-form, m6-rollback-v1)
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
