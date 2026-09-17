@@ -96,8 +96,10 @@ MODULER: dict[str, dict] = {
         "modul": "m26_prisbok",
         "unit": "disponit-m26", "prefiks": "m26",
         "oppdragstype": "tilbud.generer", "bransje": "tjenestebedrift",
-        # `tilbud.generer` står i bransjemalen (`tillatt_for: [agent]`).
-        "fullmakter": [],
+        # Malens `tilbud.generer` tillater ikke persondata (kundens adresse
+        # er persondata — målt 17/9: `dataklasse_ikke_tillatt`); utvidelsen
+        # `tilbud-generer` erstatter handlingen med persondata tillatt.
+        "fullmakter": ["tilbud-generer"],
         "planunit": "disponit-plan", "krav_id": "m26-rollback-v1",
         "tokenfil": "/etc/disponit/m26/DISPONIT_MODULTOKEN",
         "gruppe": "disponit-m26",
