@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m19-fasit-v1.json",
+  "title": "m19-fasit-v1 — adressesettet mot kjent fasit, kjørt gjennom dørene",
+  "comment": "Produsert av deploy/staging/m19-fasit-artefakt.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m19_fasit, som re-regner dommen av per_subjekt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "type": "string",
+      "const": "m19-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "runde",
+        "tenanter",
+        "sett_sha256",
+        "bevisrot_sha256",
+        "ukontrollert_dogn",
+        "gyldig_dogn",
+        "godkjente_metoder"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "const": "m19_adresse"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}$"
+        },
+        "tenanter": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "string",
+            "pattern": "^t-m19fasit-"
+          }
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "ukontrollert_dogn": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gyldig_dogn": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "godkjente_metoder": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjekter",
+        "funnavvik",
+        "avviksliste",
+        "per_subjekt",
+        "sveip1_nye",
+        "sveip1_tenanter",
+        "sveip2_nye",
+        "sveip2_oppdaterte",
+        "sveip2_lukkede",
+        "funnavvik_etter_andre",
+        "evidens_totalt",
+        "evidens_uten_aktor",
+        "evidens_delte_input_hash",
+        "evidens_per_handling",
+        "rent_funn_for_kontroll"
+      ],
+      "properties": {
+        "subjekter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "funnavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "avviksliste": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "per_subjekt": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "merke",
+              "ventet",
+              "fikk",
+              "subjekt_id"
+            ],
+            "properties": {
+              "merke": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ventet": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fikk": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "subjekt_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "sveip1_nye": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip1_tenanter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip2_nye": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip2_oppdaterte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveip2_lukkede": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "funnavvik_etter_andre": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidens_totalt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidens_uten_aktor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidens_delte_input_hash": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidens_per_handling": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "rent_funn_for_kontroll": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

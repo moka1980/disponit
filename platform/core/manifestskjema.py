@@ -3850,6 +3850,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
+    if krav_id == "m19-fasit-v1":
+        return feil + _grenser_m19_fasit(grense, art)
     if krav_id in SUITE_GRENSER:
         return feil + _grenser_generisk_suite(grense, art)
     if krav_id == "m14-suite-v1":
@@ -5307,6 +5309,135 @@ def _grenser_generisk_suite(grense: dict, art: dict) -> list[str]:
     for rel in grense["andel_pakrevd"]:
         if not (REPOROT / rel).is_file():
             feil.append(f"andelen peker på {rel}, som ikke finnes i treet")
+    return feil
+
+
+#: M-19s FASIT: settdriveren og produsenten. Bevisroten dekker begge —
+#: et artefakt som beviser en kjøring av ukjente bytes beviser ingenting.
+M19_FASIT_BEVISROT = ("deploy/staging/m19_fasit.py",
+                      "deploy/staging/m19-fasit-artefakt.py")
+
+
+def m19_fasit_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M19_FASIT_BEVISROT:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+KRAVGRENSER["m19-fasit-v1"] = {
+    # SEKS SUBJEKTER, FEM FUNNTYPER OG ÉN REN: dommen er avlesbar per
+    # rad, ikke et aggregat som kan stemme av feil grunner. Settet er
+    # PINNET i `m19_fasit.SETT` og bæres av artefaktet med sin digest.
+    "min_subjekter": 6,
+    "maks_funnavvik": 0,
+    # ANDRE KJØRING GIR NULL NYE: en sveip som finner det samme på nytt
+    # hver runde fyller køen med duplikater av samme sannhet.
+    "maks_sveip2_nye": 0,
+    # ...OG MINST ÉN LUKKING (CodeRabbit): det rene subjektet fødes
+    # ukontrollert og får sitt funn i første sveip; kontrollen kommer
+    # mellom kjøringene, og andre sveip skal lukke funnet. Uten dette
+    # kravet kunne lukkeveien vært død uten at noen merket det.
+    "min_sveip2_lukkede": 1,
+    "min_evidens": 6,
+    "maks_evidens_uten_aktor": 0,
+    "maks_delte_input_hash": 0,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.funnavvik", "maalt.subjekter", "maalt.sveip1_nye",
+            "maalt.sveip2_nye"),
+        "revisjonslogg_korrekt": (
+            "maalt.evidens_totalt", "maalt.evidens_uten_aktor",
+            "maalt.evidens_delte_input_hash"),
+    },
+}
+ARTEFAKTSKJEMAER["m19-fasit-v1"] = "artefakt-m19-fasit-skjema.json"
+
+
+def _grenser_m19_fasit(grense: dict, art: dict) -> list[str]:
+    """`m19-fasit-v1` — adressesettet mot KJENT fasit. Dommen RE-REGNES
+    av per-subjekt-tabellen artefaktet bærer (som m23/m26): et tall uten
+    radene bak seg er produsentens påstand, ikke en måling."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler")
+    else:
+        try:
+            if sha != m19_fasit_bevisrot_sha256():
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes"
+                            " — kjøringen brukte en annen produsentflate")
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    if not isinstance(o.get("sett_sha256"), str) or len(o["sett_sha256"]) != 64:
+        feil.append("oppsett.sett_sha256 mangler — settet er ubundet")
+    if not isinstance(o.get("tenanter"), list) or len(o["tenanter"]) != 2:
+        feil.append("oppsett.tenanter er ikke de to (med og uten krav) —"
+                    " `ingen_krav` er en regel om TENANTEN, og kan bare"
+                    " måles med en tenant som mangler kravet")
+    for felt, minst in (("subjekter", grense["min_subjekter"]),
+                        ("evidens_totalt", grense["min_evidens"]),
+                        # SEKS NYE I FØRSTE SVEIP: hvert subjekt i settet
+                        # får sitt funn, det rene inkludert (det fødes
+                        # ukontrollert). Gulvet er settets størrelse, ikke
+                        # 1 — et sett der bare ett subjekt traff ville
+                        # ellers passert (CodeRabbit).
+                        ("sveip1_nye", grense["min_subjekter"]),
+                        ("sveip1_tenanter", 2),
+                        ("sveip2_lukkede", grense["min_sveip2_lukkede"]),
+                        ("rent_funn_for_kontroll", 1)):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    for felt, tak in (("funnavvik", grense["maks_funnavvik"]),
+                      ("funnavvik_etter_andre", grense["maks_funnavvik"]),
+                      ("sveip2_nye", grense["maks_sveip2_nye"]),
+                      ("evidens_uten_aktor", grense["maks_evidens_uten_aktor"]),
+                      ("evidens_delte_input_hash",
+                       grense["maks_delte_input_hash"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    per = m.get("per_subjekt")
+    if not isinstance(per, list) or len(per) < grense["min_subjekter"]:
+        feil.append("per_subjekt mangler eller er for kort — tallet kan"
+                    " ikke re-regnes")
+        return feil
+    regnet = 0
+    typer = set()
+    for rad in per:
+        if not isinstance(rad, dict):
+            feil.append("per_subjekt bærer noe som ikke er en rad")
+            continue
+        ventet, fikk = rad.get("ventet"), rad.get("fikk")
+        if not isinstance(fikk, list):
+            feil.append(f"per_subjekt[{rad.get('merke')}].fikk er ikke en liste")
+            continue
+        if ventet:
+            typer.add(ventet)
+            if fikk != [ventet]:
+                regnet += 1
+        elif fikk:
+            regnet += 1
+    if regnet != m.get("funnavvik"):
+        feil.append(f"funnavvik={m.get('funnavvik')}, radene gir {regnet}")
+    mangler = {"ukontrollert_adresse", "kontroll_utlopt", "avvist_adresse",
+               "utilstrekkelig_metode", "ingen_krav"} - typer
+    if mangler:
+        feil.append(f"fasiten dekker ikke alle funntypene: {sorted(mangler)}")
+    if not any(r.get("ventet") is None for r in per if isinstance(r, dict)):
+        feil.append("settet har ingen REN rad — uten den måler det bare at"
+                    " sveipen finner noe, ikke at den lar det riktige være")
     return feil
 
 
