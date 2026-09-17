@@ -908,10 +908,13 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # #89-feilen (aktiv med tre av seks punkter) står i git — regelen
     # den lærte oss håndheves fortsatt: et ubundet punkt er `nei`, og
     # begge modulene kom hit ved å BINDE hvert punkt, ikke ved å love.
+    # 2026-09-17: m14 er den første SVEIPMODULEN med alle seks punkter ja
+    # — fasit, suite, bevisrunde, ytelse og flippedrillen
+    # (`m14-rollback-v1`, rollback-sveipmodul.py). `aktiv` + `produksjon`.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
-                         "wcag_audit"], st
+                         "m14_fakturakontroll", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
-                          "wcag_audit"], (
+                          "m14_fakturakontroll", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
