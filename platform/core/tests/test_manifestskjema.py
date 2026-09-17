@@ -911,10 +911,17 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # 2026-09-17: m14 er den første SVEIPMODULEN med alle seks punkter ja
     # — fasit, suite, bevisrunde, ytelse og flippedrillen
     # (`m14-rollback-v1`, rollback-sveipmodul.py). `aktiv` + `produksjon`.
+    # 2026-09-17 (kveld): m37 fikk rollback-punktet sitt i lease-form
+    # (`m37-rollback-v1`), og m17 — seks ja siden formiddagen, blokkert av
+    # avhengigheten — flippes sammen med den.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
-                         "m14_fakturakontroll", "wcag_audit"], st
+                         "m14_fakturakontroll", "m17_kundeservice",
+                         "m23_fordring", "m26_prisbok", "m37_unntak",
+                         "m44_kampanje", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
-                          "m14_fakturakontroll", "wcag_audit"], (
+                          "m14_fakturakontroll", "m17_kundeservice",
+                          "m23_fordring", "m26_prisbok", "m37_unntak",
+                          "m44_kampanje", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
@@ -1166,23 +1173,32 @@ def test_delte_artefakter_gir_ulike_maalinger_per_modul(m01):
 
 
 def test_m37_laaner_ikke_m01s_rollbackkonklusjon():
-    """Den ene delingen som IKKE er lovlig, pinnet.
+    """Den ene delingen som IKKE er lovlig, pinnet — nå positivt.
 
     `rollback-m01-v1` deaktiverte beslutningsmodulen og målte at M-37s
     tabeller sto urørt. Det er evidens for at M-37s tilstand overlevde m01s
-    rollback — ikke for at M-37 selv kan rulles tilbake. Arbeideren er en
-    egen prosess med egen unit, og den unitten er ikke engang installert.
+    rollback — ikke for at M-37 selv kan rulles tilbake. Til 17/9-2026 sto
+    punktet `nei` av den grunn. Nå står det `ja` på M-37s EGET artefakt
+    (`m37-rollback-v1`, lease-formen: arbeideren rullet midt i en lease),
+    og testen måler at det er nettopp det — ikke m01s.
 
-    MUTASJONEN SOM DREPER DENNE: sett `rollback_testet` til `ja` i
-    m37-manifestet med m01s artefakt.
+    MUTASJONEN SOM DREPER DENNE: pek punktet på m01s artefakt igjen.
     """
+    import hashlib
+    import json
     m37 = _manifester()["m37_unntak"]
     punkt = m37["staging_sjekkliste"]["rollback_testet"]
-    assert punkt["status"] == "nei", punkt
-    assert "artefakt" not in punkt, (
-        "m37 peker på et rollbackartefakt uten å ha kjørt en rollback")
-    assert m37["status"] != "aktiv", (
-        "m37 er aktiv med et uavklart sjekklistepunkt")
+    assert punkt["status"] == "ja", punkt
+    assert punkt["krav_id"] == "m37-rollback-v1", (
+        "m37s rollbackpunkt låner et annet kravs konklusjon")
+    art = REPOROT / punkt["artefakt"]
+    assert art.is_file(), art
+    assert hashlib.sha256(art.read_bytes()).hexdigest() == punkt["artefakt_sha256"]
+    d = json.loads(art.read_text(encoding="utf-8"))
+    assert d["krav_id"] == "m37-rollback-v1" and d["oppsett"]["modul"] == "m37_unntak"
+    assert d["oppsett"]["unit"] == "disponit-m37", (
+        "artefaktet målte ikke M-37s egen unit")
+    assert m37["status"] == "aktiv"
 
 
 def test_m37s_avhengigheter_er_aktive_for_den_selv_kan_bli_det():

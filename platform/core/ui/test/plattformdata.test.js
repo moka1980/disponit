@@ -92,7 +92,7 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-14 fra 2026-09-17: alle seks punkter ja — fasit, suite, bevisrunde,
     // ytelse og flippedrillen (`m14-rollback-v1`); manifestet flippet til
     // aktiv/produksjon i samme endring.
-    [2, 14, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
+    [2, 14, 17, 23, 26, 37, 44, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
@@ -109,7 +109,7 @@ test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
   // Da faller løftet på det FØRSTE leddet alene, uansett hva verten sier.
   settProduksjonsmiljo(true);
   assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
-  assert.equal(erTilgjengelig(37), false, "M-37 bygges, uansett miljø");
+  assert.equal(erTilgjengelig(35), false, "M-35 bygges, uansett miljø");
   for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
     settProduksjonsmiljo(verdi);
     assert.equal(produksjonsmiljo(), false,

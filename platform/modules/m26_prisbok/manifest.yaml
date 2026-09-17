@@ -41,8 +41,8 @@
 id: m26_prisbok
 navn: Prisbok- og tilbudsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m26-v1` bærer invarianten
 # `rabattgrense_hardkodet` — hvor mye en pris kan avvike fra boka før
 # det er et funn, er tenantens tall og ikke modulens.
@@ -156,13 +156,25 @@ staging_sjekkliste:
     notat: >-
       Kryss-tenant-sveipen over 3 tenanter tok 13 ms mot grensen 30 000 ms.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44: MÅLT 17/9 i
-    # modulregisteret har `m26_prisbok` NØYAKTIG ÉN release, `m26-r1`.
-    # Arbeideren er installert og kjører (`disponit-m26.service`); det er
-    # historikken som mangler, ikke maskineriet.
-    status: blokkert
-    blokkert_av: >-
-      m26_prisbok har én release (m26-r1). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-sveipmodul.py` (samme lest
+    # som M-14/M-44): forgjenger med regnbare bytes i registeret, den
+    # claimende releasen drenert MENS oppdrag 132 var claimet, claim-stopp
+    # 25.0 s uten nytt claim, rullbakken bootet med eget modultoken og
+    # claimet/fullførte 133, kandidaten overtok og fullførte 134.
+    # Prøvesendingene gikk til eiers testadresse.
+    status: ja
     krav_id: m26-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m26-rollback-v1-20260917T125946Z.json
+    artefakt_sha256: 6af751e0318e6591c40435723e23bfd9b941f75d94bad478b90fcb9fa382ef73
+    notat: >-
+      Flippedrill 17/9: drillet m26-r3-f0486382 → rullbakk m26-drill-rb-20260917T125858
+      (forgjengerens bytes, m26-r2-98a62a09) → kandidat m26-drill-k-20260917T125858.
+      Null claims etter dreneringen, rent utfall med kvittering på det
+      løpende oppdraget, rullbakken og kandidaten claimet og fullførte hvert
+      sitt, digestene re-regnet av porten.

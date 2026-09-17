@@ -3,10 +3,10 @@
 id: m37_unntak
 navn: Unntaks- og behandlingsmotor (M-37)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-# IKKE klar for aksept: `rollback_testet` er `nei`, og det er en ekte
-# mangel, ikke en formalitet. Se punktet nederst.
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+# 17/9-2026: alle seks punkter ja — rollback_testet ble det siste, drillet
+# i lease-form (`m37-rollback-v1`). Flippet aktiv/produksjon sammen med M-17.
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # all reparasjon går gjennom policyporten
   - m02_revisjonslogg          # én skrivevei til evidenskjeden
@@ -102,17 +102,27 @@ staging_sjekkliste:
       gjennomstrømning alene, men at behandlingen ikke spiser API-ets
       ytelsesmargin. Hele kjøringen tok 10,1 s mot taket på 300.
   rollback_testet:
-    # NEI, og det er en reell mangel.
-    #
-    # `rollback-m01-v1` deaktiverte BESLUTNINGSMODULEN og målte at
-    # oppdrag/reparasjonsoperasjoner sto urørt gjennom av-vinduet. Det er
-    # evidens for at M-37s tilstand overlevde m01s rollback — ikke for at
-    # M-37 SELV kan rulles tilbake. Arbeideren er en egen prosess med egen
-    # unit (`deploy/staging/disponit-m37.service`), og den unitten er ikke
-    # engang installert på staging.
-    #
-    # Å dele m01-artefaktet her ville vært å låne en konklusjon fra en
-    # måling som stilte et annet spørsmål. Punktet står `nei` til en
-    # rollback av arbeideren faktisk er kjørt og målt.
-    status: nei
-    krav_id: rollback-m01-v1
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-m37.py`, i LEASE-form
+    # (arbeideren er ingen sveipmodul): sak 159 var claimet med
+    # levende lease (118 s igjen) da den drillede prosessen ble
+    # drept og unitten bootet fra forgjengerens katalog; rullbakken frigjorde
+    # den utløpte leasen, re-claimet med generasjon 2 etter
+    # 120 s og behandlet den nøyaktig én gang; det gamle claim-tokenet
+    # traff 0 rader; kandidaten (de drillede bytene) overtok og
+    # behandlet sak 160. Sakene oppsto gjennom planrunden (vilkårsbrudd
+    # på purring.send) — ingenting ble sendt.
+    status: ja
+    krav_id: m37-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_claim_generation_ved_rulling
+      - maalt.overtakelse_claim_generation
+      - maalt.gammel_claim_traff_rader
+      - maalt.behandlinger_av_inflight
+      - maalt.rullback_cwd_er_forgjengerens
+    artefakt: deploy/staging/artefakter/m37-rollback-v1-20260917T142645Z.json
+    artefakt_sha256: 2422144162670999cf491beffbc81aee4a86f815f42c8e60941dd72ab44c2c2a
+    notat: >-
+      Flippedrill 17/9: drillet 57892c5f → rullbakk fra
+      f0486382 (samme m37-bytes, 464c0339cc58) → kandidat
+      57892c5f. Lease-formen måler prosessen, ikke bytene: én
+      behandling, ingen tapt sak, ingen dobbel, fencingen holdt.

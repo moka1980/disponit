@@ -27,8 +27,11 @@
 id: m17_kundeservice
 navn: Kundeserviceagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+# 17/9-2026: alle seks punkter ja (fasit, suite, bevisrunde, ytelse og
+# flippedrillen `m17-rollback-v1`). Flippet aktiv/produksjon samme dag som
+# M-37 fikk sitt rollback-punkt (avhengigheten registeret krever aktiv).
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: klassifiseringen er en modellkjøring som
 # går gjennom policyporten (m01), hver henvendelse og hvert utkast
 # bokføres (m02), og det som ikke kan avgjøres går til M-37s kø.
@@ -186,19 +189,25 @@ staging_sjekkliste:
       10 000. Begge tidene er målt av produsenten med veggklokke, og
       porten avviser 0.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — samme dom som M-23 (15/9), og av samme
-    # grunn: MÅLT 16/9 i modulregisteret på disponit-srv har
-    # `m17_kundeservice` NØYAKTIG ÉN release, `m17-r1`. En flippedrill
-    # må rulle tilbake TIL forgjengerens bytes
-    # (`krev_release_digest_bundet` i `m17-rollback-v1`), og det finnes
-    # ingen forgjenger. Å registrere en «rullbakk» nå ville vært
-    # bedrageriet porten finnes for å fange (m56, #117 runde 6).
-    #
-    # Arbeideren er installert og kjører (`disponit-m17.service`), så
-    # blokkeringen er ikke at maskineriet mangler — det er historikken.
-    status: blokkert
-    blokkert_av: >-
-      m17_kundeservice har én release (m17-r1). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-sveipmodul.py` (samme lest
+    # som M-14/M-44/M-26/M-23): forgjenger med regnbare bytes i registeret,
+    # den claimende releasen drenert MENS oppdrag 140 var claimet,
+    # claim-stopp 25.0 s uten nytt claim, rullbakken bootet med eget
+    # modultoken og claimet/fullførte 141, kandidaten overtok og
+    # fullførte 142. Prøvesvarene gikk til eiers testadresse.
+    status: ja
     krav_id: m17-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m17-rollback-v1-20260917T130239Z.json
+    artefakt_sha256: c7f91266dc5c732680dae55add202a68731b2274b7fb9d7f289a61f5260e39cc
+    notat: >-
+      Flippedrill 17/9: drillet m17-r3-f0486382 → rullbakk m17-drill-rb-20260917T130143
+      (forgjengerens bytes, m17-r2-98a62a09) → kandidat m17-drill-k-20260917T130143.
+      Null claims etter dreneringen, rent utfall med kvittering på det
+      løpende oppdraget, rullbakken og kandidaten claimet og fullførte hvert
+      sitt, digestene re-regnet av porten.
