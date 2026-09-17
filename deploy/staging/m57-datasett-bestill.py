@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M-57 datasettpunktet: bunten er golden v2 EKSAKT — hver av de 24
+"""M-57 datasettpunktet: bunten er golden v3 (ankeret i produksjonsform) — hver av de 24
 tekstene ti ganger (240 søknader), uten navn i teksten og uten hilsen, så
 modellen ser nøyaktig bytene ankeret ble målt på (31/8). Kjøres på verten
 som root; tokenet leses fra en root-eid fil og printes aldri. Skriver
@@ -10,7 +10,7 @@ GJENTAK = int(sys.argv[1]) if len(sys.argv) > 1 else 10
 API = "https://disponit.com"
 PROFIL = "1f5a201c-e602-4c1d-bb08-8ad4ade2518a@1"
 tok = Path(os.environ.get("DISPONIT_BESTILLERTOKENFIL", "/root/m57-datasett.token")).read_text(encoding="utf-8").strip()
-gfil = Path("deploy/staging/m57-golden-v2.json")
+gfil = Path("deploy/staging/m57-golden-v3.json")
 golden = json.loads(gfil.read_text(encoding="utf-8"))
 buf = io.BytesIO(); soknader = []
 with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:

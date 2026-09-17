@@ -1,0 +1,337 @@
+{
+  "bestatt": true,
+  "krav_id": "m57-datasett-v1",
+  "maalt": {
+    "bunt_soknader": 240,
+    "datasett_sha_lokal": "563658de9d8c732ea48bcb8f09c855e4245b52601c99d5deacb492653e998fd2",
+    "datasett_sha_staging": "563658de9d8c732ea48bcb8f09c855e4245b52601c99d5deacb492653e998fd2",
+    "fasitavvik": 0,
+    "per_golden": [
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-01"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-02"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-03"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-04"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-05"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-06"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-07"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-08"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-09"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-10"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-11"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-12"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-13"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-14"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-15"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-16"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-17"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-18"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-19"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-20"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-21"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": false, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": false,
+          "sky": false
+        },
+        "golden_id": "g-22"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": false, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": false,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-23"
+      },
+      {
+        "antall": 10,
+        "avvik": 0,
+        "dommer": {
+          "{\"drift\": true, \"norsk\": true, \"sky\": false}": 10
+        },
+        "forventet": {
+          "drift": true,
+          "norsk": true,
+          "sky": false
+        },
+        "golden_id": "g-24"
+      }
+    ],
+    "umatchet": 0
+  },
+  "oppsett": {
+    "bevisrot_sha256": "77cf24c0aa35c7e8f33b1e8b100c6edbeef70a404b12b77338a822df1ae48bc3",
+    "datasett_fil": "deploy/staging/m57-golden-v3.json",
+    "forste_claim_ts": "2026-09-17T16:09:25.413168+00:00",
+    "modul": "m57_ats",
+    "oppdrag_id": 148,
+    "resultat": "utfort",
+    "status_ts": "2026-09-17T17:09:16.121937+00:00",
+    "tenant": "t-m57fasit",
+    "vert": "disponit-srv"
+  },
+  "ts": "2026-09-17T17:26:16.235183+00:00"
+}

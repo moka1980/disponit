@@ -2216,8 +2216,11 @@ KRAVGRENSER["m57-suite-v1"] = {
 
 
 #: Datasettet M-57s regresjonsanker er målt på — de innsjekkede bytene
-#: CI bærer; staging-leddet hasher fila det faktisk leste.
-M57_DATASETT_FIL = "deploy/staging/m57-golden-v2.json"
+#: CI bærer; staging-leddet hasher fila det faktisk leste. v3 (17/9) er
+#: ankeret i PRODUKSJONSFORM: dommene målt gjennom døra på verten, 10/10
+#: like per tekst; fem tekster fikk en annen dom enn v2 (31/8, målt uten
+#: hilsen/maskering) — v2-dommen står i hver av dems notat.
+M57_DATASETT_FIL = "deploy/staging/m57-golden-v3.json"
 
 #: Harnessen for datasettpunktet — bestillingen (bunten i produksjonsform:
 #: golden-teksten + hilsen med navnet blindingen maskerer) og produsenten.

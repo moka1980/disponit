@@ -18,14 +18,17 @@ from pathlib import Path
 ROT = Path(__file__).resolve().parents[3]
 
 
+def _fil():
+    import manifestskjema as m
+    return ROT / m.M57_DATASETT_FIL
+
+
 def _golden():
-    return json.loads((ROT / "deploy/staging/m57-golden-v2.json")
-                      .read_text(encoding="utf-8"))
+    return json.loads(_fil().read_text(encoding="utf-8"))
 
 
 def _sha():
-    return hashlib.sha256((ROT / "deploy/staging/m57-golden-v2.json")
-                          .read_bytes()).hexdigest()
+    return hashlib.sha256(_fil().read_bytes()).hexdigest()
 
 
 def _bevisrot():
@@ -43,7 +46,7 @@ def _art(**over):
         "bestatt": True,
         "oppsett": {"modul": "m57_ats", "vert": "disponit-srv",
                     "tenant": "t-m57fasit", "oppdrag_id": 146,
-                    "datasett_fil": "deploy/staging/m57-golden-v2.json",
+                    "datasett_fil": "deploy/staging/m57-golden-v3.json",
                     "bevisrot_sha256": _bevisrot(),
                     "resultat": "utfort",
                     "forste_claim_ts": "2026-09-17T15:40:00+00:00",
@@ -66,7 +69,7 @@ def test_grensen_finnes_og_binder_datasettpunktet():
     assert m.ARTEFAKTSKJEMAER["m57-datasett-v1"] == "artefakt-m57-datasett-skjema.json"
     assert set(g["punktbinding"]) == {"syntetisk_datasett_likt_lokalt"}
     assert (ROT / m.M57_DATASETT_FIL).is_file()
-    assert m.M57_DATASETT_FIL == "deploy/staging/m57-golden-v2.json"
+    assert m.M57_DATASETT_FIL == "deploy/staging/m57-golden-v3.json"
 
 
 def test_gront_artefakt_bestaar_begge_portene():
@@ -114,9 +117,18 @@ def test_hver_akse_feller():
 
 
 def test_ankeret_er_bare_forventninger_og_tekster():
-    """Ankeret bærer ingen dom fra modellen i dag — bare tekst og
-    forventning per id, og hver id er unik (matchingen er på teksten)."""
+    """Ankeret bærer tekst og forventning per id, hver id er unik
+    (matchingen er på teksten), og v3 er v2s tekster ord for ord — bare
+    dommene er rekalibrert (fem av dem, dokumentert i notatet)."""
     g = _golden()
+    v2 = json.loads((ROT / "deploy/staging/m57-golden-v2.json").read_text(encoding="utf-8"))
+    assert [x["tekst"] for x in g] == [x["tekst"] for x in v2]
+    assert [x["vekter"] for x in g] == [x["vekter"] for x in v2]
+    endret = [x["id"] for x, y in zip(g, v2) if x["forventet_oppfylt"] != y["forventet_oppfylt"]]
+    assert endret == ["g-10", "g-11", "g-12", "g-14", "g-23"]
+    for x, y in zip(g, v2):
+        if x["forventet_oppfylt"] != y["forventet_oppfylt"]:
+            assert "REKALIBRERT 17/9" in x["notat"] and json.dumps(y["forventet_oppfylt"]) in x["notat"]
     assert len(g) == 24 and len({x["id"] for x in g}) == 24
     # produsenten matcher på de første 80 tegnene (blindingen kan maskere
     # navn lenger ut) — de må være unike, ellers er matchingen tvetydig
