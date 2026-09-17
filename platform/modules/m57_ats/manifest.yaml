@@ -66,49 +66,66 @@ staging_sjekkliste:
     notat: >-
       Kjørt 17/9 på disponit-srv som administrator fra et FULLT utsjekk av 9bb3082a mot en FERSK testbase med alle rolle-DSN-ene: 5452 tester, 0 feilet, 0 hoppet; M-57-andelen 398 av 398, exitkode 0. Første kjøring falt i andelen alene på et grant test_pr008 hadde strippet (rettighetspasset er nå én funksjon deployen og testene deler); denne kjøringen er etter fiksen.
   syntetisk_datasett_likt_lokalt:
-    # GRENSEN ER KONSISTENT (#541 lukket 17/9): skjemaet bærer nå de
-    # bundne målingene (`bunt_soknader`, `fasitavvik`,
-    # `datasett_sha_lokal/_staging`) som valgfrie felt, og
-    # `_m57_terskler` måler dem når de finnes. Det som mangler er
-    # KJØRINGEN: en syntetisk søknadsbunt med fasit-rangering drevet både
-    # lokalt (CI) og på staging, byte-lik. Statusen er `nei` fordi den
-    # ikke er gjort — ikke fordi grensen er uflippbar.
-    status: nei
-    krav_id: m57-v1
+    # MÅLT 17/9 I M-02s FORDELINGSFORM: golden v3 (ankeret i produksjonsform —
+    # teksten + hilsen med navnet blindingen maskerer) som én bunt på 240
+    # søknader (24 tekster × 10) gjennom døra på verten, oppdrag 148.
+    # Tallene er regnet av kandidatartefaktene og re-summert av porten;
+    # begge datasett-digestene er treets; hver tekst fikk nøyaktig én dom
+    # over alle ti gjentakene. v2 (31/8) var målt på de nakne tekstene og
+    # dømte fem av dem annerledes — v2-dommen står i v3s notat.
+    status: ja
+    krav_id: m57-datasett-v1
+    bevismaalinger:
+      - maalt.bunt_soknader
+      - maalt.fasitavvik
+      - maalt.datasett_sha_lokal
+      - maalt.datasett_sha_staging
+    artefakt: deploy/staging/artefakter/m57-datasett-v1-20260917T172616Z.json
+    artefakt_sha256: e9e2569c558d0953e3a6e97850a7cfd561395538452ee2ac3314d37f6e8f2023
     notat: >-
-      KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
-      lokalt (CI) og på staging, med BEGGE datasett-identitetene i
-      artefaktet og byte-likhet mellom dem (m02-fordelingsformen).
-      Grensen: datasett_min_soknader 200, datasett_maks_fasitavvik 0,
-      krev_datasett_sha_lik. Skjemaet bærer feltene (#541). Statusen er
-      `nei` fordi kjøringen ikke er gjort.
+      Oppdrag 148 i t-m57fasit, 17/9: 240 søknader, 0 avvik fra
+      ankeret, 0 umatchet, én dom per tekst; datasett-sha lik
+      lokalt og på staging (563658de9d8c). Harnessen
+      (bestilling + produsent) er bevisrot.
   revisjonslogg_korrekt:
-    # GRENSEN ER KONSISTENT (#541): `revisjon_avskruinger`,
-    # `revisjon_signaturer`, `revisjon_frigivelser` og
-    # `revisjon_hendelser_uten_identitet` står i skjemaet. Avskruingsdøra
-    # etterlater nå en varig hendelse (#159 lukket 30/8). Målingen er ikke
-    # gjort.
+    # MÅLT 17/9 HVA SOM FINNES: signeringen (056, `signer_utsendingsliste`)
+    # skriver bare `utsendingssignatur`; frigivelsen fødes i utsenderens
+    # klaim-dør (078/081) og skriver bare `utsendingsfrigivelse` + oppdrag.
+    # Ingen av dem skriver en hendelse med identitet i revisjonsloggen —
+    # det §6 lover. Blinding-AVSKRUINGEN ble FJERNET som dør ved #159
+    # (endepunktet svarer kodet 409 `blinding_avskruing_krever_159`), så
+    # «minst én avskruing» kan aldri måles; grensen må revideres til
+    # #159s utfall (døra nekter, null avskruinger). Punktet er dermed
+    # PRODUKTARBEID (evidensrader for signatur og frigivelse, samme form
+    # som m6_evidens) pluss en menneskelig signatur i flaten — ikke en
+    # kjøring som mangler. Neste arc.
     status: nei
     krav_id: m57-v1
     notat: >-
-      KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
-      står i revisjonsloggen, målt som hendelser med identitet — minst én
-      av hver, null uten identitet. Skjemaet bærer feltene (#541).
-      Statusen er `nei` fordi målingen ikke er gjort.
+      KREVER: at signaturhendelser og frigivelser står i revisjonsloggen
+      som hendelser med identitet (minst én av hver, null uten), og en
+      grense revidert til #159s utfall for avskruingen. Produktet skriver
+      ikke disse hendelsene i dag (målt 17/9); en egen arc.
   feilinjisering_til_unntakskø:
-    # GRENSEN ER KONSISTENT (#541): `injisert_jobber`, `unntakskoe_poster`
-    # og `koeposter_uten_jobbinding` står i skjemaet. Første halvdel (SP-3,
-    # rent feilutfall) måles av invarianten
-    # `kjoring_delvis_resultat_promotert`; andre halvdel — at feilen
-    # faktisk ble en post i unntakskøen — er ikke injisert ennå.
-    status: nei
-    krav_id: m57-v1
+    # INJISERT 17/9 PÅ disponit-srv (`m57-feilinjisering.py`): én giftig bunt
+    # (arkivmedlem 8 MiB nuller, over komprimeringsgrensen 100:1) bestilt
+    # som kundens bestilling. Arbeideren reiste Buntfeil → Kjoringsfeil og
+    # kvitterte `feilet` med kode (SP-3: rent utfall, ingen promotert
+    # liste); API-et satte oppdraget `feilet` og — kontrakten er
+    # kompenserende — fødte saken i M-37s kø bundet til oppdraget
+    # (`sak_for_oppdrag`, årsak utforelse_feilet; #552, migrasjon 209).
+    status: ja
+    krav_id: m57-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_jobber
+      - maalt.unntakskoe_poster
+      - maalt.koeposter_uten_jobbinding
+    artefakt: deploy/staging/artefakter/m57-feilinjisering-v1-20260917T182951Z.json
+    artefakt_sha256: a9efd836718cf213d73f9ef3f2d96d9cee6267f0be852d8d734df11dc382744f
     notat: >-
-      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
-      promotert liste (SP-3) OG leverte en post i unntakskøen:
-      min_injiserte_jobber 1, min_unntakskoe_poster 1,
-      maks_koeposter_uten_jobbinding 0. Skjemaet bærer feltene (#541).
-      Statusen er `nei` fordi injiseringen ikke er kjørt.
+      Oppdrag 154 i t-m57fasit, 17/9: feilet (kjoring_avbrutt) etter
+      15 s, 0 promoterte artefakter, 1 køpost bundet
+      til oppdraget (sak 161, oppdrag/utforelse_feilet), 0 uten binding.
   ytelse_bestatt:
     # MÅLT 17/9 PÅ TAKET VERTEN BÆRER (eiers vedtak natt til 17/9: «vi kan
     # gå videre med maks søknader som kan godta den maskinen vi har i
@@ -134,13 +151,29 @@ staging_sjekkliste:
       innenfor §4s frist på 240. Porten krever nøyaktig taket, re-regner
       minuttene av tidsstemplene og binder produsent + parsing.py.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44/M-26/M-14: MÅLT
-    # 17/9 i modulregisteret har `m57_ats` NØYAKTIG ÉN release,
-    # `m57-r1-20260827`. Arbeideren kjører (`disponit-m57.service`); det
-    # er historikken som mangler, ikke maskineriet.
-    status: blokkert
-    blokkert_av: >-
-      m57_ats har én release (m57-r1-20260827). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
-    krav_id: m57-v1
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-sveipmodul.py` (lesten fra
+    # M-14/M-44/M-26/M-23/M-17): M-57 har egen release og modultoken.
+    # Releasens digest er MODELLENS (registrer-m57-ats.py); `bytt_release`s
+    # M-31-port krevde en bestått evalueringskjøring for den — kjørt samme
+    # dag (24/24 mot golden v2, registrert som ren hex som releasen).
+    # Bestillingene gikk som kundens (inndata → bunt → bestilling som
+    # bestiller). Den claimende releasen drenert MENS oppdrag 151 var
+    # claimet, claim-stopp 25 s uten nytt claim, rullbakken bootet fra
+    # forgjengerens katalog med eget modultoken og claimet/fullførte
+    # 152, kandidaten overtok og fullførte 153.
+    status: ja
+    krav_id: m57-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m57-rollback-v1-20260917T173014Z.json
+    artefakt_sha256: f1dfd15e92744414dda02f2794bcd8baaca431a0b3a838ecb115c0d92d95e05b
+    notat: >-
+      Flippedrill 17/9: drillet m57-r3m-0be44da4 → rullbakk m57-drill-rb-20260917T172721
+      (fra m57-r2m-5bb38b53s katalog) → kandidat m57-drill-k-20260917T172721.
+      Null claims etter dreneringen, rent utfall med kvittering på det
+      løpende oppdraget, rullbakken og kandidaten claimet og fullførte hvert
+      sitt; digesten er modellens og lik registerets for alle tre.

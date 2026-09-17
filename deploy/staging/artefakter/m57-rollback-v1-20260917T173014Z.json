@@ -1,0 +1,55 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "digest_likhet": true,
+    "drillet_livslop": "draining",
+    "kandidat_livslop": "claiming",
+    "modulstatus": "aktiv",
+    "rullback_bytes_er_forgjengerens": true,
+    "rullback_livslop": "draining",
+    "unit_override_fjernet": true
+  },
+  "identiteter": {
+    "inflight_oppdrag_id": "151",
+    "kandidat_oppdrag_id": "153",
+    "probe_oppdrag_id": "150",
+    "rullback_oppdrag_id": "152"
+  },
+  "krav_id": "m57-rollback-v1",
+  "maalt": {
+    "claims_etter_drenering": 0,
+    "falske_verdikter": 0,
+    "inflight_har_signert_kvittering": true,
+    "inflight_oppdrag": 1,
+    "inflight_utfall": "utfort",
+    "kandidat_claimet_oppdrag": 1,
+    "kandidat_har_signert_kvittering": true,
+    "overtakelse_s": 1.0,
+    "release_digest_bundet": true,
+    "rullback_claimet_oppdrag": 1,
+    "rullback_har_signert_kvittering": true,
+    "rullback_overtakelse_s": 1.0,
+    "rullback_promoterte": 0,
+    "ventetid_ubehandlet_s": 25.0
+  },
+  "oppsett": {
+    "drillet_digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "drillet_katalog": "/opt/disponit/releases/0be44da41f427608cc3f9719595b845742ac4b04",
+    "drillet_release": "m57-r3m-0be44da4",
+    "forgjenger_digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "forgjenger_katalog": "/opt/disponit/releases/5bb38b5388be25961f216c6ed7e7991b5863a9ec",
+    "forgjenger_release": "m57-r2m-5bb38b53",
+    "kandidat_digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "kandidat_release": "m57-drill-k-20260917T172721",
+    "kontrakt_hash": "99c429cfcad5d722e2939a32fd51588677c0f8acc5ab8f9588a77343fa4d9ac6",
+    "kontraktversjon": 1,
+    "miljo": "staging",
+    "modul": "m57_ats",
+    "module_epoch": 0,
+    "rullback_digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "rullback_release": "m57-drill-rb-20260917T172721",
+    "tenant": "t-m57fasit",
+    "vert": "disponit-srv"
+  },
+  "ts": "2026-09-17T17:30:14.517142+00:00"
+}

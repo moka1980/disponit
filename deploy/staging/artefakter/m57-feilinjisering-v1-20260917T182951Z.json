@@ -1,0 +1,28 @@
+{
+  "bestatt": true,
+  "krav_id": "m57-feilinjisering-v1",
+  "maalt": {
+    "feilet_etter_s": 15.1,
+    "feilkode": "kjoring_avbrutt",
+    "injisert_jobber": 1,
+    "injisert_oppdrag_id": 154,
+    "koeposter_uten_jobbinding": 0,
+    "kvittering_resultat": "feilet",
+    "oppdrag_status": "feilet",
+    "promoterte_artefakter": 0,
+    "sak_arsak": "utforelse_feilet",
+    "sak_id": 161,
+    "sak_oppdrag_id": 154,
+    "sak_sakskilde": "oppdrag",
+    "sak_status": "ny",
+    "unntakskoe_poster": 1
+  },
+  "oppsett": {
+    "gift": "zip-medlem 8 MiB nuller (forhold > 100:1)",
+    "modul": "m57_ats",
+    "release": "m57-drill-k-20260917T172721",
+    "tenant": "t-m57fasit",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-17T18:29:51.781623+00:00"
+}
