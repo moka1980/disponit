@@ -58,20 +58,62 @@ i18n_prefiks: adresse
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 17/9 PÅ disponit-srv med den GENERISKE suiteprodusenten
+    # (#557) — første modul som bruker den. Fersk base fra utsjekket,
+    # hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m19-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m19-suite-v1-20260917T230136Z.json
+    artefakt_sha256: c0cc00c714d2e2fda6e13b1598ab5dec1e74d33976efd7054389a8b9d8728928
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5493 tester, 0 feilet, 0 hoppet; modulens andel
+      34 tester, 0 feilet, 0 hoppet. Bevisroten dekker
+      produsenten OG andelen, så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 17/9 PÅ disponit.com: settet i `m19_fasit.py` gir hver av
+    # adressekontrollens fem funntyper nøyaktig ett subjekt, og ett
+    # subjekt som skal være RENT. Alt gjennom modulens egne dører; sveipen
+    # kalt med sin egen funksjon uten tenantkontekst, som arbeideren.
+    # `ingen_krav` er en regel om TENANTEN, så settet har to tenanter.
+    status: ja
+    krav_id: m19-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T224653Z.json
+    artefakt_sha256: 04e4676dca5c47b068416d0a793b6986d42e36ba66eb99175325c43c3dee19dc
     notat: >-
-      KREVER: adresser med KJENT fasit for hva originalen var og hva
-      normaliseringen gjorde med den, kjørt likt lokalt og på staging.
+      Runde 9a5defa6: 6 subjekter, 0 funnavvik. Første sveip ga
+      6 nye funn (også det rene subjektet, som fødes ukontrollert);
+      kontrollen kom mellom kjøringene, og andre sveip ga 0 nye og
+      lukket 1. Dommen re-regnes av per-subjekt-tabellen.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte — ikke lånt fra en annen måling.
+    status: ja
+    krav_id: m19-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T224653Z.json
+    artefakt_sha256: 04e4676dca5c47b068416d0a793b6986d42e36ba66eb99175325c43c3dee19dc
     notat: >-
-      KREVER: at hver kontroll står i evidenskjeden, med hvem som gjorde
-      den og hvilken metode.
+      17 hendelser i kjeden (adresse_registrert: 6, adressekontroll_registrert: 4, adressekrav_satt: 1, adressesubjekt_opprettet: 6),
+      0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
     status: nei
     notat: >-
