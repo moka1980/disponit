@@ -128,6 +128,12 @@ MODULER: dict[str, dict] = {
         # planrunden. Drillen går samme vei med et bootstrap-token for
         # tenanten, laget på verten og tilbakekalt etterpå.
         "bestill": "api", "planunit": None, "krav_id": "m57-rollback-v1",
+        # Releasens digest er MODELLENS (registrer-m57-ats.py: «denne
+        # modulens image ER modellen»), og M-31-porten i `bytt_release`
+        # krever en bestått evalueringskjøring for nettopp den. Trebytene
+        # bevitnes av unit-overriden (WorkingDirectory), ikke av digesten.
+        "digest": "modell", "konfig": "/etc/disponit/m57/konfig",
+        "digestnokkel": "DISPONIT_M57_MODELL_DIGEST",
         "tokenfil": "/etc/disponit/m57/DISPONIT_MODULTOKEN",
         "gruppe": "disponit-m57",
         "forbered": "forbered_m57", "nytt": "nytt_m57",
@@ -886,16 +892,28 @@ def naa(m):
 
 
 # ------------------------------------------------------------------ main
+def digest_for(k: dict, kat: Path) -> str:
+    """Releasens digest for katalogen: treets bytes (sveipmodulene), eller
+    modellens fra arbeiderens konfig (M-57) — samme verdi for hver release,
+    som i registeret."""
+    if k.get("digest") != "modell":
+        return sveipmodul_digest(kat, k["modul"])
+    for linje in Path(k["konfig"]).read_text(encoding="utf-8").splitlines():
+        if linje.startswith(k["digestnokkel"] + "="):
+            return linje.split("=", 1)[1].strip().strip("'\"").removeprefix("sha256:")
+    raise SystemExit(f"AVBRUTT: {k['digestnokkel']} mangler i {k['konfig']}")
+
+
 def forbered(m, a, k):
     """--forbered: r2 (forgjengerkatalogen) og r3 (den drillede
     katalogen) inn i registeret, bytt til dem i rekkefølge."""
     modul = a.modul
     drillet, kver, khash, _dg = den_ene_claimende(m, modul)
     f_kat, d_kat = Path(a.forgjenger_katalog), Path(a.drillet_katalog)
-    r2 = f"{k['prefiks']}-r2-{f_kat.name[:8]}"
-    r3 = f"{k['prefiks']}-r3-{d_kat.name[:8]}"
+    r2 = f"{k['prefiks']}-r2{a.release_suffiks}-{f_kat.name[:8]}"
+    r3 = f"{k['prefiks']}-r3{a.release_suffiks}-{d_kat.name[:8]}"
     for rel, kat in ((r2, f_kat), (r3, d_kat)):
-        dg = sveipmodul_digest(kat, modul)
+        dg = digest_for(k, kat)
         registrer_release(m, modul, rel, kver, khash,
                           manifest_hash_i(kat, modul), dg)
         bytt_release(m, modul, rel, kver, khash)
@@ -916,6 +934,8 @@ def main() -> int:
     ap.add_argument("--drillet-katalog", default="/opt/disponit/aktiv")
     ap.add_argument("--tenant", default=None)
     ap.add_argument("--forbered", action="store_true")
+    ap.add_argument("--release-suffiks", default="",
+                    help="skiller et nytt r2/r3-par fra et tidligere (radene er immutable)")
     ap.add_argument("--ut", type=Path)
     a = ap.parse_args()
     k = MODULER[a.modul]
@@ -941,10 +961,10 @@ def main() -> int:
     forgjenger, forgjenger_digest = forgjengeren(m, modul, drillet, kver, khash)
     f_kat = Path(a.forgjenger_katalog).resolve()
     d_kat = Path(a.drillet_katalog).resolve()
-    if sveipmodul_digest(f_kat, modul) != forgjenger_digest:
+    if digest_for(k, f_kat) != forgjenger_digest:
         raise SystemExit(f"AVBRUTT: {f_kat} bærer ikke forgjengerens bytes"
                          f" ({forgjenger} {forgjenger_digest[:12]}…)")
-    if sveipmodul_digest(d_kat, modul) != drillet_digest:
+    if digest_for(k, d_kat) != drillet_digest:
         raise SystemExit(f"AVBRUTT: {d_kat} bærer ikke den drillede releasens"
                          f" bytes ({drillet} {drillet_digest[:12]}…)")
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
@@ -1024,8 +1044,8 @@ def main() -> int:
     modulstatus = m.execute("SELECT status FROM modulhode WHERE modul_id=%s",
                             (modul,)).fetchone()[0]
     m.commit()
-    bundet = (sveipmodul_digest(f_kat, modul) == forgjenger_digest
-              and sveipmodul_digest(d_kat, modul) == drillet_digest
+    bundet = (digest_for(k, f_kat) == forgjenger_digest
+              and digest_for(k, d_kat) == drillet_digest
               and aktiv == d_kat)
     art = {
         "krav_id": k["krav_id"], "ts": datetime.now(timezone.utc).isoformat(),
@@ -1064,7 +1084,7 @@ def main() -> int:
                           "modulstatus": modulstatus,
                           "digest_likhet": True,
                           "rullback_bytes_er_forgjengerens":
-                              sveipmodul_digest(f_kat, modul) == forgjenger_digest,
+                              digest_for(k, f_kat) == forgjenger_digest,
                           "unit_override_fjernet": not _overridefil(unit).exists()},
     }
     global DRILL_FULLFORT
