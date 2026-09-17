@@ -19,7 +19,7 @@ import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
 import { Tidspunkt, TomTilstand, meldLive } from "../komponenter.js";
 import { visningsToken, erGjeldendeVisning } from "../ruter.js";
-import { Bekreftelsesdialog } from "../dialog.js";
+import { Bekreftelsesdialog, Detaljpanel } from "../dialog.js";
 import { medStatus, flateHode } from "./felles.js";
 
 const ADMINSCOPE = "epost:kilde:administrer";
@@ -53,10 +53,11 @@ function statusTekst(status) {
 // vises som reapet (tidspunkt består, teksten er borte).
 function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
                       kanAdministrere, paaSlett) {
-  // ETT PANEL PER LISTE (CodeRabbit): en DOM-node kan bare stå ett sted,
-  // så et delt panel ville havnet under den SISTE kilden — og en melding
-  // åpnet i den første ville dukket opp et helt annet sted på siden.
-  const panel = meldingspanel();
+  // MELDINGEN ÅPNES I SKUFFEN TIL HØYRE (eiers ønske 17/9), samme
+  // mønster som beslutningsdetaljen: lista blir stående, svaret skrives
+  // der man leser, og det finnes ÉN åpen melding om gangen uansett hvor
+  // mange postbokser som listes. Det gamle panelet sto inne i hver
+  // liste og måtte derfor være ett per kilde.
   const boks = el("section", {},
     el("h3", { text: t("ui.epost.meldinger.tittel")
       .replace("{postboks}", kilde.postboks) }));
@@ -89,7 +90,7 @@ function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
   const tbody = el("tbody");
   for (const m of meldinger) {
     const knapp = el("button", { type: "button", text: t("ui.epost.meldinger.apne") });
-    knapp.addEventListener("click", () => hentDetalj(m, panel, kilde));
+    knapp.addEventListener("click", () => hentDetalj(m, kilde));
     // ÉN RAD, IKKE EN STABEL: handlingene hører sammen og står ved siden
     // av hverandre (eiers merknad 10/9).
     const handlinger = el("div", { class: "knapperad" }, knapp);
@@ -113,12 +114,6 @@ function meldingsliste(ctx, kilde, alle, avkortet, hentDetalj,
       el("td", {}, handlinger)));
   }
   tabell.append(tbody);
-  // PANELET STÅR OVER LISTA, ikke under den. Under seksten rader måtte
-  // eier bla forbi hele innboksen for å se meldingen han nettopp åpnet —
-  // og skrivefeltet lå enda lenger ned. Over lista er den åpnede
-  // meldingen det første man ser, og lista står igjen under som
-  // navigasjon.
-  boks.append(panel.node);
   if (meldinger.length) boks.append(tabell);
   if (avkortet) {
     boks.append(el("p", { class: "muted", text: t("ui.epost.meldinger.avkortet") }));
@@ -311,24 +306,39 @@ function svarseksjon(m, kilde, kanBehandle, paaEndring) {
   return boks;
 }
 
-function meldingspanel() {
+// MELDINGEN I SKUFFEN TIL HØYRE. Kontrolleren eier ÉN skuff for hele
+// flaten: `vis` åpner den første gangen og BYTTER INNHOLDET når samme
+// melding tegnes på nytt (etter at et svar er lagret eller sendt) — en
+// ny dialog per tegning ville stablet skuffer oppå hverandre og flyttet
+// fokus ut av skrivefeltet ved hver lagring.
+function meldingsskuff() {
   const boks = el("div", { class: "skjemaboks" });
-  boks.hidden = true;
   boks.tabIndex = -1;
+  let ctrl = null;                     // åpen skuff, eller null
+  let apen = null;                     // melding_id skuffen viser
+
+  function sikreSkuff(tittel, meldingId) {
+    if (ctrl && apen === meldingId) return false;
+    if (ctrl) ctrl.lukk();
+    apen = meldingId;
+    ctrl = Detaljpanel({ tittel, innhold: boks,
+      paaLukk: () => { ctrl = null; apen = null; } });
+    return true;
+  }
+
   return {
+    // Beholdt for testene og for kallere som vil peke på innholdet.
     node: boks,
-    fokuser() {
-      boks.focus();
-      if (boks.scrollIntoView) boks.scrollIntoView({ block: "nearest" });
-    },
+    fokuser() { boks.focus(); },
+    lukk() { if (ctrl) ctrl.lukk(); },
     vis(m, kilde, kanBehandle, paaEndring) {
+
       const til = (m.til || []).join(", ");
       const raa = m.kropp || "";
       const ren = lesbarTekst(raa);
       const kropp = el("pre", { class: "epost-kropp",
         text: ren || t("ui.epost.meldinger.tom_kropp") });
       const deler = [
-        el("h3", { text: m.emne || t("ui.epost.meldinger.uten_emne") }),
         el("p", { class: "muted", text: `${m.fra_navn ? m.fra_navn + " " : ""}<${m.fra || "—"}>`
           + (til ? ` → ${til}` : "") }),
         // TIDSPUNKTET OG FRISTEN PÅ ÉN LINJE. Fristen sto som egen
@@ -356,17 +366,23 @@ function meldingspanel() {
           bytt.setAttribute("aria-pressed", String(raatt));
         });
         bytt.setAttribute("aria-pressed", "false");
-        deler.splice(3, 0, el("div", { class: "knapperad" }, bytt));
+        deler.splice(2, 0, el("div", { class: "knapperad" }, bytt));
       }
       if (paaEndring) {
         deler.push(svarseksjon(m, kilde, kanBehandle, paaEndring));
       }
+      const forste = sikreSkuff(m.emne || t("ui.epost.meldinger.uten_emne"),
+                                m.melding_id);
       sett(boks, ...deler);
-      boks.hidden = false;
+      // Ved FØRSTE åpning setter dialogen selv fokus (lukkeknappen);
+      // ved en re-tegning står fokus på et element som nettopp ble
+      // fjernet, og da tar innholdet det.
+      if (!forste) boks.focus();
     },
     feil(tekst) {
+      sikreSkuff(t("ui.epost.meldinger.apne"), null);
       sett(boks, el("p", { role: "alert", text: tekst }));
-      boks.hidden = false;
+      boks.focus();
     },
   };
 }
@@ -452,31 +468,40 @@ export function visEpost(hoved, ctx) {
     },
     (d) => {
       const kilder = d.kilder || [];
-      // Bare det SISTE valget får tegne panelet (CodeRabbit): to raske
+      // Bare det SISTE valget får tegne skuffen (CodeRabbit): to raske
       // klikk er to svar i lufta, og et sent svar for det første skal
       // ikke overskrive det andre — verken som innhold eller som feil.
       // Valget er felles for alle listene: én melding er åpen om gangen.
-      let valgt = null;
+      let valgt = 0;
       // En endring på svaret tegner meldingen på nytt, så tilstanden på
       // skjermen alltid er den registeret har.
-      const hentDetalj = (m, panel, kilde) => {
+      const skuff = meldingsskuff();
+      // VALGET ER EN GENERASJON, ikke bare en id (CodeRabbit): skuffen
+      // kan lukkes og en ANNEN melding åpnes mens et svar er i lufta, og
+      // da skal hverken svaret eller feilen fra det forrige valget tegne
+      // noe. `valgt` teller opp for hvert klikk; en callback som ikke
+      // eier den gjeldende generasjonen, holder kjeft.
+      const hentDetalj = (m, kilde, generasjon = ++valgt) => {
+        const gjelder = () => eierSkjermen() && valgt === generasjon;
+        // RETURNERER KJEDEN (CodeRabbit): `paaEndring` venter på hele
+        // oppfriskningen, så skrivefeltet ikke låses opp før det nye
+        // skjemaet står på skjermen.
         const paaEndring = (kall) => kall()
-          .then(() => hentDetalj(m, panel, kilde))
+          .then(() => (gjelder() ? hentDetalj(m, kilde, generasjon) : null))
           .catch((e) => {
             if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-            panel.feil(e && e.status === 409
+            if (!gjelder()) return;
+            skuff.feil(e && e.status === 409
               ? t("ui.epost.svar.feil_tilstand") : t("ui.epost.feilet"));
           });
-        valgt = m.melding_id;
-        hentEpostMelding(m.melding_id)
+        return hentEpostMelding(m.melding_id)
           .then((full) => {
-            if (!eierSkjermen() || valgt !== m.melding_id) return;
-            panel.vis(full, kilde, kanBehandleUtkast, paaEndring);
-            panel.fokuser();
+            if (!gjelder()) return;
+            skuff.vis(full, kilde, kanBehandleUtkast, paaEndring);
           })
           .catch((e) => {
             if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-            if (valgt === m.melding_id) { panel.feil(t("ui.epost.feilet")); panel.fokuser(); }
+            if (gjelder()) skuff.feil(t("ui.epost.feilet"));
           });
       };
       const deler = [
