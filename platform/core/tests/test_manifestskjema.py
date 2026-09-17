@@ -915,13 +915,17 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # (`m37-rollback-v1`), og m17 — seks ja siden formiddagen, blokkert av
     # avhengigheten — flippes sammen med den.
     # 17/9 (kveld): m06 — rollback i kjerne-form (`m6-rollback-v1`).
+    # 17/9 (natt): m19 — første modul på de GENERISKE sveipprodusentene
+    # for feilinjisering, ytelse og rollback (kjerneformen).
     assert st.aktive == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                          "m14_fakturakontroll", "m17_kundeservice",
-                         "m23_fordring", "m26_prisbok", "m37_unntak",
+                         "m19_adresse", "m23_fordring", "m26_prisbok",
+                         "m37_unntak",
                          "m44_kampanje", "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                           "m14_fakturakontroll", "m17_kundeservice",
-                          "m23_fordring", "m26_prisbok", "m37_unntak",
+                          "m19_adresse", "m23_fordring", "m26_prisbok",
+                          "m37_unntak",
                           "m44_kampanje", "m57_ats", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
