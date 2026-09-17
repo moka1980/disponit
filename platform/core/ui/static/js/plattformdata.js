@@ -37,8 +37,8 @@ export const MODULSTATUS = {
   3: "bygges",      // m03_datakvalitet: under_utvikling, ikke_i_drift
   4: "bygges",      // m04_dataforvalter: under_utvikling, ikke_i_drift
   5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
-  6: "bygges",     // m06_epost: suiten kjøres på nytt etter 210 (slettesynk) —
-                    // flippes tilbake til i_drift i samme PR
+  6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
+                    // (rollback i kjerne-form; fasit og suite målt på nytt etter 210)
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl

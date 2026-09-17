@@ -915,11 +915,11 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # (`m37-rollback-v1`), og m17 — seks ja siden formiddagen, blokkert av
     # avhengigheten — flippes sammen med den.
     # 17/9 (kveld): m06 — rollback i kjerne-form (`m6-rollback-v1`).
-    assert st.aktive == ["m01_policy", "m02_revisjonslogg",
+    assert st.aktive == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                          "m14_fakturakontroll", "m17_kundeservice",
                          "m23_fordring", "m26_prisbok", "m37_unntak",
                          "m44_kampanje", "wcag_audit"], st
-    assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
+    assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                           "m14_fakturakontroll", "m17_kundeservice",
                           "m23_fordring", "m26_prisbok", "m37_unntak",
                           "m44_kampanje", "wcag_audit"], (

@@ -31,9 +31,9 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // den andre uten portverdi.
   assert.equal(modulStatus(1), "klargjort");
   assert.equal(modulStatus(2), "i_drift");
-  // 6: i_drift 17/9 → bygges under re-målingen av suiten etter 210
-  // (slettesynk); flippes tilbake i samme PR når artefaktet er bundet.
-  assert.equal(modulStatus(6), "bygges");
+  // 6: i_drift 17/9 — alle seks punkter ja; fasit og suite målt på nytt
+  // etter 210 (slettesynk) mot fersk base på verten.
+  assert.equal(modulStatus(6), "i_drift");
   // 35 flippet planlagt → bygges 31/8: manifestet (m35_kontinuitet) er
   // avlesningens kilde — 089-registeret, øvelseslogikken og
   // m35-v1-grensen er v1; aksepten krever en målt øvelse (PR-B).
@@ -91,7 +91,7 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-14 fra 2026-09-17: alle seks punkter ja — fasit, suite, bevisrunde,
     // ytelse og flippedrillen (`m14-rollback-v1`); manifestet flippet til
     // aktiv/produksjon i samme endring.
-    [2, 14, 17, 23, 26, 37, 44, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
+    [2, 6, 14, 17, 23, 26, 37, 44, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {

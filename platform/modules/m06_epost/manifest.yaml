@@ -23,8 +23,8 @@
 id: m06_epost
 navn: E-postoperasjonsagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
 # derfor ærlig oppgir ingen: M-6 BESTILLER gjennom policyporten
 # (`epost.behandling` er en bestillingstype, hver kjøring policyvurderes
@@ -43,15 +43,27 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # KJØRES PÅ NYTT: bevisroten dekker innhenteren, og 210 endret den.
-    # Suiten må måles på et tre der dette punktet ikke binder det gamle
-    # artefaktet (porten sammenligner bevisrot mot treet) — derfor `nei`
-    # i kjøringens commit; bindes i neste.
-    status: nei
+    # KJØRT PÅ NYTT 17/9 etter 210 (slettesynk): bevisroten dekker
+    # innhenteren, så det forrige artefaktet (16/9) målte en annen
+    # innhenter. Fersk base fra utsjekket på verten, hele suiten.
+    status: ja
     krav_id: m6-suite-v1
+    bevismaalinger:
+      - maalt.m6_feilet
+      - maalt.m6_tester
+      - maalt.m6_hoppet
+      - maalt.m6_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m6-suite-v1-20260917T200309Z.json
+    artefakt_sha256: 98bf6bad90672c688f11b0170358fb58bb24ce24d0fa695ada727110d34946fc
     notat: >-
-      Suiten kjøres på nytt mot fersk base fra utsjekket på verten etter
-      210; det forrige artefaktet (16/9) måler en annen innhenter.
+      5478 tester, 0 feilet, 0 hoppet; modulens egen andel
+      85 tester i elleve filer, 0 feilet, 0 hoppet. Kjørt på
+      disponit-srv 17/9 mot fersk base fra utsjekket (samme rigg som
+      CI bygger), som administrator.
   syntetisk_datasett_likt_lokalt:
     # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
     # og alt annet er produktets eget: tokenutpakking, delta-paging (to
