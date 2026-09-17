@@ -200,9 +200,11 @@ def main() -> int:
     ap.add_argument("--ut", type=Path)
     a = ap.parse_args()
     rt_dsn = os.environ.get("DATABASE_URL")
-    if not (rt_dsn and os.environ.get("DISPONIT_PLAN_URL")
+    m_dsn = os.environ.get("DISPONIT_MIGRATOR_URL")
+    if not (rt_dsn and m_dsn and os.environ.get("DISPONIT_PLAN_URL")
             and os.environ.get("DISPONIT_KEK")):
-        raise SystemExit("AVBRUTT: DATABASE_URL/DISPONIT_PLAN_URL/DISPONIT_KEK mangler")
+        raise SystemExit("AVBRUTT: DATABASE_URL/DISPONIT_MIGRATOR_URL/"
+                         "DISPONIT_PLAN_URL/DISPONIT_KEK mangler")
     ut = a.ut or (REPO / "deploy/staging/artefakter"
                   / f"{KRAV}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json")
     if ut.exists():
@@ -219,6 +221,9 @@ def main() -> int:
          f" {f_kat.name[:8]} ({forgjenger_digest[:12]})")
 
     rt = psycopg.connect(rt_dsn)
+    # Målingene leses med migratorrollen (FORCE RLS, tenantkontekst settes):
+    # runtime har bare callbackens kolonnegrants på kilden.
+    m = psycopg.connect(m_dsn)
     tenant = f"t-m6drill-{secrets.token_hex(3)}"
     rid = secrets.token_hex(4)
     kid = lag_kilde(rt, tenant)
@@ -226,7 +231,7 @@ def main() -> int:
     felles = {"tenant": tenant, "kilde_id": str(kid), "runde_id": rid,
               "ider": ider, "postboks": POSTBOKS, "kunde": KUNDE,
               "kunde_navn": KUNDE_NAVN}
-    t0 = tilstand(rt, tenant, kid, rid)
+    t0 = tilstand(m, tenant, kid, rid)
     if t0["meldinger"] or t0["delta"]:
         raise SystemExit("AVBRUTT: kilden er ikke tom før drillen")
     _log(f"tenant {tenant}, kilde {str(kid)[:8]}, {2 * PER_SIDE} meldinger rigget")
@@ -247,20 +252,20 @@ def main() -> int:
 
     # (a) inflight på de drillede bytene — avbrutt etter side 1
     r1 = kjor_i(d_kat, {**felles, "modus": "avbrutt"})
-    t1 = tilstand(rt, tenant, kid, rid)
+    t1 = tilstand(m, tenant, kid, rid)
     _log(f"inflight (drillet): {utfall(r1)}"
          f" — {t1['meldinger']} meldinger lagret, delta {t1['delta']!r}")
 
     # (b) rullbakken: forgjengerens bytes fullfører fra samme cursor
     r2 = kjor_i(f_kat, {**felles, "modus": "full"})
-    t2 = tilstand(rt, tenant, kid, rid)
+    t2 = tilstand(m, tenant, kid, rid)
     _log(f"rullbakk (forgjenger): {utfall(r2)}"
          f" — {t2['meldinger']} meldinger ({t2['ulike']} ulike), delta satt="
          f"{bool(t2['delta'])}")
 
     # (c) kandidaten: de drillede bytene ser alt som hentet
     r3 = kjor_i(d_kat, {**felles, "modus": "delta"})
-    t3 = tilstand(rt, tenant, kid, rid)
+    t3 = tilstand(m, tenant, kid, rid)
     _log(f"kandidat (drillet): {utfall(r3)}"
          f" — {t3['meldinger']} meldinger, evidens {t3['evidens']}"
          f" ({t3['evidens_ulike']} ulike)")
@@ -308,7 +313,7 @@ def main() -> int:
                                       and m6_digest(f_kat) == forgjenger_digest),
         },
         "etterkontroll": {
-            "kilde_deaktivert": q(rt, tenant, "SELECT status FROM epost_kilde"
+            "kilde_deaktivert": q(m, tenant, "SELECT status FROM epost_kilde"
                                   " WHERE tenant=%s AND kilde_id=%s",
                                   (tenant, kid))[0][0] == "deaktivert",
             "digest_likhet": drillet_digest == m6_digest(d_kat),
