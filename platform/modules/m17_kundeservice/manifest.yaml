@@ -27,13 +27,11 @@
 id: m17_kundeservice
 navn: Kundeserviceagent
 versjon: 0.1.0
-# 17/9-2026: ALLE SEKS punkter er ja (fasit, suite, bevisrunde, ytelse og
-# flippedrillen `m17-rollback-v1`), men modulen kan IKKE flippes aktiv:
-# den avhenger av m37_unntak, og registeret nekter en aktiv modul med en
-# ikke-aktiv avhengighet. M-37 mangler sitt eget rollback-punkt (egen
-# lease-arbeider, ikke sveipmodul-lesten). Flippes SAMMEN med M-37.
-status: under_utvikling
-driftstilstand: ikke_i_drift
+# 17/9-2026: alle seks punkter ja (fasit, suite, bevisrunde, ytelse og
+# flippedrillen `m17-rollback-v1`). Flippet aktiv/produksjon samme dag som
+# M-37 fikk sitt rollback-punkt (avhengigheten registeret krever aktiv).
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: klassifiseringen er en modellkjøring som
 # går gjennom policyporten (m01), hver henvendelse og hvert utkast
 # bokføres (m02), og det som ikke kan avgjøres går til M-37s kø.
