@@ -45,8 +45,21 @@ function offentligUrl(side, ekstra = {}) {
   return `/?${p.toString()}`;
 }
 
+// EIERS VEDTAK 17/9: TESTPERIODE. «Vi må skjule innlogging slik at ikke
+// uautoriserte eller nysgjerrige eller nye kunder kan registrere seg, før
+// alt er på plass — nå har vi de som er der slik at vi kan teste den.» Og
+// presist: «bare skjule den fra offentlig meny», ikke fjerne innloggingen.
+// Innloggingssiden finnes (`?side=innlogging`) og de som alt er kunder
+// logger inn som før; menyen og forsiden peker ikke dit, og «ny
+// bedrift»-kortet (selvregistreringen) står ikke i flaten før dette
+// flippes. Én konstant, pinnet av `siteflater.test.js` — flippen er en
+// synlig endring, ikke en glemt linje.
+export const REGISTRERING_AAPEN = false;
+const OFFENTLIGE_LENKER = ["hjem", "tjenester", "produkt", "sikkerhet"];
+
 function offentligTopp(side) {
-  const lenker = ["hjem", "tjenester", "produkt", "sikkerhet", "innlogging"];
+  const lenker = REGISTRERING_AAPEN
+    ? [...OFFENTLIGE_LENKER, "innlogging"] : OFFENTLIGE_LENKER;
   const nav = el("nav", { class: "site-hovednav", "aria-label": t("site.nav.hoved") },
     el("ul", {}, lenker.map((nokkel) => {
       const attrs = {
@@ -306,10 +319,18 @@ function hjemSide() {
           // primærknappen gikk til `tjenester` — en informasjonsside — så
           // en besøkende som VILLE begynne, fant ingen vei dit. Den står
           // fortsatt, som sekundær.
-          el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
-            text: t("site.home.cta_prov") }),
-          el("a", { class: "site-tekstlenke", href: offentligUrl("tjenester"),
-            text: t("site.home.cta") }),
+          // I testperioden (REGISTRERING_AAPEN=false) er primærhandlingen
+          // katalogen igjen — «prøv» ville ledet til en registrering som
+          // er skjult.
+          REGISTRERING_AAPEN
+            ? el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
+                text: t("site.home.cta_prov") })
+            : el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
+                text: t("site.home.cta") }),
+          REGISTRERING_AAPEN
+            ? el("a", { class: "site-tekstlenke", href: offentligUrl("tjenester"),
+                text: t("site.home.cta") })
+            : null,
           el("a", { class: "site-tekstlenke", href: offentligUrl("produkt"),
             text: t("site.cta.produkt") }))),
       el("aside", { class: "site-kontrollbevis",
@@ -431,10 +452,15 @@ function innloggingSide(provider) {
     // innlogging, fordi identiteten må bevises FØR et firma kan knyttes
     // til den. Forskjellen er hvor hun lander etterpå — `retursti`-en
     // peker på registreringsflaten i stedet for kundeadmin.
-    el("section", { class: "site-grid" },
+    // Selvregistreringen står bare i flaten når registreringen er åpen
+    // (eiers vedtak 17/9, se REGISTRERING_AAPEN). Skillet «allerede
+    // kunde?» gir bare mening over det kortet.
+    REGISTRERING_AAPEN ? el("section", { class: "site-grid" },
       loginKort(provider, "firmaregistrering", t("site.login.ny_tittel"),
-        t("site.login.ny_tekst"), t("site.login.ny_knapp"))),
-    el("h2", { class: "site-login-skille", text: t("site.login.alt_kunde") }),
+        t("site.login.ny_tekst"), t("site.login.ny_knapp"))) : null,
+    REGISTRERING_AAPEN
+      ? el("h2", { class: "site-login-skille", text: t("site.login.alt_kunde") })
+      : null,
     el("section", { class: "site-grid site-grid-2" },
       loginKort(provider, "kundeadmin", t("site.login.kunde_tittel"),
         t("site.login.kunde_tekst"), t("site.login.kunde_knapp")),
