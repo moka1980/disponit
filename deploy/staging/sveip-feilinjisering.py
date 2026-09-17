@@ -13,6 +13,11 @@ Derfor måles tre ting på en ekte, injisert feil:
      halvt svar (SP-3: en driftsfeil er ikke et verdikt).
   2. INGEN DELVIS SKRIVING — registerets funn står NØYAKTIG som før:
      samme antall åpne, samme typer, ingen lukket, ingen ny.
+
+     MÅLINGEN RIGGER SITT EGET REGISTER FØRST, gjennom modulens
+     fasitdriver. Et tomt register står stille uansett hva kjøringen
+     gjorde, og en fersk modul har ingenting i sitt — da hadde
+     «urørt» vært sant av feil grunn.
   3. ALARMEN — to sammenhengende feil løfter alarmen, én gjør det ikke.
      En stille sveip som feiler hver runde er verre enn en som stopper.
 
@@ -35,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +48,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "platform/core"))
 sys.path.insert(0, str(REPO / "platform"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import psycopg  # noqa: E402
 
@@ -114,8 +121,23 @@ def main() -> int:
         raise SystemExit(
             f"AVBRUTT: DISPONIT_MIGRATOR_URL/{k['dsn_variabel']}/"
             f"{k['dsn_uten_execute']} mangler")
+    rt_dsn = os.environ.get("DATABASE_URL")
+    if not rt_dsn:
+        raise SystemExit("AVBRUTT: DATABASE_URL mangler (riggen går gjennom"
+                         " modulens egne dører)")
     m = psycopg.connect(m_dsn)
     modul = __import__(f"drift.{k['modul_fil']}", fromlist=["kjor"])
+
+    # RIGGEN FØRST: modulens fasitdriver legger inn subjekter som gir
+    # funn, slik at det FINNES et register å vise urørt. Uten dette
+    # steget måler en fersk modul null mot null.
+    rigg_modul = __import__(k["riggmodul"])
+    rt = psycopg.connect(rt_dsn)
+    runde = secrets.token_hex(4)
+    rigg = rigg_modul.forbered(rt, runde)
+    rt.close()
+    _log(f"rigget runde {runde}: {len(rigg['subjekter'])} subjekter i"
+         f" {len(rigg_modul.riggtenanter(rigg))} tenanter")
 
     # FØR: registerets tilstand, talt av radene.
     for_tilstand = tilstand(m, k)
@@ -157,6 +179,8 @@ def main() -> int:
                     "funntabell": k["funntabell"],
                     "tenantkilde": k["tenantkilde"],
                     "maalerolle": k["maalerolle"],
+                    "riggmodul": k["riggmodul"], "runde": runde,
+                    "riggtenanter": rigg_modul.riggtenanter(rigg),
                     "sveipedor": k["sveipedor"],
                     "injeksjonsrolle": str(rolle),
                     "injeksjon": f"tilkobling som {k['rolle_uten_execute']}"
