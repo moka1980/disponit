@@ -31,8 +31,8 @@
 id: m23_fordring
 navn: Kundefordringsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 avhengigheter:
   - m01_policy                 # purretrinn og grenser er policy, ikke kode
   - m02_revisjonslogg          # fordring og trinnendring i evidenskjeden
@@ -178,33 +178,25 @@ staging_sjekkliste:
       purrerunden 9/9 brukte. Kostnaden skal måles over alt sveipen
       faktisk rører, ikke bare over det denne runden la inn.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — og forskjellen er at blokkeringen har en
-    # navngitt årsak som lar seg måle bort.
-    #
-    # MÅLT 15/9 i modulregisteret på disponit-srv: `m23_fordring` har
-    # NØYAKTIG ÉN release, `m23-r1` (digest 5824bca07eae, registrert
-    # 9/9), og én deployment i livsløpet `claiming`. En flippedrill må
-    # rulle tilbake TIL forgjengerens bytes — `krev_release_digest_bundet`
-    # i `m23-rollback-v1` håndhever nettopp det. Det finnes ingen
-    # forgjenger.
-    #
-    # Å REGISTRERE EN «RULLBAKK» NÅ VILLE VÆRT BEDRAGERIET PORTEN FINNES
-    # FOR Å FANGE. Med bare én bygging ville rullbakkens digest vært
-    # kandidatens egen under et nytt navn, og drillen ville stått grønn
-    # uten at det man ruller tilbake TIL noen gang var prøvd — ordrett
-    # funnet Codex gjorde på m56 (#117 runde 6).
-    #
-    # SAMME FORM SOM m56 HADDE: den bar «kan ikke kjøres (forrige release
-    # før 039)» til forutsetningen fantes, og ble så flippet. Dette
-    # punktet flippes den dagen M-23 får sin andre release — altså ved
-    # neste ekte endring i modulen — og drillen kjøres mot den.
-    #
-    # ARBEIDEREN ER INSTALLERT OG KJØRER (`disponit-m23.service`: enabled,
-    # active), så blokkeringen er IKKE at maskineriet mangler. Det er
-    # historikken som mangler.
-    status: blokkert
-    blokkert_av: >-
-      m23_fordring har én release (m23-r1). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-sveipmodul.py` (samme lest
+    # som M-14/M-44/M-26): forgjenger med regnbare bytes i registeret, den
+    # claimende releasen drenert MENS oppdrag 136 var claimet, claim-stopp
+    # 25.0 s uten nytt claim, rullbakken bootet med eget modultoken og
+    # claimet/fullførte 137, kandidaten overtok og fullførte 138.
+    # Prøvesendingene gikk til eiers testadresse.
+    status: ja
     krav_id: m23-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m23-rollback-v1-20260917T130104Z.json
+    artefakt_sha256: 7cf9635d65460ea8f7b6bae539d89ca61effa1aec82d94f53255d5453f28744d
+    notat: >-
+      Flippedrill 17/9: drillet m23-r3-f0486382 → rullbakk m23-drill-rb-20260917T130007
+      (forgjengerens bytes, m23-r2-98a62a09) → kandidat m23-drill-k-20260917T130007.
+      Null claims etter dreneringen, rent utfall med kvittering på det
+      løpende oppdraget, rullbakken og kandidaten claimet og fullførte hvert
+      sitt, digestene re-regnet av porten.

@@ -1,0 +1,55 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "digest_likhet": true,
+    "drillet_livslop": "draining",
+    "kandidat_livslop": "claiming",
+    "modulstatus": "aktiv",
+    "rullback_bytes_er_forgjengerens": true,
+    "rullback_livslop": "draining",
+    "unit_override_fjernet": true
+  },
+  "identiteter": {
+    "inflight_oppdrag_id": "132",
+    "kandidat_oppdrag_id": "134",
+    "probe_oppdrag_id": "131",
+    "rullback_oppdrag_id": "133"
+  },
+  "krav_id": "m26-rollback-v1",
+  "maalt": {
+    "claims_etter_drenering": 0,
+    "falske_verdikter": 0,
+    "inflight_har_signert_kvittering": true,
+    "inflight_oppdrag": 1,
+    "inflight_utfall": "utfort",
+    "kandidat_claimet_oppdrag": 1,
+    "kandidat_har_signert_kvittering": true,
+    "overtakelse_s": 1.0,
+    "release_digest_bundet": true,
+    "rullback_claimet_oppdrag": 1,
+    "rullback_har_signert_kvittering": true,
+    "rullback_overtakelse_s": 1.0,
+    "rullback_promoterte": 0,
+    "ventetid_ubehandlet_s": 25.0
+  },
+  "oppsett": {
+    "drillet_digest": "078ce4ba1194f73317b3354c2d3bef9ec3d839fb72d922d03e93874104f6417a",
+    "drillet_katalog": "/opt/disponit/releases/f0486382c8debdb9a6b32c9a30ef912aa26f0df4",
+    "drillet_release": "m26-r3-f0486382",
+    "forgjenger_digest": "078ce4ba1194f73317b3354c2d3bef9ec3d839fb72d922d03e93874104f6417a",
+    "forgjenger_katalog": "/opt/disponit/releases/98a62a09c436bef6778cbc333b428c252dea8e21",
+    "forgjenger_release": "m26-r2-98a62a09",
+    "kandidat_digest": "078ce4ba1194f73317b3354c2d3bef9ec3d839fb72d922d03e93874104f6417a",
+    "kandidat_release": "m26-drill-k-20260917T125858",
+    "kontrakt_hash": "3c002bb2c7fc2b4fc506f2f1f5fc498efb1415abe75b8117b03430e1a56c530c",
+    "kontraktversjon": 1,
+    "miljo": "staging",
+    "modul": "m26_prisbok",
+    "module_epoch": 0,
+    "rullback_digest": "078ce4ba1194f73317b3354c2d3bef9ec3d839fb72d922d03e93874104f6417a",
+    "rullback_release": "m26-drill-rb-20260917T125858",
+    "tenant": "t-m26drill-e5a020",
+    "vert": "disponit-srv"
+  },
+  "ts": "2026-09-17T12:59:46.762918+00:00"
+}

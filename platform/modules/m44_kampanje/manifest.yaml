@@ -52,8 +52,8 @@
 id: m44_kampanje
 navn: Kampanjeutsendingsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m44-v1` bærer invarianten
 # `frekvensgrense_hardkodet` — hvor ofte en mottaker kan kontaktes er
 # tenantens tall, selv om malen foreslår to per uke.
@@ -166,13 +166,25 @@ staging_sjekkliste:
     notat: >-
       Kryss-tenant-sveipen over 3 tenanter tok 25 ms mot grensen 30 000 ms.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17: MÅLT 16/9 i
-    # modulregisteret har `m44_kampanje` NØYAKTIG ÉN release, `m44-r1`.
-    # Arbeideren er installert og kjører (`disponit-m44.service`); det er
-    # historikken som mangler, ikke maskineriet.
-    status: blokkert
-    blokkert_av: >-
-      m44_kampanje har én release (m44-r1). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-sveipmodul.py` (samme lest
+    # som M-14): registeret fikk forgjenger med regnbare bytes (m44-r2/r3),
+    # den claimende releasen ble drenert MENS oppdrag 128 var claimet,
+    # claim-stoppet observert i 25.0 s uten nytt claim, rullbakken bootet
+    # med eget modultoken og claimet/fullførte 129, kandidaten overtok
+    # og fullførte 130. Fire prøvesendinger gikk til eiers testadresse.
+    status: ja
     krav_id: m44-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m44-rollback-v1-20260917T125121Z.json
+    artefakt_sha256: a1ec5695291ce605be145c1c55f8145bf02cc7a62be9f798e7ab8537e198c044
+    notat: >-
+      Flippedrill 17/9: drillet m44-drill-rb-20260917T123951 → rullbakk m44-drill-rb-20260917T125029
+      (forgjengerens bytes, m44-r3-f0486382) → kandidat m44-drill-k-20260917T125029.
+      Null claims etter dreneringen, rent utfall med kvittering på det
+      løpende oppdraget, rullbakken og kandidaten claimet og fullførte hvert
+      sitt, digestene re-regnet av porten.
