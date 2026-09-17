@@ -1042,16 +1042,19 @@ FELTGRENSER: dict[str, dict[str, tuple[int, int]]] = {
     # Purretrinnet er 1..20 (104s plan har høyst så mange); resten i øre
     # er positiv og under en milliard kroner.
     "purring.send": {"trinn": (1, 20), "rest_ore": (1, 100_000_000_000)},
-    # M-57-klarsignalet §4: 5000 er HARD — 5001 avvises ved validering,
-    # aldri stille avkorting (katalogens løfte er «opptil 5000», og et
-    # oppdrag som fikk 5001 har alt brutt det før parseren startet).
+    # M-57-klarsignalet §4 sa 5000. EIERS VEDTAK 17/9 (#543): taket er det
+    # verten er MÅLT til å evaluere innenfor §4s frist — 300 (m57-ytelse-v1,
+    # `manifestskjema.M57_YTELSE_MAKS_SOKNADER`, `parsing.MAKS_KANDIDATER`;
+    # porten binder de tre). HARD som før: 301 avvises ved validering,
+    # aldri stille avkorting. Modulens registrerte v1-kontrakt bar 5000 som
+    # konvolutt; døra er PLATTFORMENS og leser dette tallet.
     #
     # LUKKET av #161 (eiers B): grensen her måler det BESTILLEREN
     # OPPGIR; bunten bindes av sitt eget manifest (`soknader.json`,
     # `les_manifest` — toveis mot katalogen), og utførelsesarmen avviser
     # der deklarert kandidattall spriker fra dette tallet, før strømmen.
     "rekruttering.evaluering": {
-        "antall_soknader": (1, 5000),
+        "antall_soknader": (1, 300),
         # Kandidatdatagrensen (klarsignalet §5 / 057:34): 30–365 døgn,
         # samme spenn som `prosess_frist_i_spennet`. Tabellen står her og
         # ikke bare i basen av samme grunn som `maks_sider`: en

@@ -66,39 +66,49 @@ staging_sjekkliste:
     notat: >-
       Kjørt 17/9 på disponit-srv som administrator fra et FULLT utsjekk av 9bb3082a mot en FERSK testbase med alle rolle-DSN-ene: 5452 tester, 0 feilet, 0 hoppet; M-57-andelen 398 av 398, exitkode 0. Første kjøring falt i andelen alene på et grant test_pr008 hadde strippet (rettighetspasset er nå én funksjon deployen og testene deler); denne kjøringen er etter fiksen.
   syntetisk_datasett_likt_lokalt:
-    # BLOKKERT AV GRENSEN SELV (#541, målt 17/9): `m57-v1`s punktbinding
-    # krever `bunt_soknader`, `fasitavvik`, `datasett_sha_lokal` og
-    # `datasett_sha_staging`, men `artefakt-m57-skjema.json` har
-    # `additionalProperties: false` og definerer ingen av dem. Et artefakt
-    # som bærer målingene felles av formatporten; ett uten felles av
-    # grenseporten. Ingen kjøring kan flippe punktet før grensen er
-    # revidert (§0: ny krav_id).
-    status: blokkert
-    blokkert_av: >-
-      #541 — m57-v1s artefaktskjema avviser målingene punktbindingen
-      krever (bunt_soknader, fasitavvik, datasett_sha_lokal/_staging).
-      Låses opp av en revidert grense (m57-v2) eller en egen
-      m57-fasit-v1 i m44/m26/m14-lesten.
+    # GRENSEN ER KONSISTENT (#541 lukket 17/9): skjemaet bærer nå de
+    # bundne målingene (`bunt_soknader`, `fasitavvik`,
+    # `datasett_sha_lokal/_staging`) som valgfrie felt, og
+    # `_m57_terskler` måler dem når de finnes. Det som mangler er
+    # KJØRINGEN: en syntetisk søknadsbunt med fasit-rangering drevet både
+    # lokalt (CI) og på staging, byte-lik. Statusen er `nei` fordi den
+    # ikke er gjort — ikke fordi grensen er uflippbar.
+    status: nei
     krav_id: m57-v1
+    notat: >-
+      KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
+      lokalt (CI) og på staging, med BEGGE datasett-identitetene i
+      artefaktet og byte-likhet mellom dem (m02-fordelingsformen).
+      Grensen: datasett_min_soknader 200, datasett_maks_fasitavvik 0,
+      krev_datasett_sha_lik. Skjemaet bærer feltene (#541). Statusen er
+      `nei` fordi kjøringen ikke er gjort.
   revisjonslogg_korrekt:
-    # BLOKKERT AV GRENSEN SELV (#541): `revisjon_avskruinger`,
+    # GRENSEN ER KONSISTENT (#541): `revisjon_avskruinger`,
     # `revisjon_signaturer`, `revisjon_frigivelser` og
-    # `revisjon_hendelser_uten_identitet` finnes ikke i skjemaet.
-    status: blokkert
-    blokkert_av: >-
-      #541 — m57-v1s artefaktskjema avviser de fire revisjonsmålingene
-      punktbindingen krever. Låses opp av en revidert grense.
+    # `revisjon_hendelser_uten_identitet` står i skjemaet. Avskruingsdøra
+    # etterlater nå en varig hendelse (#159 lukket 30/8). Målingen er ikke
+    # gjort.
+    status: nei
     krav_id: m57-v1
+    notat: >-
+      KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
+      står i revisjonsloggen, målt som hendelser med identitet — minst én
+      av hver, null uten identitet. Skjemaet bærer feltene (#541).
+      Statusen er `nei` fordi målingen ikke er gjort.
   feilinjisering_til_unntakskø:
-    # BLOKKERT AV GRENSEN SELV (#541): `injisert_jobber`,
-    # `unntakskoe_poster` og `koeposter_uten_jobbinding` finnes ikke i
-    # skjemaet. Første halvdel (SP-3, rent feilutfall) måles av
-    # invarianten `kjoring_delvis_resultat_promotert`.
-    status: blokkert
-    blokkert_av: >-
-      #541 — m57-v1s artefaktskjema avviser de tre køpost-målingene
-      punktbindingen krever. Låses opp av en revidert grense.
+    # GRENSEN ER KONSISTENT (#541): `injisert_jobber`, `unntakskoe_poster`
+    # og `koeposter_uten_jobbinding` står i skjemaet. Første halvdel (SP-3,
+    # rent feilutfall) måles av invarianten
+    # `kjoring_delvis_resultat_promotert`; andre halvdel — at feilen
+    # faktisk ble en post i unntakskøen — er ikke injisert ennå.
+    status: nei
     krav_id: m57-v1
+    notat: >-
+      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
+      promotert liste (SP-3) OG leverte en post i unntakskøen:
+      min_injiserte_jobber 1, min_unntakskoe_poster 1,
+      maks_koeposter_uten_jobbinding 0. Skjemaet bærer feltene (#541).
+      Statusen er `nei` fordi injiseringen ikke er kjørt.
   ytelse_bestatt:
     # MÅLT 17/9 PÅ TAKET VERTEN BÆRER (eiers vedtak natt til 17/9: «vi kan
     # gå videre med maks søknader som kan godta den maskinen vi har i
@@ -108,8 +118,8 @@ staging_sjekkliste:
     # på verten, tilbakekalt etterpå), claimet og blindet evaluert av
     # `disponit-m57` mot qwen2.5:3b i Ollama, promotert og kvittert.
     # Varigheten er oppdragsradens egen: første claim → `utfort`.
-    # `m57-v1`s ytelsespar (5000/240) står som klarsignalets tall og er
-    # blokkert av #541; kontraktens 5000-konvolutt flyttes i #543.
+    # `m57-v1`s ytelsespar følger nå samme tak (300/240); døra håndhever
+    # 300 i `oppdragskontrakt.FELTGRENSER` (#543).
     status: ja
     krav_id: m57-ytelse-v1
     bevismaalinger:

@@ -204,8 +204,14 @@ def test_skjemaets_feltsett_er_generert_fra_settet():
                # her, ikke i invariantparet, fordi de ikke er en invariant
                # — de er grunnlaget ett av parene regnes fra.
                "bias_digester_kjort", "bias_maalinger"}
-    assert felter == ventet
+    # #541: de fem punktenes målinger er VALGFRIE å rapportere (bindingen
+    # avgjør om punktet påberopes) — men skjemaet må BÆRE dem, ellers
+    # feller formatporten nettopp det artefaktet som oppfyller grensen.
+    bundet = {sti.split(".", 1)[1]
+              for stier in KRAVGRENSER["m57-v1"]["punktbinding"].values()
+              for sti in stier}
     assert set(skjema["properties"]["maalt"]["required"]) == ventet
+    assert felter == ventet | bundet, sorted(felter ^ (ventet | bundet))
 
 
 # ===========================================================================

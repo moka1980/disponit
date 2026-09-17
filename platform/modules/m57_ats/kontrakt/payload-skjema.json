@@ -45,7 +45,7 @@
     "antall_soknader": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 5000
+      "maximum": 300
     },
     "omfang": {
       "const": "bunt"

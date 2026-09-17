@@ -46,10 +46,16 @@ def test_taket_er_ett_tall_i_grense_utforer_og_flate():
     assert f'max: "{m.M57_YTELSE_MAKS_SOKNADER}"' in js, \
         "flaten lover et annet tak enn utføreren bærer"
     assert 'max: "5000"' not in js
-    # Kontraktens konvolutt står urørt (registrert kontraktversjon 1).
+    # Døra (#543): plattformens grense og modulens payload-skjema i treet
+    # bærer samme tak. Den REGISTRERTE v1-kontrakten bar 5000 — det er en
+    # attestasjon av 27/8, ikke et løfte døra gir i dag.
+    import oppdragskontrakt as ok
+    assert ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"] \
+        == (1, m.M57_YTELSE_MAKS_SOKNADER)
     kontrakt = json.loads((ROT / "platform/modules/m57_ats/kontrakt/"
                            "payload-skjema.json").read_text(encoding="utf-8"))
-    assert kontrakt["properties"]["antall_soknader"]["maximum"] == 5000
+    assert kontrakt["properties"]["antall_soknader"]["maximum"] \
+        == m.M57_YTELSE_MAKS_SOKNADER
 
 
 def test_utforeren_avviser_en_bunt_over_taket(tmp_path):
