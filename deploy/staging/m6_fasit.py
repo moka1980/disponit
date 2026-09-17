@@ -130,6 +130,12 @@ def lag_graf(runde_id: str, kall: list):
         kall.append(url)
         if "/me/messages/" in url:
             mid = url.split("/me/messages/")[1].split("?")[0]
+            # 210: avstemmingen spør om meldingen FINNES (`$select=id`) —
+            # i fasiten finnes alle; «uten kropp» gjelder KROPPEN (ekte
+            # Graph: 404 på `$select=body` = borte, men fasiten modellerer
+            # en kropp som ikke kan hentes, og det skal ikke slette noe).
+            if "$select=id" in url:
+                return {"id": mid}
             if mid in uten_kropp:
                 raise GraphFeil(404, "fasit: kroppen finnes ikke")
             merke = mid.split("-")[1]

@@ -1340,6 +1340,11 @@ GRANT EXECUTE ON FUNCTION forfalte_planvinduer(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION utlopte_planvinduer(INT, INT) TO {rolle};
 -- M-6 inntak (175): kryss-tenant-kandidatdøra, claimer-eid som reaperen.
 GRANT EXECUTE ON FUNCTION m6_hentekandidater(INT) TO {rolle};
+-- 210: en melding slettet i postboksen slettes i registeret — delta-
+-- `@removed` og avstemmingen (404 mot Graph), claimer-eide som 176.
+GRANT EXECUTE ON FUNCTION m6_melding_fjernet_i_kilden(TEXT, UUID, TEXT, TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_marker_sjekket(TEXT, UUID, TEXT[]) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_avstemmingskandidater(TEXT, UUID, INT) TO {rolle};
 -- 181: utsendingen — køen, det den trenger, og hva som skjedde.
 GRANT EXECUTE ON FUNCTION m6_sendekandidater(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m6_for_utsending(TEXT, UUID) TO {rolle};

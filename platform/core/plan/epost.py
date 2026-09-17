@@ -249,7 +249,14 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
             ut["sider"] += 1
             sett_kontekst(conn, tenant, AKTOR, rid)
             for m in side.get("value") or []:
-                if "@removed" in m or not m.get("id"):
+                if not m.get("id"):
+                    continue
+                if "@removed" in m:
+                    # SLETTET I POSTBOKSEN (210): delta leverer slettingen
+                    # som en `@removed`-post, og registeret speiler den —
+                    # samme visking som menneskets 176, egen hendelse.
+                    if _fjernet_i_kilden(conn, tenant, kilde_id, str(m["id"])):
+                        ut["fjernet"] = ut.get("fjernet", 0) + 1
                     continue
                 ut["sett"] += 1
                 kropp, ktype = None, None
@@ -277,6 +284,12 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
         ut["forbigaende"] = f"graph_{e.status}"
         _log("epost_inntak_forbigaende", **ut)
         return ut
+    # AVSTEMMINGEN (210): delta forteller bare om slettinger ETTER forrige
+    # henting. Det som alt var slettet da kilden kom inn, eller mens delta
+    # sto stille, må spørres om — et begrenset antall av de eldst sjekkede
+    # per runde, så køen roterer og ingen runde blir lang.
+    ut["avstemt"], ut["fjernet_ved_avstemming"] = _avstem(
+        conn, tenant, kilde_id, access, graf)
     sett_kontekst(conn, tenant, AKTOR, rid)
     conn.execute(
         "UPDATE epost_kilde SET sist_hentet_ts = now(),"
@@ -284,6 +297,53 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
         " WHERE tenant=%s AND kilde_id=%s", (neste_delta, tenant, kilde_id))
     conn.commit()
     return ut
+
+
+#: Hvor mange av kildens eldst sjekkede meldinger som spørres om per runde.
+AVSTEM_PER_RUNDE = 20
+
+
+def _fjernet_i_kilden(conn, tenant, kilde_id, lev_id: str) -> bool:
+    rad = conn.execute("SELECT m6_melding_fjernet_i_kilden(%s,%s,%s,%s)",
+                       (tenant, kilde_id, lev_id, AKTOR)).fetchone()
+    return bool(rad and rad[0])
+
+
+def _avstem(conn, tenant, kilde_id, access, graf) -> tuple[int, int]:
+    """-> (sjekket, fjernet). 404 fra Graph = borte fra postboksen (slettet
+    eller flyttet ut av innboksen) → speiles. Enhver annen feil stopper
+    avstemmingen for denne runden uten å røre noe: usikkerhet sletter
+    aldri."""
+    sett_kontekst_avstem(conn, tenant)
+    rader = conn.execute("SELECT leverandor_melding_id FROM"
+                         " m6_avstemmingskandidater(%s,%s,%s)",
+                         (tenant, kilde_id, AVSTEM_PER_RUNDE)).fetchall()
+    conn.rollback()
+    finnes: list[str] = []
+    fjernet = 0
+    for (lev_id,) in rader:
+        try:
+            graf(access, f"{GRAPH}/me/messages/{lev_id}?$select=id")
+        except GraphFeil as e:
+            if e.status == 404:
+                sett_kontekst_avstem(conn, tenant)
+                if _fjernet_i_kilden(conn, tenant, kilde_id, lev_id):
+                    fjernet += 1
+                conn.commit()
+                continue
+            break
+        finnes.append(lev_id)
+    if finnes:
+        sett_kontekst_avstem(conn, tenant)
+        conn.execute("SELECT m6_marker_sjekket(%s,%s,%s)",
+                     (tenant, kilde_id, finnes))
+        conn.commit()
+    return len(finnes) + fjernet, fjernet
+
+
+def sett_kontekst_avstem(conn, tenant):
+    from db.pg import sett_kontekst
+    sett_kontekst(conn, tenant, AKTOR, "epost-avstem")
 
 
 def _feilet(conn, tenant, kilde_id, rid, ut, grunn, detalj) -> dict:
