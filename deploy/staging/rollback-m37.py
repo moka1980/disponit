@@ -126,6 +126,14 @@ def lever(pid: int) -> bool:
 
 
 def cwd_av(pid: int) -> str:
+    """Arbeidskatalogen til prosessen. Type=simple: `systemctl restart`
+    returnerer ved fork, FØR systemd har gjort chdir(WorkingDirectory) —
+    et tidlig oppslag ser `/`. Vent til katalogen er satt."""
+    for _ in range(80):
+        cwd = os.readlink(f"/proc/{pid}/cwd")
+        if cwd != "/":
+            return cwd
+        time.sleep(0.25)
     return os.readlink(f"/proc/{pid}/cwd")
 
 
@@ -244,13 +252,13 @@ def vent_lukket(rt, tenant, sid, frist_s) -> dict:
     return sak_rad(rt, tenant, sid)
 
 
-FENCING = ("FROM unntak WHERE tenant=%s AND id=%s AND claim_id=%s"
+FENCING = ("WHERE tenant=%s AND id=%s AND claim_id=%s"
            " AND claim_generation=%s AND status='under_behandling'"
            " AND claim_utloper > now()")
 
 
 def fencing_treff(ar, tenant, sid, claim_id, gen) -> int:
-    rader, _ = q(ar, tenant, "SELECT count(*) " + FENCING,
+    rader, _ = q(ar, tenant, "SELECT count(*) FROM unntak " + FENCING,
                  (tenant, sid, claim_id, gen))
     return int(rader[0][0])
 
