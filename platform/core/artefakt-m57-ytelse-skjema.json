@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m57ytelseartefakt-v1.json",
+  "title": "m57 ytelsesartefakt (m57-ytelse-v1)",
+  "comment": "EN ekte bunt paa taket (manifestskjema.M57_YTELSE_MAKS_SOKNADER) gjennom hele kjeden paa verten: bestilling -> claim -> blindet evaluering i Ollama -> promotert rapport -> kvittering. Maalt paa oppdragsradens egne tidsstempler. Skrevet av deploy/staging/m57-ytelse-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m57-ytelse-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "oppdrag_id",
+        "tenant",
+        "bevisrot_sha256",
+        "modell_digest"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m57_ats"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oppdrag_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "EN digest over produsenten og parsing.py (taket) - re-regnet av porten."
+        },
+        "modell_digest": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Konfigurasjonens paastand om hvilken modell som evaluerte (sha256 over modell-manifestet), lest fra vertens m57-konfig."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ytelse_full_bunt_soknader",
+        "ytelse_full_bunt_minutter",
+        "resultat",
+        "forste_claim_ts",
+        "status_ts"
+      ],
+      "properties": {
+        "ytelse_full_bunt_soknader": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Evaluerte kandidater i prosessen (kandidat_evalueringsartefakt), ikke det bestilte tallet."
+        },
+        "ytelse_full_bunt_minutter": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Foerste claim -> terminalstatus, rundet OPP til hele minutter."
+        },
+        "resultat": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forste_claim_ts": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status_ts": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
