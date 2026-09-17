@@ -136,15 +136,17 @@ staging_sjekkliste:
       - maalt.alarm_etter_andre
       - maalt.apne_etter
       - maalt.injeksjonsrolle_har_execute
-    artefakt: deploy/staging/artefakter/m19-feilinjisering-v1-20260917T233301Z.json
-    artefakt_sha256: d29514db8cf0e81d4de341607bb78d422992de38b4609670d8cbe62b568ad893
+    artefakt: deploy/staging/artefakter/m19-feilinjisering-v1-20260917T234416Z.json
+    artefakt_sha256: 19a1009f92f95a88a3064264223515d62070a39f580f0f8773a248dde0b9763e
     notat: >-
       Frisk kjøring først (feilet=false), så to injiserte: begge rene
       feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
-      urørt — 23 åpne og 2 lukkede over 9 tenanter, talt per funntype,
+      urørt — 40 åpne og 3 lukkede over 15 tenanter, talt per funntype,
       fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
       Injeksjonen har egen positiv kontroll: basen bekrefter at rollen
-      faktisk mangler EXECUTE.
+      faktisk mangler EXECUTE. Målingen rigger sitt eget register først,
+      gjennom modulens fasitdriver: et tomt register står stille uansett
+      hva kjøringen gjorde.
   ytelse_bestatt:
     # MÅLT 17/9 PÅ disponit.com: veggklokke rundt modulens egen `kjor()`,
     # ikke rundt SQL-funksjonen alene — advisory-låsen,

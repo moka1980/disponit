@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m19-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "adresse_registrert": 6,
+      "adressekontroll_registrert": 4,
+      "adressekrav_satt": 1,
+      "adressesubjekt_opprettet": 6
+    },
+    "evidens_totalt": 17,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "ukontrollert_adresse"
+        ],
+        "merke": "ukontrollert",
+        "subjekt_id": "47caf678-964c-4b34-993d-0d94f4af757c",
+        "ventet": "ukontrollert_adresse"
+      },
+      {
+        "fikk": [
+          "kontroll_utlopt"
+        ],
+        "merke": "utlopt",
+        "subjekt_id": "772f836e-55ad-4020-9002-906e4a913455",
+        "ventet": "kontroll_utlopt"
+      },
+      {
+        "fikk": [
+          "avvist_adresse"
+        ],
+        "merke": "avvist",
+        "subjekt_id": "6da43c96-e2d9-42f4-a719-f28c02a4a1f3",
+        "ventet": "avvist_adresse"
+      },
+      {
+        "fikk": [
+          "utilstrekkelig_metode"
+        ],
+        "merke": "feil_metode",
+        "subjekt_id": "bd37f50c-6479-47b1-b253-8f59fbf3760e",
+        "ventet": "utilstrekkelig_metode"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "f588c329-1211-4383-9159-2d65972a7e77",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "ingen_krav",
+        "subjekt_id": "e700f1aa-d4d4-4918-b914-db6f6288098b",
+        "ventet": "ingen_krav"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 11,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 28
+  },
+  "oppsett": {
+    "bevisrot_sha256": "4e3590cec7799c2fa5f0a52e45ee5189f8d7c8e103a1ba4ef09857549a90fdf2",
+    "godkjente_metoder": [
+      "dokumentert",
+      "levering_bekreftet"
+    ],
+    "gyldig_dogn": 180,
+    "modul": "m19_adresse",
+    "runde": "575fda32",
+    "sett_sha256": "ffacc236d14612f27c493b68d1e7dd57401bf3f4834bf076bbf1c7d466ee0b4e",
+    "tenanter": [
+      "t-m19fasit-med_krav-575fda32",
+      "t-m19fasit-uten_krav-575fda32"
+    ],
+    "ukontrollert_dogn": 30,
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-17T23:34:41.690230+00:00"
+}
