@@ -65,29 +65,21 @@ def _gjenopprett_rettigheter(migrator):
     """Rettighetene deploy-skriptet setter ETTER migrasjonene.
 
     `_nullstill` + `kjorer.migrer` bygger skjemaet, men GRANT-ene bor i
-    deploy/staging/migrer.py — uten dette steget står runtimerollen uten
-    SELECT og resten av suiten feiler på noe migrasjonstestene rev ned.
+    deploy/staging/migrer.py — uten dette steget står rollene uten
+    rettigheter og resten av suiten feiler på noe migrasjonstestene rev ned.
+
+    SAMME PASS SOM DEPLOYEN, IKKE EN KOPI (17/9): denne hjelperen bar en
+    håndholdt liste over grantsettene, og lista manglet ett sett hver gang
+    et nytt kom til — varselsenderen, plan-arbeideren, og sist
+    `disponit_arbeider` (`les_revisjonshendelse` forsvant for arbeideren
+    for resten av suiten; grønt i full suite fordi M-57-testene kjører FØR
+    denne fila alfabetisk, rødt når andelen kjøres etterpå). Nå kalles
+    `migrer.sett_rettigheter`, som selv hopper over roller som ikke finnes.
     """
     from .test_kjorer_og_kryptering import _migrer_modul
     modul = _migrer_modul()
-    # VARSLER-blokken hører med: migrasjonstestene river skjemaet og bygger
-    # det på nytt, og en gjenoppbygging som replayer alle grantsettene UNNTATT
-    # ett etterlater senderrollen uten EXECUTE — for resten av suiten. Det var
-    # nøyaktig slik varselsendertestene røk i full suite men besto alene.
-    for sql, rolle in ((modul.RETTIGHETER, "disponit"),
-                       (modul.M37_RETTIGHETER, "disponit"),
-                       # 043: oppløsningsveien — runtime alene, egen blokk.
-                       (modul.M37_RETTIGHETER_API, "disponit"),
-                       (modul.VARSLER_RETTIGHETER, "disponit_varselsender"),
-                       # 048 (#108): plan-arbeideren — samme lærdom som
-                       # varsler-linjen over, samme dag den ble aktuell.
-                       (modul.PLAN_RETTIGHETER, "disponit_plan_arbeider"),
-                       (modul.TOKEN_ADMIN_RETTIGHETER,
-                        "disponit_token_admin")):
-        migrator.execute(sql.format(rolle=rolle))
-        # Commit PER blokk: M37-blokken setter `SET LOCAL ROLE`, og uten
-        # commit her ville neste blokk kjørt som feil rolle.
-        migrator.commit()
+    migrator.rollback()
+    assert modul.sett_rettigheter(migrator, "disponit") is None
 
 
 def _kjor_til_007_og_saa_alt(migrator, seed):

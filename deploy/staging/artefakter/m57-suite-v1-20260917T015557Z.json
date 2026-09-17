@@ -1,0 +1,31 @@
+{
+  "bestatt": true,
+  "krav_id": "m57-suite-v1",
+  "maalt": {
+    "m57_exitkode": 0,
+    "m57_feilet": 0,
+    "m57_hoppet": 0,
+    "m57_tester": 398,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5452
+  },
+  "oppsett": {
+    "bevisrot_sha256": "49603f9542257edd8ba318556bbd39c1993cd7f2d747dd0c80e2c2480722ef4a",
+    "commit": "9bb3082ab39bb24d27ff96c5b4d0440ff35a3341",
+    "m57_filer": [
+      "platform/core/tests/test_m57_controller.py",
+      "platform/core/tests/test_m57_grense.py",
+      "platform/core/tests/test_m57_kandidatlagre.py",
+      "platform/core/tests/test_m57_klienter.py",
+      "platform/core/tests/test_m57_modul.py",
+      "platform/core/tests/test_m57_rapportflate.py",
+      "platform/core/tests/test_m57_utsender.py",
+      "platform/core/tests/test_m57_utsending.py"
+    ],
+    "modul": "m57_ats",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-17T01:55:57.824746+00:00"
+}

@@ -1705,6 +1705,205 @@ def last_bootstrap():
     return modul
 
 
+def sett_rettigheter(conn, rolle: str) -> int | None:
+    """RETTIGHETSPASSET — det som gjør en migrert base til en base rollene
+    kan bruke. Kjøres av `main` ETTER migrasjonene, på hver deploy.
+
+    ÉN FUNKSJON, IKKE EN BLOKK I `main` (17/9): testene som river skjemaet
+    og bygger det opp igjen (`test_pr008._gjenopprett_rettigheter`) hadde
+    en egen, håndholdt kopi av dette passet — og kopien manglet ett
+    rollesett hver gang et nytt kom til (varselsenderen, så
+    plan-arbeideren, så `disponit_arbeider`: `les_revisjonshendelse`
+    forsvant for arbeideren for resten av suiten, grønt i full suite fordi
+    M-57-testene kjører FØR pr008 alfabetisk, rødt når andelen kjøres
+    etterpå). Nå kaller testen det samme passet som deployen.
+
+    -> None når alt gikk, ellers exit-koden `main` skal returnere.
+    """
+    conn.execute(NULLSTILL_TABELLER.format(rolle=rolle))
+    conn.execute(RETTIGHETER.format(rolle=rolle))
+    conn.commit()
+    conn.execute(M37_RETTIGHETER.format(rolle=rolle))
+    conn.commit()      # avslutter SET LOCAL ROLE
+    # 043: oppløsningsveien — runtime ALENE (se blokken).
+    conn.execute(M37_RETTIGHETER_API.format(rolle=rolle))
+    conn.commit()
+    # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
+    # i migrasjon 013 sammen med funksjonen — der overlever det enhver
+    # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke
+    # bare denne kjøringen. Ikke dupliser det her.
+    print(f"rettigheter satt for {rolle}")
+    # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
+    # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en
+    # hard feil — ikke en advarsel. Betinget, som 003 gjør for runtime.
+    token_admin = os.environ.get("DISPONIT_TOKEN_ADMIN_ROLLE",
+                                 "disponit_token_admin")
+    if not token_admin.replace("_", "").isalnum():
+        print(f"AVBRUTT: ugyldig rollenavn {token_admin!r}")
+        return 2
+    finnes = conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                          (token_admin,)).fetchone()
+    if finnes:
+        conn.execute(NULLSTILL_TABELLER.format(rolle=token_admin))
+        conn.execute(TOKEN_ADMIN_RETTIGHETER.format(rolle=token_admin))
+        conn.commit()
+        print(f"rettigheter satt for {token_admin}")
+    else:
+        conn.rollback()
+        print(f"hopper over {token_admin}: rollen finnes ikke"
+              " (opprettes av oppsett-postgresql.sh)")
+    # PR-009: arbeiderrollen — betinget som token-admin, av samme grunn.
+    arbeider = "disponit_arbeider"
+    if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                    (arbeider,)).fetchone():
+        conn.execute(NULLSTILL_TABELLER.format(rolle=arbeider))
+        conn.execute(ARBEIDER_RETTIGHETER.format(rolle=arbeider))
+        conn.commit()
+        conn.execute(M37_RETTIGHETER.format(rolle=arbeider))
+        conn.commit()
+        print(f"rettigheter satt for {arbeider}")
+    else:
+        conn.rollback()
+        print(f"hopper over {arbeider}: rollen finnes ikke"
+              " (opprettes av oppsett-postgresql.sh)")
+    # Varselsenderens rolle — betinget som de andre, av samme grunn.
+    # KUN de tre funksjonene: SECURITY DEFINER gjør tabellgrants
+    # unødvendige, og fraværet av dem ER poenget med rollen (Codex P1:
+    # et kompromittert web-API skal ikke ha senderens kryss-tenant-vindu).
+    varsler = "disponit_varselsender"
+    if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                    (varsler,)).fetchone():
+        conn.execute(VARSLER_RETTIGHETER.format(rolle=varsler))
+        conn.commit()
+        print(f"rettigheter satt for {varsler}")
+    else:
+        conn.rollback()
+        print(f"hopper over {varsler}: rollen finnes ikke"
+              " (opprettes av oppsett-postgresql.sh)")
+    # 048 (#108): plan-arbeiderens rolle — betinget som de andre.
+    # Rollen bærer bestillingsveiens delmengde + claim-funksjonene
+    # runtime mistet; se PLAN_RETTIGHETER for grensen og porten.
+    planarb = "disponit_plan_arbeider"
+    if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                    (planarb,)).fetchone():
+        conn.execute(NULLSTILL_TABELLER.format(rolle=planarb))
+        conn.execute(PLAN_RETTIGHETER.format(rolle=planarb))
+        conn.commit()
+        print(f"rettigheter satt for {planarb}")
+    else:
+        conn.rollback()
+        print(f"hopper over {planarb}: rollen finnes ikke"
+              " (opprettes av oppsett-postgresql.sh)")
+    # 090/091: driftstatusens og selvtestens roller — betinget som de
+    # andre, av samme grunn (en GRANT til en rolle som ikke finnes er
+    # en hard feil, ikke en advarsel). Ingen NULLSTILL_TABELLER for
+    # disse to: de har ingen tabellrettigheter å nullstille, og et
+    # kall som listet tabellene ville vært den første antydningen om
+    # at de skulle hatt noen.
+    # 092 (M-3): profileringsjobbens rolle står i SAMME løkke og av
+    # samme grunn — ingen tabellrettigheter å nullstille, og en
+    # GRANT til en rolle som ikke finnes er en hard feil.
+    for navn, mal in (("disponit_driftstatus", DRIFTSTATUS_RETTIGHETER),
+                      ("disponit_selvtest", SELVTEST_RETTIGHETER),
+                      ("disponit_kvalitetsmaaler",
+                       KVALITETSMAALER_RETTIGHETER),
+                      ("disponit_lagermaaler", LAGERMAALER_RETTIGHETER),
+                      # 095 (M-9): begrepssveipens rolle står i samme
+                      # løkke og med samme betingelse — den har heller
+                      # ingen tabellrettigheter å nullstille, bare den
+                      # ene EXECUTEn.
+                      ("disponit_kunnskapssveip",
+                       KUNNSKAPSSVEIP_RETTIGHETER),
+                      # 097 (M-12): gjennomgangssveipens rolle står i
+                      # samme løkke og med samme betingelse — heller
+                      # ingen tabellrettigheter å nullstille, bare
+                      # den ene EXECUTEn.
+                      ("disponit_tilgangssveip",
+                       TILGANGSSVEIP_RETTIGHETER),
+                      # 099 (M-30): fristsveipens rolle, samme
+                      # løkke og samme betingelse — ingen
+                      # tabellrettigheter å nullstille, bare den
+                      # ene EXECUTEn.
+                      ("disponit_personvernsveip",
+                       PERSONVERNSVEIP_RETTIGHETER),
+                      # 100 (M-34): etterprøvingssveipens rolle,
+                      # samme løkke og samme betingelse — ingen
+                      # tabellrettigheter å nullstille, bare den ene
+                      # EXECUTEn.
+                      ("disponit_compliancesveip",
+                       COMPLIANCESVEIP_RETTIGHETER),
+                      # 101 (M-13): avstemmingssveipens rolle, samme
+                      # løkke og samme betingelse — ingen
+                      # tabellrettigheter å nullstille, bare den ene
+                      # EXECUTEn.
+                      ("disponit_avstemmingssveip",
+                       AVSTEMMINGSVEIP_RETTIGHETER),
+                      # 102 (M-17): henvendelsessveipens rolle, samme
+                      # løkke og samme betingelse — ingen
+                      # tabellrettigheter å nullstille, bare den ene
+                      # EXECUTEn.
+                      ("disponit_henvendelsessveip",
+                       HENVENDELSESVEIP_RETTIGHETER),
+                      # 103 (M-18): onboardingsveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_onboardingsveip",
+                       ONBOARDINGSVEIP_RETTIGHETER),
+                      # 104 (M-23): fordringssveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_fordringssveip",
+                       FORDRINGSVEIP_RETTIGHETER),
+                      # 105 (M-24): leverandørsveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_leverandorsveip",
+                       LEVERANDORSVEIP_RETTIGHETER),
+                      # 106 (M-14): fakturasveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_fakturasveip",
+                       FAKTURASVEIP_RETTIGHETER),
+                      # 107 (M-25): prosjektsveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_prosjektsveip",
+                       PROSJEKTSVEIP_RETTIGHETER),
+                      # 108 (M-26): prisboksveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_prisboksveip",
+                       PRISBOKSVEIP_RETTIGHETER),
+                      # 109 (M-27): lagersveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_lagersveip",
+                       LAGERSVEIP_RETTIGHETER),
+                      # 110 (M-42): kontovaktsveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_kontovaktsveip",
+                       KONTOVAKTSVEIP_RETTIGHETER),
+                      # 111 (M-41): betalingssveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_betalingssveip",
+                       BETALINGSSVEIP_RETTIGHETER),
+                      # 112 (M-19): adressesveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_adressesveip",
+                       ADRESSESVEIP_RETTIGHETER),
+                      # 113 (M-39): lønnssveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_lonnssveip",
+                       LONNSSVEIP_RETTIGHETER),
+                      # 114 (M-44): kampanjesveipens rolle, samme
+                      # løkke og samme betingelse.
+                      ("disponit_kampanjesveip",
+                       KAMPANJESVEIP_RETTIGHETER)):
+        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
+                        (navn,)).fetchone():
+            conn.execute(mal.format(rolle=navn))
+            conn.commit()
+            print(f"rettigheter satt for {navn}")
+        else:
+            conn.rollback()
+            print(f"hopper over {navn}: rollen finnes ikke"
+                  " (opprettes av oppsett-postgresql.sh)")
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     # argv som parameter, ikke sys.argv direkte: da kan tester kalle
     # inngangen som den kalles i drift, uten å rote med prosessens argumenter.
@@ -1767,187 +1966,9 @@ def main(argv: list[str] | None = None) -> int:
                  if res.grunner else ""))
         kjort = legacy + for_backfill + migrer(conn)
         print(f"migrasjoner kjørt: {kjort or 'ingen — alt var oppdatert'}")
-        conn.execute(NULLSTILL_TABELLER.format(rolle=rolle))
-        conn.execute(RETTIGHETER.format(rolle=rolle))
-        conn.commit()
-        conn.execute(M37_RETTIGHETER.format(rolle=rolle))
-        conn.commit()      # avslutter SET LOCAL ROLE
-        # 043: oppløsningsveien — runtime ALENE (se blokken).
-        conn.execute(M37_RETTIGHETER_API.format(rolle=rolle))
-        conn.commit()
-        # PR-013: policy_eier sitt skrivegrant på `policyer`/`policy_hode` bor
-        # i migrasjon 013 sammen med funksjonen — der overlever det enhver
-        # skjemagjenoppbygging (også testenes _nullstill + re-migrer), ikke
-        # bare denne kjøringen. Ikke dupliser det her.
-        print(f"rettigheter satt for {rolle}")
-        # Token-admin er valgfri på eldre installasjoner: rollen opprettes av
-        # oppsett-skriptet, og en GRANT til en rolle som ikke finnes er en
-        # hard feil — ikke en advarsel. Betinget, som 003 gjør for runtime.
-        token_admin = os.environ.get("DISPONIT_TOKEN_ADMIN_ROLLE",
-                                     "disponit_token_admin")
-        if not token_admin.replace("_", "").isalnum():
-            print(f"AVBRUTT: ugyldig rollenavn {token_admin!r}")
-            return 2
-        finnes = conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
-                              (token_admin,)).fetchone()
-        if finnes:
-            conn.execute(NULLSTILL_TABELLER.format(rolle=token_admin))
-            conn.execute(TOKEN_ADMIN_RETTIGHETER.format(rolle=token_admin))
-            conn.commit()
-            print(f"rettigheter satt for {token_admin}")
-        else:
-            conn.rollback()
-            print(f"hopper over {token_admin}: rollen finnes ikke"
-                  " (opprettes av oppsett-postgresql.sh)")
-        # PR-009: arbeiderrollen — betinget som token-admin, av samme grunn.
-        arbeider = "disponit_arbeider"
-        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
-                        (arbeider,)).fetchone():
-            conn.execute(NULLSTILL_TABELLER.format(rolle=arbeider))
-            conn.execute(ARBEIDER_RETTIGHETER.format(rolle=arbeider))
-            conn.commit()
-            conn.execute(M37_RETTIGHETER.format(rolle=arbeider))
-            conn.commit()
-            print(f"rettigheter satt for {arbeider}")
-        else:
-            conn.rollback()
-            print(f"hopper over {arbeider}: rollen finnes ikke"
-                  " (opprettes av oppsett-postgresql.sh)")
-        # Varselsenderens rolle — betinget som de andre, av samme grunn.
-        # KUN de tre funksjonene: SECURITY DEFINER gjør tabellgrants
-        # unødvendige, og fraværet av dem ER poenget med rollen (Codex P1:
-        # et kompromittert web-API skal ikke ha senderens kryss-tenant-vindu).
-        varsler = "disponit_varselsender"
-        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
-                        (varsler,)).fetchone():
-            conn.execute(VARSLER_RETTIGHETER.format(rolle=varsler))
-            conn.commit()
-            print(f"rettigheter satt for {varsler}")
-        else:
-            conn.rollback()
-            print(f"hopper over {varsler}: rollen finnes ikke"
-                  " (opprettes av oppsett-postgresql.sh)")
-        # 048 (#108): plan-arbeiderens rolle — betinget som de andre.
-        # Rollen bærer bestillingsveiens delmengde + claim-funksjonene
-        # runtime mistet; se PLAN_RETTIGHETER for grensen og porten.
-        planarb = "disponit_plan_arbeider"
-        if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
-                        (planarb,)).fetchone():
-            conn.execute(NULLSTILL_TABELLER.format(rolle=planarb))
-            conn.execute(PLAN_RETTIGHETER.format(rolle=planarb))
-            conn.commit()
-            print(f"rettigheter satt for {planarb}")
-        else:
-            conn.rollback()
-            print(f"hopper over {planarb}: rollen finnes ikke"
-                  " (opprettes av oppsett-postgresql.sh)")
-        # 090/091: driftstatusens og selvtestens roller — betinget som de
-        # andre, av samme grunn (en GRANT til en rolle som ikke finnes er
-        # en hard feil, ikke en advarsel). Ingen NULLSTILL_TABELLER for
-        # disse to: de har ingen tabellrettigheter å nullstille, og et
-        # kall som listet tabellene ville vært den første antydningen om
-        # at de skulle hatt noen.
-        # 092 (M-3): profileringsjobbens rolle står i SAMME løkke og av
-        # samme grunn — ingen tabellrettigheter å nullstille, og en
-        # GRANT til en rolle som ikke finnes er en hard feil.
-        for navn, mal in (("disponit_driftstatus", DRIFTSTATUS_RETTIGHETER),
-                          ("disponit_selvtest", SELVTEST_RETTIGHETER),
-                          ("disponit_kvalitetsmaaler",
-                           KVALITETSMAALER_RETTIGHETER),
-                          ("disponit_lagermaaler", LAGERMAALER_RETTIGHETER),
-                          # 095 (M-9): begrepssveipens rolle står i samme
-                          # løkke og med samme betingelse — den har heller
-                          # ingen tabellrettigheter å nullstille, bare den
-                          # ene EXECUTEn.
-                          ("disponit_kunnskapssveip",
-                           KUNNSKAPSSVEIP_RETTIGHETER),
-                          # 097 (M-12): gjennomgangssveipens rolle står i
-                          # samme løkke og med samme betingelse — heller
-                          # ingen tabellrettigheter å nullstille, bare
-                          # den ene EXECUTEn.
-                          ("disponit_tilgangssveip",
-                           TILGANGSSVEIP_RETTIGHETER),
-                          # 099 (M-30): fristsveipens rolle, samme
-                          # løkke og samme betingelse — ingen
-                          # tabellrettigheter å nullstille, bare den
-                          # ene EXECUTEn.
-                          ("disponit_personvernsveip",
-                           PERSONVERNSVEIP_RETTIGHETER),
-                          # 100 (M-34): etterprøvingssveipens rolle,
-                          # samme løkke og samme betingelse — ingen
-                          # tabellrettigheter å nullstille, bare den ene
-                          # EXECUTEn.
-                          ("disponit_compliancesveip",
-                           COMPLIANCESVEIP_RETTIGHETER),
-                          # 101 (M-13): avstemmingssveipens rolle, samme
-                          # løkke og samme betingelse — ingen
-                          # tabellrettigheter å nullstille, bare den ene
-                          # EXECUTEn.
-                          ("disponit_avstemmingssveip",
-                           AVSTEMMINGSVEIP_RETTIGHETER),
-                          # 102 (M-17): henvendelsessveipens rolle, samme
-                          # løkke og samme betingelse — ingen
-                          # tabellrettigheter å nullstille, bare den ene
-                          # EXECUTEn.
-                          ("disponit_henvendelsessveip",
-                           HENVENDELSESVEIP_RETTIGHETER),
-                          # 103 (M-18): onboardingsveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_onboardingsveip",
-                           ONBOARDINGSVEIP_RETTIGHETER),
-                          # 104 (M-23): fordringssveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_fordringssveip",
-                           FORDRINGSVEIP_RETTIGHETER),
-                          # 105 (M-24): leverandørsveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_leverandorsveip",
-                           LEVERANDORSVEIP_RETTIGHETER),
-                          # 106 (M-14): fakturasveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_fakturasveip",
-                           FAKTURASVEIP_RETTIGHETER),
-                          # 107 (M-25): prosjektsveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_prosjektsveip",
-                           PROSJEKTSVEIP_RETTIGHETER),
-                          # 108 (M-26): prisboksveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_prisboksveip",
-                           PRISBOKSVEIP_RETTIGHETER),
-                          # 109 (M-27): lagersveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_lagersveip",
-                           LAGERSVEIP_RETTIGHETER),
-                          # 110 (M-42): kontovaktsveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_kontovaktsveip",
-                           KONTOVAKTSVEIP_RETTIGHETER),
-                          # 111 (M-41): betalingssveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_betalingssveip",
-                           BETALINGSSVEIP_RETTIGHETER),
-                          # 112 (M-19): adressesveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_adressesveip",
-                           ADRESSESVEIP_RETTIGHETER),
-                          # 113 (M-39): lønnssveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_lonnssveip",
-                           LONNSSVEIP_RETTIGHETER),
-                          # 114 (M-44): kampanjesveipens rolle, samme
-                          # løkke og samme betingelse.
-                          ("disponit_kampanjesveip",
-                           KAMPANJESVEIP_RETTIGHETER)):
-            if conn.execute("SELECT 1 FROM pg_roles WHERE rolname=%s",
-                            (navn,)).fetchone():
-                conn.execute(mal.format(rolle=navn))
-                conn.commit()
-                print(f"rettigheter satt for {navn}")
-            else:
-                conn.rollback()
-                print(f"hopper over {navn}: rollen finnes ikke"
-                      " (opprettes av oppsett-postgresql.sh)")
+        feil = sett_rettigheter(conn, rolle)
+        if feil:
+            return feil
         # Sluttkontroll. En advarsel med exit 0 er ingen port: klarer vi
         # ikke å bevise at historikken er låst, skal oppsettet feile.
         versjoner = conn.execute(

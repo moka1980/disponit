@@ -89,3 +89,6 @@ deploy/staging/artefakter/*.json
 # med sha256 og re-regnet av `m14-fasit-v1`/`m14-suite-v1`-portene.
 !deploy/staging/artefakter/m14-fasit-v1-20260916T233432Z.json
 !deploy/staging/artefakter/m14-suite-v1-20260916T234940Z.json
+# M-57 sertifisering 17/9: suiteartefaktet, bundet i manifestet med sha256 og
+# re-regnet av `m57-suite-v1`-porten (resten av m57-v1 er blokkert, #541).
+!deploy/staging/artefakter/m57-suite-v1-20260917T015557Z.json
