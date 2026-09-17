@@ -92,3 +92,6 @@ deploy/staging/artefakter/*.json
 # M-57 sertifisering 17/9: suiteartefaktet, bundet i manifestet med sha256 og
 # re-regnet av `m57-suite-v1`-porten (resten av m57-v1 er blokkert, #541).
 !deploy/staging/artefakter/m57-suite-v1-20260917T015557Z.json
+# M-57 ytelse 17/9: én ekte 300-bunt på verten, bundet i manifestet med
+# sha256 og re-regnet av `m57-ytelse-v1`-porten.
+!deploy/staging/artefakter/m57-ytelse-v1-20260917T082229Z.json

@@ -100,17 +100,29 @@ staging_sjekkliste:
       punktbindingen krever. Låses opp av en revidert grense.
     krav_id: m57-v1
   ytelse_bestatt:
-    # BLOKKERT AV VERTEN (målt 17/9): grensen krever >= 5000 søknader på
-    # <= 240 minutter, altså ~2,9 s per søknad gjennom modellen.
-    # disponit-srv har 2 vCPU, 3 GB RAM og `qwen2.5:3b-instruct` i
-    # Ollama (persondata forlater aldri serveren — eiers valg 26/8). Den
-    # målingen kan ikke gjøres på denne verten; grensen står.
-    status: blokkert
-    blokkert_av: >-
-      Vertens kapasitet (2 vCPU, 3 GB, qwen2.5:3b i Ollama, målt 17/9)
-      kan ikke evaluere 5000 søknader på 240 minutter. Låses opp av en
-      vert med GPU/flere kjerner eller en revidert ytelsesgrense (§0).
-    krav_id: m57-v1
+    # MÅLT 17/9 PÅ TAKET VERTEN BÆRER (eiers vedtak natt til 17/9: «vi kan
+    # gå videre med maks søknader som kan godta den maskinen vi har i
+    # dag»): taket er 300 (`parsing.MAKS_KANDIDATER`, bundet til grensen
+    # av porten), og ÉN EKTE bunt på nøyaktig 300 gikk gjennom hele kjeden
+    # på disponit-srv — bestilt som bestiller gjennom API-et (token laget
+    # på verten, tilbakekalt etterpå), claimet og blindet evaluert av
+    # `disponit-m57` mot qwen2.5:3b i Ollama, promotert og kvittert.
+    # Varigheten er oppdragsradens egen: første claim → `utfort`.
+    # `m57-v1`s ytelsespar (5000/240) står som klarsignalets tall og er
+    # blokkert av #541; kontraktens 5000-konvolutt flyttes i #543.
+    status: ja
+    krav_id: m57-ytelse-v1
+    bevismaalinger:
+      - maalt.ytelse_full_bunt_soknader
+      - maalt.ytelse_full_bunt_minutter
+      - maalt.resultat
+    artefakt: deploy/staging/artefakter/m57-ytelse-v1-20260917T082229Z.json
+    artefakt_sha256: 1a1a2d1ebac91b308c6185c02f27263529c9e89ecea45bf718049cf7b6ab8f63
+    notat: >-
+      Oppdrag 111 i t-m57fasit, 17/9: 300 søknader evaluert på
+      75 minutter (første claim → utfort), kvittering `utfort`,
+      innenfor §4s frist på 240. Porten krever nøyaktig taket, re-regner
+      minuttene av tidsstemplene og binder produsent + parsing.py.
   rollback_testet:
     # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44/M-26/M-14: MÅLT
     # 17/9 i modulregisteret har `m57_ats` NØYAKTIG ÉN release,
