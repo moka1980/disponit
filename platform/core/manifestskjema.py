@@ -5330,6 +5330,12 @@ SVEIPMODULER: dict[str, dict] = {
         # lik null ser ut som et urørt register. Målingen går derfor
         # tenant for tenant, over den samme listen sveipen selv bruker.
         "tenantkilde": "adressesubjekt",
+        # …OG HVEM SOM FÅR SE DEN. Kryss-tenant-autoriteten er snever og
+        # eksplisitt (112): bare subjekttabellen, bare FOR SELECT, bare
+        # til eierrollen, og bare uten tenantkontekst. Migratoren er
+        # medlem av den rollen, så målingen kan ta den på — men den må
+        # TA den; uten rollen ser tabellen tom ut.
+        "maalerolle": "disponit_adresse_eier",
         "dsn_variabel": "DISPONIT_ADRESSESVEIP_URL",
         "sveipedor": "m19_sveip_adresser(int)",
         # RUNTIME-ROLLEN er injeksjonen. 112 REVOKER eksplisitt EXECUTE

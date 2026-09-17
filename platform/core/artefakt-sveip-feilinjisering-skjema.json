@@ -38,6 +38,7 @@
         "vert",
         "funntabell",
         "tenantkilde",
+        "maalerolle",
         "sveipedor",
         "injeksjonsrolle",
         "injeksjon",
@@ -73,6 +74,10 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "tenantkilde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maalerolle": {
           "type": "string",
           "minLength": 1
         }

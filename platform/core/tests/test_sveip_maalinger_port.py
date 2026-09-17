@@ -35,6 +35,7 @@ def _feilart(**over):
         "oppsett": {"modul": MODUL, "vert": "disponit.com",
                     "funntabell": "adressefunn",
                     "tenantkilde": "adressesubjekt",
+                    "maalerolle": "disponit_adresse_eier",
                     "sveipedor": "m19_sveip_adresser(int)",
                     "injeksjonsrolle": "disponit",
                     "injeksjon": "tilkobling som disponit — uten EXECUTE",

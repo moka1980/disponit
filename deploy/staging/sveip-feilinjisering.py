@@ -63,8 +63,14 @@ def tilstand(m, k: dict) -> dict:
     null rader — og null lik null hadde sett ut som et urørt register
     uansett hva kjøringen gjorde.
 
+    MÅLINGEN TAR PÅ SEG EIERROLLEN, som er den eneste med
+    kryss-tenant-lesing av subjektlisten (112, snevert: bare den
+    tabellen, bare SELECT, bare uten tenantkontekst). Uten den ser også
+    tenantlisten tom ut, og tellingen blir null av feil grunn.
+
     Et tall alene holder heller ikke: ett funn kunne blitt lukket og et
     annet åpnet i samme feilende kjøring, og summen stått stille."""
+    m.execute(f"SET ROLE {k['maalerolle']}")
     m.execute("SELECT set_config('disponit.tenant', '', true)")
     tenanter = [r[0] for r in m.execute(
         f"SELECT DISTINCT tenant FROM {k['tenantkilde']} ORDER BY 1"
@@ -147,6 +153,7 @@ def main() -> int:
         "oppsett": {"modul": a.modul, "vert": a.vert,
                     "funntabell": k["funntabell"],
                     "tenantkilde": k["tenantkilde"],
+                    "maalerolle": k["maalerolle"],
                     "sveipedor": k["sveipedor"],
                     "injeksjonsrolle": str(rolle),
                     "injeksjon": f"tilkobling som {k['rolle_uten_execute']}"
