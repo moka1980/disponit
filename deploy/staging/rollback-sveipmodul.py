@@ -361,6 +361,32 @@ def boot_fra(k: dict, unit: str, katalog: Path | None, release: str,
     raise SystemExit(f"AVBRUTT: {unit} kom ikke opp fra {katalog or 'aktiv'}")
 
 
+DRILL_FULLFORT = False
+
+
+def gjenopprett_arbeideren(k: dict, dsn: str) -> None:
+    """Ved AVBRUDD: overriden vekk og arbeideren onboardet for den releasen
+    som står claiming — ellers står prod fencet til noen gjør det for hånd
+    (målt 17/9). Ved normal slutt har drillen selv gjort det."""
+    if DRILL_FULLFORT:
+        return
+    try:
+        fjern_override(k["unit"])
+        with psycopg.connect(dsn) as m:
+            rad = m.execute(
+                "SELECT release_id FROM moduldeployment WHERE modul_id=%s"
+                " AND miljo=%s AND livslop='claiming'",
+                (k["modul"], MILJO)).fetchone()
+        if rad:
+            onboard_for(k, rad[0])
+            subprocess.run(["systemctl", "restart", f"{k['unit']}.service"],
+                           timeout=120)
+            _log(f"  gjenopprettet: {k['unit']} onboardet for {rad[0]}")
+    except Exception as e:                                  # noqa: BLE001
+        _log(f"  ADVARSEL: gjenopprettingen feilet ({e}) — onboard arbeideren"
+             " for den claimende releasen for hånd")
+
+
 def fjern_override(unit: str):
     fil = _overridefil(unit)
     if fil.exists():
@@ -412,9 +438,9 @@ def nytt_m14(rt, tenant: str, ctx: dict, i: int) -> str:
 
 
 def forbered_m44(rt, tenant: str) -> dict:
-    """Grense, avsender og ÉN mottaker med kryptert kontakt (eiers
-    testadresse) og gyldig samtykke — hver kampanje planlegges for den."""
-    from api.kampanje import _kontakt_kryptert
+    """Grense og avsender. Mottakeren lages PER oppdrag: utvidelsen
+    `kampanje-send` har `frekvens.maks: 2` per mottaker per 30 dager, og
+    drillen bestiller fire — én mottaker hver, alle med eiers testadresse."""
     _sk(rt, tenant)
     rt.execute("SELECT m44_sett_grense(%s,10,7,730,%s)", (tenant, AKTOR))
     rt.commit()
@@ -422,11 +448,19 @@ def forbered_m44(rt, tenant: str) -> dict:
     rt.execute("SELECT m44_sett_avsender(%s,%s,%s,%s)",
                (tenant, "Drill AS", "post@disponit.com", AKTOR))
     rt.commit()
+    return {}
+
+
+def nytt_m44(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN mottaker (kryptert kontakt, gyldig samtykke) og ÉN kampanje med
+    innhold, planlagt i dag, med mottakeren i planen — nøyaktig én
+    kandidat for `m44_kampanjekandidater`, innenfor frekvensgrensen."""
+    from api.kampanje import _kontakt_kryptert
     mid = uuid.uuid4()
     _sk(rt, tenant)
     rt.execute("SELECT m44_registrer_mottaker(%s,%s,%s,%s,%s,%s)",
-               (tenant, mid, f"M-drill-{secrets.token_hex(3)}", "Drill Mottaker",
-                TESTMOTTAKER, AKTOR))
+               (tenant, mid, f"M-drill-{secrets.token_hex(3)}-{i}",
+                f"Drill Mottaker {i}", TESTMOTTAKER, AKTOR))
     rt.commit()
     _sk(rt, tenant)
     ct, nonce, key_id = _kontakt_kryptert(rt, tenant, TESTMOTTAKER)
@@ -439,12 +473,6 @@ def forbered_m44(rt, tenant: str) -> dict:
         "       %s,'nyhetsbrev',current_date - 1,'drill',%s)",
         (tenant, uuid.uuid4(), mid, f"s-drill-{secrets.token_hex(3)}", AKTOR))
     rt.commit()
-    return {"mid": mid}
-
-
-def nytt_m44(rt, tenant: str, ctx: dict, i: int) -> str:
-    """ÉN kampanje med innhold, planlagt i dag, med mottakeren i planen —
-    nøyaktig én kandidat for `m44_kampanjekandidater`."""
     kid = uuid.uuid4(); kode = f"K-drill-{secrets.token_hex(3)}-{i}"
     _sk(rt, tenant)
     rt.execute(
@@ -456,8 +484,7 @@ def nytt_m44(rt, tenant: str, ctx: dict, i: int) -> str:
          " kreves.", AKTOR))
     rt.commit()
     _sk(rt, tenant)
-    rt.execute("SELECT m44_legg_i_plan(%s,%s,%s,%s)",
-               (tenant, kid, ctx["mid"], AKTOR))
+    rt.execute("SELECT m44_legg_i_plan(%s,%s,%s,%s)", (tenant, kid, mid, AKTOR))
     rt.commit()
     return str(kid)
 
@@ -573,7 +600,13 @@ def forbered(m, a, k):
                           manifest_hash_i(kat, modul), dg)
         bytt_release(m, modul, rel, kver, khash)
         _log(f"  registrert og byttet til {rel} (digest {dg[:12]}…, fra {kat})")
-    _log(f"forberedt: {drillet} → {r2} → {r3}; drillen kan nå rulle {r3} → {r2}")
+    # Arbeiderens token er bundet til release: uten dette står den fencet
+    # mot claim-porten fra nå (målt 17/9 på m14 og m44).
+    onboard_for(k, r3)
+    subprocess.run(["systemctl", "restart", f"{k['unit']}.service"], check=True,
+                   timeout=120)
+    _log(f"forberedt: {drillet} → {r2} → {r3}; arbeideren onboardet for {r3};"
+         f" drillen kan nå rulle {r3} → {r2}")
 
 
 def main() -> int:
@@ -603,6 +636,7 @@ def main() -> int:
 
     # 0. preflight
     ta_reservasjonen(m, modul, dsn)
+    atexit.register(gjenopprett_arbeideren, k, dsn)
     drillet, kver, khash, drillet_digest = den_ene_claimende(m, modul)
     forgjenger, forgjenger_digest = forgjengeren(m, modul, drillet, kver, khash)
     f_kat = Path(a.forgjenger_katalog).resolve()
@@ -733,6 +767,8 @@ def main() -> int:
                               sveipmodul_digest(f_kat, modul) == forgjenger_digest,
                           "unit_override_fjernet": not _overridefil(unit).exists()},
     }
+    global DRILL_FULLFORT
+    DRILL_FULLFORT = True
     formfeil = valider_artefaktformat(art, k["krav_id"])
     grensefeil = _sjekk_grenser(k["krav_id"], art)
     art["bestatt"] = not formfeil and not grensefeil
