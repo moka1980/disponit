@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/rollback-modul-artefakt-v1.json",
+  "title": "flippedrill for en sveipmodul (m<X>-rollback-v1)",
+  "comment": "rollback-m56-v1s form for sveipmodulene: den drillede releasen dreneres MENS et oppdrag er underveis, rullbakken (forgjengerens bytes, sveipmodul_digest) bootes som unit-override og claimer, kandidaten (de drillede bytene) overtar. Skrevet av deploy/staging/rollback-sveipmodul.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "identiteter",
+    "maalt",
+    "etterkontroll"
+  ],
+  "properties": {
+    "krav_id": {
+      "type": "string",
+      "pattern": "^m[0-9]{2}-rollback-v1$"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "miljo",
+        "vert",
+        "tenant",
+        "drillet_release",
+        "rullback_release",
+        "kandidat_release",
+        "forgjenger_release",
+        "drillet_digest",
+        "kandidat_digest",
+        "rullback_digest",
+        "forgjenger_digest",
+        "forgjenger_katalog",
+        "drillet_katalog",
+        "module_epoch",
+        "kontraktversjon",
+        "kontrakt_hash"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "miljo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rullback_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kandidat_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forgjenger_release": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        },
+        "kandidat_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        },
+        "rullback_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        },
+        "forgjenger_digest": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        },
+        "forgjenger_katalog": {
+          "type": "string",
+          "minLength": 1
+        },
+        "drillet_katalog": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kontraktversjon": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kontrakt_hash": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-f]{64}$",
+          "maxLength": 64
+        }
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inflight_oppdrag_id",
+        "rullback_oppdrag_id",
+        "kandidat_oppdrag_id",
+        "probe_oppdrag_id"
+      ],
+      "properties": {
+        "inflight_oppdrag_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rullback_oppdrag_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kandidat_oppdrag_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probe_oppdrag_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inflight_oppdrag",
+        "inflight_utfall",
+        "inflight_har_signert_kvittering",
+        "falske_verdikter",
+        "claims_etter_drenering",
+        "ventetid_ubehandlet_s",
+        "rullback_claimet_oppdrag",
+        "rullback_har_signert_kvittering",
+        "rullback_promoterte",
+        "rullback_overtakelse_s",
+        "kandidat_claimet_oppdrag",
+        "kandidat_har_signert_kvittering",
+        "overtakelse_s",
+        "release_digest_bundet"
+      ],
+      "properties": {
+        "inflight_oppdrag": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inflight_utfall": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inflight_har_signert_kvittering": {
+          "type": "boolean"
+        },
+        "falske_verdikter": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "claims_etter_drenering": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ventetid_ubehandlet_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rullback_claimet_oppdrag": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rullback_har_signert_kvittering": {
+          "type": "boolean"
+        },
+        "rullback_promoterte": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Sveipmodulene promoterer ingen artefakter; tallet er bilag/kvitteringer rullbakken skrev, grensen er 0."
+        },
+        "rullback_overtakelse_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "kandidat_claimet_oppdrag": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kandidat_har_signert_kvittering": {
+          "type": "boolean"
+        },
+        "overtakelse_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "release_digest_bundet": {
+          "type": "boolean"
+        }
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "drillet_livslop",
+        "rullback_livslop",
+        "kandidat_livslop",
+        "modulstatus",
+        "digest_likhet",
+        "rullback_bytes_er_forgjengerens",
+        "unit_override_fjernet"
+      ],
+      "properties": {
+        "drillet_livslop": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rullback_livslop": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kandidat_livslop": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modulstatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest_likhet": {
+          "type": "boolean"
+        },
+        "rullback_bytes_er_forgjengerens": {
+          "type": "boolean"
+        },
+        "unit_override_fjernet": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
