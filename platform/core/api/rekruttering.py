@@ -155,7 +155,7 @@ def _kandidater(conn, tenant, prosess_id):
     """Kandidatene i én prosess, lest RETT fra 057-lageret under RLS.
 
     AVGRENSNINGEN LIGGER I KALLEREN (#183, landet i denne PR-en). Hver
-    prosess kan bære 5000 kandidater (katalogens harde løfte) i inntil
+    prosess kan bære opptil taket (300, #543) kandidater i inntil
     365 døgn, så et svar som løp over alle ureapet prosesser vokste uten
     tak. Nå kalles denne funksjonen for ÉN prosess per forespørsel —
     `prosesser_endepunkt` velger den og lar resten være indeksrader — og
@@ -176,7 +176,7 @@ def _kandidater(conn, tenant, prosess_id):
     beste, ikke til utvelgelsen, så feltet forlater aldri serveren her —
     og da er både artefaktkopien og 057-lageret (`kandidat_intervjusporsmal`)
     noe denne lesningen kaster. Regelen over gjelder også dem: lesningen
-    slutter å hente det den kaster, og på en prosess med inntil 5000
+    slutter å hente det den kaster, og på en prosess med inntil 300
     kandidater er en JOIN mot lageret unødvendig arbeid i basen og
     unødvendig nyttelast over forbindelsen.
     Subtraksjonen av `intervjusporsmal` blir stående — artefaktet kan
@@ -489,7 +489,7 @@ def prosesser_endepunkt(tjeneste, request):
 
         # ÉN PROSESS BÆRER DATA, RESTEN ER EN INDEKS (#183, Codex P2 fra
         # #176). Løkka kalte `_kandidater` og `_lister` for HVER ureapet
-        # prosess. Katalogens løfte er 5000 søknader per bestilling, og
+        # prosess. Taket er 300 søknader per bestilling (#543), og
         # prosessraden lever til slettefristen — inntil 365 døgn — så én
         # GET kunne skanne og serialisere titusener av funn- og
         # spørsmålspayloader, holde en pool-forbindelse hele veien, og i

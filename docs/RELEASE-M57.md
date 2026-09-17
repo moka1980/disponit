@@ -120,3 +120,22 @@ er transportidempotensen: klaim committes før SMTP, døde klaim blir
 TERMINALT `uviss` (aldri auto-resend), `feilet` prøves opp til 3 ganger.
 Uten `smtp.env` rapporterer jobben `smtp_ikke_konfigurert` og rører
 ingenting. Nye units rulles av `opp.sh` (UNITS-listen) ved neste deploy.
+
+## Taket 300 (17/9, eiers vedtak — #543/#544)
+
+«Vi kan gå videre med maks søknader som kan godta den maskinen vi har i
+dag.» Målt: 300 søknader på 75 min på disponit-srv (oppdrag 111,
+`m57-ytelse-v1`). Ett tall bærer taket: `oppdragskontrakt.FELTGRENSER`
+(døra), `parsing.MAKS_KANDIDATER` (utføreren), flatens `max`, og begge
+ytelsesgrensene (`manifestskjema.M57_YTELSE_MAKS_SOKNADER`). Porten
+`test_m57_ytelse_port` binder dem.
+
+REGISTERET: `oppdragstype_register`-raden er immutabel — det finnes ingen
+«kontraktversjon 2» for `rekruttering.evaluering`. Den registrerte
+`payload_schema_hash` (6163b897…) er attestasjonen av v1-skjemaet slik
+det var 27/8 (maximum 5000); treets `payload-skjema.json` sier 300, og
+døra er plattformens (`FELTGRENSER`), ikke skjemaets. En RE-KJØRING av
+`registrer-m57-ats.py` må derfor få de OPPRINNELIGE hashene som
+argumenter (99c429cf…, 6163b897…, 95449df4…) — nye hasher felles av
+immutabilitetsvakten, som det skal.
+

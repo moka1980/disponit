@@ -7,15 +7,16 @@ Modulen er KUNDE av plattformen, aldri omvendt (m56-formen):
   (#200 valg B: payloaden navngir ALDRI bunten — bindingsraden
   `inndata_artefakt.oppdrag_id` er eneste sannhet, og modulen henter
   bunten via `hent_inndata_for_oppdrag`, 060), `antall_soknader`
-  (1–5000, hard grense — 5001 avvises ved validering, aldri stille
-  avkorting) og `omfang: bunt` (bærer 240-minuttersfristen).
+  (1–300, hard grense — 301 avvises ved validering, aldri stille
+  avkorting; eiers vedtak 17/9 (#543): taket er det verten er målt til
+  innenfor fristen, klarsignalets 5000 var konvolutten i kontraktversjon 1) og `omfang: bunt` (bærer 240-minuttersfristen).
   Valgfritt: `slettefrist_dogn` (30–365, standard 90) — kundens
   kandidatdatafrist, bundet i bestillingen fordi den ellers ikke har noe
   sted å stå (§5).
 
   BUNTEN BÆRER SIN EGEN DEKLARASJON (#161, eiers B): et lukket
   `soknader.json` i roten navngir hver kandidat (`kandidat_id`) og
-  filene hens (`filer`), 1–5000 kandidater. Parseren binder manifestet
+  filene hens (`filer`), 1–300 kandidater. Parseren binder manifestet
   toveis mot katalogen — deklarert fil uten medlem og medlem uten
   deklarasjon er like røde — og deklarert kandidattall må være lik
   oppdragets `antall_soknader` FØR én byte innhold pakkes ut. En

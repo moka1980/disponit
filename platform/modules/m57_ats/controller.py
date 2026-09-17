@@ -285,10 +285,10 @@ def _payloadbrudd(payload: dict) -> str | None:
     speilet). Den håndrullede sjekken her leste bare profilen og at
     `antall_soknader >= 1`, og var dermed en ANNEN port enn den som
     slapp oppdraget gjennom ved opprettelsen: `oppdragskontrakt` binder
-    også `omfang` til «bunt», `antall_soknader` til 1–5000 (klarsignalet
-    §4 — 5001 avvises, aldri stille avkorting), `slettefrist_dogn` til
-    30–365 og `stillingsprofil_ref` til en ikke-tom streng. Et eldre
-    eller korrupt claim med `antall_soknader: 5001` kunne derfor hentes
+    også `omfang` til «bunt», `antall_soknader` til 1–300 (taket verten
+    bærer, #543 — 301 avvises, aldri stille avkorting), `slettefrist_dogn`
+    til 30–365 og `stillingsprofil_ref` til en ikke-tom streng. Et eldre
+    eller korrupt claim med `antall_soknader: 301` kunne derfor hentes
     og evalueres av utføreren selv om bestillingsveien ville avvist det.
 
     To sett regler betyr at de to sidene kan være uenige om hva et lovlig

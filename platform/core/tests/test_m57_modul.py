@@ -1905,13 +1905,17 @@ def test_rangeringen_er_poeng_med_synlige_vekter():
     )[0]["poeng"] == evaluering.VEKT_EKSAKT_MAKS
 
 
-def test_port27_5001_avvises_ved_validering():
+def test_port27_over_taket_avvises_ved_validering():
+    """Taket er 300 (eiers vedtak 17/9, #543) — på taket går, én over felles."""
+    import oppdragskontrakt as ok
+    _, tak = ok.FELTGRENSER["rekruttering.evaluering"]["antall_soknader"]
+    assert tak == 300
     payload = {"stillingsprofil_ref": "p-1@1",
                "stillingsprofil": {"profil_id": "p-1", "versjon": 1, "navn": "N",
                           "krav": [{"kravnavn": "K", "vekt": 3}]},
-               "antall_soknader": 5000, "omfang": "bunt"}
+               "antall_soknader": tak, "omfang": "bunt"}
     assert bryter_feltkontrakten("rekruttering.evaluering", payload) == []
-    for antall in (5001, 0, -1):
+    for antall in (tak + 1, 5000, 0, -1):
         brudd = bryter_feltkontrakten(
             "rekruttering.evaluering", payload | {"antall_soknader": antall})
         assert brudd, antall

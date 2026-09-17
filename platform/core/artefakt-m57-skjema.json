@@ -84,8 +84,8 @@
         "bias_maling_mangler_for_digest_brudd",
         "ttl_lager_utenfor_kandidatgrensen_forsok",
         "ttl_lager_utenfor_kandidatgrensen_brudd",
-        "bestilling_over_5000_akseptert_forsok",
-        "bestilling_over_5000_akseptert_brudd",
+        "bestilling_over_taket_akseptert_forsok",
+        "bestilling_over_taket_akseptert_brudd",
         "kjoring_delvis_resultat_promotert_forsok",
         "kjoring_delvis_resultat_promotert_brudd",
         "ui_axe_alvorlige_brudd_forsok",
@@ -240,11 +240,11 @@
           "type": "integer",
           "minimum": 0
         },
-        "bestilling_over_5000_akseptert_forsok": {
+        "bestilling_over_taket_akseptert_forsok": {
           "type": "integer",
           "minimum": 0
         },
-        "bestilling_over_5000_akseptert_brudd": {
+        "bestilling_over_taket_akseptert_brudd": {
           "type": "integer",
           "minimum": 0
         },
@@ -376,6 +376,111 @@
             }
           },
           "description": "Biasmalingene kjoringen hvilte pa, en per dekket digest. Formkravene speiler krev_biasmaaling; at artefakten FINNES i et lager er #167 valg A."
+        },
+        "suite_tester": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "suite_feilet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "m57_tester": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "m57_feilet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "m57_hoppet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "bunt_soknader": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "fasitavvik": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "revisjon_avskruinger": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "revisjon_signaturer": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "revisjon_frigivelser": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "revisjon_hendelser_uten_identitet": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "injisert_jobber": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "unntakskoe_poster": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "koeposter_uten_jobbinding": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "rullback_claims": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "rullback_promoterte": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "claims_etter_drenering": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Telling (heltall >= 0). VALGFRI aa rapportere, ikke aa oppfylle: punktbindingen avgjoer om punktet paaberopes, og da maales tallet mot grensen (#541)."
+        },
+        "stagingidentitet": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Identitet/digest som streng. VALGFRI aa rapportere, ikke aa oppfylle (#541)."
+        },
+        "datasett_sha_lokal": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Identitet/digest som streng. VALGFRI aa rapportere, ikke aa oppfylle (#541)."
+        },
+        "datasett_sha_staging": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Identitet/digest som streng. VALGFRI aa rapportere, ikke aa oppfylle (#541)."
+        },
+        "release_digest_bundet": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "Identitet/digest som streng. VALGFRI aa rapportere, ikke aa oppfylle (#541)."
         }
       }
     }

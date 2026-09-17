@@ -440,7 +440,10 @@ M57_INVARIANTER: tuple[str, ...] = (
     "blinding_avskrudd_uten_auditrad",
     "bias_maling_mangler_for_digest",
     "ttl_lager_utenfor_kandidatgrensen",
-    "bestilling_over_5000_akseptert",
+    # Taket var 5000; eiers vedtak 17/9 (#543) gjorde det til det verten
+    # bærer (`M57_YTELSE_MAKS_SOKNADER`). Punktet er det samme: én over
+    # taket skal avvises, aldri avkortes.
+    "bestilling_over_taket_akseptert",
     "kjoring_delvis_resultat_promotert",
     "ui_axe_alvorlige_brudd",
     # BESLUTNING-168 (072): skjemaversjonen som relasjonell identitet —
@@ -453,6 +456,12 @@ M57_INVARIANTER: tuple[str, ...] = (
     "rapport_treff_etter_reaping",
     "v1rapporter_utenfor_kandidatgrensen",
 )
+#: M-57s TAK (eiers vedtak natt til 17/9, #543/#544): «vi kan gå videre med
+#: maks søknader som kan godta den maskinen vi har i dag». Ett tall for
+#: døra (`oppdragskontrakt.FELTGRENSER`), utføreren (`parsing.MAKS_KANDIDATER`),
+#: flaten og begge ytelsesgrensene; målt i `m57-ytelse-v1` (300 på 75 min).
+M57_YTELSE_MAKS_SOKNADER = 300
+
 KRAVGRENSER["m57-v1"] = {
     # Settet er PINNET her, ikke avledet av artefaktet: et artefakt som
     # utelater en invariant skal felles på fraværet, ikke definere det
@@ -478,7 +487,7 @@ KRAVGRENSER["m57-v1"] = {
     # `antall_soknader`); 240 minutter er utførelsesfristen for `bunt`
     # (§4, samme tall som `UTFORELSESFRIST_VALG`). Drifter de to fra
     # hverandre, sier `test_ytelsesgrensen_er_klarsignalets_tall` ifra.
-    "ytelse_min_soknader": 5000,
+    "ytelse_min_soknader": M57_YTELSE_MAKS_SOKNADER,
     "ytelse_maks_minutter": 240,
     # PUNKTBINDING (#166): TOM MED VILJE, og det er det tilsiktede utfallet.
     #
@@ -2146,14 +2155,6 @@ KRAVGRENSER["m57-suite-v1"] = {
     },
 }
 
-#: M-57 YTELSE (17/9, eiers vedtak natt til 17/9): «vi kan gå videre med
-#: maks søknader som kan godta den maskinen vi har i dag». Buntgrensen
-#: senkes fra klarsignalets 5000 til 300, og ytelsen måles i m44/m26/m14-
-#: lesten — én EKTE bunt på taket gjennom hele kjeden på verten (bestilling
-#: → claim → blindet evaluering i Ollama → promotert rapport → kvittering),
-#: målt på oppdragsradens egne tidsstempler. Registrert FØR målingen (§0).
-#: `m57-v1`s eget ytelsespar (5000/240) står blokkert av #541.
-M57_YTELSE_MAKS_SOKNADER = 300
 
 KRAVGRENSER["m57-ytelse-v1"] = {
     # Bunten skal være HELE taket — en varighet uten last er en tom
