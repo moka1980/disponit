@@ -11,7 +11,7 @@ bestilte tallet — en bunt som ble avkortet skal vise det.
 
 BRUK (på verten, med migratorens DSN i miljøet):
     DISPONIT_MIGRATOR_URL=... /opt/disponit/.venv/bin/python \\
-        deploy/staging/m57-ytelse-artefakt.py --oppdrag 111 [--ut …]
+        deploy/staging/m57-ytelse-artefakt.py --oppdrag 111 --tenant t-m57fasit [--ut …]
 """
 from __future__ import annotations
 
@@ -51,6 +51,9 @@ def _modell_digest() -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--oppdrag", type=int, required=True)
+    ap.add_argument("--tenant", required=True,
+                    help="oppdragets tenant — RLS (FORCE) viser raden bare"
+                         " i sin egen kontekst")
     ap.add_argument("--vert", default="disponit-srv")
     ap.add_argument("--ut", type=Path)
     a = ap.parse_args()
@@ -60,15 +63,17 @@ def main() -> int:
         return 2
     import psycopg
     with psycopg.connect(dsn) as c:
+        # RLS med FORCE: raden finnes bare i sin egen tenantkontekst.
+        c.execute("SELECT set_config('disponit.tenant', %s, true)", (a.tenant,))
         rad = c.execute(
             "SELECT tenant, status, forste_claim_ts, status_ts,"
-            " kvittering->>'resultat' FROM oppdrag WHERE id=%s",
-            (a.oppdrag,)).fetchone()
+            " kvittering->>'resultat' FROM oppdrag WHERE id=%s AND tenant=%s",
+            (a.oppdrag, a.tenant)).fetchone()
         if rad is None:
-            print(f"AVBRUTT: oppdrag {a.oppdrag} finnes ikke", file=sys.stderr)
+            print(f"AVBRUTT: oppdrag {a.oppdrag} finnes ikke i {a.tenant}",
+                  file=sys.stderr)
             return 2
         tenant, status, claim, slutt, resultat = rad
-        c.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
         evaluerte = c.execute(
             "SELECT count(*) FROM kandidat_evalueringsartefakt e"
             " JOIN rekrutteringsprosess p ON p.tenant=e.tenant"
