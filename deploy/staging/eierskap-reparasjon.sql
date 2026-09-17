@@ -52,6 +52,10 @@ INSERT INTO _design VALUES
     -- 176 (M-6): menneskets sletting av en hentet melding, og evidensen.
     ('FUNCTION', 'm6_evidens(text,uuid,text,text,jsonb)',            'disponit_m37_claimer'),
     ('FUNCTION', 'm6_slett_melding(text,uuid,text)',                 'disponit_m37_claimer'),
+    -- 210: slettet i postboksen speiles — samme visking som 176, egen hendelse.
+    ('FUNCTION', 'm6_melding_fjernet_i_kilden(text,uuid,text,text)',  'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_marker_sjekket(text,uuid,text[])',               'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_avstemmingskandidater(text,uuid,integer)',       'disponit_m37_claimer'),
     -- 179 (M-6): mennesket skriver svaret og avgjør det.
     ('FUNCTION', 'm6_skriv_svarutkast(text,uuid,bytea,bytea,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm6_avgjor_utkast(text,uuid,text,text)',             'disponit_m37_claimer'),

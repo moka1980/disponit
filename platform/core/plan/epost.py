@@ -315,9 +315,11 @@ def _avstem(conn, tenant, kilde_id, access, graf) -> tuple[int, int]:
     avstemmingen for denne runden uten å røre noe: usikkerhet sletter
     aldri."""
     sett_kontekst_avstem(conn, tenant)
-    rader = conn.execute("SELECT leverandor_melding_id FROM"
-                         " m6_avstemmingskandidater(%s,%s,%s)",
-                         (tenant, kilde_id, AVSTEM_PER_RUNDE)).fetchall()
+    # (Tillitsgrense-porten utleder kallsettet statisk: `FROM navn(` i ÉN
+    # literal.)
+    rader = conn.execute(
+        "SELECT leverandor_melding_id FROM m6_avstemmingskandidater(%s,%s,%s)",
+        (tenant, kilde_id, AVSTEM_PER_RUNDE)).fetchall()
     conn.rollback()
     finnes: list[str] = []
     fjernet = 0
