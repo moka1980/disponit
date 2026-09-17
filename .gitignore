@@ -110,3 +110,5 @@ deploy/staging/artefakter/*.json
 !deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
 !deploy/staging/artefakter/m6-suite-v1-20260917T200309Z.json
 !deploy/staging/artefakter/m57-revisjon-v1-20260917T214741Z.json
+!deploy/staging/artefakter/m19-fasit-v1-20260917T224653Z.json
+!deploy/staging/artefakter/m19-suite-v1-20260917T230136Z.json

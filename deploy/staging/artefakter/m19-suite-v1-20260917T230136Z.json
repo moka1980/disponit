@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m19-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 34,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5493
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m19_adresse.py"
+    ],
+    "bevisrot_sha256": "d8f12fc45bf9653b289544ae3a5741d00a5164121ae9e7b3327ae18284a0b890",
+    "commit": "2a8d94602714954bfd869511f8033d2a613d5d6b",
+    "modul": "m19_adresse",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-17T23:01:36.360858+00:00"
+}
