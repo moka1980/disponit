@@ -2525,7 +2525,10 @@ function bestillSeksjon(hoved, ctx, data, okt, laas) {
   };
   tegnProfilvalg();
   const antallInp = el("input", { type: "number", id: "bestill-antall",
-    min: "1", max: "5000", step: "1", required: true, value: "1" });
+    // Taket er det verten er målt til innenfor §4s frist (eiers vedtak
+    // 17/9; `parsing.MAKS_KANDIDATER`, m57-ytelse-v1) — ikke kontraktens
+    // 5000-konvolutt.
+    min: "1", max: "300", step: "1", required: true, value: "1" });
   const fristInp = el("input", { type: "number", id: "bestill-frist",
     min: "30", max: "365", step: "1" });
   // FROSSET ER FROSSET (samme grep som prosessvelgeren, A-dommen #212).

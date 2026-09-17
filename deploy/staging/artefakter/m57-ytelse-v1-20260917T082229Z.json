@@ -1,0 +1,20 @@
+{
+  "bestatt": true,
+  "krav_id": "m57-ytelse-v1",
+  "maalt": {
+    "forste_claim_ts": "2026-09-17T07:06:39.154492+00:00",
+    "resultat": "utfort",
+    "status_ts": "2026-09-17T08:21:18.261806+00:00",
+    "ytelse_full_bunt_minutter": 75,
+    "ytelse_full_bunt_soknader": 300
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f32f7cdc034db40e0f419fcf1de7c31b1d7c24dd7fd2508920d5b4123190d910",
+    "modell_digest": "sha256:357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "modul": "m57_ats",
+    "oppdrag_id": 111,
+    "tenant": "t-m57fasit",
+    "vert": "disponit-srv"
+  },
+  "ts": "2026-09-17T08:22:29.065851+00:00"
+}

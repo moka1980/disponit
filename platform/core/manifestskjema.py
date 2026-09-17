@@ -2146,6 +2146,28 @@ KRAVGRENSER["m57-suite-v1"] = {
     },
 }
 
+#: M-57 YTELSE (17/9, eiers vedtak natt til 17/9): «vi kan gå videre med
+#: maks søknader som kan godta den maskinen vi har i dag». Buntgrensen
+#: senkes fra klarsignalets 5000 til 300, og ytelsen måles i m44/m26/m14-
+#: lesten — én EKTE bunt på taket gjennom hele kjeden på verten (bestilling
+#: → claim → blindet evaluering i Ollama → promotert rapport → kvittering),
+#: målt på oppdragsradens egne tidsstempler. Registrert FØR målingen (§0).
+#: `m57-v1`s eget ytelsespar (5000/240) står blokkert av #541.
+M57_YTELSE_MAKS_SOKNADER = 300
+
+KRAVGRENSER["m57-ytelse-v1"] = {
+    # Bunten skal være HELE taket — en varighet uten last er en tom
+    # kjøring — og innenfor §4s utførelsesfrist.
+    "ytelse_min_soknader": M57_YTELSE_MAKS_SOKNADER,
+    "ytelse_maks_minutter": 240,
+    "krev_utfort": True,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.ytelse_full_bunt_soknader",
+                           "maalt.ytelse_full_bunt_minutter",
+                           "maalt.resultat"),
+    },
+}
+
 #: Produsentflaten for M-57s suiteartefakt — bare skriptet; modulen har
 #: ingen fasitdriver (#541).
 M57_BEVISROT_FILER = (
@@ -3400,6 +3422,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m14-fasit-v1": "artefakt-m14-fasit-skjema.json",
     "m14-suite-v1": "artefakt-m14-suite-skjema.json",
     "m57-suite-v1": "artefakt-m57-suite-skjema.json",
+    "m57-ytelse-v1": "artefakt-m57-ytelse-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
@@ -3681,6 +3704,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m14_suite(grense, art)
     if krav_id == "m57-suite-v1":
         return feil + _grenser_m57_suite(grense, art)
+    if krav_id == "m57-ytelse-v1":
+        return feil + _grenser_m57_ytelse(grense, art)
     if krav_id == "m6-fasit-v1":
         return feil + _grenser_m6_fasit(grense, art)
     if krav_id == "m6-suite-v1":
@@ -5102,6 +5127,95 @@ def _m57_bevisrot_feil(art: dict) -> list[str]:
                 f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
                 " produsentflate enn treet porten står i"]
     return []
+
+
+M57_YTELSE_BEVISROT_FILER = (
+    "deploy/staging/m57-ytelse-artefakt.py",
+    "platform/modules/m57_ats/parsing.py",
+)
+
+
+def m57_ytelse_bevisrot_sha256() -> str:
+    """Produsenten OG taket: artefaktet beviser en kjøring på det taket
+    `parsing.MAKS_KANDIDATER` bar da."""
+    h = hashlib.sha256()
+    for rel in M57_YTELSE_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _grenser_m57_ytelse(grense: dict, art: dict) -> list[str]:
+    """`m57-ytelse-v1` — ÉN ekte bunt på taket gjennom hele kjeden på
+    verten, målt på oppdragsradens egne tidsstempler (første claim →
+    terminalstatus). Tre målinger, alle tre kreves: antallet er taket (en
+    varighet uten last er en tom kjøring), varigheten er innenfor §4s
+    frist, og utfallet er `utfort` (en avbrutt kjøring innenfor fristen
+    beviser ingenting)."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler — taket kjøringen gikk"
+                    " på er ubundet")
+    else:
+        try:
+            lokal = m57_ytelse_bevisrot_sha256()
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(f"bevisrot_sha256={sha[:12]}… er ikke de"
+                            f" innsjekkede bytenes {lokal[:12]}… — kjøringen"
+                            " gikk på et annet tak enn treet porten står i")
+    soknader, melding = _teller(m, "ytelse_full_bunt_soknader",
+                                "ytelse_full_bunt_soknader")
+    if melding:
+        feil.append(melding)
+    elif soknader != grense["ytelse_min_soknader"]:
+        feil.append(f"ytelse_full_bunt_soknader={soknader}, krever nøyaktig"
+                    f" {grense['ytelse_min_soknader']} — bunten skal være"
+                    " HELE taket, verken et utvalg eller over det")
+    minutter, melding = _teller(m, "ytelse_full_bunt_minutter",
+                                "ytelse_full_bunt_minutter")
+    if melding:
+        feil.append(melding)
+    else:
+        # RE-REGNET AV TIDSSTEMPLENE artefaktet selv bærer (som m44
+        # re-teller avvikene): et minuttall som spriker fra claim →
+        # terminalstatus er to ulike kjøringer i samme fil.
+        import math
+        from datetime import datetime
+        try:
+            t0 = datetime.fromisoformat(str(m.get("forste_claim_ts")))
+            t1 = datetime.fromisoformat(str(m.get("status_ts")))
+        except (TypeError, ValueError):
+            feil.append("forste_claim_ts/status_ts er ikke lesbare"
+                        " tidsstempler — varigheten kan ikke re-regnes")
+        else:
+            if t0.tzinfo is None or t1.tzinfo is None or t1 <= t0:
+                feil.append("status_ts ligger ikke etter forste_claim_ts"
+                            " (eller mangler sone) — varigheten er ingen")
+            else:
+                regnet = math.ceil((t1 - t0).total_seconds() / 60)
+                if regnet != minutter:
+                    feil.append(f"ytelse_full_bunt_minutter={minutter}"
+                                f" spriker fra tidsstemplene ({regnet} min)")
+        if minutter < 1:
+            feil.append("ytelse_full_bunt_minutter=0 — en bunt ingen tok"
+                        " tiden på er ingen måling")
+        elif minutter > grense["ytelse_maks_minutter"]:
+            feil.append(f"ytelse_full_bunt_minutter={minutter}, fristen er"
+                        f" {grense['ytelse_maks_minutter']} (§4)")
+    if grense.get("krev_utfort") and m.get("resultat") != "utfort":
+        feil.append(f"resultat={m.get('resultat')!r} — bare en UTFØRT bunt"
+                    " beviser ytelsen; en avbrutt innenfor fristen gjør"
+                    " ikke det")
+    return feil
 
 
 def _grenser_m57_suite(grense: dict, art: dict) -> list[str]:

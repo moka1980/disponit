@@ -51,9 +51,14 @@ TILLATTE_ENDELSER = frozenset({".pdf", ".docx", ".html", ".htm"})
 
 #: #161 (eiers B): bunten BÆRER sin egen deklarasjon — et lukket
 #: `soknader.json` i roten navngir hver kandidat og filene hens.
-#: Grensene er klarsignalets §4: 1–5000 kandidater.
+#: Grensene var klarsignalets §4: 1–5000 kandidater. EIERS VEDTAK 17/9:
+#: «vi kan gå videre med maks søknader som kan godta den maskinen vi har i
+#: dag» — taket er det verten er MÅLT til å evaluere innenfor §4s frist
+#: (`manifestskjema.M57_YTELSE_MAKS_SOKNADER`, m57-ytelse-v1). Kontraktens
+#: `maximum: 5000` står som registrert konvolutt (kontraktversjon 1);
+#: dette er utførerens harde tak under den, og porten binder de to.
 MANIFESTNAVN = "soknader.json"
-MAKS_KANDIDATER = 5000
+MAKS_KANDIDATER = 300
 MAKS_MANIFESTBYTES = 4 * 1024 * 1024
 #: KANDIDAT-ID-ENS LUKKEDE ASCII-KANON (eierdom, K2-kjennelsen på #216 —
 #: valg A). Porten telte før opp TEGNKLASSER å avvise, én runde per
@@ -280,8 +285,8 @@ def inspiser_bunt(sti: str | Path) -> list[Medlem]:
     `soknader.json` i buntens rot navngir hver kandidat og filene hens;
     en ekte parser slår manifestet opp mot de faktiske medlemmene begge
     veier (uadressert medlem og manglende medlem er like rødt), og
-    `len(kandidater)` må være == oppdragets `antall_soknader` og ≤ 5000
-    FØR innholdet parses — ekstern-lesing-doktrinen, samme grunn som
+    `len(kandidater)` må være == oppdragets `antall_soknader` og ≤
+    `MAKS_KANDIDATER` FØR innholdet parses — ekstern-lesing-doktrinen, samme grunn som
     resten av denne gaten kjører før utpakking. Manifestoppslaget bor i
     `kjoring.kjor_bunt` (#161-arbeidet er landet — den forrige
     formuleringen her sa at `kjoring.py` ikke fantes ennå, og villedet
