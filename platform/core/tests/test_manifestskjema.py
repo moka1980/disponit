@@ -1194,7 +1194,7 @@ def test_m37_laaner_ikke_m01s_rollbackkonklusjon():
     art = REPOROT / punkt["artefakt"]
     assert art.is_file(), art
     assert hashlib.sha256(art.read_bytes()).hexdigest() == punkt["artefakt_sha256"]
-    d = json.loads(art.read_text())
+    d = json.loads(art.read_text(encoding="utf-8"))
     assert d["krav_id"] == "m37-rollback-v1" and d["oppsett"]["modul"] == "m37_unntak"
     assert d["oppsett"]["unit"] == "disponit-m37", (
         "artefaktet målte ikke M-37s egen unit")
