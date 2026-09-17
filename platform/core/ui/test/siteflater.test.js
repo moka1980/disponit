@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t, velgSprak } from "../static/js/i18n.js";
-import { visInnlogging } from "../static/js/innlogging.js";
+import { REGISTRERING_AAPEN, visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
 import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
@@ -96,7 +96,12 @@ test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async (
   // ingen det, og prosaen nådde ingen besøkende (Cursor P2).
   assert.ok(app.textContent.includes(t("site.hero.tilbud")),
     "tilbudsbeskrivelsen rendres ikke på forsiden — nøkkelen er død kontrakt");
-  assert.equal(app.querySelectorAll(".site-hovednav a").length, 5);
+  // Eiers vedtak 17/9 (testperiode): innlogging står IKKE i den offentlige
+  // menyen — fire lenker, ingen av dem til innlogging.
+  assert.equal(app.querySelectorAll(".site-hovednav a").length, 4);
+  assert.ok(![...app.querySelectorAll(".site-hovednav a")]
+    .some((a) => /side=innlogging/.test(a.getAttribute("href"))),
+    "innlogging står i den offentlige menyen");
   assert.equal(app.querySelectorAll('.site-hovednav a[aria-current="page"]').length, 1);
   assert.equal(app.querySelector(".site-sok"), null,
     "katalogsøket konkurrerer fortsatt med forsidens primærhandling");
@@ -155,31 +160,29 @@ test("Landing: en NY bedrift finner veien inn fra den offentlige siden",
   await visInnlogging();
   await vent(() => app.querySelectorAll('form[action="/v1/oidc/start"]').length);
 
-  // 1. Tilbudet står der, med sine egne ord.
-  assert.ok(app.textContent.includes(t("site.login.ny_tittel")),
-    "ingen vei inn for en ny bedrift på den offentlige siden");
-  assert.ok(app.textContent.includes(t("site.login.ny_knapp")));
-
-  // 2. Og den FØRER til registreringsflaten, ikke til kundeadmin.
+  // EIERS VEDTAK 17/9 — TESTPERIODE: «skjule innlogging slik at ikke
+  // uautoriserte eller nysgjerrige eller nye kunder kan registrere seg, før
+  // alt er på plass». Presisert: «bare skjule den fra offentlig meny», ikke
+  // fjerne innloggingen. Porten måler nøyaktig det: registreringskortet er
+  // borte, kundekortene står, og forsiden lokker ikke til innlogging.
+  assert.equal(REGISTRERING_AAPEN, false,
+    "registreringen er åpnet — eiers testperiode (17/9) er over, og da skal"
+    + " denne porten skrives om til den gamle veien, ikke bare flippes");
+  assert.ok(!app.textContent.includes(t("site.login.ny_tittel")),
+    "registreringskortet står i flaten i testperioden");
+  assert.ok(!app.textContent.includes(t("site.login.ny_knapp")));
+  assert.ok(!app.textContent.includes(t("site.login.alt_kunde")));
   const skjemaer = [...app.querySelectorAll('form[action="/v1/oidc/start"]')];
-  const forste = skjemaer[0];
-  assert.match(
-    forste.querySelector('input[name="retursti"]').getAttribute("value"),
-    /visning=firmaregistrering/,
-    "registreringskortet sender henne ikke til registreringsflaten");
+  assert.equal(skjemaer.length, 2, "kundenes to innloggingskort skal stå");
+  for (const f of skjemaer) {
+    assert.doesNotMatch(
+      f.querySelector('input[name="retursti"]').getAttribute("value"),
+      /visning=firmaregistrering/,
+      "et kort fører til registreringsflaten");
+  }
 
-  // 3. Den står FØRST. En ny bedrift skal ikke måtte lete forbi to
-  //    innloggingskort for å finne veien inn.
-  assert.equal(skjemaer.length, 3);
-
-  // 4. Og forsiden har en primærknapp som fører hit — ikke bare til mer
-  //    lesestoff. Den gamle primærhandlingen gikk til `tjenester`.
+  // Forsiden: primærhandlingen er katalogen, ingen lenke til innlogging.
   window.history.replaceState({}, "", "/");
-  // FRISKT BRETT, ikke et andre `#app` ved siden av det første:
-  // `nyttBrett()` gjør `document.body.replaceChildren()`, så forrige side er
-  // borte før denne tegnes. (CodeRabbit mistenkte det motsatte — at
-  // `visInnlogging()` ville skrevet til det gamle elementet — så tvilen
-  // måles bort her i stedet for å forklares bort.)
   const hjem = nyttAppBrett();
   assert.equal(document.querySelectorAll("#app").length, 1,
     "to #app-elementer: flaten kan ha blitt tegnet i feil brett");
@@ -187,8 +190,11 @@ test("Landing: en NY bedrift finner veien inn fra den offentlige siden",
   await vent(() => hjem.querySelector(".site-home-handlinger a"));
   const primar = hjem.querySelector(".site-home-handlinger a.knapp.primar");
   assert.ok(primar, "forsiden har ingen primærhandling");
-  assert.equal(primar.textContent, t("site.home.cta_prov"));
-  assert.match(primar.getAttribute("href"), /side=innlogging/);
+  assert.equal(primar.textContent, t("site.home.cta"));
+  assert.match(primar.getAttribute("href"), /side=tjenester/);
+  assert.ok(![...hjem.querySelectorAll("a")]
+    .some((a) => /side=innlogging/.test(a.getAttribute("href") || "")),
+    "forsiden lenker til innlogging i testperioden");
 
   const brudd = await alvorligeBrudd(hjem);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
@@ -204,13 +210,11 @@ test("Landing: innlogging er en egen side med riktig retursti", async () => {
   // offentlige navigasjonen, og for den som ikke kan lagre valget er URL-en
   // det ENESTE som bærer det over OIDC-runden. `trygg_retursti` beholder
   // query-strengen på en lokal path-referanse, så leddet overlever turen.
-  // TRE KORT NÅ, og registreringen står FØRST (eiers funn: «hvor kan man
-  // registrere ny kunde?»). Rekkefølgen er en del av kontrakten: en ny
-  // bedrift skal ikke måtte lete forbi to innloggingskort for å finne
-  // veien inn.
+  // TO KORT I TESTPERIODEN (eiers vedtak 17/9): registreringskortet står
+  // ikke i flaten før REGISTRERING_AAPEN flippes — da kommer det FØRST
+  // igjen (eiers funn: «hvor kan man registrere ny kunde?»).
   assert.deepEqual(retur,
-    ["/?visning=firmaregistrering&sprak=nb",
-     "/?visning=kundeadmin&sprak=nb", "/?visning=admin&sprak=nb"]);
+    ["/?visning=kundeadmin&sprak=nb", "/?visning=admin&sprak=nb"]);
   // … OG PÅ ENGELSK (#238 P2): produksjonskoden leser `sprak()`
   // dynamisk, så en regresjon til hardkodet nb var usynlig for en test
   // som bare målte norsk. Det er nettopp språket som skal overleve
@@ -221,13 +225,12 @@ test("Landing: innlogging er en egen side med riktig retursti", async () => {
     .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await vent(() => {
     const r = [...app.querySelectorAll('input[name="retursti"]')];
-    return r.length === 3 && r[0].getAttribute("value").includes("sprak=en");
+    return r.length === 2 && r[0].getAttribute("value").includes("sprak=en");
   });
   const returEn = [...app.querySelectorAll('input[name="retursti"]')]
     .map((n) => n.getAttribute("value"));
   assert.deepEqual(returEn,
-    ["/?visning=firmaregistrering&sprak=en",
-     "/?visning=kundeadmin&sprak=en", "/?visning=admin&sprak=en"],
+    ["/?visning=kundeadmin&sprak=en", "/?visning=admin&sprak=en"],
     "engelsk overlever ikke OIDC-runden — returstien mistet språket");
   // Tilbake til norsk så resten av suiten arver riktig språk.
   [...app.querySelectorAll(".site-sprak-knapp")]
@@ -551,7 +554,9 @@ test("Landing: språkvalget følger navigasjonen når lagring er nektet", async 
     assert.ok(lenker.length >= 8, "for få offentlige lenker til å måle noe");
     // Måler selektoren heroen i det hele tatt? Forsvinner handlingene ut av
     // settet, står løkka under igjen og påstår om alt UNNTATT dem.
-    assert.equal(app.querySelectorAll(".site-home-handlinger a").length, 3,
+    // To handlinger i testperioden (katalog + produkt); «prøv»-knappen
+    // står ikke i flaten før REGISTRERING_AAPEN flippes.
+    assert.equal(app.querySelectorAll(".site-home-handlinger a").length, 2,
       "heroens handlinger er ikke med i det språkleddet måles på");
     for (const a of lenker) {
       assert.equal(new URL(a.getAttribute("href"), "https://x.test")
@@ -627,14 +632,14 @@ test("Landing: et forbigått språkbytte tegner ikke over flaten som står", asy
     // byttet eier flaten fra nå, og det er det som kommer i mål først.
     engelsk.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     await vent(() => app.textContent.includes(EN["site.login.tittel"]));
-    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 3,
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "det gjeldende byttet rendret ikke innloggingsveiene");
 
     // …og så kommer det forlatte byttet i mål, med sitt provider-løse svar.
     slippOppsett();
     await vent(() => false, 20);         // la det forlatte kallet få kjøre ut
 
-    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 3,
+    assert.equal(app.querySelectorAll('form[action="/v1/oidc/start"]').length, 2,
       "et forbigått språkbytte skrev over flaten med sitt eget oppsett-svar");
     assert.ok(!app.textContent.includes(NB["ui.logg_inn_utilgjengelig"]),
       "forsiden endte i feiltilstand fra et kall brukeren hadde forlatt");
