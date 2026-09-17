@@ -70,13 +70,18 @@ OVERTAKELSESFRIST_S = 900
 CLAIMSTOPP_VENT_S = 25.0
 AKTOR = "sveipmodul-drill"
 
-#: Per modul: arbeiderens unit, bestillingstypen drilloppdragene bærer,
-#: og hvordan tenanten forberedes slik at bestillingene går `tillat`.
+#: Per modul: arbeiderens unit, oppdragstypen drilloppdragene bærer, og
+#: hvordan tenanten forberedes og ETT nytt kandidatoppdrag lages — så
+#: planrunden (som `agent:<modul>`) bestiller nøyaktig ett per ledd.
+#: `TESTMOTTAKER` er eiers testadresse (husregel: aldri oppdiktede) —
+#: fire av modulene SENDER til mottakeren.
+TESTMOTTAKER = "eliassi@gmail.com"
 MODULER: dict[str, dict] = {
     "m14_fakturakontroll": {
         "modul": "m14_fakturakontroll",
         "unit": "disponit-m14", "prefiks": "m14",
-        "bestillingstype": "faktura.bokfor", "bransje": "tjenestebedrift",
+        "oppdragstype": "faktura.bokfor", "bransje": "tjenestebedrift",
+        "fullmakter": [],
         # Bransjemalen: `faktura.bokfor` er `tillatt_for: [agent]` —
         # bokføring bestilles av PLANRUNDEN (`plan.faktura`, som
         # `agent:faktura`), aldri av en kunde. Drillen går samme vei.
@@ -85,6 +90,57 @@ MODULER: dict[str, dict] = {
         # RELEASE) — hver boot re-onboardes gjennom den ekte HTTP-veien.
         "tokenfil": "/etc/disponit/m14/DISPONIT_MODULTOKEN",
         "gruppe": "disponit-m14",
+        "forbered": "forbered_m14", "nytt": "nytt_m14",
+    },
+    "m26_prisbok": {
+        "modul": "m26_prisbok",
+        "unit": "disponit-m26", "prefiks": "m26",
+        "oppdragstype": "tilbud.generer", "bransje": "tjenestebedrift",
+        # Malens `tilbud.generer` tillater ikke persondata (kundens adresse
+        # er persondata — målt 17/9: `dataklasse_ikke_tillatt`); utvidelsen
+        # `tilbud-generer` erstatter handlingen med persondata tillatt.
+        "fullmakter": ["tilbud-generer"],
+        "planunit": "disponit-plan", "krav_id": "m26-rollback-v1",
+        "tokenfil": "/etc/disponit/m26/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m26",
+        "forbered": "forbered_m26", "nytt": "nytt_m26",
+    },
+    "m23_fordring": {
+        "modul": "m23_fordring",
+        "unit": "disponit-m23", "prefiks": "m23",
+        "oppdragstype": "purring.send", "bransje": "tjenestebedrift",
+        # `purring.send` står i bransjemalen; kandidaten krever et åpent
+        # `trinn_forfalt`-funn, så fordringssveipen kjøres før planrunden.
+        "fullmakter": [],
+        "planunit": "disponit-plan", "krav_id": "m23-rollback-v1",
+        "tokenfil": "/etc/disponit/m23/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m23",
+        "forbered": "forbered_m23", "nytt": "nytt_m23",
+        "sveipunit": "disponit-fordringssveip",
+    },
+    "m17_kundeservice": {
+        "modul": "m17_kundeservice",
+        "unit": "disponit-m17", "prefiks": "m17",
+        "oppdragstype": "kundeservice.svar.send", "bransje": "tjenestebedrift",
+        # `kundeservice.svar.send` er en utvidelse (`tillatt_for: [agent]`).
+        "fullmakter": ["kundeservice-svar"],
+        "planunit": "disponit-plan", "krav_id": "m17-rollback-v1",
+        "tokenfil": "/etc/disponit/m17/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m17",
+        "forbered": "forbered_m17", "nytt": "nytt_m17",
+    },
+    "m44_kampanje": {
+        "modul": "m44_kampanje",
+        "unit": "disponit-m44", "prefiks": "m44",
+        "oppdragstype": "kampanje.send", "bransje": "tjenestebedrift",
+        # `kampanje.send` er en utvidelse (`tillatt_for: [agent]`) —
+        # velges som fullmakt ved registreringen, her gjennom samme
+        # bootstrap-dør.
+        "fullmakter": ["kampanje-send"],
+        "planunit": "disponit-plan", "krav_id": "m44-rollback-v1",
+        "tokenfil": "/etc/disponit/m44/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m44",
+        "forbered": "forbered_m44", "nytt": "nytt_m44",
     },
 }
 
@@ -342,6 +398,32 @@ def boot_fra(k: dict, unit: str, katalog: Path | None, release: str,
     raise SystemExit(f"AVBRUTT: {unit} kom ikke opp fra {katalog or 'aktiv'}")
 
 
+DRILL_FULLFORT = False
+
+
+def gjenopprett_arbeideren(k: dict, dsn: str) -> None:
+    """Ved AVBRUDD: overriden vekk og arbeideren onboardet for den releasen
+    som står claiming — ellers står prod fencet til noen gjør det for hånd
+    (målt 17/9). Ved normal slutt har drillen selv gjort det."""
+    if DRILL_FULLFORT:
+        return
+    try:
+        fjern_override(k["unit"])
+        with psycopg.connect(dsn) as m:
+            rad = m.execute(
+                "SELECT release_id FROM moduldeployment WHERE modul_id=%s"
+                " AND miljo=%s AND livslop='claiming'",
+                (k["modul"], MILJO)).fetchone()
+        if rad:
+            onboard_for(k, rad[0])
+            subprocess.run(["systemctl", "restart", f"{k['unit']}.service"],
+                           timeout=120)
+            _log(f"  gjenopprettet: {k['unit']} onboardet for {rad[0]}")
+    except Exception as e:                                  # noqa: BLE001
+        _log(f"  ADVARSEL: gjenopprettingen feilet ({e}) — onboard arbeideren"
+             " for den claimende releasen for hånd")
+
+
 def fjern_override(unit: str):
     fil = _overridefil(unit)
     if fil.exists():
@@ -356,9 +438,9 @@ def _sk(rt, tenant):
     sett_kontekst(rt, tenant, AKTOR, "drill")
 
 
-def forbered_tenant(rt, tenant: str) -> str:
+def forbered_m14(rt, tenant: str) -> dict:
     """Terskler, sats og kjent leverandør (M-24) — så hver faktura
-    `m14_for_bokforing` ser er ren. -> leverandørreferansen."""
+    `m14_for_bokforing` ser er ren."""
     _sk(rt, tenant)
     rt.execute("SELECT m14_sett_terskler(%s,1,10000000,30,3,%s)", (tenant, AKTOR))
     rt.commit()
@@ -371,10 +453,10 @@ def forbered_tenant(rt, tenant: str) -> str:
     rt.execute("SELECT m24_registrer_leverandor(%s,%s,%s,NULL,%s)",
                (tenant, uuid.uuid4(), lev, AKTOR))
     rt.commit()
-    return lev
+    return {"lev": lev}
 
 
-def ny_faktura(rt, tenant: str, lev: str, i: int) -> uuid.UUID:
+def nytt_m14(rt, tenant: str, ctx: dict, i: int) -> str:
     """ÉN faktura, registrert og avgjort `kontrollert` — akkurat nå, så
     neste planrunde finner nøyaktig én kandidat i tenanten."""
     fid = uuid.uuid4(); nr = f"DRILL-{secrets.token_hex(3)}-{i}"
@@ -383,41 +465,241 @@ def ny_faktura(rt, tenant: str, lev: str, i: int) -> uuid.UUID:
     rt.execute(
         "SELECT m14_registrer_faktura(%s,%s,%s,%s,%s,%s,%s,'hoy','NOK',"
         " current_date - 10, current_date + 20, current_date - 1, %s)",
-        (tenant, fid, lev, nr, netto, mva, netto + mva, AKTOR))
+        (tenant, fid, ctx["lev"], nr, netto, mva, netto + mva, AKTOR))
     rt.commit()
     _sk(rt, tenant)
     rt.execute("SELECT m14_avgjor_faktura(%s,%s,'kontrollert',%s,%s)",
                (tenant, fid, "Drill: kontrollert uten avvik.", AKTOR))
     rt.commit()
-    return fid
+    return str(fid)
 
 
-def bestill_via_planen(m, rt, tenant: str, lev: str, planunit: str,
-                       i: int, merkelapp: str) -> int:
-    """Registrerer én faktura og lar PLANRUNDEN bestille bokføringen
-    (`agent:faktura`, samme bestillingsvei som i drift). -> oppdrag_id."""
+def forbered_m44(rt, tenant: str) -> dict:
+    """Grense og avsender. Mottakeren lages PER oppdrag: utvidelsen
+    `kampanje-send` har `frekvens.maks: 2` per mottaker per 30 dager, og
+    drillen bestiller fire — én mottaker hver, alle med eiers testadresse."""
+    _sk(rt, tenant)
+    rt.execute("SELECT m44_sett_grense(%s,10,7,730,%s)", (tenant, AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m44_sett_avsender(%s,%s,%s,%s)",
+               (tenant, "Drill AS", "post@disponit.com", AKTOR))
+    rt.commit()
+    return {}
+
+
+def nytt_m44(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN mottaker (kryptert kontakt, gyldig samtykke) og ÉN kampanje med
+    innhold, planlagt i dag, med mottakeren i planen — nøyaktig én
+    kandidat for `m44_kampanjekandidater`, innenfor frekvensgrensen."""
+    from api.kampanje import _kontakt_kryptert
+    mid = uuid.uuid4()
+    _sk(rt, tenant)
+    rt.execute("SELECT m44_registrer_mottaker(%s,%s,%s,%s,%s,%s)",
+               (tenant, mid, f"M-drill-{secrets.token_hex(3)}-{i}",
+                f"Drill Mottaker {i}", TESTMOTTAKER, AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    ct, nonce, key_id = _kontakt_kryptert(rt, tenant, TESTMOTTAKER)
+    rt.execute("SELECT m44_sett_kontakt(%s,%s,%s,%s,%s,%s)",
+               (tenant, mid, ct, nonce, key_id, AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m44_registrer_samtykke(%s,%s,%s,'gitt','preferanseside',"
+        "       %s,'nyhetsbrev',current_date - 1,'drill',%s)",
+        (tenant, uuid.uuid4(), mid, f"s-drill-{secrets.token_hex(3)}", AKTOR))
+    rt.commit()
+    kid = uuid.uuid4(); kode = f"K-drill-{secrets.token_hex(3)}-{i}"
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m44_registrer_kampanje(%s,%s,%s,%s,'salg',%s,current_date,"
+        "       %s,%s,%s)",
+        (tenant, kid, kode, f"Drill kampanje {i}",
+         "https://disponit.com/avmeld", f"Disponit flippedrill {i}",
+         "Dette er en teknisk prøvesending fra flippedrillen. Ingen handling"
+         " kreves.", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m44_legg_i_plan(%s,%s,%s,%s)", (tenant, kid, mid, AKTOR))
+    rt.commit()
+    return str(kid)
+
+
+def _epostfelter(rt, tenant: str, aad: bytes):
+    """(hash, maske, ct, nonce, key_id) for eiers testadresse — slik
+    API-ene gjør det (tilbud/fordring): sha256 i små bokstaver, maske
+    `x****@…`, kryptert under tenantens DEK med modulens AAD."""
+    import hashlib
+    from db import kryptering
+    e = TESTMOTTAKER.strip().lower()
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(rt, tenant)
+    ct, nonce = kryptering.krypter(dek, {"e": e}, tenant, key_id, ekstra_aad=aad)
+    maske = e[0] + "****" + e[e.index("@"):]
+    return hashlib.sha256(e.encode("utf-8")).hexdigest(), maske, ct, nonce, key_id
+
+
+def forbered_m26(rt, tenant: str) -> dict:
+    """Prisbok med terskler, ett produkt med gjeldende pris, én
+    standardklausul og avsenderprofilen tilbudet sendes i."""
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_terskler(%s,100,30,7,%s)", (tenant, AKTOR))
+    rt.commit()
+    pid = uuid.uuid4()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_registrer_produkt(%s,%s,%s,%s,'time',%s)",
+               (tenant, pid, f"P-drill-{secrets.token_hex(3)}", "Drilltime", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_pris(%s,%s,%s,'NOK',current_date - 30,%s,%s)",
+               (tenant, pid, 120_000, "drill", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_klausul(%s,%s,%s,%s,true,current_date,%s)",
+               (tenant, "DRILL-LEV", "Levering",
+                "Levering skjer innen 30 dager.", AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_sett_avsenderprofil(%s,%s,%s,%s,%s)",
+               (tenant, "Drill AS", "post@disponit.com",
+                "Vennlig hilsen Drill AS", AKTOR))
+    rt.commit()
+    return {"pid": pid}
+
+
+def nytt_m26(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN godkjent tilbud med én linje fra boka, gyldig 30 dager, kunden
+    = eiers testadresse — nøyaktig én kandidat for `m26_tilbudskandidater`."""
+    h, maske, ct, nonce, key_id = _epostfelter(rt, tenant, b"m26:kunde")
+    tid = uuid.uuid4()
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT * FROM m26_lag_tilbud(%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+        "current_date,current_date + 30,%s,%s::jsonb,%s)",
+        (tenant, tid, f"Drill Kunde {i}", None, h, maske, ct, nonce, key_id,
+         "Teknisk prøvetilbud fra flippedrillen.",
+         json.dumps([{"produkt_id": str(ctx["pid"]), "antall": 1,
+                      "enhetspris_ore": None}]), AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m26_avgjor_tilbud(%s,%s,'godkjent',%s)",
+               (tenant, tid, AKTOR))
+    rt.commit()
+    return str(tid)
+
+
+def forbered_m17(rt, tenant: str) -> dict:
+    """Ingenting utover policyen: henvendelsen bærer sin egen avsender."""
+    return {}
+
+
+def nytt_m17(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN henvendelse fra eiers testadresse (m17-fasitens dør
+    `m17_ta_imot`), klassifisert `svar_kreves`, med et utkast som et
+    menneske GODKJENNER — nøyaktig én kandidat for `m17_svarkandidater`."""
+    from api.kundeservice import (_AAD_AVSENDER, _avsenderhash,
+                                  _avsendermaske, _krypter)
+    from db import kryptering
+    _sk(rt, tenant)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(rt, tenant)
+    rt.commit()
+    hid = uuid.uuid4()
+    e_ct, e_n = _krypter(dek, key_id, tenant, f"Drill henvendelse {i}")
+    k_ct, k_n = _krypter(dek, key_id, tenant,
+                         "Teknisk prøve fra flippedrillen. Ingen handling kreves.")
+    a_ct, a_n = _krypter(dek, key_id, tenant, TESTMOTTAKER, aad=_AAD_AVSENDER)
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT * FROM m17_ta_imot(%s,%s,'epost',%s,now() - interval '1 day',"
+        "       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        (tenant, hid, f"H-drill-{secrets.token_hex(3)}-{i}",
+         _avsenderhash(TESTMOTTAKER), e_ct, e_n, k_ct, k_n, key_id, AKTOR,
+         _avsendermaske(TESTMOTTAKER), a_ct, a_n))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m17_klassifiser(%s,%s,'normal','teknisk','svar_kreves',"
+               "'menneske',NULL,%s)", (tenant, hid, AKTOR))
+    rt.commit()
+    uid = uuid.uuid4()
+    u_ct, u_n = _krypter(dek, key_id, tenant,
+                         "Hei! Dette er et teknisk prøvesvar fra flippedrillen.")
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m17_lagre_utkast(%s,%s,%s,%s,%s,%s,%s::text[],'menneske',NULL,%s)",
+        (tenant, uid, hid, u_ct, u_n, key_id, [], AKTOR))
+    rt.execute("SELECT m17_avgjor_utkast(%s,%s,'godkjent',%s)",
+               (tenant, uid, AKTOR))
+    rt.commit()
+    return str(hid)
+
+
+M23_PLAN = [
+    {"navn": "Påminnelse", "dogn_etter_forfall": 3,
+     "handling": "paaminnelse", "gebyr_ore": 0},
+    {"navn": "Purring", "dogn_etter_forfall": 14,
+     "handling": "purring", "gebyr_ore": 7000},
+    {"navn": "Inkassovarsel", "dogn_etter_forfall": 28,
+     "handling": "inkassovarsel", "gebyr_ore": 35000},
+]
+
+
+def forbered_m23(rt, tenant: str) -> dict:
+    """Purreplanen (m23-fasitens tre trinn) og avsenderen."""
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_purreplan(%s,%s::jsonb,%s)",
+               (tenant, json.dumps(M23_PLAN), AKTOR))
+    rt.commit()
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_avsender(%s,%s,%s,%s)",
+               (tenant, "Drill AS", "post@disponit.com", AKTOR))
+    rt.commit()
+    return {}
+
+
+def nytt_m23(rt, tenant: str, ctx: dict, i: int) -> str:
+    """ÉN fordring 20 døgn over forfall (policyens vilkår
+    `forfall_passert_dager min: 14`) med mottaker (eiers testadresse), så
+    fordringssveipen som lager `trinn_forfalt`-funnet — nøyaktig én
+    kandidat for `m23_purringskandidater` (trinn 1, påminnelse)."""
+    fid = uuid.uuid4(); nr = f"DRILL-{secrets.token_hex(3)}-{i}"
+    _sk(rt, tenant)
+    rt.execute(
+        "SELECT m23_registrer_fordring(%s,%s,%s,%s,%s,current_date - 50,"
+        " current_date - 20,%s)",
+        (tenant, fid, f"Drill Kunde {i}", nr, 50_000 + i, AKTOR))
+    rt.commit()
+    h, maske, ct, nonce, key_id = _epostfelter(rt, tenant, b"m23:mottaker")
+    _sk(rt, tenant)
+    rt.execute("SELECT m23_sett_mottaker(%s,%s,%s,%s,%s,%s,%s,%s)",
+               (tenant, fid, maske, ct, nonce, key_id, h, AKTOR))
+    rt.commit()
+    subprocess.run(["systemctl", "start", "disponit-fordringssveip.service"],
+                   check=True, timeout=600)
+    return str(fid)
+
+
+def bestill_via_planen(m, rt, k: dict, tenant: str, ctx: dict, i: int,
+                       merkelapp: str) -> int:
+    """Lager ETT kandidatobjekt og lar PLANRUNDEN bestille (som
+    `agent:<modul>`, samme bestillingsvei som i drift). -> oppdrag_id."""
     t0 = naa(m)
-    fid = ny_faktura(rt, tenant, lev, i)
-    subprocess.run(["systemctl", "start", f"{planunit}.service"], check=True,
-                   timeout=600)
+    ref = globals()[k["nytt"]](rt, tenant, ctx, i)
+    subprocess.run(["systemctl", "start", f"{k['planunit']}.service"],
+                   check=True, timeout=600)
     _tenantkontekst(m, tenant)
     rad = m.execute(
-        "SELECT id FROM oppdrag WHERE tenant=%s AND oppdragstype='faktura.bokfor'"
-        " AND opprettet > %s ORDER BY id DESC LIMIT 1", (tenant, t0)).fetchone()
+        "SELECT id FROM oppdrag WHERE tenant=%s AND oppdragstype=%s"
+        " AND opprettet > %s ORDER BY id DESC LIMIT 1",
+        (tenant, k["oppdragstype"], t0)).fetchone()
     m.commit()
     if rad is None:
-        _tenantkontekst(m, tenant)
-        utfall = m.execute(
-            "SELECT utfall, handling FROM bokforingsbestilling"
-            " WHERE tenant=%s AND faktura_id=%s", (tenant, fid)).fetchone()
-        m.commit()
-        raise SystemExit(f"AVBRUTT: planrunden bestilte ikke ({merkelapp}):"
-                         f" {utfall}")
+        raise SystemExit(f"AVBRUTT: planrunden bestilte ikke ({merkelapp},"
+                         f" {k['oppdragstype']} for {ref})")
     _log(f"  {merkelapp}: oppdrag {rad[0]} bestilt av planrunden")
     return int(rad[0])
 
 
-def sikre_policy(rt, tenant: str, bransje: str):
+def sikre_policy(rt, tenant: str, bransje: str, fullmakter: list):
     """Bransjemalen inn gjennom bootstrap-døra — som registreringen gjør."""
     from db import kryptering
     from api.firmaregistrering import _aktiver_bransjemal
@@ -428,7 +710,7 @@ def sikre_policy(rt, tenant: str, bransje: str):
     if finnes:
         rt.rollback(); return
     kryptering.hent_eller_opprett_aktiv_dek(rt, tenant)
-    _aktiver_bransjemal(rt, tenant, bransje, [])
+    _aktiver_bransjemal(rt, tenant, bransje, list(fullmakter))
     rt.commit()
 
 
@@ -507,7 +789,13 @@ def forbered(m, a, k):
                           manifest_hash_i(kat, modul), dg)
         bytt_release(m, modul, rel, kver, khash)
         _log(f"  registrert og byttet til {rel} (digest {dg[:12]}…, fra {kat})")
-    _log(f"forberedt: {drillet} → {r2} → {r3}; drillen kan nå rulle {r3} → {r2}")
+    # Arbeiderens token er bundet til release: uten dette står den fencet
+    # mot claim-porten fra nå (målt 17/9 på m14 og m44).
+    onboard_for(k, r3)
+    subprocess.run(["systemctl", "restart", f"{k['unit']}.service"], check=True,
+                   timeout=120)
+    _log(f"forberedt: {drillet} → {r2} → {r3}; arbeideren onboardet for {r3};"
+         f" drillen kan nå rulle {r3} → {r2}")
 
 
 def main() -> int:
@@ -537,6 +825,7 @@ def main() -> int:
 
     # 0. preflight
     ta_reservasjonen(m, modul, dsn)
+    atexit.register(gjenopprett_arbeideren, k, dsn)
     drillet, kver, khash, drillet_digest = den_ene_claimende(m, modul)
     forgjenger, forgjenger_digest = forgjengeren(m, modul, drillet, kver, khash)
     f_kat = Path(a.forgjenger_katalog).resolve()
@@ -559,16 +848,15 @@ def main() -> int:
     # 1. tenanten og oppdragene
     tenant = a.tenant or f"t-{k['prefiks']}drill-{secrets.token_hex(3)}"
     rt = psycopg.connect(rt_dsn)
-    sikre_policy(rt, tenant, k["bransje"])
-    lev = forbered_tenant(rt, tenant)
-    plan = k["planunit"]
+    sikre_policy(rt, tenant, k["bransje"], k["fullmakter"])
+    ctx = globals()[k["forbered"]](rt, tenant)
     mh = manifest_hash_i(d_kat, modul)
     registrer_release(m, modul, rb_id, kver, khash, mh, forgjenger_digest)
     registrer_release(m, modul, kand_id, kver, khash, mh, drillet_digest)
 
     # probe: den levende arbeideren claimer for den drillede releasen.
     krev_reservasjonen("proben")
-    o0 = bestill_via_planen(m, rt, tenant, lev, plan, 0, "probe")
+    o0 = bestill_via_planen(m, rt, k, tenant, ctx, 0, "probe")
     rel0, _ = vent_claimet(m, tenant, o0, OVERTAKELSESFRIST_S)
     st0 = vent_terminal(m, tenant, o0, OVERTAKELSESFRIST_S)
     if rel0 != drillet or st0 != "utfort":
@@ -578,7 +866,7 @@ def main() -> int:
 
     # (b) inflight: claimet av den drillede — så rulles den.
     krev_reservasjonen("inflight")
-    o1 = bestill_via_planen(m, rt, tenant, lev, plan, 1, "inflight")
+    o1 = bestill_via_planen(m, rt, k, tenant, ctx, 1, "inflight")
     rel1, _ = vent_claimet(m, tenant, o1, OVERTAKELSESFRIST_S)
     if rel1 != drillet:
         raise SystemExit(f"AVBRUTT: inflight claimet av {rel1!r}")
@@ -590,7 +878,7 @@ def main() -> int:
     falske = 0 if (st1 in ("utfort", "feilet") and kv1) else 1
 
     # (a) claim-stopp: nytt oppdrag, drenert release, levende arbeider.
-    o2 = bestill_via_planen(m, rt, tenant, lev, plan, 2, "claimstopp")
+    o2 = bestill_via_planen(m, rt, k, tenant, ctx, 2, "claimstopp")
     t_o2 = time.monotonic()
     time.sleep(CLAIMSTOPP_VENT_S)
     rad2 = status(m, tenant, o2)
@@ -611,7 +899,7 @@ def main() -> int:
     # (c) fram igjen: kandidaten (drillede bytes) — fencingen FØR bestillingen.
     krev_reservasjonen("kandidaten")
     bytt_release(m, modul, kand_id, kver, khash)      # rb → draining
-    o3 = bestill_via_planen(m, rt, tenant, lev, plan, 3, "framigjen")
+    o3 = bestill_via_planen(m, rt, k, tenant, ctx, 3, "framigjen")
     boot_fra(k, unit, d_kat, kand_id, "kandidaten")
     rel3, overtakelse = vent_claimet(m, tenant, o3, OVERTAKELSESFRIST_S)
     st3 = vent_terminal(m, tenant, o3, OVERTAKELSESFRIST_S)
@@ -668,6 +956,8 @@ def main() -> int:
                               sveipmodul_digest(f_kat, modul) == forgjenger_digest,
                           "unit_override_fjernet": not _overridefil(unit).exists()},
     }
+    global DRILL_FULLFORT
+    DRILL_FULLFORT = True
     formfeil = valider_artefaktformat(art, k["krav_id"])
     grensefeil = _sjekk_grenser(k["krav_id"], art)
     art["bestatt"] = not formfeil and not grensefeil

@@ -911,10 +911,14 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # 2026-09-17: m14 er den første SVEIPMODULEN med alle seks punkter ja
     # — fasit, suite, bevisrunde, ytelse og flippedrillen
     # (`m14-rollback-v1`, rollback-sveipmodul.py). `aktiv` + `produksjon`.
+    # m17 har også seks ja (17/9), men avhenger av m37 (under_utvikling)
+    # og står derfor under_utvikling til M-37 har sitt rollback-punkt.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
-                         "m14_fakturakontroll", "wcag_audit"], st
+                         "m14_fakturakontroll", "m23_fordring",
+                         "m26_prisbok", "m44_kampanje", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
-                          "m14_fakturakontroll", "wcag_audit"], (
+                          "m14_fakturakontroll", "m23_fordring",
+                          "m26_prisbok", "m44_kampanje", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

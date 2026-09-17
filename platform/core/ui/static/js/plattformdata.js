@@ -70,9 +70,11 @@ export const MODULSTATUS = {
   // den. Ordet er `bygges` fordi manifestet finnes; ingen har kode
   // ennå, og ingen flippes av en byggemilepæl.
   13: "bygges",     // m13_avstemming: under_utvikling, ikke_i_drift
-  17: "bygges",     // m17_kundeservice: under_utvikling, ikke_i_drift
+  17: "bygges",     // m17_kundeservice: 6 av 6 punkter ja 17/9, men avhenger
+                    // av m37 (under_utvikling) — flippes sammen med M-37
   18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift
-  23: "bygges",     // m23_fordring: under_utvikling, ikke_i_drift
+  23: "i_drift",    // m23_fordring: aktiv, produksjon — alle seks punkter ja
+                    // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   24: "bygges",     // m24_leverandor: under_utvikling, ikke_i_drift
   // KLYNGE 4 «det bransjemalene alt har lovet» (106-110) — registrert
   // 2/9 sammen med grensene m14-v1…m42-v1. Alle fem er navngitt som
@@ -88,7 +90,8 @@ export const MODULSTATUS = {
                     // punkter ja 17/9 (fasit, suite, bevisrunde, ytelse og
                     // flippedrillen m14-rollback-v1)     // m14_fakturakontroll: under_utvikling, ikke_i_drift
   25: "bygges",     // m25_prosjekt: under_utvikling, ikke_i_drift
-  26: "bygges",     // m26_prisbok: under_utvikling, ikke_i_drift
+  26: "i_drift",    // m26_prisbok: aktiv, produksjon — alle seks punkter ja
+                    // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   27: "bygges",     // m27_lager: under_utvikling, ikke_i_drift
   42: "bygges",     // m42_kontovakt: under_utvikling, ikke_i_drift
   // KLYNGE 5 «resten av det bransjemalene alt har lovet» (111-114) —
@@ -103,7 +106,8 @@ export const MODULSTATUS = {
   41: "bygges",     // m41_betaling: under_utvikling, ikke_i_drift
   19: "bygges",     // m19_adresse: under_utvikling, ikke_i_drift
   39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
-  44: "bygges",     // m44_kampanje: under_utvikling, ikke_i_drift
+  44: "i_drift",    // m44_kampanje: aktiv, produksjon — alle seks punkter ja
+                    // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   // KLYNGE 6 (116-120): «de fem som finner noe, og ikke handler på
   // det». Registrert ved fødselen sammen med grensene m46/m48/m49/
   // m51/m55-v1 — se docs/KLYNGE6-FUNDAMENT.md.
