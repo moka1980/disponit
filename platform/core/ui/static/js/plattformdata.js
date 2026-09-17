@@ -210,8 +210,8 @@ export const MODULSTATUS = {
   // veier. Manifestet (denne flatens eneste kilde) sier
   // aktiv/produksjon.
   56: "i_drift",
-  57: "bygges",     // m57_ats: under_utvikling, ikke_i_drift — flippes
-                    // av M-57-aksepten, aldri av en byggemilepæl
+  57: "i_drift",    // m57_ats: aktiv, produksjon — alle SJU punkter ja 17/9
+                    // (suite, datasett, revisjon, feilinjisering, ytelse, rollback)
 };
 
 // Status står IKKE her: modulene beskriver navn, fase og tekst, mens

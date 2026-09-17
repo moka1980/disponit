@@ -1,0 +1,31 @@
+{
+  "bestatt": true,
+  "identiteter": {
+    "frigivelse_id": "039a5837-1e4c-4a22-8f74-5562521a23c0",
+    "frigivelseshendelse_id": "78d8255e-c7d5-4105-83d9-aa2cc1a620a8",
+    "liste_id": "994861ae-0927-40f8-90ae-efbe058bee3a",
+    "signatar_prefiks": "bid_4926",
+    "signaturhendelse_id": "ead66db2-4eba-4576-9053-b0f71a1d89a1"
+  },
+  "krav_id": "m57-revisjon-v1",
+  "maalt": {
+    "frigivelser_med_signatarens_identitet": true,
+    "hendelser_er_uforanderlige": true,
+    "hendelser_totalt": 2,
+    "revisjon_avskruinger": 0,
+    "revisjon_frigivelser": 1,
+    "revisjon_hendelser_uten_identitet": 0,
+    "revisjon_signaturer": 1,
+    "signaturer_med_signatarens_identitet": true,
+    "trigger_frigivelse": true,
+    "trigger_signatur": true
+  },
+  "oppsett": {
+    "migrasjon": 211,
+    "miljo": "staging",
+    "modul": "m57_ats",
+    "tenant": "t-m57rev-29ac13",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-17T21:47:41.019386+00:00"
+}
