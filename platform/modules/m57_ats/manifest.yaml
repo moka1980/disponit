@@ -24,8 +24,8 @@
 id: m57_ats
 navn: Rekrutteringsagent (ATS)
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 avhengigheter:
   - m01_policy                 # bestilling går gjennom beslutningsveien
   - m02_revisjonslogg          # én skrivevei til evidenskjeden
@@ -88,24 +88,32 @@ staging_sjekkliste:
       lokalt og på staging (563658de9d8c). Harnessen
       (bestilling + produsent) er bevisrot.
   revisjonslogg_korrekt:
-    # MÅLT 17/9 HVA SOM FINNES: signeringen (056, `signer_utsendingsliste`)
-    # skriver bare `utsendingssignatur`; frigivelsen fødes i utsenderens
-    # klaim-dør (078/081) og skriver bare `utsendingsfrigivelse` + oppdrag.
-    # Ingen av dem skriver en hendelse med identitet i revisjonsloggen —
-    # det §6 lover. Blinding-AVSKRUINGEN ble FJERNET som dør ved #159
-    # (endepunktet svarer kodet 409 `blinding_avskruing_krever_159`), så
-    # «minst én avskruing» kan aldri måles; grensen må revideres til
-    # #159s utfall (døra nekter, null avskruinger). Punktet er dermed
-    # PRODUKTARBEID (evidensrader for signatur og frigivelse, samme form
-    # som m6_evidens) pluss en menneskelig signatur i flaten — ikke en
-    # kjøring som mangler. Neste arc.
-    status: nei
-    krav_id: m57-v1
+    # MÅLT 17/9 PÅ disponit-srv etter migrasjon 211. Punktet sto `nei`
+    # fordi PRODUKTET manglet halvparten: signeringen skrev bare
+    # `utsendingssignatur`, frigivelsen bare `utsendingsfrigivelse`, og
+    # ingen av dem ble en hendelse med identitet i loggen §6 peker på.
+    # 211 gjør evidensen til en TRIGGER på de to tabellene — et kallsted
+    # kan glemmes i neste vei som skriver raden, en trigger kan ikke.
+    # Identiteten er SIGNATARENS også for frigivelsen: den fødes av
+    # utsenderen, men 056 slipper ingen frigivelse gjennom uten signatur
+    # på nøyaktig det innholdet. Avskruingskravet er snudd (#159 rev døra
+    # ned): null avskruinger, og at døra fortsatt svarer kodet 409 måles
+    # av porten.
+    status: ja
+    krav_id: m57-revisjon-v1
+    bevismaalinger:
+      - maalt.revisjon_signaturer
+      - maalt.revisjon_frigivelser
+      - maalt.revisjon_hendelser_uten_identitet
+      - maalt.revisjon_avskruinger
+    artefakt: deploy/staging/artefakter/m57-revisjon-v1-20260917T214741Z.json
+    artefakt_sha256: a75b976c0ded751d062e0a1d27a546e5f7efe18a2e3ddf30c2895399ccebb099
     notat: >-
-      KREVER: at signaturhendelser og frigivelser står i revisjonsloggen
-      som hendelser med identitet (minst én av hver, null uten), og en
-      grense revidert til #159s utfall for avskruingen. Produktet skriver
-      ikke disse hendelsene i dag (målt 17/9); en egen arc.
+      Tenant t-m57rev-29ac13, 17/9: liste signert av et menneske med
+      aktivt medlemskap og frigitt av senderrollen gjennom dørene.
+      1 signaturhendelse, 1 frigivelseshendelse,
+      0 uten identitet, 0 avskruinger; begge triggerne på
+      tabellene, og en UPDATE mot hendelsen ble avvist.
   feilinjisering_til_unntakskø:
     # INJISERT 17/9 PÅ disponit-srv (`m57-feilinjisering.py`): én giftig bunt
     # (arkivmedlem 8 MiB nuller, over komprimeringsgrensen 100:1) bestilt
