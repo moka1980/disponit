@@ -5384,9 +5384,21 @@ def sveip_rollback_bevisrot_sha256() -> str:
     return h.hexdigest()
 
 
+#: BYTENE SOM FAKTISK RULLER. En modul uten egen release bytter ikke
+#: sine egne filer i en rollback — den bytter KJERNEN den kjører inni.
+#: Det er derfor denne digesten som må være ULIK mellom de to
+#: katalogene; modulens egne filer står som oftest stille gjennom en
+#: rulling, og en port som krevde at DE var ulike, ville krevd at
+#: modulen ble endret for at en rollback skulle kunne måles.
+KJERNEBYTENE: tuple[str, ...] = ("platform/core", "platform/drift")
+
+
+def kjerne_digest(rot) -> str:
+    return release_digest(rot, KJERNEBYTENE)
+
+
 def sveipkjerne_digest(rot, modul_id: str) -> str:
-    """Digesten over de KJERNEBYTENE sveipen er — for en modul uten egen
-    release er det dem en rollback faktisk bytter."""
+    """Digesten over modulens EGNE filer i en release-katalog."""
     return release_digest(rot, SVEIPMODULER[modul_id]["releasefiler"])
 
 
@@ -5544,15 +5556,19 @@ def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
                 feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes")
         except OSError as e:
             feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
-    # TO ULIKE KATALOGER, TO ULIKE DIGESTER: en «rulling» mellom to
-    # identiske releaser ruller ingenting.
-    d, f_ = o.get("drillet_digest"), o.get("forgjenger_digest")
+    # TO ULIKE KATALOGER, TO ULIKE KJERNER. Det er kjernen som rulles;
+    # modulens egne filer står som oftest stille gjennom en rulling, og
+    # en port på DEM ville krevd at modulen ble endret for at en rollback
+    # skulle kunne måles.
+    d, f_ = o.get("drillet_kjernedigest"), o.get("forgjenger_kjernedigest")
     if not (isinstance(d, str) and len(d) == 64
             and isinstance(f_, str) and len(f_) == 64):
-        feil.append("drillet_digest/forgjenger_digest mangler")
+        feil.append("drillet_kjernedigest/forgjenger_kjernedigest mangler")
     elif d == f_:
-        feil.append("drillet og forgjenger har SAMME digest — da ble"
+        feil.append("drillet og forgjenger har SAMME kjernedigest — da ble"
                     " ingenting rullet")
+    if o.get("drillet_release") == o.get("forgjenger_release"):
+        feil.append("drillet og forgjenger er samme release")
     # (a) DEN AVBRUTTE KJØRINGEN: drept midt i, og registeret urørt.
     if m.get("inflight_drept") is not True:
         feil.append("inflight_drept er ikke true — kjøringen ble ikke"

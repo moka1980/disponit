@@ -191,7 +191,9 @@ def _rbart(**over):
             "drillet_release": "aa11", "forgjenger_release": "bb22",
             "drillet_katalog": "/opt/disponit/releases/aa11",
             "forgjenger_katalog": "/opt/disponit/releases/bb22",
-            "drillet_digest": "a" * 64, "forgjenger_digest": "b" * 64,
+            "drillet_digest": "a" * 64, "forgjenger_digest": "a" * 64,
+            "drillet_kjernedigest": "c" * 64,
+            "forgjenger_kjernedigest": "d" * 64,
             "arbeidernokkel": 619204773,
             "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(),
             "form": "kjerne"},
@@ -208,7 +210,7 @@ def _rbart(**over):
             "dubletter": 0, "kandidat_nye": 0, "kandidat_apne": 6,
             "rullback_bytes_er_forgjengerens": True,
             "kandidat_bytes_er_drillede": True,
-            "release_digest_bundet": True},
+            "release_digest_bundet": True, "modul_digest_likt": True},
         "etterkontroll": {"aktiv_urort": True, "kandidat_feilet": False},
     }
     for sti, verdi in over.items():
@@ -247,9 +249,15 @@ def test_rollbackens_akser_feller():
             ("maalt.release_digest_bundet", False),
             ("oppsett.modul", "m44_purring"),
             ("oppsett.bevisrot_sha256", "0" * 64),
-            # TO IDENTISKE KATALOGER ruller ingenting.
-            ("oppsett.forgjenger_digest", "a" * 64)):
+            # TO IDENTISKE KJERNER ruller ingenting…
+            ("oppsett.forgjenger_kjernedigest", "c" * 64),
+            # …og det gjør heller ikke én og samme release.
+            ("oppsett.forgjenger_release", "aa11")):
         assert m._sjekk_grenser(ROLLBACK_KRAV, _rbart(**{sti: verdi})), (sti, verdi)
+    # MODULENS EGNE FILER er som regel uendret over en rulling — det er
+    # nettopp derfor kjerneformen finnes, og skal IKKE felle drillen.
+    assert m._sjekk_grenser(ROLLBACK_KRAV, _rbart(
+        **{"maalt.modul_digest_likt": True})) == []
     uten = _rbart(); del uten["maalt"]["arbeidernokkel_fri"]
     assert m.valider_artefaktformat(uten, ROLLBACK_KRAV) != []
 

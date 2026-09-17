@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import psycopg  # noqa: E402
 
 from manifestskjema import (SVEIPMODULER, _sjekk_grenser,  # noqa: E402
-                            sveip_rollback_bevisrot_sha256,
+                            kjerne_digest, sveip_rollback_bevisrot_sha256,
                             sveipkjerne_digest, valider_artefaktformat)
 
 #: Hvor lenge vi venter på at sveipen faktisk BLOKKERER på tabellåsen.
@@ -223,10 +223,14 @@ def main() -> int:
     for kat in (d_kat, f_kat):
         if not (kat / "platform/drift" / f"{k['modul_fil']}.py").is_file():
             raise SystemExit(f"AVBRUTT: {kat} har ingen {k['modul_fil']}")
+    # KJERNEN er det som rulles; modulens egne filer står som oftest
+    # stille gjennom en rulling, og måles derfor bare som et faktum.
+    d_kjerne, f_kjerne = kjerne_digest(d_kat), kjerne_digest(f_kat)
     d_dig = sveipkjerne_digest(d_kat, a.modul)
     f_dig = sveipkjerne_digest(f_kat, a.modul)
-    _log(f"drillet {d_kat.name[:8]} ({d_dig[:12]}) ← forgjenger"
-         f" {f_kat.name[:8]} ({f_dig[:12]})")
+    _log(f"drillet {d_kat.name[:8]} (kjerne {d_kjerne[:12]}, modul"
+         f" {d_dig[:12]}) ← forgjenger {f_kat.name[:8]} (kjerne"
+         f" {f_kjerne[:12]}, modul {f_dig[:12]})")
 
     rigg_modul = __import__(k["riggmodul"])
     rt = psycopg.connect(rt_dsn)
@@ -305,6 +309,8 @@ def main() -> int:
             "drillet_release": d_kat.name, "forgjenger_release": f_kat.name,
             "drillet_katalog": str(d_kat), "forgjenger_katalog": str(f_kat),
             "drillet_digest": d_dig, "forgjenger_digest": f_dig,
+            "drillet_kjernedigest": d_kjerne,
+            "forgjenger_kjernedigest": f_kjerne,
             "arbeidernokkel": nokkel,
             "bevisrot_sha256": sveip_rollback_bevisrot_sha256(),
             "form": "kjerne: sveipen ruller med kjernen — avbruddet tas"
@@ -332,8 +338,16 @@ def main() -> int:
                 r2["fil"].startswith(str(f_kat) + "/"),
             "kandidat_bytes_er_drillede":
                 r3["fil"].startswith(str(d_kat) + "/"),
+            # BEGGE KATALOGENE MÅLES PÅ NYTT til slutt: endret noe seg
+            # under drillen, målte vi ikke de bytene vi sier.
             "release_digest_bundet": (sveipkjerne_digest(d_kat, a.modul) == d_dig
-                                      and sveipkjerne_digest(f_kat, a.modul) == f_dig),
+                                      and sveipkjerne_digest(f_kat, a.modul) == f_dig
+                                      and kjerne_digest(d_kat) == d_kjerne
+                                      and kjerne_digest(f_kat) == f_kjerne),
+            # MODULENS EGNE FILER er som regel de samme over en rulling.
+            # Det er ikke en feil — det er nettopp derfor kjerneformen
+            # finnes — men det skal stå i artefaktet.
+            "modul_digest_likt": d_dig == f_dig,
         },
         "etterkontroll": {
             "aktiv_urort": Path("/opt/disponit/aktiv").resolve() == d_kat,
