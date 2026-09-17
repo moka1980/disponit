@@ -128,6 +128,13 @@ def forbered(rt, runde: str) -> dict:
     return rigg
 
 
+def riggtenanter(rigg: dict) -> list[str]:
+    """Riggens tenanter, i den formen de generiske produsentene ber om.
+    Kontrakten en sveipmodul må fylle for å bruke `rollback-sveipkjerne.py`
+    er nettopp denne: `forbered(rt, runde)` og `riggtenanter(rigg)`."""
+    return [rigg["med_krav"], rigg["uten_krav"]]
+
+
 def kontroller_ren(rt, rigg: dict) -> None:
     """Det rene subjektets kontroll — MELLOM de to sveipene."""
     merke, _v, _d, kontroll = next(r for r in SETT if r[1] is None)

@@ -172,3 +172,114 @@ def test_produsentene_kaller_modulens_egen_kjor():
         # HOPPET OVER er ikke en kjøring: en måling mot en sveip som
         # aldri kjørte måler ingenting, og skal avbryte.
         assert "hoppet_over" in kilde, navn
+
+
+ROLLBACK_KRAV = "m19-rollback-v1"
+
+
+def _rbart(**over):
+    import manifestskjema as m
+    art = {
+        "krav_id": ROLLBACK_KRAV, "ts": "2026-09-18T02:00:00+00:00",
+        "bestatt": True,
+        "oppsett": {
+            "modul": MODUL, "miljo": "staging", "vert": "disponit.com",
+            "runde": "abcd1234",
+            "tenanter": ["t-m19fasit-med_krav-abcd1234",
+                         "t-m19fasit-uten_krav-abcd1234"],
+            "funntabell": "adressefunn", "maalerolle": "disponit_adresse_eier",
+            "drillet_release": "aa11", "forgjenger_release": "bb22",
+            "drillet_katalog": "/opt/disponit/releases/aa11",
+            "forgjenger_katalog": "/opt/disponit/releases/bb22",
+            "drillet_digest": "a" * 64, "forgjenger_digest": "b" * 64,
+            "arbeidernokkel": 619204773,
+            "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(),
+            "form": "kjerne"},
+        "identiteter": {
+            "avbrutt_pid": 11, "rullback_pid": 12, "kandidat_pid": 13,
+            "avbrutt_fil": "/opt/disponit/releases/aa11/platform/drift/adressesveip.py",
+            "rullback_fil": "/opt/disponit/releases/bb22/platform/drift/adressesveip.py",
+            "kandidat_fil": "/opt/disponit/releases/aa11/platform/drift/adressesveip.py"},
+        "maalt": {
+            "inflight_drept": True, "inflight_returkode": -9,
+            "inflight_blokkerte_paa_laas": True, "inflight_funn": 0,
+            "arbeidernokkel_fri": True,
+            "rullbakk_funn": 6, "rullbakk_rader": 6,
+            "dubletter": 0, "kandidat_nye": 0, "kandidat_apne": 6,
+            "rullback_bytes_er_forgjengerens": True,
+            "kandidat_bytes_er_drillede": True,
+            "release_digest_bundet": True},
+        "etterkontroll": {"aktiv_urort": True, "kandidat_feilet": False},
+    }
+    for sti, verdi in over.items():
+        del_, felt = sti.split(".")
+        art[del_][felt] = verdi
+    return art
+
+
+def test_rollbackporten_star_for_drillen():
+    import manifestskjema as m
+    g = m.KRAVGRENSER[ROLLBACK_KRAV]
+    assert g["maks_dubletter"] == 0 and g["maks_kandidat_nye"] == 0
+    assert m.ARTEFAKTSKJEMAER[ROLLBACK_KRAV] == "artefakt-sveip-rollback-skjema.json"
+    assert set(g["punktbinding"]) == {"rollback_testet"}
+    art = _rbart()
+    assert m.valider_artefaktformat(art, ROLLBACK_KRAV) == []
+    assert m._sjekk_grenser(ROLLBACK_KRAV, art) == []
+
+
+def test_rollbackens_akser_feller():
+    import manifestskjema as m
+    for sti, verdi in (
+            # DEN DREPTE KJØRINGEN må faktisk ha nådd skrivingen, ellers
+            # måler drillen en prosess som aldri rakk noe.
+            ("maalt.inflight_drept", False),
+            # …og den må ikke ha skrevet et halvt funn.
+            ("maalt.inflight_funn", 1),
+            # ARBEIDERNØKKELEN må slippe, ellers er sveipen stengt ute av
+            # sin egen døde sesjon.
+            ("maalt.arbeidernokkel_fri", False),
+            ("maalt.rullbakk_funn", 5),
+            ("maalt.dubletter", 1),
+            ("maalt.kandidat_nye", 1),
+            ("maalt.rullback_bytes_er_forgjengerens", False),
+            ("maalt.kandidat_bytes_er_drillede", False),
+            ("maalt.release_digest_bundet", False),
+            ("oppsett.modul", "m44_purring"),
+            ("oppsett.bevisrot_sha256", "0" * 64),
+            # TO IDENTISKE KATALOGER ruller ingenting.
+            ("oppsett.forgjenger_digest", "a" * 64)):
+        assert m._sjekk_grenser(ROLLBACK_KRAV, _rbart(**{sti: verdi})), (sti, verdi)
+    uten = _rbart(); del uten["maalt"]["arbeidernokkel_fri"]
+    assert m.valider_artefaktformat(uten, ROLLBACK_KRAV) != []
+
+
+def test_drillen_avbryter_utenfra_og_bevitner_bytene():
+    """Avbruddet skal komme fra transporten, ikke fra en bryter i
+    modulen, og hver kjøring skal si hvilken FIL sveipen ble lastet fra.
+    En drill som bare stoler på PYTHONPATH måler oppsettet sitt."""
+    from pathlib import Path
+    kilde = (Path(__file__).resolve().parents[3]
+             / "deploy/staging/rollback-sveipkjerne.py").read_text(encoding="utf-8")
+    assert "ACCESS EXCLUSIVE MODE" in kilde and "SIGKILL" in kilde
+    assert "modul.__file__" in kilde
+    assert 'klar["fil"].startswith' in kilde, \
+        "drillen sjekker ikke at bytene kom fra katalogen den drillet"
+    # …og den nekter å drepe en prosess som aldri blokkerte.
+    assert "blokkerte aldri på tabellåsen" in kilde
+
+
+def test_riggkontrakten_er_oppfylt_av_modulens_fasitdriver():
+    """Den generiske drillen krever `forbered` og `riggtenanter` av
+    riggmodulen. Mangler én av dem, faller drillen først på verten."""
+    import sys
+    from pathlib import Path
+    rot = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(rot / "deploy/staging"))
+    import manifestskjema as m
+    for modul_id, k in m.SVEIPMODULER.items():
+        rigg = __import__(k["riggmodul"])
+        assert callable(getattr(rigg, "forbered", None)), modul_id
+        assert callable(getattr(rigg, "riggtenanter", None)), modul_id
+        for rel in k["releasefiler"]:
+            assert (rot / rel).exists(), (modul_id, rel)

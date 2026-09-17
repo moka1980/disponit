@@ -70,7 +70,10 @@ def tilstand(m, k: dict) -> dict:
 
     Et tall alene holder heller ikke: ett funn kunne blitt lukket og et
     annet åpnet i samme feilende kjøring, og summen stått stille."""
+    # SET ROLE ER TRANSAKSJONELT, og `rollback()` under ville tatt rollen
+    # av igjen ved neste runde i løkka. Den committes derfor én gang.
     m.execute(f"SET ROLE {k['maalerolle']}")
+    m.commit()
     m.execute("SELECT set_config('disponit.tenant', '', true)")
     tenanter = [r[0] for r in m.execute(
         f"SELECT DISTINCT tenant FROM {k['tenantkilde']} ORDER BY 1"
