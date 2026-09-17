@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "https://disponit.no/skjema/m14fasitartefakt-v1.json",
+  "title": "m14 fasitartefakt (m14-fasit-v1)",
+  "comment": "Det syntetiske fakturasettet (deploy/staging/m14_fasit.py) drevet gjennom kundens egne doerer, sveipet av drift/fakturasveip.kjor() som sveiperollen, og maalt mot TRE haandskrevne fasiter: funnene (mva-avvik, ingen sats, ukjent leverandoer, naer dublett, over beloepsgrense, ukontrollert, ingen terskel), flaten slik den viser dem, og evidenskjeden inkl. kontrollene per faktura. Avvikene baeres i artefaktet saa dommen kan RE-REGNES av porten. CI driver samme sett mot lokal base (test_m14_fasit_port). Skrevet av deploy/staging/m14-fasit-artefakt.py.",
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt",
+    "avvik"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m14-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "modul",
+        "vert",
+        "sett_versjon",
+        "sett_sha256",
+        "bevisrot_sha256",
+        "tenanter"
+      ],
+      "properties": {
+        "modul": {
+          "const": "m14_fakturakontroll"
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sett_versjon": {
+          "type": "string",
+          "minLength": 1,
+          "comment": "bygg_sett()-versjonen som drev settet."
+        },
+        "sett_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "sha256 av settdriverens bytes (deploy/staging/m14_fasit.py) slik kjoeringen FAKTISK brukte den. sett_versjon er en haandholdt streng; denne er identiteten. Porten krever likhet med de innsjekkede bytene."
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "comment": "EN digest over hele m14-produsentflaten (manifestskjema.M14_BEVISROT_FILER), re-regnet av porten over sitt eget tre."
+        },
+        "tenanter": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "comment": "Tenantene runden kjoerte mot - en MED terskel (strammet etter registreringen) og en UTEN. Begge kreves: uten den terskelloese er ingen_terskel umaalt."
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fakturaer",
+        "ventede_funn",
+        "evidenshendelser",
+        "funnavvik",
+        "koeavvik",
+        "evidensavvik",
+        "sveipetid_ms",
+        "sveip_tenanter"
+      ],
+      "properties": {
+        "fakturaer": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall fakturaer i settet - summen over begge tenantene."
+        },
+        "ventede_funn": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall funn fasiten venter."
+        },
+        "evidenshendelser": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Hendelser fasiten venter i revisjonsloggen (kilde m14_faktura): en per doer som ble kalt. Kontrollene maales i tillegg per faktura."
+        },
+        "funnavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "koeavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidensavvik": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sveipetid_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "comment": "Veggklokketid for fakturasveipen i denne runden."
+        },
+        "sveip_tenanter": {
+          "type": "integer",
+          "minimum": 1,
+          "comment": "Antall tenanter sveipen rapporterte - nevneren til sveipetid_ms; kryss-tenant."
+        }
+      }
+    },
+    "avvik": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "funnavvik",
+          "koeavvik",
+          "evidensavvik"
+        ],
+        "properties": {
+          "funnavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "koeavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidensavvik": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "comment": "Avvikene per tenantrolle, ordrett. Porten teller dem paa nytt og sammenligner med maalt - en telling som spriker fra listen er to ulike kjoeringer i samme fil."
+    }
+  }
+}

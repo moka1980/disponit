@@ -1,0 +1,31 @@
+{
+  "bestatt": true,
+  "krav_id": "m14-suite-v1",
+  "maalt": {
+    "m14_exitkode": 0,
+    "m14_feilet": 0,
+    "m14_hoppet": 0,
+    "m14_tester": 84,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5452
+  },
+  "oppsett": {
+    "bevisrot_sha256": "d673c9646110c3ab52f95874a51ad1a013b73f93f7edb3be6354cb7655e33ca9",
+    "commit": "b9ce22c1fc064f3fbab52f9ecea55aba3021b76e",
+    "m14_filer": [
+      "platform/core/tests/test_bestilling_bokfor_port.py",
+      "platform/core/tests/test_m14_bilag_port.py",
+      "platform/core/tests/test_m14_bokforing_port.py",
+      "platform/core/tests/test_m14_bokforingsutloser_port.py",
+      "platform/core/tests/test_m14_controller.py",
+      "platform/core/tests/test_m14_faktura.py",
+      "platform/core/tests/test_m14_fasit_port.py",
+      "platform/core/tests/test_m14_flate_port.py"
+    ],
+    "modul": "m14_fakturakontroll",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-16T23:49:40.482922+00:00"
+}
