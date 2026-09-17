@@ -318,8 +318,13 @@ def main() -> int:
                          " navneform t-m37drill-<6 hex>")
 
     # 1. tenanten og purringen — sakene oppstår som i drift
-    D.sikre_policy(rt, tenant, k["bransje"], k["fullmakter"])
-    D.forbered_m23(rt, tenant)
+    # Bransjemalen skrives som `utkast`; en gjentatt kjøring (--tenant)
+    # skal ikke bootstrappe på nytt (døra nekter, med rette).
+    har_policy, _ = q(rt, tenant, "SELECT 1 FROM policyer WHERE tenant=%s"
+                      " LIMIT 1", (tenant,))
+    if not har_policy:
+        D.sikre_policy(rt, tenant, k["bransje"], k["fullmakter"])
+        D.forbered_m23(rt, tenant)
     # Én purring per tenant: en gjentatt kjøring (--tenant) sender ikke
     # eiers testadresse en ny.
     rader, _ = q(rt, tenant, "SELECT id FROM oppdrag WHERE tenant=%s AND"
