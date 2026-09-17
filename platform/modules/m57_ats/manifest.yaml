@@ -45,80 +45,80 @@ i18n_prefiks: m57ats
 # «Et manifest skal aldri lese sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
-    krav_id: m57-v1
+    # MÅLT 17/9 I M-44/M-26/M-14-LESTEN: egen grense `m57-suite-v1` med
+    # modulens andel pinnet (de åtte `test_m57_*`-filene) — fullt utsjekk,
+    # fersk base, alle rolle-DSN-ene, kjørt som administrator.
+    # `m57-v1`s suitefelter kan ikke bæres av dens eget skjema (#541);
+    # dette punktet binder derfor til den nye grensen, som m44/m26/m14.
+    status: ja
+    krav_id: m57-suite-v1
+    bevismaalinger:
+      - maalt.tester_totalt
+      - maalt.tester_feilet
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+      - maalt.m57_tester
+      - maalt.m57_feilet
+      - maalt.m57_hoppet
+      - maalt.m57_exitkode
+    artefakt: deploy/staging/artefakter/m57-suite-v1-20260917T015557Z.json
+    artefakt_sha256: aa8fe17365a421adbbc7096cd88388d4eea2ce6cd43e364d757c9a76f0cddec2
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet
-      (m02-suite-formen). GRENSEN FINNES NÅ i `m57-v1` (registrert 1/9,
-      FØR målingen — §0): suite_min_tester 3000, suite_maks_feilet 0, og
-      modulens EGEN andel som tre tall — m57_min_tester 80,
-      m57_maks_feilet 0, m57_maks_hoppet 0. Det siste skiller «bestått»
-      fra «ikke forsøkt»: en grønn suite beviser ingenting om M-57 hvis
-      modulens egne ble hoppet over. Stagingidentiteten kreves bundet —
-      punktet heter «på staging», og uten den er en lokal kjøring like
-      god bevisverdi. Statusen er `nei` fordi kjøringen ikke er gjort,
-      ikke fordi grensen mangler.
+      Kjørt 17/9 på disponit-srv som administrator fra et FULLT utsjekk av 9bb3082a mot en FERSK testbase med alle rolle-DSN-ene: 5452 tester, 0 feilet, 0 hoppet; M-57-andelen 398 av 398, exitkode 0. Første kjøring falt i andelen alene på et grant test_pr008 hadde strippet (rettighetspasset er nå én funksjon deployen og testene deler); denne kjøringen er etter fiksen.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # BLOKKERT AV GRENSEN SELV (#541, målt 17/9): `m57-v1`s punktbinding
+    # krever `bunt_soknader`, `fasitavvik`, `datasett_sha_lokal` og
+    # `datasett_sha_staging`, men `artefakt-m57-skjema.json` har
+    # `additionalProperties: false` og definerer ingen av dem. Et artefakt
+    # som bærer målingene felles av formatporten; ett uten felles av
+    # grenseporten. Ingen kjøring kan flippe punktet før grensen er
+    # revidert (§0: ny krav_id).
+    status: blokkert
+    blokkert_av: >-
+      #541 — m57-v1s artefaktskjema avviser målingene punktbindingen
+      krever (bunt_soknader, fasitavvik, datasett_sha_lokal/_staging).
+      Låses opp av en revidert grense (m57-v2) eller en egen
+      m57-fasit-v1 i m44/m26/m14-lesten.
     krav_id: m57-v1
-    notat: >-
-      KREVER: syntetisk søknadsbunt med fasit-rangering drevet både
-      lokalt (CI) og på staging, med BEGGE datasett-identitetene i
-      artefaktet og byte-likhet mellom dem (m02-fordelingsformen).
-      GRENSEN FINNES NÅ i `m57-v1` (1/9, §0): datasett_min_soknader 200,
-      datasett_maks_fasitavvik 0, og krev_datasett_sha_lik — begge
-      digestene skal stå der OG være like. Én digest beviser at noe
-      kjørte, ikke at det kjørte likt to steder. Statusen er `nei` fordi
-      kjøringen ikke er gjort.
   revisjonslogg_korrekt:
-    status: nei
+    # BLOKKERT AV GRENSEN SELV (#541): `revisjon_avskruinger`,
+    # `revisjon_signaturer`, `revisjon_frigivelser` og
+    # `revisjon_hendelser_uten_identitet` finnes ikke i skjemaet.
+    status: blokkert
+    blokkert_av: >-
+      #541 — m57-v1s artefaktskjema avviser de fire revisjonsmålingene
+      punktbindingen krever. Låses opp av en revidert grense.
     krav_id: m57-v1
-    notat: >-
-      KREVER: at blinding-avskruinger, signaturhendelser og frigivelser
-      står i revisjonsloggen, målt som hendelser med identitet. GRENSEN
-      FINNES NÅ i `m57-v1` (1/9, §0): minst én av hver av de tre, og
-      null hendelser uten identitet. MEN PUNKTET KAN IKKE OPPFYLLES
-      ENNÅ, og det er en ærlig tilstand og ikke en glipp: avskruingsdøra
-      er selvattestert (#159) og etterlater ingen varig hendelse, så
-      revisjon_avskruinger står 0 til #159 har gitt den en. Grensen er
-      registrert nå nettopp derfor — den definerer hva #159 må levere, i
-      stedet for å bli skrevet etterpå av den som allerede vet hva
-      målingen ga.
   feilinjisering_til_unntakskø:
-    status: nei
+    # BLOKKERT AV GRENSEN SELV (#541): `injisert_jobber`,
+    # `unntakskoe_poster` og `koeposter_uten_jobbinding` finnes ikke i
+    # skjemaet. Første halvdel (SP-3, rent feilutfall) måles av
+    # invarianten `kjoring_delvis_resultat_promotert`.
+    status: blokkert
+    blokkert_av: >-
+      #541 — m57-v1s artefaktskjema avviser de tre køpost-målingene
+      punktbindingen krever. Låses opp av en revidert grense.
     krav_id: m57-v1
-    notat: >-
-      KREVER: at en avbrutt parsing/evaluering gir rent feilutfall uten
-      promotert liste (SP-3) OG at den faktisk leverte en post i
-      unntakskøen. Første halvdel dekkes av invarianten
-      `kjoring_delvis_resultat_promotert`. ANDRE HALVDEL HAR GRENSE NÅ i
-      `m57-v1` (1/9, §0): min_injiserte_jobber 1, min_unntakskoe_poster
-      1, maks_koeposter_uten_jobbinding 0. Uten den består en kjøring
-      som MISTER feilen helt like godt som en som køer den. Statusen er
-      `nei` fordi injiseringen ikke er kjørt.
   ytelse_bestatt:
-    status: nei
+    # BLOKKERT AV VERTEN (målt 17/9): grensen krever >= 5000 søknader på
+    # <= 240 minutter, altså ~2,9 s per søknad gjennom modellen.
+    # disponit-srv har 2 vCPU, 3 GB RAM og `qwen2.5:3b-instruct` i
+    # Ollama (persondata forlater aldri serveren — eiers valg 26/8). Den
+    # målingen kan ikke gjøres på denne verten; grensen står.
+    status: blokkert
+    blokkert_av: >-
+      Vertens kapasitet (2 vCPU, 3 GB, qwen2.5:3b i Ollama, målt 17/9)
+      kan ikke evaluere 5000 søknader på 240 minutter. Låses opp av en
+      vert med GPU/flere kjerner eller en revidert ytelsesgrense (§0).
     krav_id: m57-v1
-    notat: >-
-      KREVER: `ytelse_full_bunt_soknader` (>= 5000, den fulle bunten) og
-      `ytelse_full_bunt_minutter` (<= 240, §4s utførelsesfrist) — de to
-      SAMMEN, siden en varighet uten last er en tom kjøring og en full
-      bunt uten varighet bare er en påstand om at det gikk. Grensen har
-      stått siden §0; 1/9 fikk punktet også sin PUNKTBINDING, som
-      manglet: fram til da ville en gjennomført 5000-måling ikke kunnet
-      flippe punktet i det hele tatt — grensen fantes, veien fra måling
-      til punkt gjorde ikke. Statusen er `nei` fordi prøvekjøringen ikke
-      er kjørt.
   rollback_testet:
-    status: nei
+    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44/M-26/M-14: MÅLT
+    # 17/9 i modulregisteret har `m57_ats` NØYAKTIG ÉN release,
+    # `m57-r1-20260827`. Arbeideren kjører (`disponit-m57.service`); det
+    # er historikken som mangler, ikke maskineriet.
+    status: blokkert
+    blokkert_av: >-
+      m57_ats har én release (m57-r1-20260827). En flippedrill må rulle
+      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
+      rulle tilbake til. Låses opp av modulens andre release.
     krav_id: m57-v1
-    notat: >-
-      KREVER: 049-flippedrillen for modulens RELEASE — at forrige
-      M-57-release kan gjenoppta arbeid etter rollback. GRENSEN FINNES
-      NÅ i `m57-v1` (1/9, §0), speilet fra `rollback-m56-v1`:
-      min_rullback_claims 1, min_rullback_promoterte 1,
-      maks_claims_etter_drenering 0, og release-digesten bundet — uten
-      den vet vi ikke HVILKEN release som gjenopptok arbeidet.
-      `ddl_begge_kjoringer_gronne` er SP-10/DDL-idempotens, en annen
-      ting enn en releaseflipp. Statusen er `nei` fordi drillen ikke er
-      kjørt.
