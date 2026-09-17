@@ -2050,6 +2050,31 @@ KRAVGRENSER["m14-rollback-v1"] = {
     },
 }
 
+KRAVGRENSER["m37-rollback-v1"] = {
+    # Lease-formen (rollback-m37.py): en sak claimet da rullingen traff
+    # skal re-claimes av rullbakken med generasjon + 1 og behandles
+    # NØYAKTIG én gang; det gamle tokenet treffer null rader.
+    "maks_gammel_claim_traff_rader": 0,
+    "min_overtakelse_generasjon": 2,
+    "behandlinger_av_inflight": 1,
+    "maks_behandlinger_under_gammel_claim": 0,
+    "maks_oppdrag_for_inflight": 1,
+    "min_inflight_lease_rest_s": 1.0,
+    # `claim_neste_sak` klemmer leasen til maks 600 s; ett minutt slingring.
+    "maks_overtakelse_ventetid_s": 660.0,
+    "maks_heartbeat_alder_s": 30.0,
+    "krev_release_digest_bundet": True,
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.inflight_claim_generation_ved_rulling",
+            "maalt.overtakelse_claim_generation",
+            "maalt.gammel_claim_traff_rader",
+            "maalt.behandlinger_av_inflight",
+            "maalt.rullback_cwd_er_forgjengerens",
+        ),
+    },
+}
+
 KRAVGRENSER["m14-suite-v1"] = {
     "min_tester": 1500,
     "maks_feilet": 0,
@@ -3423,6 +3448,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m23-rollback-v1": "artefakt-rollback-modul-skjema.json",
     "m26-rollback-v1": "artefakt-rollback-modul-skjema.json",
     "m44-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m37-rollback-v1": "artefakt-rollback-m37-skjema.json",
     "m26-fasit-v1": "artefakt-m26-fasit-skjema.json",
     "m26-suite-v1": "artefakt-m26-suite-skjema.json",
     "m14-fasit-v1": "artefakt-m14-fasit-skjema.json",
@@ -3695,6 +3721,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m26_suite(grense, art)
     if krav_id == "m14-rollback-v1":
         return feil + _grenser_rollback_modul(grense, art)
+    if krav_id == "m37-rollback-v1":
+        return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
     if krav_id == "m14-suite-v1":
@@ -6361,29 +6389,44 @@ SVEIPMODUL_RELEASEFILER: dict[str, tuple[str, ...]] = {
 }
 
 
-def sveipmodul_digest(rot, modul_id: str) -> str:
-    """sha256 over modulens releasebytes under `rot` (et tre eller en
+def release_digest(rot, filer: tuple[str, ...]) -> str:
+    """sha256 over et sett releasebytes under `rot` (et tre eller en
     release-katalog): hver fil i oppskriften i sortert rekkefølge, som
     (relativ sti, sha256 av bytene). __pycache__ og *.pyc er ikke bytes
     noen deployer."""
     from pathlib import Path
     rot = Path(rot)
-    filer: list[Path] = []
-    for rel in SVEIPMODUL_RELEASEFILER[modul_id]:
+    alle: list[Path] = []
+    for rel in filer:
         sti = rot / rel
         if sti.is_dir():
-            filer += [f for f in sti.rglob("*") if f.is_file()
-                      and "__pycache__" not in f.parts
-                      and f.suffix != ".pyc"]
+            alle += [f for f in sti.rglob("*") if f.is_file()
+                     and "__pycache__" not in f.parts
+                     and f.suffix != ".pyc"]
         elif sti.is_file():
-            filer.append(sti)
+            alle.append(sti)
         else:
             raise FileNotFoundError(rel)
     h = hashlib.sha256()
-    for f in sorted(filer, key=lambda f: f.relative_to(rot).as_posix()):
+    for f in sorted(alle, key=lambda f: f.relative_to(rot).as_posix()):
         h.update(f.relative_to(rot).as_posix().encode("utf-8") + b"\x00")
         h.update(hashlib.sha256(f.read_bytes()).digest() + b"\x00")
     return h.hexdigest()
+
+
+def sveipmodul_digest(rot, modul_id: str) -> str:
+    """Sveipmodulens releasebytes (`SVEIPMODUL_RELEASEFILER`)."""
+    return release_digest(rot, SVEIPMODUL_RELEASEFILER[modul_id])
+
+
+#: M-37s releasebytes: manifestet og kjernen (`platform/core/m37`, som
+#: unitten kjører `-m m37.arbeider` fra). Ikke en sveipmodul — egen liste.
+M37_RELEASEFILER: tuple[str, ...] = ("platform/modules/m37_unntak",
+                                     "platform/core/m37")
+
+
+def m37_digest(rot) -> str:
+    return release_digest(rot, M37_RELEASEFILER)
 
 
 ROLLBACK_MODUL_GRENSER = ("m14-rollback-v1", "m17-rollback-v1",
@@ -6471,6 +6514,119 @@ def _grenser_rollback_modul(grense: dict, art: dict) -> list[str]:
                                           ident.get("kandidat_oppdrag_id")}
                                          - {None}) != 3:
         feil.append("identiteter: tre ulike oppdrag kreves — ett per ledd")
+    return feil
+
+
+def _grenser_m37_rollback(grense: dict, art: dict) -> list[str]:
+    """`m37-rollback-v1` — flippedrillen for unntakskøens arbeider, i
+    LEASE-form: saken som var claimet da rullingen traff ble re-claimet av
+    rullbakken med generasjon + 1, behandlet nøyaktig én gang, det gamle
+    claim-tokenet traff null rader, rullbakken kjørte fra forgjengerens
+    katalog, og kandidaten (de drillede bytene) overtok etterpå."""
+    feil: list[str] = []
+    m, o, k = art.get("maalt"), art.get("oppsett"), art.get("etterkontroll")
+    if not isinstance(m, dict) or not isinstance(o, dict) \
+            or not isinstance(k, dict):
+        return ["artefaktet mangler `maalt`/`oppsett`/`etterkontroll`"]
+    for felt, tak in (("gammel_claim_traff_rader",
+                       grense["maks_gammel_claim_traff_rader"]),
+                      ("behandlinger_under_gammel_claim",
+                       grense["maks_behandlinger_under_gammel_claim"]),
+                      ("oppdrag_for_inflight",
+                       grense["maks_oppdrag_for_inflight"]),
+                      ("fencing_treff_etter_overtakelse", 0)):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    for felt, minst in (("overtakelse_claim_generation",
+                         grense["min_overtakelse_generasjon"]),
+                        ("claim_utlopt_hendelser", 1),
+                        ("fencing_treff_for_rulling", 1),
+                        ("arbeider_ventet_paa_policyer", 1),
+                        ("kandidat_claim_generation", 1),
+                        ("probe_claim_generation", 1)):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    b, melding = _teller(m, "behandlinger_av_inflight",
+                         "behandlinger_av_inflight")
+    if melding:
+        feil.append(melding)
+    elif b != grense["behandlinger_av_inflight"]:
+        feil.append(f"behandlinger_av_inflight={b}, krever nøyaktig"
+                    f" {grense['behandlinger_av_inflight']} — null er tapt,"
+                    " to er dobbelt")
+    g0, melding = _teller(m, "inflight_claim_generation_ved_rulling",
+                          "inflight_claim_generation_ved_rulling")
+    if melding:
+        feil.append(melding)
+    elif g0 is not None and m.get("overtakelse_claim_generation") != g0 + 1:
+        feil.append("overtakelsen er ikke generasjonen etter den som ble"
+                    " rullet — ingen kan si HVEM som overtok")
+    if m.get("inflight_status_ved_rulling") != "under_behandling":
+        feil.append("inflight-saken var ikke under_behandling da rullingen"
+                    " traff — ingen lease ble rullet over")
+    rest, melding = _positiv(m, "inflight_lease_rest_s_ved_rulling",
+                             "inflight_lease_rest_s_ved_rulling")
+    if melding:
+        feil.append(melding)
+    elif rest < grense["min_inflight_lease_rest_s"]:
+        feil.append(f"inflight_lease_rest_s_ved_rulling={rest:g} — leasen"
+                    " var i praksis utløpt")
+    vent, melding = _positiv(m, "overtakelse_ventetid_s",
+                             "overtakelse_ventetid_s")
+    if melding:
+        feil.append(melding)
+    elif vent > grense["maks_overtakelse_ventetid_s"]:
+        feil.append(f"overtakelse_ventetid_s={vent:g} > "
+                    f"{grense['maks_overtakelse_ventetid_s']:g}")
+    for felt in ("inflight_utfall", "kandidat_utfall", "probe_utfall"):
+        if m.get(felt) in (None, "", "ny", "under_behandling"):
+            feil.append(f"{felt}={m.get(felt)!r} er ikke en lukket sak")
+    for felt in ("rullback_cwd_er_forgjengerens", "kandidat_cwd_er_aktiv",
+                 "release_digest_bundet"):
+        if m.get(felt) is not True:
+            feil.append(f"{felt} er ikke true")
+    if grense.get("krev_release_digest_bundet"):
+        if o.get("drillet_digest") != o.get("kandidat_digest"):
+            feil.append("kandidatens digest er ikke den drillede")
+        if k.get("rullback_bytes_er_forgjengerens") is not True:
+            feil.append("etterkontrollen bekrefter ikke at rullbakken kjørte"
+                        " forgjengerens bytes")
+    if o.get("forgjenger_katalog") in (None, "", o.get("drillet_katalog")):
+        feil.append("forgjenger_katalog mangler eller er den drillede —"
+                    " «rullet tilbake» uten retning er en påstand")
+    if o.get("forgjenger_release") in (None, "", o.get("drillet_release")):
+        feil.append("forgjenger_release mangler eller er den drillede")
+    for felt in ("unit_aktiv", "unit_override_fjernet", "digest_likhet"):
+        if k.get(felt) is not True:
+            feil.append(f"etterkontroll.{felt} er ikke true")
+    hb, melding = _positiv(k, "heartbeat_alder_s", "heartbeat_alder_s")
+    if melding:
+        feil.append(melding)
+    elif hb > grense["maks_heartbeat_alder_s"]:
+        feil.append(f"heartbeat_alder_s={hb:g} — arbeideren lever ikke"
+                    " etter drillen")
+    r, melding = _teller(k, "uventede_restarter", "uventede_restarter")
+    if melding:
+        feil.append(melding)
+    elif r > 0:
+        feil.append(f"uventede_restarter={r} — noe annet enn drillen"
+                    " restartet arbeideren")
+    ident = art.get("identiteter")
+    if not isinstance(ident, dict):
+        feil.append("identiteter mangler")
+    else:
+        if len({ident.get("probe_sak_id"), ident.get("inflight_sak_id"),
+                ident.get("kandidat_sak_id")}) != 3:
+            feil.append("de tre sakene er ikke tre ulike saker")
+        if len({ident.get("drillet_pid"), ident.get("rullback_pid"),
+                ident.get("kandidat_pid")}) != 3:
+            feil.append("de tre prosessene er ikke tre ulike prosesser")
     return feil
 
 
