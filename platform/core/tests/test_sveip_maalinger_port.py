@@ -34,6 +34,7 @@ def _feilart(**over):
         "bestatt": True,
         "oppsett": {"modul": MODUL, "vert": "disponit.com",
                     "funntabell": "adressefunn",
+                    "tenantkilde": "adressesubjekt",
                     "sveipedor": "m19_sveip_adresser(int)",
                     "injeksjonsrolle": "disponit",
                     "injeksjon": "tilkobling som disponit — uten EXECUTE",
@@ -44,7 +45,7 @@ def _feilart(**over):
                   "alarm_etter_forste": False, "alarm_etter_andre": True,
                   "apne_for": 4, "apne_etter": 4,
                   "lukkede_for": 1, "lukkede_etter": 1,
-                  "registeret_urort": True,
+                  "registeret_urort": True, "tenanter": 3,
                   "per_type_for": dict(TYPER), "per_type_etter": dict(TYPER)},
     }
     for sti, verdi in over.items():
@@ -109,11 +110,20 @@ def test_feilinjiseringens_akser_feller():
             ("maalt.alarm_etter_forste", True),
             ("maalt.alarm_etter_andre", False),
             ("maalt.registeret_urort", False),
+            # ET TOMT REGISTER står stille uansett hva kjøringen gjorde:
+            # null åpne før og null etter er sant av feil grunn.
+            ("maalt.apne_for", 0),
+
             ("maalt.apne_etter", 5),
             ("maalt.lukkede_etter", 2),
             ("oppsett.modul", "m44_purring"),
             ("oppsett.bevisrot_sha256", "0" * 64)):
         assert m._sjekk_grenser(FEIL_KRAV, _feilart(**{sti: verdi})), (sti, verdi)
+    tomt = _feilart(**{"maalt.apne_for": 0, "maalt.apne_etter": 0,
+                       "maalt.per_type_for": {}, "maalt.per_type_etter": {}})
+    assert m._sjekk_grenser(FEIL_KRAV, tomt) == [
+        "apne_for=0 — et tomt register står stille uansett hva kjøringen"
+        " gjorde; målingen krever minst 1 åpent funn"]
     # SUMMEN KAN STEMME mens ett funn ble lukket og et annet åpnet. Bare
     # fordelingen per funntype fanger det.
     art = _feilart(**{"maalt.per_type_etter":

@@ -5325,6 +5325,11 @@ SVEIPMODULER: dict[str, dict] = {
     "m19_adresse": {
         "modul_fil": "adressesveip",
         "funntabell": "adressefunn",
+        # HVOR TENANTENE KOMMER FRA. Funntabellen har FORCE RLS, også mot
+        # eieren: en telling uten tenantkontekst gir null rader, og null
+        # lik null ser ut som et urørt register. Målingen går derfor
+        # tenant for tenant, over den samme listen sveipen selv bruker.
+        "tenantkilde": "adressesubjekt",
         "dsn_variabel": "DISPONIT_ADRESSESVEIP_URL",
         "sveipedor": "m19_sveip_adresser(int)",
         # RUNTIME-ROLLEN er injeksjonen. 112 REVOKER eksplisitt EXECUTE
@@ -5372,6 +5377,9 @@ def registrer_sveipgrenser(modul_id: str, *, maks_sekunder: float,
         "krev_injiserte": 2,
         "krev_alarm_paa_andre": True,
         "krev_registeret_urort": True,
+        # ET TOMT REGISTER KAN IKKE VISE AT DET STO STILLE. Null åpne før
+        # og null etter er sant uansett hva kjøringen gjorde.
+        "krev_apne_for_minst": 1,
         "punktbinding": {
             "feilinjisering_til_unntakskø": (
                 "maalt.injisert_feilet", "maalt.registeret_urort",
@@ -5443,6 +5451,13 @@ def _grenser_sveip_feilinjisering(grense: dict, art: dict) -> list[str]:
             feil.append("alarm_etter_andre er ikke true — to feil på rad"
                         " skal melde fra; en stille sveip er verre enn en"
                         " som stopper")
+    apne_for, melding = _teller(m, "apne_for", "apne_for")
+    if melding:
+        feil.append(melding)
+    elif apne_for < grense.get("krev_apne_for_minst", 0):
+        feil.append(f"apne_for={apne_for} — et tomt register står stille"
+                    " uansett hva kjøringen gjorde; målingen krever minst"
+                    f" {grense['krev_apne_for_minst']} åpent funn")
     if grense.get("krev_registeret_urort"):
         if m.get("registeret_urort") is not True:
             feil.append("registeret_urort er ikke true — en feilende kjøring"

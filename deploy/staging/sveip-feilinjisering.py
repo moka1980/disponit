@@ -54,19 +54,38 @@ def _log(*a):
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}]", *a, flush=True)
 
 
-def tilstand(m, tabell: str) -> dict:
-    """Registerets funn, talt av migratoren: antall åpne, antall lukkede,
-    og summen av funntypene. Et tall alene kunne stemme selv om ett funn
-    ble lukket og et annet åpnet i samme feilende kjøring."""
+def tilstand(m, k: dict) -> dict:
+    """Registerets funn, talt av migratoren TENANT FOR TENANT: antall
+    åpne, antall lukkede, og summen av funntypene.
+
+    Kontekst per tenant, ikke én telling over hele tabellen: funntabellen
+    har FORCE RLS også mot eieren, så en spørring uten tenantkontekst gir
+    null rader — og null lik null hadde sett ut som et urørt register
+    uansett hva kjøringen gjorde.
+
+    Et tall alene holder heller ikke: ett funn kunne blitt lukket og et
+    annet åpnet i samme feilende kjøring, og summen stått stille."""
     m.execute("SELECT set_config('disponit.tenant', '', true)")
-    rader = m.execute(
-        f"SELECT funntype, count(*) FILTER (WHERE apen),"
-        f" count(*) FILTER (WHERE NOT apen) FROM {tabell}"
-        " GROUP BY 1 ORDER BY 1").fetchall()
+    tenanter = [r[0] for r in m.execute(
+        f"SELECT DISTINCT tenant FROM {k['tenantkilde']} ORDER BY 1"
+    ).fetchall()]
     m.rollback()
-    return {"per_type": {r[0]: [int(r[1]), int(r[2])] for r in rader},
-            "apne": sum(int(r[1]) for r in rader),
-            "lukkede": sum(int(r[2]) for r in rader)}
+    per: dict[str, list[int]] = {}
+    for tenant in tenanter:
+        m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
+        rader = m.execute(
+            f"SELECT funntype, count(*) FILTER (WHERE apen),"
+            f" count(*) FILTER (WHERE NOT apen) FROM {k['funntabell']}"
+            " WHERE tenant = %s GROUP BY 1", (tenant,)).fetchall()
+        m.rollback()
+        for funntype, apne, lukkede in rader:
+            rad = per.setdefault(funntype, [0, 0])
+            rad[0] += int(apne)
+            rad[1] += int(lukkede)
+    return {"per_type": {t: list(v) for t, v in sorted(per.items())},
+            "apne": sum(v[0] for v in per.values()),
+            "lukkede": sum(v[1] for v in per.values()),
+            "tenanter": len(tenanter)}
 
 
 def main() -> int:
@@ -90,8 +109,9 @@ def main() -> int:
     modul = __import__(f"drift.{k['modul_fil']}", fromlist=["kjor"])
 
     # FØR: registerets tilstand, talt av radene.
-    for_tilstand = tilstand(m, k["funntabell"])
-    _log(f"før: {for_tilstand['apne']} åpne, {for_tilstand['lukkede']} lukkede")
+    for_tilstand = tilstand(m, k)
+    _log(f"før: {for_tilstand['apne']} åpne, {for_tilstand['lukkede']}"
+         f" lukkede over {for_tilstand['tenanter']} tenanter")
 
     # DEN EKTE VEIEN FØRST: en kjøring som skal lykkes, så vi vet at
     # riggen virker og at feilen etterpå er feilen vi injiserte.
@@ -103,7 +123,7 @@ def main() -> int:
         raise SystemExit("AVBRUTT: den friske kjøringen ble HOPPET OVER"
                          " (arbeidernøkkelen var opptatt) — en måling mot"
                          " en sveip som aldri kjørte er ingen måling")
-    etter_frisk = tilstand(m, k["funntabell"])
+    etter_frisk = tilstand(m, k)
 
     # INJEKSJONEN: samme kode, samme dør — men runtime-tilkoblingen, som
     # ikke har EXECUTE. Feilen kommer utenfra, som en ekte driftsfeil.
@@ -119,13 +139,14 @@ def main() -> int:
     _log(f"injisert 1: feilet={forste.feilet} alarm={forste.alarm_utlost}")
     _log(f"injisert 2: feilet={andre.feilet} alarm={andre.alarm_utlost}")
 
-    etter = tilstand(m, k["funntabell"])
+    etter = tilstand(m, k)
     urort = (etter == etter_frisk)
     ts = datetime.now(timezone.utc).isoformat()
     art = {
         "krav_id": k["feilinjisering_krav"], "ts": ts, "bestatt": True,
         "oppsett": {"modul": a.modul, "vert": a.vert,
                     "funntabell": k["funntabell"],
+                    "tenantkilde": k["tenantkilde"],
                     "sveipedor": k["sveipedor"],
                     "injeksjonsrolle": str(rolle),
                     "injeksjon": f"tilkobling som {k['rolle_uten_execute']}"
@@ -142,6 +163,7 @@ def main() -> int:
             "lukkede_for": etter_frisk["lukkede"],
             "lukkede_etter": etter["lukkede"],
             "registeret_urort": urort,
+            "tenanter": etter["tenanter"],
             "per_type_for": etter_frisk["per_type"],
             "per_type_etter": etter["per_type"],
         },
