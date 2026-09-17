@@ -42,8 +42,8 @@
 id: m14_fakturakontroll
 navn: Fakturakontrollagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m14-v1` bærer invarianten
 # `mvasats_hardkodet` — satsene SKAL være policyverdier, ikke konstanter
 # i koden, av samme grunn som M-23s purretrinn og M-24s terskler. Da er
@@ -157,14 +157,30 @@ staging_sjekkliste:
     notat: >-
       Kryss-tenant-sveipen over 3 tenanter tok 18 ms mot grensen 30 000 ms.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — samme dom som M-23/M-17/M-44/M-26: MÅLT 17/9
-    # i modulregisteret har `m14_fakturakontroll` NØYAKTIG ÉN release,
-    # `m14-r1`. Arbeideren er installert og kjører
-    # (`disponit-m14.service`); det er historikken som mangler, ikke
-    # maskineriet.
-    status: blokkert
-    blokkert_av: >-
-      m14_fakturakontroll har én release (m14-r1). En flippedrill må rulle
-      tilbake til FORGJENGERENS bytes, og det finnes ingen forgjenger å
-      rulle tilbake til. Låses opp av modulens andre release.
+    # DRILLET 17/9 PÅ disponit-srv (rollback-m56-v1s form for sveipmodulene,
+    # `deploy/staging/rollback-sveipmodul.py`): registeret fikk først en
+    # forgjenger med regnbare bytes (m14-r2 fra release-katalogen
+    # 98a62a09, m14-r3 fra 8f1bbbfd — `sveipmodul_digest`), så ble r3
+    # drenert MENS oppdrag 122 var claimet, claim-stoppet
+    # observert i 25.0 s uten et eneste nytt claim, rullbakken bootet
+    # fra forgjengerkatalogen med eget modultoken og claimet/fullførte
+    # oppdrag 123, kandidaten (de drillede bytene) overtok og
+    # fullførte oppdrag 124. Alle fire med signert kvittering,
+    # ingen falske verdikter, unit-overriden fjernet.
+    status: ja
     krav_id: m14-rollback-v1
+    bevismaalinger:
+      - maalt.claims_etter_drenering
+      - maalt.inflight_oppdrag
+      - maalt.falske_verdikter
+      - maalt.rullback_claimet_oppdrag
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m14-rollback-v1-20260917T115853Z.json
+    artefakt_sha256: de74b591ef6c193a554142b4cdcfc0c71a4862a7935c77c56eb249d89450470c
+    notat: >-
+      Flippedrill 17/9 mot registeret og arbeideren på disponit-srv:
+      drillet m14-r3-8f1bbbfd → rullbakk m14-drill-rb-20260917T115800 (forgjengerens bytes,
+      m14-r2-98a62a09) → kandidat m14-drill-k-20260917T115800. Null claims etter
+      dreneringen, rent utfall med kvittering på det løpende oppdraget,
+      rullbakken og kandidaten claimet og fullførte hvert sitt, digestene
+      re-regnet av porten mot registeret og treet.

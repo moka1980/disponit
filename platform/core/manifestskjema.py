@@ -3418,6 +3418,11 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m44-fasit-v1": "artefakt-m44-fasit-skjema.json",
     "m44-suite-v1": "artefakt-m44-suite-skjema.json",
     "m44-kampanje-v1": "artefakt-m44-kampanje-skjema.json",
+    "m14-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m17-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m23-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m26-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m44-rollback-v1": "artefakt-rollback-modul-skjema.json",
     "m26-fasit-v1": "artefakt-m26-fasit-skjema.json",
     "m26-suite-v1": "artefakt-m26-suite-skjema.json",
     "m14-fasit-v1": "artefakt-m14-fasit-skjema.json",
@@ -3681,24 +3686,15 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id == "m44-suite-v1":
         return feil + _grenser_m44_suite(grense, art)
     if krav_id == "m44-rollback-v1":
-        return feil + ["m44-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m26-rollback-v1":
-        return feil + ["m26-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m26-fasit-v1":
         return feil + _grenser_m26_fasit(grense, art)
     if krav_id == "m26-suite-v1":
         return feil + _grenser_m26_suite(grense, art)
     if krav_id == "m14-rollback-v1":
-        return feil + ["m14-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
     if krav_id == "m14-suite-v1":
@@ -3721,28 +3717,13 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id == "m17-suite-v1":
         return feil + _grenser_m17_suite(grense, art)
     if krav_id == "m17-rollback-v1":
-        # FEILER LUKKET, som m23-rollback-v1: grensen er registrert (§0),
-        # produsent og skjema finnes ikke før drillen kan kjøres.
-        return feil + ["m17-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m23-fasit-v1":
         return feil + _grenser_m23_fasit(grense, art)
     if krav_id == "m23-suite-v1":
         return feil + _grenser_m23_suite(grense, art)
     if krav_id == "m23-rollback-v1":
-        # FEILER LUKKET TIL DRILLEN FINNES (CodeRabbit, major). Grensen
-        # er registrert FØR produsenten (§0), og uten en egen arm falt
-        # kallet videre til den generiske ytelsesporten — som leter etter
-        # `min_antall` og `oppsett.antall`, felt en flippedrill aldri
-        # bærer. Da hadde et rollback-artefakt blitt målt mot HELT andre
-        # krav, og svaret ville sagt noe sant om et spørsmål ingen
-        # stilte. Et punkt uten produsent skal si nettopp det.
-        return feil + ["m23-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m10-v1":
         return feil + _grenser_m10(grense, art)
     if krav_id == "m11-v1":
@@ -6350,6 +6331,149 @@ def _grenser_m11(grense: dict, art: dict) -> list[str]:
     justeres når den ble upraktisk.
     """
     return _grenser_parform(grense, art)
+#: SVEIPMODULENES RELEASEBYTES (17/9, planen i docs/pr/PLAN-ROLLBACK-DRILL-
+#: SVEIPMODULER.md, valg A): en release for en sveipmodul har ikke noe
+#: image — den ER filene under modulkatalogen pluss driftsveien. Digesten
+#: er REGNBAR av treet, så «forgjengerens bytes» kan måles mot en
+#: release-katalog på verten (`/opt/disponit/releases/<commit>`), ikke
+#: bare påstås. Oppskriften er pinnet her og lest av drillen og porten.
+SVEIPMODUL_RELEASEFILER: dict[str, tuple[str, ...]] = {
+    "m14_fakturakontroll": ("platform/modules/m14_fakturakontroll",
+                            "platform/drift/m14_arbeider.py",
+                            "platform/drift/fakturasveip.py",
+                            "platform/drift/kjor_fakturasveip.py"),
+    "m17_kundeservice": ("platform/modules/m17_kundeservice",
+                         "platform/drift/m17_arbeider.py",
+                         "platform/drift/henvendelsessveip.py",
+                         "platform/drift/kjor_henvendelsessveip.py"),
+    "m23_fordring": ("platform/modules/m23_fordring",
+                     "platform/drift/m23_arbeider.py",
+                     "platform/drift/fordringssveip.py",
+                     "platform/drift/kjor_fordringssveip.py"),
+    "m26_prisbok": ("platform/modules/m26_prisbok",
+                    "platform/drift/m26_arbeider.py",
+                    "platform/drift/prisboksveip.py",
+                    "platform/drift/kjor_prisboksveip.py"),
+    "m44_kampanje": ("platform/modules/m44_kampanje",
+                     "platform/drift/m44_arbeider.py",
+                     "platform/drift/kampanjesveip.py",
+                     "platform/drift/kjor_kampanjesveip.py"),
+}
+
+
+def sveipmodul_digest(rot, modul_id: str) -> str:
+    """sha256 over modulens releasebytes under `rot` (et tre eller en
+    release-katalog): hver fil i oppskriften i sortert rekkefølge, som
+    (relativ sti, sha256 av bytene). __pycache__ og *.pyc er ikke bytes
+    noen deployer."""
+    from pathlib import Path
+    rot = Path(rot)
+    filer: list[Path] = []
+    for rel in SVEIPMODUL_RELEASEFILER[modul_id]:
+        sti = rot / rel
+        if sti.is_dir():
+            filer += [f for f in sti.rglob("*") if f.is_file()
+                      and "__pycache__" not in f.parts
+                      and f.suffix != ".pyc"]
+        elif sti.is_file():
+            filer.append(sti)
+        else:
+            raise FileNotFoundError(rel)
+    h = hashlib.sha256()
+    for f in sorted(filer, key=lambda f: f.relative_to(rot).as_posix()):
+        h.update(f.relative_to(rot).as_posix().encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(f.read_bytes()).digest() + b"\x00")
+    return h.hexdigest()
+
+
+ROLLBACK_MODUL_GRENSER = ("m14-rollback-v1", "m17-rollback-v1",
+                          "m23-rollback-v1", "m26-rollback-v1",
+                          "m44-rollback-v1")
+
+
+def _grenser_rollback_modul(grense: dict, art: dict) -> list[str]:
+    """`m<X>-rollback-v1` — flippedrillen for en SVEIPMODUL, i
+    `rollback-m56-v1`s form på de fem tallene grensene bærer: den drenerte
+    releasen claimet ingenting, det løpende oppdraget fikk rent utfall,
+    rullbakken SELV claimet og fullførte, kandidaten er byte-identisk med
+    den drillede, og hver digest i artefaktet er den registerets og
+    treets oppskrift gir (`release_digest_bundet`)."""
+    feil: list[str] = []
+    m, o, k = art.get("maalt"), art.get("oppsett"), art.get("etterkontroll")
+    if not isinstance(m, dict) or not isinstance(o, dict) \
+            or not isinstance(k, dict):
+        return ["artefaktet mangler `maalt`/`oppsett`/`etterkontroll`"]
+    for felt, tak in (("claims_etter_drenering",
+                       grense["maks_claims_etter_drenering"]),
+                      ("falske_verdikter", grense["maks_falske_verdikter"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    for felt, minst in (("inflight_oppdrag", grense["min_inflight"]),
+                        ("rullback_claimet_oppdrag",
+                         grense["min_rullback_claims"]),
+                        ("rullback_promoterte",
+                         grense["min_rullback_promoterte"]),
+                        ("kandidat_claimet_oppdrag", 1)):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    for felt in ("inflight_har_signert_kvittering",
+                 "rullback_har_signert_kvittering",
+                 "kandidat_har_signert_kvittering"):
+        if m.get(felt) is not True:
+            feil.append(f"{felt} er ikke true — et utfall uten signert"
+                        " kvittering fra SIN kjøring er ikke målt")
+    if m.get("inflight_utfall") not in ("utfort", "feilet"):
+        feil.append(f"inflight_utfall={m.get('inflight_utfall')!r} er ikke"
+                    " et rent utfall")
+    vent, melding = _positiv(m, "ventetid_ubehandlet_s",
+                             "ventetid_ubehandlet_s")
+    if melding:
+        feil.append(melding)
+    elif vent < 20.0:
+        feil.append(f"ventetid_ubehandlet_s={vent:g} — claim-stoppet må"
+                    " observeres i minst 20 s")
+    if grense.get("krev_release_digest_bundet"):
+        if m.get("release_digest_bundet") is not True:
+            feil.append("release_digest_bundet er ikke true — digestene er"
+                        " ikke målt mot registeret og treet")
+        if o.get("drillet_digest") != o.get("kandidat_digest"):
+            feil.append("kandidatens digest er ikke den drillede —"
+                        " aksepterte bytes må være drillede bytes")
+        if o.get("rullback_digest") != o.get("forgjenger_digest"):
+            feil.append("rullbakkens digest er ikke forgjengerens")
+        if k.get("rullback_bytes_er_forgjengerens") is not True:
+            feil.append("etterkontrollen bekrefter ikke at rullbakken"
+                        " kjørte forgjengerens bytes")
+    if o.get("forgjenger_release") in (None, "", o.get("drillet_release")):
+        feil.append("forgjenger_release mangler eller er den drillede —"
+                    " «rullet tilbake» uten retning er en påstand")
+    for felt, ventet in (("drillet_livslop", "draining"),
+                         ("rullback_livslop", "draining"),
+                         ("kandidat_livslop", "claiming")):
+        if k.get(felt) != ventet:
+            feil.append(f"{felt}={k.get(felt)!r}, ventet {ventet!r}")
+    if k.get("modulstatus") != "aktiv":
+        feil.append(f"modulstatus={k.get('modulstatus')!r} etter drillen")
+    if k.get("digest_likhet") is not True:
+        feil.append("etterkontrollen bekrefter ikke digestlikheten")
+    if k.get("unit_override_fjernet") is not True:
+        feil.append("unit-overriden står igjen — arbeideren kjører ikke fra"
+                    " `aktiv` etter drillen, og neste deploy flytter den ikke")
+    ident = art.get("identiteter")
+    if not isinstance(ident, dict) or len({ident.get("inflight_oppdrag_id"),
+                                          ident.get("rullback_oppdrag_id"),
+                                          ident.get("kandidat_oppdrag_id")}
+                                         - {None}) != 3:
+        feil.append("identiteter: tre ulike oppdrag kreves — ett per ledd")
+    return feil
+
+
 def _grenser_rollback_m56(grense: dict, art: dict) -> list[str]:
     """`rollback-m56-v1` — flippedrillen for moduldeployment (049).
 

@@ -89,7 +89,10 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
   assert.deepEqual(
     Object.entries(MODULSTATUS).filter(([, s]) => s === "i_drift")
       .map(([id]) => Number(id)),
-    [2, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
+    // M-14 fra 2026-09-17: alle seks punkter ja — fasit, suite, bevisrunde,
+    // ytelse og flippedrillen (`m14-rollback-v1`); manifestet flippet til
+    // aktiv/produksjon i samme endring.
+    [2, 14, 56], "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {

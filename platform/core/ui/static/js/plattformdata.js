@@ -84,7 +84,9 @@ export const MODULSTATUS = {
   // KLYNGENS NYE DOM: klynge 1-3 holdt igjen på å UTFØRE en handling.
   // Her holder vi igjen på å AUTORISERE en. Ordet er `bygges` fordi
   // manifestet finnes; ingen har kode ennå.
-  14: "bygges",     // m14_fakturakontroll: under_utvikling, ikke_i_drift
+  14: "i_drift",    // m14_fakturakontroll: aktiv, produksjon — alle seks
+                    // punkter ja 17/9 (fasit, suite, bevisrunde, ytelse og
+                    // flippedrillen m14-rollback-v1)     // m14_fakturakontroll: under_utvikling, ikke_i_drift
   25: "bygges",     // m25_prosjekt: under_utvikling, ikke_i_drift
   26: "bygges",     // m26_prisbok: under_utvikling, ikke_i_drift
   27: "bygges",     // m27_lager: under_utvikling, ikke_i_drift
