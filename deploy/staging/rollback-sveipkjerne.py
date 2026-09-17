@@ -189,11 +189,17 @@ def maal(m, k: dict, tenanter: list[str]) -> dict:
     return {"rader": totalt, "apne": apne, "dubletter": totalt - distinkte}
 
 
-def blokkert(m, dor: str) -> bool:
-    """Står det en backend og VENTER på lås mens den kjører sveipedøra?"""
+def blokkert(m, tabell: str) -> bool:
+    """Står det en ANNEN backend og venter på lås på funntabellen?
+
+    Målt i `pg_locks`, ikke i `pg_stat_activity`: spørreteksten der er
+    skjult for alle andre enn superbrukeren og sesjonens egen rolle, så
+    et oppslag på «hvem kjører sveipedøra» ville alltid sagt nei — og
+    drillen ville konkludert med at sveipen aldri blokkerte. Låsetabellen
+    er synlig for alle."""
     rad = m.execute(
-        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock'"
-        " AND query ILIKE %s", (f"%{dor.split('(')[0]}%",)).fetchone()
+        "SELECT count(*) FROM pg_locks WHERE relation = %s::regclass"
+        " AND NOT granted AND pid <> pg_backend_pid()", (tabell,)).fetchone()
     m.rollback()
     return int(rad[0]) > 0
 
@@ -254,7 +260,7 @@ def main() -> int:
     frist = time.monotonic() + VENT_PAA_BLOKK
     sto_i_lås = False
     while time.monotonic() < frist:
-        if blokkert(m, k["sveipedor"]):
+        if blokkert(m, k["funntabell"]):
             sto_i_lås = True
             break
         if p.poll() is not None:
