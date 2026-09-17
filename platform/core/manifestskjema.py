@@ -2108,6 +2108,50 @@ KRAVGRENSER["m14-fasit-v1"] = {
     },
 }
 
+#: M-57 SERTIFISERING (17/9, natt) — SUITEPUNKTET ALENE i m44/m26/m14-lesten.
+#: `m57-v1` bærer resten og er blokkert av sitt eget skjema (#541);
+#: rollbackgrensen finnes alt i `m57-v1`.
+M57_SUITE_ANDEL: tuple[str, ...] = (
+    "platform/core/tests/test_m57_controller.py",
+    "platform/core/tests/test_m57_grense.py",
+    "platform/core/tests/test_m57_kandidatlagre.py",
+    "platform/core/tests/test_m57_klienter.py",
+    "platform/core/tests/test_m57_modul.py",
+    "platform/core/tests/test_m57_rapportflate.py",
+    "platform/core/tests/test_m57_utsender.py",
+    "platform/core/tests/test_m57_utsending.py",
+)
+
+
+KRAVGRENSER["m57-suite-v1"] = {
+    "min_tester": 1500,
+    "maks_feilet": 0,
+    # Andelens gulv er MÅLT: 398 tester i de åtte filene (17/9). Gulvet
+    # står litt under.
+    "min_m57_tester": 380,
+    "maks_m57_feilet": 0,
+    "maks_m57_hoppet": 0,
+    "m57_andel_pakrevd": M57_SUITE_ANDEL,
+    "punktbinding": {
+        "tester_gronne_pa_staging": (
+            "maalt.m57_feilet",
+            "maalt.m57_tester",
+            "maalt.m57_hoppet",
+            "maalt.m57_exitkode",
+            "maalt.tester_feilet",
+            "maalt.tester_totalt",
+            "maalt.tester_hoppet",
+            "maalt.suite_exitkode",
+        ),
+    },
+}
+
+#: Produsentflaten for M-57s suiteartefakt — bare skriptet; modulen har
+#: ingen fasitdriver (#541).
+M57_BEVISROT_FILER = (
+    "deploy/staging/m57-suite-artefakt.py",
+)
+
 M24_INVARIANTER: tuple[str, ...] = (
     # V1-DOMMEN: modulen BETALER INGENTING. En utgående betaling er den
     # ene handlingen i katalogen som er umulig å angre.
@@ -3355,6 +3399,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m26-suite-v1": "artefakt-m26-suite-skjema.json",
     "m14-fasit-v1": "artefakt-m14-fasit-skjema.json",
     "m14-suite-v1": "artefakt-m14-suite-skjema.json",
+    "m57-suite-v1": "artefakt-m57-suite-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
@@ -3634,6 +3679,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m14_fasit(grense, art)
     if krav_id == "m14-suite-v1":
         return feil + _grenser_m14_suite(grense, art)
+    if krav_id == "m57-suite-v1":
+        return feil + _grenser_m57_suite(grense, art)
     if krav_id == "m6-fasit-v1":
         return feil + _grenser_m6_fasit(grense, art)
     if krav_id == "m6-suite-v1":
@@ -5022,6 +5069,99 @@ def _grenser_m14_suite(grense: dict, art: dict) -> list[str]:
         ekstra = sorted(set(filer) - set(grense["m14_andel_pakrevd"]))
         feil.append(
             "oppsett.m14_filer er ikke det godkjente utvalget"
+            + (f"; mangler {mangler}" if mangler else "")
+            + (f"; ukjente {ekstra}" if ekstra else "")
+            + " — delingsbetingelsen krever de PINNEDE målingene")
+    return feil
+
+
+def m57_bevisrot_sha256() -> str:
+    """ÉN digest over hele M-57-produsentflaten (samme form som m23)."""
+    h = hashlib.sha256()
+    for rel in M57_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m57_bevisrot_feil(art: dict) -> list[str]:
+    oppsett = art.get("oppsett")
+    sha = oppsett.get("bevisrot_sha256") if isinstance(oppsett, dict) \
+        else None
+    if not (isinstance(sha, str) and len(sha) == 64):
+        return ["oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                " ubundet, og artefaktet beviser da en kjøring av"
+                " ukjente bytes"]
+    try:
+        lokal = m57_bevisrot_sha256()
+    except OSError as e:
+        return [f"bevisroten lot seg ikke hashe lokalt: {e}"]
+    if sha != lokal:
+        return [f"bevisrot_sha256={sha[:12]}… er ikke de innsjekkede"
+                f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
+                " produsentflate enn treet porten står i"]
+    return []
+
+
+def _grenser_m57_suite(grense: dict, art: dict) -> list[str]:
+    """`m57-suite-v1` — hele suiten på staging, M-57s andel for seg.
+    Formen er `_grenser_m23_suite` sin, av de samme grunnene."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    tall = {}
+    for navn in ("tester_totalt", "tester_feilet", "tester_hoppet",
+                 "m57_tester", "m57_feilet", "m57_hoppet",
+                 "suite_exitkode", "m57_exitkode"):
+        verdi, melding = _teller(m, navn, navn)
+        if melding:
+            feil.append(melding)
+        tall[navn] = verdi
+    if any(v is None for v in tall.values()):
+        return feil
+    kjorte = tall["tester_totalt"] - tall["tester_hoppet"]
+    if kjorte < grense["min_tester"]:
+        feil.append(f"tester_totalt={tall['tester_totalt']} minus"
+                    f" tester_hoppet={tall['tester_hoppet']} = {kjorte}"
+                    f" kjørte, krever >= {grense['min_tester']}")
+    if tall["tester_feilet"] > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={tall['tester_feilet']}, krever <="
+                    f" {grense['maks_feilet']}")
+    m57_kjorte = tall["m57_tester"] - tall["m57_hoppet"]
+    if m57_kjorte < grense["min_m57_tester"]:
+        feil.append(f"m57_tester={tall['m57_tester']} minus"
+                    f" m57_hoppet={tall['m57_hoppet']} = {m57_kjorte}"
+                    f" kjørte, krever >= {grense['min_m57_tester']}")
+    if tall["m57_feilet"] > grense["maks_m57_feilet"]:
+        feil.append(f"m57_feilet={tall['m57_feilet']}, krever <="
+                    f" {grense['maks_m57_feilet']}")
+    if tall["m57_hoppet"] > grense["maks_m57_hoppet"]:
+        feil.append(f"m57_hoppet={tall['m57_hoppet']}, krever <="
+                    f" {grense['maks_m57_hoppet']} — M-57s navngitte"
+                    " andel skal være KJØRT, ikke hoppet over")
+    if tall["m57_tester"] > tall["tester_totalt"]:
+        feil.append(f"m57_tester={tall['m57_tester']} >"
+                    f" tester_totalt={tall['tester_totalt']} — andelen"
+                    " kan ikke overstige helheten")
+    for navn in ("suite_exitkode", "m57_exitkode"):
+        if tall[navn] != 0:
+            feil.append(f"{navn}={tall[navn]} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige")
+    oppsett = art.get("oppsett")
+    feil += _m57_bevisrot_feil(art)
+    filer = oppsett.get("m57_filer") if isinstance(oppsett, dict) else None
+    if not (isinstance(filer, list) and filer
+            and all(isinstance(x, str) and x for x in filer)):
+        feil.append("oppsett.m57_filer mangler — M-57s andel skal være"
+                    " NAVNGITT, ikke antatt (delingsbetingelsen)")
+    elif sorted(filer) != sorted(grense["m57_andel_pakrevd"]):
+        mangler = sorted(set(grense["m57_andel_pakrevd"]) - set(filer))
+        ekstra = sorted(set(filer) - set(grense["m57_andel_pakrevd"]))
+        feil.append(
+            "oppsett.m57_filer er ikke det godkjente utvalget"
             + (f"; mangler {mangler}" if mangler else "")
             + (f"; ukjente {ekstra}" if ekstra else "")
             + " — delingsbetingelsen krever de PINNEDE målingene")
