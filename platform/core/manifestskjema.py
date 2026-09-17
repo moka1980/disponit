@@ -5450,6 +5450,12 @@ def _grenser_m57_revisjon(grense: dict, art: dict) -> list[str]:
             if m.get(felt) is not True:
                 feil.append(f"{felt} er ikke true — evidensen henger i et"
                             " kallsted, ikke i tabellen")
+    # ...OG LOGGEN LAR SEG IKKE REDIGERE. Produsenten prøver en UPDATE mot
+    # hendelsen den nettopp fødte; går den gjennom, er «revisjonslogg» bare
+    # et bord med rader (CodeRabbit: målingen sto uten port).
+    if m.get("hendelser_er_uforanderlige") is not True:
+        feil.append("hendelser_er_uforanderlige er ikke true — en logg som"
+                    " kan endres i ettertid er ikke evidens")
     # ...og hendelsene hører til DENNE kjøringen, ikke til historien.
     if o.get("tenant") in (None, ""):
         feil.append("oppsett.tenant mangler — tallene er ikke stedfestet")

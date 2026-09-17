@@ -83,6 +83,7 @@ def test_hver_akse_feller():
                        ("maalt.frigivelser_med_signatarens_identitet", False),
                        ("maalt.trigger_signatur", False),
                        ("maalt.trigger_frigivelse", False),
+                       ("maalt.hendelser_er_uforanderlige", False),
                        ("oppsett.tenant", "")):
         assert m._sjekk_grenser("m57-revisjon-v1", _art(**{sti: verdi})), \
             (sti, verdi)
