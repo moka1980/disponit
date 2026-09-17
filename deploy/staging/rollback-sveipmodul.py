@@ -323,9 +323,10 @@ def forbered_m14(rt, tenant: str, antall: int) -> list[dict]:
         rt.execute("SELECT m14_avgjor_faktura(%s,%s,'kontrollert',%s,%s)",
                    (tenant, fid, "Drill: kontrollert uten avvik.", AKTOR))
         rt.commit()
+        # Kroppen er referansen og omfanget — beløp, leverandør og
+        # kontroller er registerets (`_normaliser_bokforing`).
         kropper.append({"bestillingstype": "faktura.bokfor",
-                        "faktura_id": f"faktura:{fid}", "fakturanummer": nr,
-                        "leverandor_ref": lev, "omfang": "bilag"})
+                        "faktura_ref": f"faktura:{fid}", "omfang": "bilag"})
     return kropper
 
 
