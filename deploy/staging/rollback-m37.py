@@ -212,8 +212,12 @@ def historikk(rt, tenant, sid):
 
 
 def ny_sak(rt, tenant, planunit: str) -> int:
-    """Én planrunde -> det nyeste unntaket for tenanten (som i drift)."""
+    """Fordringssveip + én planrunde -> det nyeste unntaket for tenanten
+    (som i drift: sveipen lager `trinn_forfalt`-funnet for neste trinn,
+    planrunden bestiller, policyen sier frekvensgrense → UNNTAK)."""
     t0 = db_naa(rt)
+    subprocess.run(["systemctl", "start", "disponit-fordringssveip.service"],
+                   check=True, timeout=600)
     subprocess.run(["systemctl", "start", f"{planunit}.service"],
                    check=True, timeout=600)
     rader, _ = q(rt, tenant,
