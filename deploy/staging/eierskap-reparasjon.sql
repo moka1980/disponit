@@ -56,6 +56,13 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm6_melding_fjernet_i_kilden(text,uuid,text,text)',  'disponit_m37_claimer'),
     ('FUNCTION', 'm6_marker_sjekket(text,uuid,text[])',               'disponit_m37_claimer'),
     ('FUNCTION', 'm6_avstemmingskandidater(text,uuid,integer)',       'disponit_m37_claimer'),
+    -- 211: signaturen og frigivelsen blir revisjonshendelser. FUNKSJONENE
+    -- er claimerens, for den har INSERT på revisjonshendelse — triggerne
+    -- står på migratorens tabeller. (Ingen semikolon i kommentarene her:
+    -- designblokken leses fram til det FØRSTE, og en setning som slutter
+    -- midt i tabellen tar halve designet med seg.)
+    ('FUNCTION', 'm57_signatur_revisjon()',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'm57_frigivelse_revisjon()',                         'disponit_m37_claimer'),
     -- 179 (M-6): mennesket skriver svaret og avgjør det.
     ('FUNCTION', 'm6_skriv_svarutkast(text,uuid,bytea,bytea,text,text)', 'disponit_m37_claimer'),
     ('FUNCTION', 'm6_avgjor_utkast(text,uuid,text,text)',             'disponit_m37_claimer'),
