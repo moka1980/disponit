@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m57-feilinjisering-v1.json",
+  "title": "m57-feilinjisering-v1 — SP-3: avbrutt parsing gir rent feilutfall og en post i unntakskøen",
+  "comment": "Produsert av deploy/staging/m57-feilinjisering.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m57_feilinjisering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "maalt"],
+  "properties": {
+    "krav_id": {"type": "string", "const": "m57-feilinjisering-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "feil": {"type": "array", "items": {"type": "string"}},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modul", "vert", "tenant", "gift", "release"],
+      "properties": {
+        "modul": {"type": "string", "const": "m57_ats"},
+        "vert": {"type": "string", "minLength": 1},
+        "tenant": {"type": "string", "minLength": 1},
+        "gift": {"type": "string", "minLength": 1},
+        "release": {"type": "string", "minLength": 1}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["injisert_jobber", "injisert_oppdrag_id", "oppdrag_status",
+                   "kvittering_resultat", "feilkode", "promoterte_artefakter",
+                   "unntakskoe_poster", "koeposter_uten_jobbinding",
+                   "sak_id", "sak_oppdrag_id", "sak_sakskilde", "sak_arsak",
+                   "sak_status", "feilet_etter_s"],
+      "properties": {
+        "injisert_jobber": {"type": "integer", "minimum": 0},
+        "injisert_oppdrag_id": {"type": "integer", "minimum": 1},
+        "oppdrag_status": {"type": "string", "minLength": 1},
+        "kvittering_resultat": {"type": ["string", "null"]},
+        "feilkode": {"type": ["string", "null"]},
+        "promoterte_artefakter": {"type": "integer", "minimum": 0},
+        "unntakskoe_poster": {"type": "integer", "minimum": 0},
+        "koeposter_uten_jobbinding": {"type": "integer", "minimum": 0},
+        "sak_id": {"type": ["integer", "null"]},
+        "sak_oppdrag_id": {"type": ["integer", "null"]},
+        "sak_sakskilde": {"type": ["string", "null"]},
+        "sak_arsak": {"type": ["string", "null"]},
+        "sak_status": {"type": ["string", "null"]},
+        "feilet_etter_s": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

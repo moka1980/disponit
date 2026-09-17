@@ -989,10 +989,10 @@ def test_m6_grensen_maaler_parene_og_ja_punktet():
 
 
 def test_m6_manifestet_er_gyldig_og_aerlig():
-    """Manifestet validerer mot skjemaet, sier under_utvikling/
-    ikke_i_drift, bærer de REELLE avhengighetene (M-6 BESTILLER gjennom
-    policyporten — ulikt m16/m38), og ingen punkter er flippet uten
-    måling."""
+    """Manifestet validerer mot skjemaet, sier aktiv/produksjon (17/9:
+    alle seks punkter ja — rollback i kjerne-form, `m6-rollback-v1`),
+    bærer de REELLE avhengighetene (M-6 BESTILLER gjennom policyporten
+    — ulikt m16/m38), og ingen punkter er flippet uten måling."""
     import yaml
 
     from manifestskjema import valider_manifest
@@ -1000,8 +1000,8 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
                        .read_text(encoding="utf-8"))
     assert valider_manifest(m) == []
     assert m["id"] == "m06_epost" == MODULROT.name
-    assert m["status"] == "under_utvikling"
-    assert m["driftstilstand"] == "ikke_i_drift"
+    assert m["status"] == "aktiv"
+    assert m["driftstilstand"] == "produksjon"
     assert m["avhengigheter"] == ["m01_policy", "m02_revisjonslogg"]
     assert m["i18n_prefiks"] == "m06epost"
     # SERTIFISERT 16/9 (#537): hvert «ja» er BUNDET — grensen finnes,
@@ -1014,8 +1014,8 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
     from manifestskjema import KRAVGRENSER
     rot = MODULROT.parents[2]
     for punkt, innhold in m["staging_sjekkliste"].items():
-        assert innhold["status"] in ("ja", "blokkert"), \
-            f"{punkt} står som {innhold['status']}"
+        assert innhold["status"] == "ja", \
+            f"{punkt} står som {innhold['status']} — aktiv krever ja"
         grense = KRAVGRENSER[innhold["krav_id"]]
         if innhold["status"] == "blokkert":
             assert innhold["blokkert_av"].strip(), f"{punkt}: blokkert uten grunn"
@@ -1028,4 +1028,7 @@ def test_m6_manifestet_er_gyldig_og_aerlig():
         lov = set(grense["punktbinding"].get(punkt, ()))
         for maaling in innhold["bevismaalinger"]:
             assert maaling in lov, f"{punkt}: {maaling} er ikke bundet"
-    assert m["staging_sjekkliste"]["rollback_testet"]["status"] == "blokkert"
+    # 17/9: rollbackpunktet er ja på M-6s EGET artefakt i kjerne-form —
+    # ikke lånt fra kjernen, ikke fra m01, målt på innhentingens tilstand.
+    rb = m["staging_sjekkliste"]["rollback_testet"]
+    assert rb["status"] == "ja" and rb["krav_id"] == "m6-rollback-v1"

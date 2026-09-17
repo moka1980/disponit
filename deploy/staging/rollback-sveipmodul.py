@@ -118,6 +118,26 @@ MODULER: dict[str, dict] = {
         "forbered": "forbered_m23", "nytt": "nytt_m23",
         "sveipunit": "disponit-fordringssveip",
     },
+    "m57_ats": {
+        "modul": "m57_ats",
+        "unit": "disponit-m57", "prefiks": "m57",
+        "oppdragstype": "rekruttering.evaluering", "bransje": "tjenestebedrift",
+        "fullmakter": [],
+        # M-57 bestilles av KUNDEN (bestiller) gjennom API-et — inndata
+        # reserveres, bunten lastes opp, bestillingen legges — ikke av
+        # planrunden. Drillen går samme vei med et bootstrap-token for
+        # tenanten, laget på verten og tilbakekalt etterpå.
+        "bestill": "api", "planunit": None, "krav_id": "m57-rollback-v1",
+        # Releasens digest er MODELLENS (registrer-m57-ats.py: «denne
+        # modulens image ER modellen»), og M-31-porten i `bytt_release`
+        # krever en bestått evalueringskjøring for nettopp den. Trebytene
+        # bevitnes av unit-overriden (WorkingDirectory), ikke av digesten.
+        "digest": "modell", "konfig": "/etc/disponit/m57/konfig",
+        "digestnokkel": "DISPONIT_M57_MODELL_DIGEST",
+        "tokenfil": "/etc/disponit/m57/DISPONIT_MODULTOKEN",
+        "gruppe": "disponit-m57",
+        "forbered": "forbered_m57", "nytt": "nytt_m57",
+    },
     "m17_kundeservice": {
         "modul": "m17_kundeservice",
         "unit": "disponit-m17", "prefiks": "m17",
@@ -678,12 +698,110 @@ def nytt_m23(rt, tenant: str, ctx: dict, i: int) -> str:
     return str(fid)
 
 
+BESTILLERTOKEN: dict[str, str] = {}
+
+
+def _bestillertoken(tenant: str) -> str:
+    """Bootstrap-token for tenanten (rolle bestiller, scope
+    bestilling:opprett) — laget på verten med token-cli, holdt i minne,
+    aldri printet, tilbakekalt ved avslutning."""
+    if tenant in BESTILLERTOKEN:
+        return BESTILLERTOKEN[tenant]
+    r = subprocess.run(
+        [sys.executable, str(REPO / "deploy/staging/token-cli.py"), "opprett",
+         "--tenant", tenant, "--rolle", "bestiller",
+         "--scope", "bestilling:opprett", "--bootstrap"],
+        capture_output=True, text=True, timeout=120)
+    treff = re.search(r"\b([A-Za-z0-9_-]+\.[A-Za-z0-9_-]{20,})\b", r.stdout)
+    if not treff:
+        raise SystemExit("AVBRUTT: fikk ikke bestillertoken for tenanten")
+    tok = treff.group(1)
+    BESTILLERTOKEN[tenant] = tok
+    tid = tok.split(".", 1)[0]
+
+    def tilbakekall():
+        subprocess.run([sys.executable, str(REPO / "deploy/staging/token-cli.py"),
+                        "deaktiver", tid], capture_output=True, timeout=60)
+    atexit.register(tilbakekall)
+    return tok
+
+
+def _api(metode: str, sti: str, tok: str, data: bytes | None,
+         ctype: str = "application/json") -> tuple[int, dict | str]:
+    req = urllib.request.Request(API + sti, data=data, method=metode)
+    req.add_header("Authorization", "Bearer " + tok)
+    req.add_header("Idempotency-Key", "drill-" + secrets.token_hex(8))
+    req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")[:300]
+
+
+def forbered_m57(rt, tenant: str) -> dict:
+    """Stillingsprofilen tenanten alt har (fasit-tenanten) — drillen lager
+    ingen; en tenant uten profil kan ikke bestille."""
+    _sk(rt, tenant)
+    rad = rt.execute(
+        "SELECT profil_id, versjon FROM stillingsprofil WHERE tenant=%s"
+        " ORDER BY opprettet DESC LIMIT 1", (tenant,)).fetchone()
+    rt.rollback()
+    if rad is None:
+        raise SystemExit(f"AVBRUTT: {tenant} har ingen stillingsprofil")
+    golden = json.loads((REPO / "deploy/staging/m57-golden-v2.json")
+                        .read_text(encoding="utf-8"))
+    return {"profil": f"{rad[0]}@{rad[1]}", "golden": golden}
+
+
+def nytt_m57(rt, tenant: str, ctx: dict, i: int) -> str:
+    """Én liten bunt (to søknader fra golden v2) reservert, lastet opp og
+    bestilt som bestiller — nøyaktig kundens vei. -> oppdrag_id (str)."""
+    import html
+    import io
+    import zipfile
+    tok = _bestillertoken(tenant)
+    buf = io.BytesIO(); soknader = []
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for j in range(2):
+            g = ctx["golden"][(2 * i + j) % len(ctx["golden"])]
+            kid = f"drill-{i}-{j}"; navn = f"Drillkandidat{i}{j}"
+            # Produksjonsformen: det deklarerte navnet står i teksten —
+            # blindingen krever det (ellers `ugyldig_maskeringsform`).
+            tekst = g["tekst"] + f"\n\nMed vennlig hilsen {navn}"
+            z.writestr(f"{kid}/soknad.html", "<html><body><p>"
+                       + html.escape(tekst).replace("\n", "<br>")
+                       + "</p></body></html>")
+            soknader.append({"kandidat_id": kid, "filer": [f"{kid}/soknad.html"],
+                             "felter": {"navn": [navn]}})
+        z.writestr("soknader.json", json.dumps({"soknader": soknader}))
+    st, sv = _api("POST", "/v1/inndata/reserver", tok, json.dumps(
+        {"eiermodul": "m57_ats", "formaal": "soknadsbunt"}).encode())
+    if st != 201:
+        raise SystemExit(f"AVBRUTT: inndata/reserver {st} {sv}")
+    jti, ref = sv["reservasjon_jti"], sv["inndata_ref"]
+    st, sv = _api("PUT", f"/v1/inndata/opplast/{jti}", tok, buf.getvalue(),
+                  "application/zip")
+    if st != 201:
+        raise SystemExit(f"AVBRUTT: inndata/opplast {st} {sv}")
+    st, sv = _api("POST", "/v1/bestilling", tok, json.dumps(
+        {"bestillingstype": "rekruttering.evaluering", "inndata_ref": ref,
+         "stillingsprofil_ref": ctx["profil"], "antall_soknader": len(soknader),
+         "omfang": "bunt"}).encode())
+    if st != 200 or not isinstance(sv, dict) or sv.get("beslutning") != "tillat":
+        raise SystemExit(f"AVBRUTT: bestilling {st} {sv}")
+    return str(sv["oppdrag_id"])
+
+
 def bestill_via_planen(m, rt, k: dict, tenant: str, ctx: dict, i: int,
                        merkelapp: str) -> int:
     """Lager ETT kandidatobjekt og lar PLANRUNDEN bestille (som
     `agent:<modul>`, samme bestillingsvei som i drift). -> oppdrag_id."""
     t0 = naa(m)
     ref = globals()[k["nytt"]](rt, tenant, ctx, i)
+    if k.get("bestill") == "api":
+        _log(f"  {merkelapp}: oppdrag {ref} bestilt gjennom API-et")
+        return int(ref)
     subprocess.run(["systemctl", "start", f"{k['planunit']}.service"],
                    check=True, timeout=600)
     _tenantkontekst(m, tenant)
@@ -704,8 +822,10 @@ def sikre_policy(rt, tenant: str, bransje: str, fullmakter: list):
     from db import kryptering
     from api.firmaregistrering import _aktiver_bransjemal
     _sk(rt, tenant)
+    # Bransjemalen skrives som `utkast` — en tenant med EN policyrad er
+    # forberedt, og bootstrap-døra nekter (med rette) en gang til.
     finnes = rt.execute(
-        "SELECT 1 FROM policyer WHERE tenant=%s AND status='produksjon'",
+        "SELECT 1 FROM policyer WHERE tenant=%s LIMIT 1",
         (tenant,)).fetchone()
     if finnes:
         rt.rollback(); return
@@ -775,16 +895,28 @@ def naa(m):
 
 
 # ------------------------------------------------------------------ main
+def digest_for(k: dict, kat: Path) -> str:
+    """Releasens digest for katalogen: treets bytes (sveipmodulene), eller
+    modellens fra arbeiderens konfig (M-57) — samme verdi for hver release,
+    som i registeret."""
+    if k.get("digest") != "modell":
+        return sveipmodul_digest(kat, k["modul"])
+    for linje in Path(k["konfig"]).read_text(encoding="utf-8").splitlines():
+        if linje.startswith(k["digestnokkel"] + "="):
+            return linje.split("=", 1)[1].strip().strip("'\"").removeprefix("sha256:")
+    raise SystemExit(f"AVBRUTT: {k['digestnokkel']} mangler i {k['konfig']}")
+
+
 def forbered(m, a, k):
     """--forbered: r2 (forgjengerkatalogen) og r3 (den drillede
     katalogen) inn i registeret, bytt til dem i rekkefølge."""
     modul = a.modul
     drillet, kver, khash, _dg = den_ene_claimende(m, modul)
     f_kat, d_kat = Path(a.forgjenger_katalog), Path(a.drillet_katalog)
-    r2 = f"{k['prefiks']}-r2-{f_kat.name[:8]}"
-    r3 = f"{k['prefiks']}-r3-{d_kat.name[:8]}"
+    r2 = f"{k['prefiks']}-r2{a.release_suffiks}-{f_kat.name[:8]}"
+    r3 = f"{k['prefiks']}-r3{a.release_suffiks}-{d_kat.name[:8]}"
     for rel, kat in ((r2, f_kat), (r3, d_kat)):
-        dg = sveipmodul_digest(kat, modul)
+        dg = digest_for(k, kat)
         registrer_release(m, modul, rel, kver, khash,
                           manifest_hash_i(kat, modul), dg)
         bytt_release(m, modul, rel, kver, khash)
@@ -805,6 +937,8 @@ def main() -> int:
     ap.add_argument("--drillet-katalog", default="/opt/disponit/aktiv")
     ap.add_argument("--tenant", default=None)
     ap.add_argument("--forbered", action="store_true")
+    ap.add_argument("--release-suffiks", default="",
+                    help="skiller et nytt r2/r3-par fra et tidligere (radene er immutable)")
     ap.add_argument("--ut", type=Path)
     a = ap.parse_args()
     k = MODULER[a.modul]
@@ -830,10 +964,10 @@ def main() -> int:
     forgjenger, forgjenger_digest = forgjengeren(m, modul, drillet, kver, khash)
     f_kat = Path(a.forgjenger_katalog).resolve()
     d_kat = Path(a.drillet_katalog).resolve()
-    if sveipmodul_digest(f_kat, modul) != forgjenger_digest:
+    if digest_for(k, f_kat) != forgjenger_digest:
         raise SystemExit(f"AVBRUTT: {f_kat} bærer ikke forgjengerens bytes"
                          f" ({forgjenger} {forgjenger_digest[:12]}…)")
-    if sveipmodul_digest(d_kat, modul) != drillet_digest:
+    if digest_for(k, d_kat) != drillet_digest:
         raise SystemExit(f"AVBRUTT: {d_kat} bærer ikke den drillede releasens"
                          f" bytes ({drillet} {drillet_digest[:12]}…)")
     epoch = m.execute("SELECT module_epoch FROM modulhode WHERE modul_id=%s",
@@ -913,8 +1047,8 @@ def main() -> int:
     modulstatus = m.execute("SELECT status FROM modulhode WHERE modul_id=%s",
                             (modul,)).fetchone()[0]
     m.commit()
-    bundet = (sveipmodul_digest(f_kat, modul) == forgjenger_digest
-              and sveipmodul_digest(d_kat, modul) == drillet_digest
+    bundet = (digest_for(k, f_kat) == forgjenger_digest
+              and digest_for(k, d_kat) == drillet_digest
               and aktiv == d_kat)
     art = {
         "krav_id": k["krav_id"], "ts": datetime.now(timezone.utc).isoformat(),
@@ -953,7 +1087,7 @@ def main() -> int:
                           "modulstatus": modulstatus,
                           "digest_likhet": True,
                           "rullback_bytes_er_forgjengerens":
-                              sveipmodul_digest(f_kat, modul) == forgjenger_digest,
+                              digest_for(k, f_kat) == forgjenger_digest,
                           "unit_override_fjernet": not _overridefil(unit).exists()},
     }
     global DRILL_FULLFORT

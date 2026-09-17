@@ -61,6 +61,13 @@ def main(argv: list[str] | None = None, modellfabrikk=None) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     modul, digest, sti = argv
+    # ÉN FORM PÅ DIGESTEN: releasen registreres som ren hex
+    # (`registrer-m57-ats.py`, `_hex64`), og `bytt_release`s M-31-port
+    # sammenligner strengene. Kjøringene 31/8 og 1/9 sto med `sha256:`-
+    # prefiks og kunne aldri treffe releasen — porten var i praksis stengt
+    # for M-57 (målt 17/9 under flippedrillen). Prefikset strippes her,
+    # ved registreringen; klienten får det den fikk.
+    digest = digest.strip().removeprefix("sha256:")
     try:
         eksempler, innhold_hash = golden.les_sett(Path(sti))
     except golden.Settfeil as feil:

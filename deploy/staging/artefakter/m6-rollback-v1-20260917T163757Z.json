@@ -1,0 +1,55 @@
+{
+  "krav_id": "m6-rollback-v1",
+  "ts": "2026-09-17T16:37:57.717635+00:00",
+  "bestatt": true,
+  "oppsett": {
+    "modul": "m06_epost",
+    "miljo": "staging",
+    "vert": "cloud-server-10605510",
+    "tenant": "t-m6drill-52868a",
+    "kilde_id": "72560fbd-11fa-407c-8712-13ddfc6a4fa3",
+    "drillet_release": "0be44da41f427608cc3f9719595b845742ac4b04",
+    "forgjenger_release": "5bb38b5388be25961f216c6ed7e7991b5863a9ec",
+    "drillet_katalog": "/opt/disponit/releases/0be44da41f427608cc3f9719595b845742ac4b04",
+    "forgjenger_katalog": "/opt/disponit/releases/5bb38b5388be25961f216c6ed7e7991b5863a9ec",
+    "drillet_digest": "8dfd9e5344ebfbf54f617e613759118d8694c431df0523ea08d8d18793f079f1",
+    "forgjenger_digest": "8dfd9e5344ebfbf54f617e613759118d8694c431df0523ea08d8d18793f079f1",
+    "kandidat_digest": "8dfd9e5344ebfbf54f617e613759118d8694c431df0523ea08d8d18793f079f1",
+    "meldinger_rigget": 10,
+    "per_side": 5,
+    "form": "kjerne: innhenteren ruller med kjernen — rigget Graph, ekte base, planarbeiderens rolle, underprosess per release-katalog"
+  },
+  "identiteter": {
+    "runde_id": "587ba658",
+    "inflight_pid": 2781667,
+    "rullback_pid": 2781671,
+    "kandidat_pid": 2781673,
+    "inflight_fil": "/opt/disponit/releases/0be44da41f427608cc3f9719595b845742ac4b04/platform/core/plan/epost.py",
+    "rullback_fil": "/opt/disponit/releases/5bb38b5388be25961f216c6ed7e7991b5863a9ec/platform/core/plan/epost.py",
+    "kandidat_fil": "/opt/disponit/releases/0be44da41f427608cc3f9719595b845742ac4b04/platform/core/plan/epost.py"
+  },
+  "maalt": {
+    "inflight_utfall": "forbigaende:graph_503",
+    "inflight_hentet": 5,
+    "inflight_delta_uendret": true,
+    "rullbakk_utfall": "ok",
+    "rullbakk_nye": 5,
+    "rullbakk_sett": 10,
+    "rullbakk_delta_satt": true,
+    "total_meldinger": 10,
+    "dubletter": 0,
+    "kandidat_utfall": "ok",
+    "kandidat_nye": 0,
+    "kandidat_sett": 0,
+    "evidens_mottatt": 10,
+    "evidens_ulike_hash": 10,
+    "rullback_bytes_er_forgjengerens": true,
+    "kandidat_bytes_er_drillede": true,
+    "release_digest_bundet": true
+  },
+  "etterkontroll": {
+    "kilde_deaktivert": true,
+    "digest_likhet": true,
+    "aktiv_urort": true
+  }
+}

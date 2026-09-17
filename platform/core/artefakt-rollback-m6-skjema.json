@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-rollback-m6-v1.json",
+  "title": "m6-rollback-v1 — flippedrillen for e-postinnhenteren (kjerne-formen)",
+  "comment": "Produsert av deploy/staging/rollback-m6.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m6_rollback.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "identiteter", "maalt", "etterkontroll"],
+  "properties": {
+    "krav_id": {"type": "string", "const": "m6-rollback-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "feil": {"type": "array", "items": {"type": "string"}},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modul", "miljo", "vert", "tenant", "kilde_id", "drillet_release",
+                   "forgjenger_release", "drillet_katalog", "forgjenger_katalog",
+                   "drillet_digest", "forgjenger_digest", "kandidat_digest",
+                   "meldinger_rigget", "per_side", "form"],
+      "properties": {
+        "modul": {"type": "string", "const": "m06_epost"},
+        "miljo": {"type": "string", "minLength": 1},
+        "vert": {"type": "string", "minLength": 1},
+        "tenant": {"type": "string", "pattern": "^t-m6drill-[0-9a-f]{6}$"},
+        "kilde_id": {"type": "string", "minLength": 1},
+        "drillet_release": {"type": "string", "minLength": 1},
+        "forgjenger_release": {"type": "string", "minLength": 1},
+        "drillet_katalog": {"type": "string", "minLength": 1},
+        "forgjenger_katalog": {"type": "string", "minLength": 1},
+        "drillet_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "forgjenger_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "kandidat_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "meldinger_rigget": {"type": "integer", "minimum": 2},
+        "per_side": {"type": "integer", "minimum": 1},
+        "form": {"type": "string", "minLength": 1}
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runde_id", "inflight_pid", "rullback_pid", "kandidat_pid",
+                   "inflight_fil", "rullback_fil", "kandidat_fil"],
+      "properties": {
+        "runde_id": {"type": "string", "minLength": 1},
+        "inflight_pid": {"type": "integer", "minimum": 1},
+        "rullback_pid": {"type": "integer", "minimum": 1},
+        "kandidat_pid": {"type": "integer", "minimum": 1},
+        "inflight_fil": {"type": "string", "minLength": 1},
+        "rullback_fil": {"type": "string", "minLength": 1},
+        "kandidat_fil": {"type": "string", "minLength": 1}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inflight_utfall", "inflight_hentet", "inflight_delta_uendret",
+                   "rullbakk_utfall", "rullbakk_nye", "rullbakk_sett",
+                   "rullbakk_delta_satt", "total_meldinger", "dubletter",
+                   "kandidat_utfall", "kandidat_nye", "kandidat_sett",
+                   "evidens_mottatt", "evidens_ulike_hash",
+                   "rullback_bytes_er_forgjengerens", "kandidat_bytes_er_drillede",
+                   "release_digest_bundet"],
+      "properties": {
+        "inflight_utfall": {"type": "string", "minLength": 1},
+        "inflight_hentet": {"type": "integer", "minimum": 0},
+        "inflight_delta_uendret": {"type": "boolean"},
+        "rullbakk_utfall": {"type": "string", "minLength": 1},
+        "rullbakk_nye": {"type": "integer", "minimum": 0},
+        "rullbakk_sett": {"type": "integer", "minimum": 0},
+        "rullbakk_delta_satt": {"type": "boolean"},
+        "total_meldinger": {"type": "integer", "minimum": 0},
+        "dubletter": {"type": "integer", "minimum": 0},
+        "kandidat_utfall": {"type": "string", "minLength": 1},
+        "kandidat_nye": {"type": "integer", "minimum": 0},
+        "kandidat_sett": {"type": "integer", "minimum": 0},
+        "evidens_mottatt": {"type": "integer", "minimum": 0},
+        "evidens_ulike_hash": {"type": "integer", "minimum": 0},
+        "rullback_bytes_er_forgjengerens": {"type": "boolean"},
+        "kandidat_bytes_er_drillede": {"type": "boolean"},
+        "release_digest_bundet": {"type": "boolean"}
+      }
+    },
+    "etterkontroll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kilde_deaktivert", "digest_likhet", "aktiv_urort"],
+      "properties": {
+        "kilde_deaktivert": {"type": "boolean"},
+        "digest_likhet": {"type": "boolean"},
+        "aktiv_urort": {"type": "boolean"}
+      }
+    }
+  }
+}

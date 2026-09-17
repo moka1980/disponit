@@ -23,8 +23,8 @@
 id: m06_epost
 navn: E-postoperasjonsagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv                  # aktiv | inaktiv | under_utvikling
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
 # derfor ærlig oppgir ingen: M-6 BESTILLER gjennom policyporten
 # (`epost.behandling` er en bestillingstype, hver kjøring policyvurderes
@@ -168,17 +168,27 @@ staging_sjekkliste:
       7.0 ms per melding mot taket på 5 000. Målt med veggklokke av
       produsenten; porten avviser 0.
   rollback_testet:
-    # BLOKKERT, IKKE «NEI» — og av en annen grunn enn M-17/M-23: M-6 har
-    # INGEN egen release og ingen egen arbeider. Innhenteren og
-    # utsendingen kjører i planarbeideren (kjernen, `disponit-plan`), og
-    # ruller med kjernen — det finnes ingen modulrelease å drille i
-    # `rollback-m56-v1`s form. Grensen `m6-rollback-v1` er registrert
-    # (§0) og feiler lukket til den dagen M-6 får en egen release og en
-    # forgjenger til den.
-    status: blokkert
-    blokkert_av: >-
-      m06_epost har ingen egen release — innhenteren og utsendingen kjører
-      i planarbeideren og ruller med kjernen. En flippedrill må rulle en
-      MODULRELEASE tilbake til forgjengerens bytes, og ingen av delene
-      finnes. Låses opp når M-6 får egen release og arbeider.
+    # DRILLET 17/9 PÅ disponit-srv med `rollback-m6.py` i KJERNE-form: M-6
+    # har ingen egen release — innhenteren ruller med kjernen. En
+    # innhenting avbrutt midt i på de drillede bytene (side 1 committet,
+    # 5 meldinger, cursor urørt) ble fullført av forgjengerens bytes
+    # (5bb38b53) uten dubletter (10 meldinger, 0 dubletter,
+    # cursor satt), og de drillede bytene så deretter ingenting nytt.
+    # Én evidensrad per melding (10). Rigget Graph i den ekte basen
+    # med planarbeiderens rolle (m6_fasit-formen), én underprosess per
+    # release-katalog som bevitnet filen innhenteren ble lastet fra.
+    status: ja
     krav_id: m6-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_hentet
+      - maalt.dubletter
+      - maalt.rullbakk_nye
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m6-rollback-v1-20260917T163757Z.json
+    artefakt_sha256: 8eeb53c286c0ceeb0317462416e571a662b4c7a98e2b5a269d41515d72d8a714
+    notat: >-
+      Flippedrill 17/9 i kjerne-form: drillet 0be44da4 → rullbakk fra
+      5bb38b53 (samme M-6-bytes, 8dfd9e5344eb) → kandidat
+      0be44da4. Innhentingens tilstand holdt over rullingen: ingen
+      tapt melding, ingen dublett, cursoren aldri foran lageret.
