@@ -320,11 +320,19 @@ def main() -> int:
     # 1. tenanten og purringen — sakene oppstår som i drift
     D.sikre_policy(rt, tenant, k["bransje"], k["fullmakter"])
     D.forbered_m23(rt, tenant)
-    oid = D.bestill_via_planen(m, rt, k, tenant, {}, 1, "purring")
-    D.vent_terminal(m, tenant, oid, 600)
-    purring = D.status(m, tenant, oid)
-    if purring != "utfort":
-        raise SystemExit(f"AVBRUTT: purringen endte {purring!r}")
+    # Én purring per tenant: en gjentatt kjøring (--tenant) sender ikke
+    # eiers testadresse en ny.
+    rader, _ = q(rt, tenant, "SELECT id FROM oppdrag WHERE tenant=%s AND"
+                 " oppdragstype=%s AND status='utfort' ORDER BY id LIMIT 1",
+                 (tenant, k["oppdragstype"]))
+    if rader:
+        oid = int(rader[0][0])
+    else:
+        oid = D.bestill_via_planen(m, rt, k, tenant, {}, 1, "purring")
+        D.vent_terminal(m, tenant, oid, 600)
+        purring = D.status(m, tenant, oid)[0]
+        if purring != "utfort":
+            raise SystemExit(f"AVBRUTT: purringen endte {purring!r}")
     _log(f"tenant {tenant}: purring {oid} utført — unntakene kan lages")
 
     # 2. probe: den drillede arbeideren behandler et unntak herfra
