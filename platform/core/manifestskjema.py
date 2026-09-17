@@ -2230,6 +2230,33 @@ M57_DATASETT_BEVISROT_FILER = (
     "deploy/staging/m57-datasett-artefakt.py",
 )
 
+KRAVGRENSER["m57-revisjon-v1"] = {
+    # §6: signaturhendelser og frigivelser SKAL stå i revisjonsloggen,
+    # med identitet. Målt 17/9 gjorde de det ikke (dørene skrev bare sine
+    # egne rader); migrasjon 211 gjør evidensen til en TRIGGER på de to
+    # tabellene, så hver signatur og hver frigivelse fødes med hendelsen.
+    "min_signaturer": 1,
+    "min_frigivelser": 1,
+    "maks_uten_identitet": 0,
+    # AVSKRUINGEN ER SNUDD (#159). Den opprinnelige grensen krevde minst
+    # én blinding-avskruing i loggen. Døra ble FJERNET i august —
+    # endepunktet svarer kodet 409 `blinding_avskruing_krever_159` — så
+    # et krav om minst én avskruing kunne aldri oppfylles uten å bygge
+    # tilbake nettopp det #159 rev ned. Kravet er derfor det motsatte, og
+    # det er MÅLBART: null avskruinger i loggen. At døra er stengt er
+    # kodens egenskap og måles av porten (`test_m57_revisjon_port`), ikke
+    # av en produsent som kan påstå hva som helst.
+    "maks_avskruinger": 0,
+    "krev_trigger": True,
+    "punktbinding": {
+        "revisjonslogg_korrekt": (
+            "maalt.revisjon_signaturer",
+            "maalt.revisjon_frigivelser",
+            "maalt.revisjon_hendelser_uten_identitet",
+            "maalt.revisjon_avskruinger"),
+    },
+}
+
 KRAVGRENSER["m57-datasett-v1"] = {
     # Skilt ut fra `m57-v1` som suite- og ytelsespunktet (#542/#544):
     # samme tall, eget artefakt, egen produsent.
@@ -3544,6 +3571,7 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m57-ytelse-v1": "artefakt-m57-ytelse-skjema.json",
     "m57-datasett-v1": "artefakt-m57-datasett-skjema.json",
     "m57-feilinjisering-v1": "artefakt-m57-feilinjisering-skjema.json",
+    "m57-revisjon-v1": "artefakt-m57-revisjon-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
@@ -3792,6 +3820,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m57_datasett(grense, art)
     if krav_id == "m57-feilinjisering-v1":
         return feil + _grenser_m57_feilinjisering(grense, art)
+    if krav_id == "m57-revisjon-v1":
+        return feil + _grenser_m57_revisjon(grense, art)
     if krav_id == "m57-v1":
         return feil + _grenser_m57(grense, art)
     if krav_id == "m31-v1":
@@ -5377,6 +5407,62 @@ def _grenser_m57_datasett(grense: dict, art: dict) -> list[str]:
         feil.append(f"bunt_soknader={soknader}, per_golden summerer {sum_antall}")
     if avvik is not None and sum_avvik != avvik:
         feil.append(f"fasitavvik={avvik}, per_golden summerer {sum_avvik}")
+    return feil
+
+
+def _grenser_m57_revisjon(grense: dict, art: dict) -> list[str]:
+    """`m57-revisjon-v1` — signaturen og frigivelsen som hendelser MED
+    identitet, og null avskruinger (#159 rev døra ned). Hendelsene
+    telles i loggen, ikke i produsenten: hver av dem må peke på en
+    bruker, og hver frigivelse må bære signatarens identitet — det er
+    mennesket som autoriserte utsendelsen, ikke maskinen som sendte."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    for felt, minst in (("revisjon_signaturer", grense["min_signaturer"]),
+                        ("revisjon_frigivelser", grense["min_frigivelser"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    for felt, tak in (("revisjon_hendelser_uten_identitet",
+                       grense["maks_uten_identitet"]),
+                      ("revisjon_avskruinger", grense["maks_avskruinger"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    # HVER FRIGIVELSE BÆRER SIGNATARENS IDENTITET, ikke utsenderens: en
+    # hendelse med maskinen som bruker ville sagt at maskinen bestemte.
+    if m.get("frigivelser_med_signatarens_identitet") is not True:
+        feil.append("frigivelser_med_signatarens_identitet er ikke true —"
+                    " frigivelsen peker ikke på mennesket som signerte")
+    if m.get("signaturer_med_signatarens_identitet") is not True:
+        feil.append("signaturer_med_signatarens_identitet er ikke true")
+    # EVIDENSEN ER STRUKTUR, IKKE ET KALLSTED: artefaktet bærer at begge
+    # triggerne sto på tabellene da kjøringen gikk.
+    if grense.get("krev_trigger"):
+        for felt in ("trigger_signatur", "trigger_frigivelse"):
+            if m.get(felt) is not True:
+                feil.append(f"{felt} er ikke true — evidensen henger i et"
+                            " kallsted, ikke i tabellen")
+    # ...OG LOGGEN LAR SEG IKKE REDIGERE. Produsenten prøver en UPDATE mot
+    # hendelsen den nettopp fødte; går den gjennom, er «revisjonslogg» bare
+    # et bord med rader (CodeRabbit: målingen sto uten port).
+    if m.get("hendelser_er_uforanderlige") is not True:
+        feil.append("hendelser_er_uforanderlige er ikke true — en logg som"
+                    " kan endres i ettertid er ikke evidens")
+    # ...og hendelsene hører til DENNE kjøringen, ikke til historien.
+    if o.get("tenant") in (None, ""):
+        feil.append("oppsett.tenant mangler — tallene er ikke stedfestet")
+    ident = art.get("identiteter")
+    if not isinstance(ident, dict) or not str(ident.get("liste_id") or "").strip():
+        feil.append("identiteter.liste_id mangler — signaturen er ikke"
+                    " knyttet til en liste")
     return feil
 
 

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m57-revisjon-v1.json",
+  "title": "m57-revisjon-v1 — signatur og frigivelse som revisjonshendelser med identitet",
+  "comment": "Produsert av deploy/staging/m57-revisjon-artefakt.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m57_revisjon.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["krav_id", "ts", "bestatt", "oppsett", "identiteter", "maalt"],
+  "properties": {
+    "krav_id": {"type": "string", "const": "m57-revisjon-v1"},
+    "ts": {"type": "string", "minLength": 1},
+    "bestatt": {"type": "boolean"},
+    "feil": {"type": "array", "items": {"type": "string"}},
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modul", "miljo", "vert", "tenant", "migrasjon"],
+      "properties": {
+        "modul": {"type": "string", "const": "m57_ats"},
+        "miljo": {"type": "string", "minLength": 1},
+        "vert": {"type": "string", "minLength": 1},
+        "tenant": {"type": "string", "minLength": 1},
+        "migrasjon": {"type": "integer", "minimum": 211}
+      }
+    },
+    "identiteter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["liste_id", "frigivelse_id", "signatar_prefiks",
+                   "signaturhendelse_id", "frigivelseshendelse_id"],
+      "properties": {
+        "liste_id": {"type": "string", "minLength": 1},
+        "frigivelse_id": {"type": "string", "minLength": 1},
+        "signatar_prefiks": {"type": "string", "minLength": 4},
+        "signaturhendelse_id": {"type": "string", "minLength": 1},
+        "frigivelseshendelse_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revisjon_signaturer", "revisjon_frigivelser",
+                   "revisjon_hendelser_uten_identitet", "revisjon_avskruinger",
+                   "signaturer_med_signatarens_identitet",
+                   "frigivelser_med_signatarens_identitet",
+                   "trigger_signatur", "trigger_frigivelse",
+                   "hendelser_totalt", "hendelser_er_uforanderlige"],
+      "properties": {
+        "revisjon_signaturer": {"type": "integer", "minimum": 0},
+        "revisjon_frigivelser": {"type": "integer", "minimum": 0},
+        "revisjon_hendelser_uten_identitet": {"type": "integer", "minimum": 0},
+        "revisjon_avskruinger": {"type": "integer", "minimum": 0},
+        "signaturer_med_signatarens_identitet": {"type": "boolean"},
+        "frigivelser_med_signatarens_identitet": {"type": "boolean"},
+        "trigger_signatur": {"type": "boolean"},
+        "trigger_frigivelse": {"type": "boolean"},
+        "hendelser_totalt": {"type": "integer", "minimum": 0},
+        "hendelser_er_uforanderlige": {"type": "boolean"}
+      }
+    }
+  }
+}
