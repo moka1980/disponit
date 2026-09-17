@@ -3850,6 +3850,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
+    if krav_id in SUITE_GRENSER:
+        return feil + _grenser_generisk_suite(grense, art)
     if krav_id == "m14-suite-v1":
         return feil + _grenser_m14_suite(grense, art)
     if krav_id == "m57-suite-v1":
@@ -5166,6 +5168,154 @@ def _m14_bevisrot_feil(art: dict) -> list[str]:
                 f" bytenes {lokal[:12]}… — kjøringen brukte en annen"
                 " produsentflate enn treet porten står i"]
     return []
+
+
+#: SUITEPUNKTET GENERALISERT (17/9). De sju første modulene fikk hver
+#: sin produsent, sin grense og sitt skjema — 103 identiske linjer per
+#: modul, forskjellig bare i modul-id og fillisten. Det holder ikke for
+#: de 46 som står igjen: en lest som koster en natt per modul er ingen
+#: lest. Her er den ENE formen, og nye moduler registreres med én linje.
+#:
+#: De eksisterende sju står urørt med sine egne konstanter og funksjoner:
+#: å skrive om et bundet artefakts port er å endre dommen etter at den
+#: falt. Nye moduler bruker denne.
+SUITE_ANDEL: dict[str, tuple[str, ...]] = {}
+SUITE_GRENSER: dict[str, dict] = {}
+
+#: Produsentflaten for den generiske suiten — ÉN fil, samme for alle
+#: modulene som bruker den.
+GENERISK_SUITE_BEVISROT = ("deploy/staging/suite-artefakt.py",)
+
+
+def generisk_suite_bevisrot_sha256(modul_id: str) -> str:
+    """Produsenten OG ANDELEN (CodeRabbit): artefaktet påstår at nettopp
+    disse testene kjørte grønt. Endres en av dem etterpå, gjelder
+    påstanden andre bytes — akkurat som M-6s fasit måtte kjøres på nytt
+    da innhenteren i bevisroten ble endret (17/9). Digesten dekker derfor
+    begge, og et artefakt fra før en testendring felles av porten."""
+    h = hashlib.sha256()
+    for rel in (*GENERISK_SUITE_BEVISROT, *SUITE_ANDEL.get(modul_id, ())):
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def registrer_suitegrense(modul_id: str, prefiks: str, andel: tuple,
+                          *, min_tester: int, min_andel_tester: int) -> str:
+    """Registrerer `<prefiks>-suite-v1` for en modul. -> krav_id.
+
+    `andel` er modulens EGNE testfiler, pinnet her og båret av artefaktet
+    — en andel som utledes av et filnavnmønster ved kjøring ville krympet
+    i stillhet den dagen en fil ble omdøpt. `min_andel_tester` er MÅLT,
+    aldri gjettet: gulvet settes litt under det filene faktisk har.
+    """
+    krav = f"{prefiks}-suite-v1"
+    SUITE_ANDEL[modul_id] = tuple(andel)
+    SUITE_GRENSER[krav] = {"modul": modul_id, "prefiks": prefiks}
+    KRAVGRENSER[krav] = {
+        "modul": modul_id, "prefiks": prefiks,
+        "min_tester": min_tester, "maks_feilet": 0,
+        "min_andel_tester": min_andel_tester,
+        "maks_andel_feilet": 0, "maks_andel_hoppet": 0,
+        "andel_pakrevd": tuple(andel),
+        "punktbinding": {
+            "tester_gronne_pa_staging": (
+                "maalt.andel_feilet", "maalt.andel_tester",
+                "maalt.andel_hoppet", "maalt.andel_exitkode",
+                "maalt.tester_feilet", "maalt.tester_totalt",
+                "maalt.tester_hoppet", "maalt.suite_exitkode"),
+        },
+    }
+    ARTEFAKTSKJEMAER[krav] = "artefakt-suite-skjema.json"
+    return krav
+
+
+def _grenser_generisk_suite(grense: dict, art: dict) -> list[str]:
+    """`<prefiks>-suite-v1` — hele suiten på staging, modulens andel for
+    seg. Formen er `_grenser_m14_suite` sin, av de samme grunnene: den
+    hoppede testen teller ikke som kjørt, andelen kan ikke overstige
+    helheten, en unormal exitkode gjør junit-XML-en til en delvis
+    kjøring, og produsentflaten er bundet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    tall = {}
+    for navn in ("tester_totalt", "tester_feilet", "tester_hoppet",
+                 "andel_tester", "andel_feilet", "andel_hoppet",
+                 "suite_exitkode", "andel_exitkode"):
+        verdi, melding = _teller(m, navn, navn)
+        if melding:
+            feil.append(melding)
+        tall[navn] = verdi
+    if any(v is None for v in tall.values()):
+        return feil
+    kjorte = tall["tester_totalt"] - tall["tester_hoppet"]
+    if kjorte < grense["min_tester"]:
+        feil.append(f"tester_totalt={tall['tester_totalt']} minus"
+                    f" tester_hoppet={tall['tester_hoppet']} = {kjorte}"
+                    f" kjørte, krever >= {grense['min_tester']}")
+    if tall["tester_feilet"] > grense["maks_feilet"]:
+        feil.append(f"tester_feilet={tall['tester_feilet']}, krever <="
+                    f" {grense['maks_feilet']}")
+    andel_kjorte = tall["andel_tester"] - tall["andel_hoppet"]
+    if andel_kjorte < grense["min_andel_tester"]:
+        feil.append(f"andel_tester={tall['andel_tester']} minus"
+                    f" andel_hoppet={tall['andel_hoppet']} = {andel_kjorte}"
+                    f" kjørte, krever >= {grense['min_andel_tester']}")
+    if tall["andel_feilet"] > grense["maks_andel_feilet"]:
+        feil.append(f"andel_feilet={tall['andel_feilet']}, krever <="
+                    f" {grense['maks_andel_feilet']}")
+    if tall["andel_hoppet"] > grense["maks_andel_hoppet"]:
+        feil.append(f"andel_hoppet={tall['andel_hoppet']}, krever <="
+                    f" {grense['maks_andel_hoppet']} — modulens navngitte"
+                    " andel skal være KJØRT, ikke hoppet over")
+    if tall["andel_tester"] > tall["tester_totalt"]:
+        feil.append(f"andel_tester={tall['andel_tester']} >"
+                    f" tester_totalt={tall['tester_totalt']} — andelen"
+                    " kan ikke overstige helheten")
+    for navn in ("suite_exitkode", "andel_exitkode"):
+        if tall[navn] != 0:
+            feil.append(f"{navn}={tall[navn]} — pytest avsluttet unormalt;"
+                        " en junit-XML fra en avbrutt kjøring teller bare"
+                        " testene som rakk å bli ferdige")
+    oppsett = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if oppsett.get("modul") != grense["modul"]:
+        feil.append(f"oppsett.modul={oppsett.get('modul')!r} er ikke"
+                    f" {grense['modul']!r} — artefaktet måler en annen modul")
+    sha = oppsett.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler — produsentflaten er"
+                    " ubundet, og artefaktet beviser da en kjøring av"
+                    " ukjente bytes")
+    else:
+        try:
+            lokal = generisk_suite_bevisrot_sha256(grense["modul"])
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(f"bevisrot_sha256={sha[:12]}… er ikke de"
+                            f" innsjekkede bytenes {lokal[:12]}…")
+    filer = oppsett.get("andel_filer")
+    if not isinstance(filer, list):
+        feil.append("oppsett.andel_filer mangler eller er ikke en liste")
+    elif filer != list(grense["andel_pakrevd"]):
+        feil.append("oppsett.andel_filer er ikke den pinnede andelen —"
+                    " en kjøring over andre filer måler en annen modul")
+    for rel in grense["andel_pakrevd"]:
+        if not (REPOROT / rel).is_file():
+            feil.append(f"andelen peker på {rel}, som ikke finnes i treet")
+    return feil
+
+
+#: FØRSTE MODUL PÅ DEN GENERISKE LESTEN (17/9): M-19 adresse. Andelen er
+#: modulens egen testfil, og gulvet er MÅLT (34 tester 17/9) — satt litt
+#: under, som de sju før den.
+registrer_suitegrense("m19_adresse", "m19",
+                      ("platform/core/tests/test_m19_adresse.py",),
+                      min_tester=3000, min_andel_tester=30)
 
 
 def _grenser_m14_suite(grense: dict, art: dict) -> list[str]:
