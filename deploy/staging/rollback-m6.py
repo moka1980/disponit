@@ -122,16 +122,28 @@ def _log(*a):
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}]", *a, flush=True)
 
 
-def kjor_i(katalog: Path, inn: dict) -> dict:
-    """Innhentingen som underprosess fra `katalog` — bytene der."""
+def kjor_i(katalog: Path, inn: dict, m=None, tenant=None, kid=None) -> dict:
+    """Innhentingen som underprosess fra `katalog` — bytene der.
+
+    `hent_access_token` krever `status='aktiv'`; kilden settes aktiv
+    rett før og deaktivert rett etter (et sekunds vindu), så planrunden
+    aldri rekker å plukke den mot den ekte Graph."""
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{katalog}/platform/core:{katalog}/platform"
     with tempfile.TemporaryDirectory() as td:
         Path(td, "inn.json").write_text(json.dumps(inn), encoding="utf-8")
         Path(td, "runner.py").write_text(RUNNER, encoding="utf-8")
-        r = subprocess.run([sys.executable, f"{td}/runner.py", f"{td}/inn.json"],
-                           capture_output=True, text=True, timeout=600,
-                           cwd=f"{katalog}/platform/core", env=env)
+        if m is not None:
+            q(m, tenant, "UPDATE epost_kilde SET status='aktiv'"
+              " WHERE tenant=%s AND kilde_id=%s", (tenant, kid))
+        try:
+            r = subprocess.run([sys.executable, f"{td}/runner.py", f"{td}/inn.json"],
+                               capture_output=True, text=True, timeout=600,
+                               cwd=f"{katalog}/platform/core", env=env)
+        finally:
+            if m is not None:
+                q(m, tenant, "UPDATE epost_kilde SET status='deaktivert'"
+                  " WHERE tenant=%s AND kilde_id=%s", (tenant, kid))
     if r.returncode != 0:
         raise SystemExit(f"AVBRUTT: runneren i {katalog} feilet:\n"
                          + r.stderr[-1500:])
@@ -251,20 +263,20 @@ def main() -> int:
         return "ok"
 
     # (a) inflight på de drillede bytene — avbrutt etter side 1
-    r1 = kjor_i(d_kat, {**felles, "modus": "avbrutt"})
+    r1 = kjor_i(d_kat, {**felles, "modus": "avbrutt"}, m, tenant, kid)
     t1 = tilstand(m, tenant, kid, rid)
     _log(f"inflight (drillet): {utfall(r1)}"
          f" — {t1['meldinger']} meldinger lagret, delta {t1['delta']!r}")
 
     # (b) rullbakken: forgjengerens bytes fullfører fra samme cursor
-    r2 = kjor_i(f_kat, {**felles, "modus": "full"})
+    r2 = kjor_i(f_kat, {**felles, "modus": "full"}, m, tenant, kid)
     t2 = tilstand(m, tenant, kid, rid)
     _log(f"rullbakk (forgjenger): {utfall(r2)}"
          f" — {t2['meldinger']} meldinger ({t2['ulike']} ulike), delta satt="
          f"{bool(t2['delta'])}")
 
     # (c) kandidaten: de drillede bytene ser alt som hentet
-    r3 = kjor_i(d_kat, {**felles, "modus": "delta"})
+    r3 = kjor_i(d_kat, {**felles, "modus": "delta"}, m, tenant, kid)
     t3 = tilstand(m, tenant, kid, rid)
     _log(f"kandidat (drillet): {utfall(r3)}"
          f" — {t3['meldinger']} meldinger, evidens {t3['evidens']}"
