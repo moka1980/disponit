@@ -8749,6 +8749,22 @@ def _ingest_kvittering(tjeneste: Tjeneste, conn, auth: Autentisert,
         (json.dumps(kvittering, ensure_ascii=False),
          (kvittering.get("signatur") or {}).get("verdi"), ny_hash,
          "utfort" if vellykket else "feilet", tenant, oppdrag_id))
+    if not vellykket:
+        # Et RENT feilutfall på en KOMPENSERENDE kontrakt (M-57: en avbrutt
+        # parsing/evaluering, SP-3) er ikke et verdikt — men det er heller
+        # ikke ingenting: en bunt som aldri ble evaluert har en kunde som
+        # venter, og bestillingen står `feilet` uten at noe menneske ser
+        # den. Saken knyttes til oppdraget (`sak_for_oppdrag`, samme dør
+        # som evidensreaperen og den sene kvitteringen bruker), i M-37s
+        # kø, med snapshot 0: aldri automatikk, alltid et menneske. Direkte
+        # og irreversible kontrakter er uendret — deres feil har egne veier.
+        reversibilitet = conn.execute(
+            "SELECT reversibilitet_for_oppdrag(%s,%s)",
+            (tenant, oppdrag_id)).fetchone()[0]
+        if reversibilitet == "kompenserende":
+            conn.execute("SELECT sikre_sak_for_oppdrag(%s,%s,%s,%s,%s)",
+                         (tenant, oppdrag_id, "utforelse_feilet",
+                          auth.aktor, rid))
     # M-23 (150, ARC B PR 5): PURRINGEN ER SENDT → REGISTERET. Kvitteringen
     # er signert av eiermodulen og ressursbundet til fordringen; det er
     # den som flytter trinnet og fører hendelsen — i SAMME transaksjon som

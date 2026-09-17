@@ -1710,24 +1710,40 @@ M6_SUITE_ANDEL: tuple[str, ...] = (
     "platform/core/tests/test_m6_utsending_port.py",
 )
 
-#: M-6 FLIPPEDRILLEN, registrert FØR drillen er kjørt (§0), i
-#: `rollback-m56-v1`s form som m17/m23. M-6 har INGEN egen release og
-#: ingen egen arbeider: innhenteren og utsendingen kjører i
-#: planarbeideren (kjernen). Punktet er BLOKKERT til modulen får en
-#: release å rulle tilbake — og en forgjenger til den.
+#: M-6 FLIPPEDRILLEN i KJERNE-FORM. M-6 har ingen egen release og ingen
+#: egen arbeider: innhenteren (`plan.epost`) kjører i planarbeideren og
+#: RULLER MED KJERNEN. Det som må holde over en rulling av kjernebytene
+#: er innhentingens tilstand: en innhenting avbrutt midt i på de drillede
+#: bytene (side 1 committet, cursor urørt) fullføres av forgjengerens
+#: bytes uten dubletter, og de drillede bytene ser deretter alt som
+#: hentet. Rigget Graph (m6_fasit-formen), ekte base, planarbeiderens
+#: rolle, én underprosess per release-katalog som bevitner filen den
+#: lastet innhenteren fra.
+M6_RELEASEFILER: tuple[str, ...] = (
+    "platform/modules/m06_epost",
+    "platform/core/plan/epost.py",
+    "platform/core/api/epost_kilde.py",
+    "platform/core/api/epost_meldinger.py",
+)
+
+
+def m6_digest(rot) -> str:
+    return release_digest(rot, M6_RELEASEFILER)
+
+
 KRAVGRENSER["m6-rollback-v1"] = {
-    "maks_claims_etter_drenering": 0,
-    "min_inflight": 1,
-    "maks_falske_verdikter": 0,
-    "min_rullback_claims": 1,
-    "min_rullback_promoterte": 0,
+    "min_inflight_hentet": 1,
+    "maks_dubletter": 0,
+    "min_rullbakk_nye": 1,
+    "maks_kandidat_nye": 0,
+    "krev_evidens_per_melding": True,
     "krev_release_digest_bundet": True,
     "punktbinding": {
         "rollback_testet": (
-            "maalt.claims_etter_drenering",
-            "maalt.inflight_oppdrag",
-            "maalt.falske_verdikter",
-            "maalt.rullback_claimet_oppdrag",
+            "maalt.inflight_hentet",
+            "maalt.dubletter",
+            "maalt.rullbakk_nye",
+            "maalt.kandidat_nye",
             "maalt.release_digest_bundet",
         ),
     },
@@ -2050,6 +2066,24 @@ KRAVGRENSER["m14-rollback-v1"] = {
     },
 }
 
+KRAVGRENSER["m57-rollback-v1"] = {
+    "maks_claims_etter_drenering": 0,
+    "min_inflight": 1,
+    "maks_falske_verdikter": 0,
+    "min_rullback_claims": 1,
+    "min_rullback_promoterte": 0,
+    "krev_release_digest_bundet": True,
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.claims_etter_drenering",
+            "maalt.inflight_oppdrag",
+            "maalt.falske_verdikter",
+            "maalt.rullback_claimet_oppdrag",
+            "maalt.release_digest_bundet",
+        ),
+    },
+}
+
 KRAVGRENSER["m37-rollback-v1"] = {
     # Lease-formen (rollback-m37.py): en sak claimet da rullingen traff
     # skal re-claimes av rullbakken med generasjon + 1 og behandles
@@ -2180,6 +2214,54 @@ KRAVGRENSER["m57-suite-v1"] = {
     },
 }
 
+
+#: Datasettet M-57s regresjonsanker er målt på — de innsjekkede bytene
+#: CI bærer; staging-leddet hasher fila det faktisk leste.
+M57_DATASETT_FIL = "deploy/staging/m57-golden-v2.json"
+
+#: Harnessen for datasettpunktet — bestillingen (bunten i produksjonsform:
+#: golden-teksten + hilsen med navnet blindingen maskerer) og produsenten.
+#: Artefaktet bærer digesten; porten krever treets.
+M57_DATASETT_BEVISROT_FILER = (
+    "deploy/staging/m57-datasett-bestill.py",
+    "deploy/staging/m57-datasett-artefakt.py",
+)
+
+KRAVGRENSER["m57-datasett-v1"] = {
+    # Skilt ut fra `m57-v1` som suite- og ytelsespunktet (#542/#544):
+    # samme tall, eget artefakt, egen produsent.
+    "datasett_min_soknader": 200,
+    "datasett_maks_fasitavvik": 0,
+    "maks_umatchet": 0,
+    "krev_datasett_sha_lik": True,
+    "krev_utfort": True,
+    # DETERMINISMEN måles uavhengig av ankeret: hver tekst går minst ti
+    # ganger, og alle gangene skal gi NØYAKTIG én dom. Et anker som
+    # treffes ved tilfeldighet beviser ingenting.
+    "min_gjentak_per_tekst": 10,
+    "krev_en_dom_per_tekst": True,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.bunt_soknader", "maalt.fasitavvik",
+            "maalt.datasett_sha_lokal", "maalt.datasett_sha_staging"),
+    },
+}
+
+KRAVGRENSER["m57-feilinjisering-v1"] = {
+    # SP-3 på M-57: en avbrutt parsing/evaluering gir RENT feilutfall
+    # (kvittering `feilet` med kode, ingen promotert liste) OG leverer
+    # en post i unntakskøen bundet til oppdraget (`sak_for_oppdrag`).
+    "min_injiserte_jobber": 1,
+    "min_unntakskoe_poster": 1,
+    "maks_koeposter_uten_jobbinding": 0,
+    "maks_promoterte_artefakter": 0,
+    "krev_feilet": True,
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.injisert_jobber", "maalt.unntakskoe_poster",
+            "maalt.koeposter_uten_jobbinding"),
+    },
+}
 
 KRAVGRENSER["m57-ytelse-v1"] = {
     # Bunten skal være HELE taket — en varighet uten last er en tom
@@ -3448,6 +3530,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m23-rollback-v1": "artefakt-rollback-modul-skjema.json",
     "m26-rollback-v1": "artefakt-rollback-modul-skjema.json",
     "m44-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m57-rollback-v1": "artefakt-rollback-modul-skjema.json",
+    "m6-rollback-v1": "artefakt-rollback-m6-skjema.json",
     "m37-rollback-v1": "artefakt-rollback-m37-skjema.json",
     "m26-fasit-v1": "artefakt-m26-fasit-skjema.json",
     "m26-suite-v1": "artefakt-m26-suite-skjema.json",
@@ -3455,6 +3539,8 @@ ARTEFAKTSKJEMAER: dict[str, str] = {
     "m14-suite-v1": "artefakt-m14-suite-skjema.json",
     "m57-suite-v1": "artefakt-m57-suite-skjema.json",
     "m57-ytelse-v1": "artefakt-m57-ytelse-skjema.json",
+    "m57-datasett-v1": "artefakt-m57-datasett-skjema.json",
+    "m57-feilinjisering-v1": "artefakt-m57-feilinjisering-skjema.json",
     "m17-svar-v1": "artefakt-m17-svar-skjema.json",
     "m14-bokforing-v1": "artefakt-m14-bokforing-skjema.json",
     "m26-tilbud-v1": "artefakt-m26-tilbud-skjema.json",
@@ -3699,6 +3785,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m02_fordeling(grense, art)
     if krav_id == "rollback-m56-v1":
         return feil + _grenser_rollback_m56(grense, art)
+    if krav_id == "m57-datasett-v1":
+        return feil + _grenser_m57_datasett(grense, art)
+    if krav_id == "m57-feilinjisering-v1":
+        return feil + _grenser_m57_feilinjisering(grense, art)
     if krav_id == "m57-v1":
         return feil + _grenser_m57(grense, art)
     if krav_id == "m31-v1":
@@ -3721,6 +3811,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m26_suite(grense, art)
     if krav_id == "m14-rollback-v1":
         return feil + _grenser_rollback_modul(grense, art)
+    if krav_id == "m57-rollback-v1":
+        return feil + _grenser_rollback_modul(grense, art)
     if krav_id == "m37-rollback-v1":
         return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
@@ -3736,10 +3828,7 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     if krav_id == "m6-suite-v1":
         return feil + _grenser_m6_suite(grense, art)
     if krav_id == "m6-rollback-v1":
-        return feil + ["m6-rollback-v1: flippedrillen er ikke bygget —"
-                       " grensen er registrert (§0), men verken"
-                       " produsent eller artefaktskjema finnes, så et"
-                       " artefakt kan ikke måles mot den ennå"]
+        return feil + _grenser_m6_rollback(grense, art)
     if krav_id == "m17-fasit-v1":
         return feil + _grenser_m17_fasit(grense, art)
     if krav_id == "m17-suite-v1":
@@ -5156,6 +5245,179 @@ def m57_ytelse_bevisrot_sha256() -> str:
     return h.hexdigest()
 
 
+def m57_datasett_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M57_DATASETT_BEVISROT_FILER:
+        p = REPOROT / rel
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _grenser_m57_datasett(grense: dict, art: dict) -> list[str]:
+    """`m57-datasett-v1` — M-02s fordelingsform: bunten er stor nok,
+    avviket fra ankeret er null, og datasettet staging kjørte er
+    BYTE-LIKT det treet bærer (porten re-regner den lokale digesten
+    selv). Tallene re-summeres av per-tekst-tabellen, og hver teksts
+    forventning i artefaktet må være treets."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if grense.get("krev_utfort") and o.get("resultat") != "utfort":
+        feil.append(f"oppsett.resultat={o.get('resultat')!r} — bunten"
+                    " fullførte ikke, og et delvis datasett rangerer ingenting")
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler — harnessen er ubundet")
+    else:
+        try:
+            lokal = m57_datasett_bevisrot_sha256()
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+        else:
+            if sha != lokal:
+                feil.append(f"bevisrot_sha256={sha[:12]}… er ikke de"
+                            f" innsjekkede bytenes {lokal[:12]}…")
+    soknader, melding = _teller(m, "bunt_soknader", "bunt_soknader")
+    if melding:
+        feil.append(melding)
+    elif soknader < grense["datasett_min_soknader"]:
+        feil.append(f"bunt_soknader={soknader}, krever >="
+                    f" {grense['datasett_min_soknader']}")
+    avvik, melding = _teller(m, "fasitavvik", "fasitavvik")
+    if melding:
+        feil.append(melding)
+    elif avvik > grense["datasett_maks_fasitavvik"]:
+        feil.append(f"fasitavvik={avvik}, krever <="
+                    f" {grense['datasett_maks_fasitavvik']} — rangeringen"
+                    " avvek fra ankeret")
+    umatchet, melding = _teller(m, "umatchet", "umatchet")
+    if melding:
+        feil.append(melding)
+    elif umatchet > grense["maks_umatchet"]:
+        feil.append(f"umatchet={umatchet} søknader matchet ingen golden-tekst")
+    try:
+        golden_bytes = (REPOROT / M57_DATASETT_FIL).read_bytes()
+        lokal = hashlib.sha256(golden_bytes).hexdigest()
+        golden = {g["id"]: g for g in json.loads(golden_bytes.decode("utf-8"))}
+    except (OSError, ValueError) as e:
+        return feil + [f"datasettet lot seg ikke lese lokalt: {e}"]
+    if grense.get("krev_datasett_sha_lik"):
+        staging = str(m.get("datasett_sha_staging") or "").strip().lower()
+        if staging != lokal:
+            feil.append("datasett_sha_staging != treets bytes — staging"
+                        " kjørte et annet datasett enn det porten står i")
+        if str(m.get("datasett_sha_lokal") or "").strip().lower() != lokal:
+            feil.append("datasett_sha_lokal er ikke treets digest")
+    per = m.get("per_golden")
+    if not isinstance(per, list) or not per:
+        feil.append("per_golden mangler — tallene kan ikke re-summeres")
+        return feil
+    sum_antall = sum_avvik = 0
+    sett = set()
+    for p in per:
+        if not isinstance(p, dict):
+            feil.append("per_golden bærer noe som ikke er en rad")
+            continue
+        gid = p.get("golden_id")
+        g = golden.get(gid)
+        if g is None:
+            feil.append(f"per_golden: {gid!r} finnes ikke i datasettet")
+            continue
+        sett.add(gid)
+        if p.get("forventet") != g["forventet_oppfylt"]:
+            feil.append(f"per_golden[{gid}].forventet er ikke ankerets")
+        # Dommene DEKODES og TELLES én gang, fail-closed: en bool, et
+        # ikke-heltall eller en nøkkel som ikke er JSON feller raden med
+        # melding — porten reiser aldri et unntak på et artefakt.
+        dommer = p.get("dommer")
+        if not isinstance(dommer, dict):
+            feil.append(f"per_golden[{gid}].dommer er ikke et kart")
+            continue
+        dekodet: list[tuple[object, int]] = []
+        gyldig = True
+        for nokkel, verdi in dommer.items():
+            if isinstance(verdi, bool) or not isinstance(verdi, int) or verdi < 0:
+                feil.append(f"per_golden[{gid}].dommer[{nokkel!r}] er ikke"
+                            " en telling")
+                gyldig = False
+                break
+            try:
+                dekodet.append((json.loads(nokkel), verdi))
+            except (TypeError, ValueError):
+                feil.append(f"per_golden[{gid}].dommer har en nøkkel som"
+                            " ikke er JSON")
+                gyldig = False
+                break
+        if not gyldig:
+            continue
+        antall = sum(v for _, v in dekodet)
+        if antall != p.get("antall"):
+            feil.append(f"per_golden[{gid}].antall stemmer ikke med dommene")
+        if grense.get("krev_en_dom_per_tekst") and len(dekodet) != 1:
+            feil.append(f"per_golden[{gid}]: {len(dekodet)} ulike dommer —"
+                        " modellen er ikke deterministisk på denne teksten")
+        if antall < grense.get("min_gjentak_per_tekst", 0):
+            feil.append(f"per_golden[{gid}].antall={antall} <"
+                        f" {grense['min_gjentak_per_tekst']} gjentak")
+        regnet = sum(v for dom, v in dekodet if dom != g["forventet_oppfylt"])
+        if regnet != p.get("avvik"):
+            feil.append(f"per_golden[{gid}].avvik={p.get('avvik')} — dommene"
+                        f" gir {regnet}")
+        sum_antall += antall
+        sum_avvik += regnet
+    if sett != set(golden):
+        feil.append("per_golden dekker ikke hele datasettet")
+    if soknader is not None and sum_antall != soknader:
+        feil.append(f"bunt_soknader={soknader}, per_golden summerer {sum_antall}")
+    if avvik is not None and sum_avvik != avvik:
+        feil.append(f"fasitavvik={avvik}, per_golden summerer {sum_avvik}")
+    return feil
+
+
+def _grenser_m57_feilinjisering(grense: dict, art: dict) -> list[str]:
+    """`m57-feilinjisering-v1` — SP-3 på M-57: den injiserte jobben
+    endte `feilet` med kode, promoterte ingenting, og køen fikk nøyaktig
+    posten som er bundet til jobben."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    for felt, minst in (("injisert_jobber", grense["min_injiserte_jobber"]),
+                        ("unntakskoe_poster", grense["min_unntakskoe_poster"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi < minst:
+            feil.append(f"{felt}={verdi}, krever >= {minst}")
+    for felt, tak in (("koeposter_uten_jobbinding",
+                       grense["maks_koeposter_uten_jobbinding"]),
+                      ("promoterte_artefakter",
+                       grense["maks_promoterte_artefakter"])):
+        verdi, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif verdi > tak:
+            feil.append(f"{felt}={verdi}, krever <= {tak}")
+    if grense.get("krev_feilet"):
+        if m.get("oppdrag_status") != "feilet":
+            feil.append(f"oppdrag_status={m.get('oppdrag_status')!r} — ikke"
+                        " et rent feilutfall")
+        if not str(m.get("feilkode") or "").strip():
+            feil.append("feilkode mangler — et feilutfall uten kode er taushet")
+        if m.get("kvittering_resultat") != "feilet":
+            feil.append("kvittering_resultat er ikke `feilet` — feilen kom"
+                        " ikke gjennom kvitteringen")
+    if m.get("sak_sakskilde") != "oppdrag" or m.get("sak_arsak") != "utforelse_feilet":
+        feil.append("køposten er ikke en `sak_for_oppdrag` med årsak"
+                    " utforelse_feilet — bindingen til jobben er ikke målt")
+    if m.get("sak_oppdrag_id") != m.get("injisert_oppdrag_id"):
+        feil.append("køposten peker ikke på den injiserte jobben")
+    return feil
+
+
 def _grenser_m57_ytelse(grense: dict, art: dict) -> list[str]:
     """`m57-ytelse-v1` — ÉN ekte bunt på taket gjennom hele kjeden på
     verten, målt på oppdragsradens egne tidsstempler (første claim →
@@ -6386,6 +6648,12 @@ SVEIPMODUL_RELEASEFILER: dict[str, tuple[str, ...]] = {
                      "platform/drift/m44_arbeider.py",
                      "platform/drift/kampanjesveip.py",
                      "platform/drift/kjor_kampanjesveip.py"),
+    # M-57 er en modul med egen release og modultoken (m56-formen) —
+    # arbeideren og utsenderen ruller sammen med modulkatalogen.
+    "m57_ats": ("platform/modules/m57_ats",
+                "platform/drift/m57_arbeider.py",
+                "platform/drift/m57_utsender.py",
+                "platform/drift/kjor_m57_utsender.py"),
 }
 
 
@@ -6431,7 +6699,7 @@ def m37_digest(rot) -> str:
 
 ROLLBACK_MODUL_GRENSER = ("m14-rollback-v1", "m17-rollback-v1",
                           "m23-rollback-v1", "m26-rollback-v1",
-                          "m44-rollback-v1")
+                          "m44-rollback-v1", "m57-rollback-v1")
 
 
 def _grenser_rollback_modul(grense: dict, art: dict) -> list[str]:
@@ -6514,6 +6782,99 @@ def _grenser_rollback_modul(grense: dict, art: dict) -> list[str]:
                                           ident.get("kandidat_oppdrag_id")}
                                          - {None}) != 3:
         feil.append("identiteter: tre ulike oppdrag kreves — ett per ledd")
+    return feil
+
+
+def _grenser_m6_rollback(grense: dict, art: dict) -> list[str]:
+    """`m6-rollback-v1` — kjerne-formen: inflight avbrutt med side 1
+    lagret og cursor urørt, rullbakken (forgjengerens bytes) fullførte
+    uten dubletter og satte cursoren, kandidaten (drillede bytes) så
+    ingenting nytt, én evidensrad per melding, og hver kjøring bevitnet
+    katalogen den lastet innhenteren fra."""
+    feil: list[str] = []
+    m, o, k = art.get("maalt"), art.get("oppsett"), art.get("etterkontroll")
+    if not isinstance(m, dict) or not isinstance(o, dict) \
+            or not isinstance(k, dict):
+        return ["artefaktet mangler `maalt`/`oppsett`/`etterkontroll`"]
+    hentet, melding = _teller(m, "inflight_hentet", "inflight_hentet")
+    if melding:
+        feil.append(melding)
+    elif hentet < grense["min_inflight_hentet"]:
+        feil.append(f"inflight_hentet={hentet} — ingenting sto lagret da"
+                    " rullingen traff, så ingen tilstand ble rullet over")
+    if not str(m.get("inflight_utfall") or "").startswith("forbigaende:"):
+        feil.append(f"inflight_utfall={m.get('inflight_utfall')!r} — innhentingen"
+                    " ble ikke avbrutt midt i som en FORBIGÅENDE driftsfeil"
+                    " (SP-3: prøves igjen, aldri en dom over kilden)")
+    if m.get("inflight_delta_uendret") is not True:
+        feil.append("delta-cursoren flyttet seg på en avbrutt innhenting —"
+                    " meldinger kan være «hentet» uten å være lagret")
+    nye, melding = _teller(m, "rullbakk_nye", "rullbakk_nye")
+    if melding:
+        feil.append(melding)
+    elif nye < grense["min_rullbakk_nye"]:
+        feil.append(f"rullbakk_nye={nye} — forgjengerens bytes hentet"
+                    " ingenting nytt")
+    if m.get("rullbakk_utfall") != "ok":
+        feil.append(f"rullbakk_utfall={m.get('rullbakk_utfall')!r}")
+    if m.get("kandidat_utfall") != "ok":
+        feil.append(f"kandidat_utfall={m.get('kandidat_utfall')!r}")
+    if m.get("rullbakk_delta_satt") is not True:
+        feil.append("rullbakken satte ikke delta-cursoren — kilden er ikke"
+                    " ferdig hentet")
+    dub, melding = _teller(m, "dubletter", "dubletter")
+    if melding:
+        feil.append(melding)
+    elif dub > grense["maks_dubletter"]:
+        feil.append(f"dubletter={dub} — side 1 ble lagret to ganger")
+    total, melding = _teller(m, "total_meldinger", "total_meldinger")
+    if melding:
+        feil.append(melding)
+    elif hentet is not None and nye is not None and total != hentet + nye:
+        feil.append(f"total_meldinger={total} ≠ inflight_hentet + rullbakk_nye"
+                    f" ({hentet} + {nye})")
+    elif total != o.get("meldinger_rigget"):
+        feil.append(f"total_meldinger={total} ≠ meldinger_rigget"
+                    f" {o.get('meldinger_rigget')}")
+    kn, melding = _teller(m, "kandidat_nye", "kandidat_nye")
+    if melding:
+        feil.append(melding)
+    elif kn > grense["maks_kandidat_nye"]:
+        feil.append(f"kandidat_nye={kn} — de drillede bytene så ikke alt"
+                    " som hentet")
+    if grense.get("krev_evidens_per_melding"):
+        ev, f1 = _teller(m, "evidens_mottatt", "evidens_mottatt")
+        evh, f2 = _teller(m, "evidens_ulike_hash", "evidens_ulike_hash")
+        for x in (f1, f2):
+            if x:
+                feil.append(x)
+        if not f1 and not f2 and total is not None and (ev != total or evh != total):
+            feil.append(f"evidens_mottatt={ev}/{evh} ulike for {total}"
+                        " meldinger — ikke nøyaktig én evidensrad per melding")
+    for felt in ("rullback_bytes_er_forgjengerens", "kandidat_bytes_er_drillede",
+                 "release_digest_bundet"):
+        if m.get(felt) is not True:
+            feil.append(f"{felt} er ikke true")
+    if grense.get("krev_release_digest_bundet"):
+        if o.get("drillet_digest") != o.get("kandidat_digest"):
+            feil.append("kandidatens digest er ikke den drillede")
+    if o.get("forgjenger_katalog") in (None, "", o.get("drillet_katalog")):
+        feil.append("forgjenger_katalog mangler eller er den drillede")
+    for felt in ("kilde_deaktivert", "digest_likhet", "aktiv_urort"):
+        if k.get(felt) is not True:
+            feil.append(f"etterkontroll.{felt} er ikke true")
+    ident = art.get("identiteter")
+    if not isinstance(ident, dict):
+        feil.append("identiteter mangler")
+    else:
+        if len({ident.get("inflight_pid"), ident.get("rullback_pid"),
+                ident.get("kandidat_pid")}) != 3:
+            feil.append("de tre kjøringene er ikke tre prosesser")
+        for felt, kat in (("inflight_fil", "drillet_katalog"),
+                          ("rullback_fil", "forgjenger_katalog"),
+                          ("kandidat_fil", "drillet_katalog")):
+            if not str(ident.get(felt) or "").startswith(str(o.get(kat)) + "/"):
+                feil.append(f"identiteter.{felt} ligger ikke i {kat}")
     return feil
 
 
