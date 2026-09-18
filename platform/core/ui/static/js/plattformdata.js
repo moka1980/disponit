@@ -74,7 +74,7 @@ export const MODULSTATUS = {
   18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift
   23: "i_drift",    // m23_fordring: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
-  24: "bygges",     // m24_leverandor: under_utvikling, ikke_i_drift
+  24: "i_drift",    // m24_leverandor: aktiv, produksjon
   // KLYNGE 4 «det bransjemalene alt har lovet» (106-110) — registrert
   // 2/9 sammen med grensene m14-v1…m42-v1. Alle fem er navngitt som
   // VERIFIKATORER i bransjemaler vi sender ut: de betrodde partene som
@@ -92,7 +92,7 @@ export const MODULSTATUS = {
   26: "i_drift",    // m26_prisbok: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   27: "i_drift",    // m27_lager: aktiv, produksjon
-  42: "bygges",     // m42_kontovakt: under_utvikling, ikke_i_drift
+  42: "i_drift",    // m42_kontovakt: aktiv, produksjon
   // KLYNGE 5 «resten av det bransjemalene alt har lovet» (111-114) —
   // registrert 3/9 sammen med grensene m41-v1…m44-v1. Dette er de fire
   // SISTE manglende modulene i malene vi sender ut; når de er bygget er
