@@ -47,6 +47,7 @@ import pytest
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, dekker, klient, migrator, miljo)
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 HMSSVEIP_DSN = os.environ.get("DISPONIT_TEST_HMSSVEIP_DSN")
 
@@ -152,31 +153,6 @@ def _to():
 
 def _tenantnavn(merke: str) -> str:
     return f"t-m53-{merke}-{secrets.token_hex(4)}"
-
-
-#: DAGEN SLIK BASEN SER DEN, ikke slik Python gjør.
-#:
-#: Her sto en `datetime.date.today()`, regnet ÉN gang ved import og i
-#: maskinens LOKALE sone. Modulen regner `current_date` i basens sone, og
-#: de to er ikke samme dag: krysset kjøringen midnatt mellom import og
-#: måling — eller sto sonene fra hverandre — ble et 40 døgn gammelt
-#: avvik 41 døgn, og en regel som utløp «i går» gjaldt fortsatt. CI falt
-#: på nettopp det 18/9 kl. 00:07, på to tester som ikke var gale.
-#:
-#: Datoen HENTES derfor per kall, over en egen tilkobling. Ett
-#: rundtur-kall er billigere enn en test som faller på klokka.
-_DATOKOBLING = None
-
-
-def i_dag() -> datetime.date:
-    global _DATOKOBLING
-    if _DATOKOBLING is None or _DATOKOBLING.closed:
-        _DATOKOBLING = psycopg.connect(
-            os.environ.get("DISPONIT_TEST_MIGRATOR_DSN")
-            or os.environ["DISPONIT_TEST_DSN"])
-    dag = _DATOKOBLING.execute("SELECT current_date").fetchone()[0]
-    _DATOKOBLING.rollback()
-    return dag
 
 
 def _dag(n: int) -> datetime.date:

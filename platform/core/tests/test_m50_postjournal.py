@@ -46,6 +46,7 @@ import pytest
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, dekker, klient, migrator, miljo)
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 POSTJOURNALSVEIP_DSN = os.environ.get(
     "DISPONIT_TEST_POSTJOURNALSVEIP_DSN")
@@ -121,10 +122,12 @@ def _tenantnavn(merke: str) -> str:
 #: basens `current_date` sto på i dag — og en test som råtner med
 #: klokka måler ikke det den sier.
 def _idag() -> datetime.date:
-    return datetime.date.today()
-
-
-I_DAG = _idag()
+    # HER STO `datetime.date.today()`, under nettopp den kommentaren over
+    # som lover at en suite ikke skal råtne med klokka. Den gjorde det
+    # likevel: verdien ble regnet én gang ved import, i maskinens lokale
+    # sone, mens basen regner `current_date` i sin egen. Nå spørres
+    # basen.
+    return i_dag()
 
 
 def _dag(n: int) -> datetime.date:
@@ -177,7 +180,7 @@ def _post(c, tenant, sid, kid, *, nr=None, dato=None, tittel="Sak",
         "%s,%s,%s,%s,%s,%s::date,%s,%s,%s,%s::date,%s,%s,"
         "%s::date[],%s)",
         (tenant, pid, sid, kid, nr or secrets.token_hex(4),
-         dato or I_DAG, tittel, formaal, hentet_av, hentet or I_DAG,
+         dato or _idag(), tittel, formaal, hentet_av, hentet or _idag(),
          navn if navn is not None else ["Kari Nordmann"],
          roller if roller is not None else ["part"],
          frister if frister is not None else [_dag(30)],
@@ -373,9 +376,9 @@ def test_post_uten_oppbevaringsgrenser_nektes(miljo):
             c.execute("SELECT * FROM m50_registrer_post("
                       "%s,%s,%s,%s,%s,%s::date,%s,%s,%s,%s::date,"
                       "%s,%s,%s::date[],%s)",
-                      (tenant, uuid.uuid4(), sid, kid, "24/1", I_DAG,
+                      (tenant, uuid.uuid4(), sid, kid, "24/1", _idag(),
                        "Sak", "kartlegging av byggesaker i kommunen",
-                       "Ola", I_DAG, ["Kari"], ["part"], [_dag(30)],
+                       "Ola", _idag(), ["Kari"], ["part"], [_dag(30)],
                        "u-test"))
         assert "oppbevaringsgrenser" in str(e.value)
         c.rollback()
@@ -402,9 +405,9 @@ def test_post_mot_avviklet_kildeversjon_nektes(miljo):
                       "%s,%s,%s,%s,%s,%s::date,%s,%s,%s,%s::date,"
                       "%s,%s,%s::date[],%s)",
                       (tenant, uuid.uuid4(), sid, gammel, "19/9",
-                       I_DAG, "Gammel",
+                       _idag(), "Gammel",
                        "kartlegging av byggesaker i kommunen", "Ola",
-                       I_DAG, ["Kari"], ["part"], [_dag(30)],
+                       _idag(), ["Kari"], ["part"], [_dag(30)],
                        "u-test"))
         assert "gjelder ikke i dag" in str(e.value)
         assert "Arkivet tar imot den" in str(e.value)
@@ -425,9 +428,9 @@ def test_slettefrist_utover_tenantens_tak_nektes(miljo):
             c.execute("SELECT * FROM m50_registrer_post("
                       "%s,%s,%s,%s,%s,%s::date,%s,%s,%s,%s::date,"
                       "%s,%s,%s::date[],%s)",
-                      (tenant, uuid.uuid4(), sid, kid, "24/2", I_DAG,
+                      (tenant, uuid.uuid4(), sid, kid, "24/2", _idag(),
                        "Sak", "kartlegging av byggesaker i kommunen",
-                       "Ola", I_DAG, ["Kari"], ["part"], [_dag(4000)],
+                       "Ola", _idag(), ["Kari"], ["part"], [_dag(4000)],
                        "u-test"))
         assert "omgåelse av planen" in str(e.value)
         c.rollback()
@@ -459,9 +462,9 @@ def test_personlistene_kan_ikke_vaere_null_eller_ulike(miljo):
                           "%s,%s,%s,%s,%s,%s::date,%s,%s,%s,"
                           "%s::date,%s,%s,%s::date[],%s)",
                           (tenant, uuid.uuid4(), sid, kid,
-                           secrets.token_hex(3), I_DAG, "Sak",
+                           secrets.token_hex(3), _idag(), "Sak",
                            "kartlegging av byggesaker i kommunen",
-                           "Ola", I_DAG, navn, roller, frister,
+                           "Ola", _idag(), navn, roller, frister,
                            "u-test"))
             assert ord in str(e.value)
             c.rollback()

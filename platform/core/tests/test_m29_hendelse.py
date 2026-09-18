@@ -42,6 +42,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 HENDELSESSVEIP_DSN = os.environ.get("DISPONIT_TEST_HENDELSESSVEIP_DSN")
 
@@ -110,7 +111,6 @@ def _naa(**kw):
     return dt.datetime.now(dt.timezone.utc) + dt.timedelta(**kw)
 
 
-I_DAG = dt.date.today()
 
 
 def _nektes(mg, t, sql, args, *, teller_sql, teller_args):
@@ -157,7 +157,7 @@ def _regel(rt, t, *, signaltype="unntak_gjentatt", poeng=50,
         "SELECT m29_registrer_regel(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (t, rid, f"regel-{secrets.token_hex(3)}", signaltype, poeng,
          terskel_treff, "fordi gjentatte unntak er et moenster",
-         fra or (I_DAG - dt.timedelta(days=1)), til, "u-test"))
+         fra or (i_dag() - dt.timedelta(days=1)), til, "u-test"))
     rt.commit()
     return rid
 
@@ -170,7 +170,7 @@ def _playbook(rt, t, *, steg=None, tofaktor=True, fra=None, til=None):
         (t, pid, f"pb-{secrets.token_hex(3)}",
          "naar det samme unntaket gjentar seg", tofaktor,
          steg or ["varsle_sikkerhetsansvarlig", "samle_tidslinje"],
-         fra or (I_DAG - dt.timedelta(days=1)), til, "u-test"))
+         fra or (i_dag() - dt.timedelta(days=1)), til, "u-test"))
     rt.commit()
     return pid
 
@@ -343,7 +343,7 @@ def test_et_fritt_steg_avvises_av_basen():
             rt.execute(
                 "SELECT m29_registrer_playbook(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (t, uuid.uuid4(), "pb", "naar", True,
-                 ["kjor_shell:rm -rf /"], I_DAG, None, "u-test"))
+                 ["kjor_shell:rm -rf /"], i_dag(), None, "u-test"))
         rt.rollback()
 
 
@@ -675,7 +675,7 @@ def test_en_playbook_uten_steg_avvises():
         with pytest.raises(psycopg.errors.RaiseException):
             rt.execute(
                 "SELECT m29_registrer_playbook(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (t, uuid.uuid4(), "pb", "naar", True, [], I_DAG, None,
+                (t, uuid.uuid4(), "pb", "naar", True, [], i_dag(), None,
                  "u-test"))
         rt.rollback()
 
@@ -712,8 +712,8 @@ def test_en_utlopt_regel_kan_ikke_forklare_en_ny_score():
     t = _tenantnavn("utlopt")
     with _to() as (rt, _mg):
         kv = _krav(rt, t)
-        rid = _regel(rt, t, fra=I_DAG - dt.timedelta(days=30),
-                     til=I_DAG - dt.timedelta(days=1))
+        rid = _regel(rt, t, fra=i_dag() - dt.timedelta(days=30),
+                     til=i_dag() - dt.timedelta(days=1))
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.RaiseException):
             rt.execute(
@@ -1028,13 +1028,13 @@ def test_avviklingen_er_enveis_i_basen_ikke_bare_i_prosaen():
         rid = _regel(rt, t)
         _sett_kontekst(rt, t)
         rt.execute("SELECT m29_avvikle_regel(%s,%s,%s,%s)",
-                   (t, rid, I_DAG, "u-test"))
+                   (t, rid, i_dag(), "u-test"))
         rt.commit()
         # ANDRE FORSØK MED EN SENERE DATO SKAL NEKTES.
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.RaiseException):
             rt.execute("SELECT m29_avvikle_regel(%s,%s,%s,%s)",
-                       (t, rid, I_DAG + dt.timedelta(days=365), "u-test"))
+                       (t, rid, i_dag() + dt.timedelta(days=365), "u-test"))
         rt.rollback()
         # …OG DATOEN STÅR SOM DEN BLE SATT, ikke som det andre kallet
         # ville hatt den.
@@ -1046,7 +1046,7 @@ def test_avviklingen_er_enveis_i_basen_ikke_bare_i_prosaen():
         _sett_kontekst(rt, t)
         rad = [r for r in rt.execute("SELECT * FROM m29_reglene(%s)",
                                      (t,)).fetchall() if r[0] == rid][0]
-        assert rad[6] == I_DAG, rad[6]
+        assert rad[6] == i_dag(), rad[6]
 
 
 @pg

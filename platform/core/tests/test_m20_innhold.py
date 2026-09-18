@@ -40,6 +40,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 INNHOLDSSVEIP_DSN = os.environ.get("DISPONIT_TEST_INNHOLDSSVEIP_DSN")
 
@@ -131,7 +132,6 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m20-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = datetime.date.today()
 
 
 # =====================================================================
@@ -517,7 +517,7 @@ def test_en_utloept_kilde_nektes_i_doera_ikke_i_en_sveip():
     with _to() as (rt, mg):
         t = _tenantnavn("utloept")
         _krav(rt, t)
-        gammel = _kilde(rt, t, gyldig_til=I_DAG - datetime.timedelta(days=1))
+        gammel = _kilde(rt, t, gyldig_til=i_dag() - datetime.timedelta(days=1))
         uid, _ = _utkast(rt, t, "forsiden", "Raskest", gammel,
                          med_paastand=False)
         _sett_kontekst(rt, t)
@@ -1119,7 +1119,7 @@ def test_kilde_som_snart_utloeper_kan_avklares_av_et_menneske_og_forblir_lukket(
     with _to() as (rt, mg):
         t = _tenantnavn("snart")
         _krav(rt, t, varsel=30)
-        kid = _kilde(rt, t, gyldig_til=I_DAG + datetime.timedelta(days=10))
+        kid = _kilde(rt, t, gyldig_til=i_dag() + datetime.timedelta(days=10))
         _side(rt, t, "forsiden", "Raskest", kid)
         with _sv() as sv:
             sv.execute("SELECT * FROM m20_sveip_innhold(500)")

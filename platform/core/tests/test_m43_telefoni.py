@@ -38,6 +38,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 TELEFONISVEIP_DSN = os.environ.get("DISPONIT_TEST_TELEFONISVEIP_DSN")
 
@@ -134,7 +135,6 @@ def _naa(**kw):
     return dt.datetime.now(dt.timezone.utc) + dt.timedelta(**kw)
 
 
-I_DAG = dt.date.today()
 
 
 def _nektes(mg, t, sql, args, *, teller_sql, teller_args):
@@ -200,7 +200,7 @@ def _hjemmel(rt, t, *, gyldig_til=None, fra=None):
     rt.execute("SELECT m43_registrer_hjemmel(%s,%s,%s,%s,%s,%s,%s,%s)",
                (t, hid, "berettiget_interesse",
                 "Opptak av kundesamtaler etter vedtak 12/24",
-                "kvalitetssikring", fra or I_DAG, gyldig_til, "u-test"))
+                "kvalitetssikring", fra or i_dag(), gyldig_til, "u-test"))
     rt.commit()
     return hid
 
@@ -210,7 +210,7 @@ def _regel(rt, t, *, gyldig_til=None, fra=None):
     rid = uuid.uuid4()
     rt.execute("SELECT m43_registrer_regel(%s,%s,%s,%s,%s,%s,%s)",
                (t, rid, "Sinte kunder gaar til vakthavende", "vakt@acme",
-                fra or I_DAG, gyldig_til, "u-test"))
+                fra or i_dag(), gyldig_til, "u-test"))
     rt.commit()
     return rid
 
@@ -608,8 +608,8 @@ def test_en_utloept_hjemmel_nektes_med_m7s_egen_regel():
         t = _tenantnavn("utloept")
         _krav(rt, t)
         sid, _ = _samtale(rt, t)
-        hid = _hjemmel(rt, t, fra=I_DAG - dt.timedelta(days=30),
-                       gyldig_til=I_DAG - dt.timedelta(days=1))
+        hid = _hjemmel(rt, t, fra=i_dag() - dt.timedelta(days=30),
+                       gyldig_til=i_dag() - dt.timedelta(days=1))
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.RaiseException) as e:
             rt.execute(
@@ -810,7 +810,7 @@ def test_en_avviklet_regel_baerer_ingen_ny_eskalering():
         # REGELEN GJALDT FRA I FJOR. En regel kan ikke avvikles FØR den
         # gjaldt — døra nekter det, og det er riktig: et papir kan ikke
         # trekkes tilbake før det ble skrevet.
-        rid = _regel(rt, t, fra=I_DAG - dt.timedelta(days=365))
+        rid = _regel(rt, t, fra=i_dag() - dt.timedelta(days=365))
         _sett_kontekst(rt, t)
         rt.execute("SELECT * FROM m43_eskaler(%s,%s,%s,%s,%s,%s)",
                    (t, uuid.uuid4(), sid, rid, "kunden var sint",
@@ -818,7 +818,7 @@ def test_en_avviklet_regel_baerer_ingen_ny_eskalering():
         rt.commit()
         _sett_kontekst(rt, t)
         rt.execute("SELECT m43_avvikle_regel(%s,%s,%s,%s)",
-                   (t, rid, I_DAG - dt.timedelta(days=1), "u-kari"))
+                   (t, rid, i_dag() - dt.timedelta(days=1), "u-kari"))
         rt.commit()
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.RaiseException) as e:

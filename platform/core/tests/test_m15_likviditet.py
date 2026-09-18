@@ -39,6 +39,7 @@ import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 LIKVIDITETSSVEIP_DSN = os.environ.get(
     "DISPONIT_TEST_LIKVIDITETSSVEIP_DSN")
@@ -134,11 +135,10 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m15-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = datetime.date.today()
 
 
 def _dag(n: int) -> datetime.date:
-    return I_DAG + datetime.timedelta(days=n)
+    return i_dag() + datetime.timedelta(days=n)
 
 
 METODE = ("Startsaldo fra bankposter, fordringer inn paa"
@@ -1068,7 +1068,7 @@ def test_forfall_i_dag_faller_ikke_mellom_to_uker():
     with _to() as (rt, _mg):
         _krav(rt, t, horisont=13)
         mid = _modell(rt, t)
-        _post(rt, t, belop=-7000000, forfall=I_DAG,
+        _post(rt, t, belop=-7000000, forfall=i_dag(),
               gjentakelse="engang")
         pid, rad = _prognose(rt, t, mid)
         _sett_kontekst(rt, t)
@@ -1137,7 +1137,7 @@ def test_en_uke_kan_ikke_maales_paa_sin_egen_siste_dag():
         kan = rt.execute(
             "SELECT ukeslutt, kan_maales FROM m15_banen(%s,%s)"
             " WHERE uke_nr = 1", (t, pid)).fetchone()
-        assert kan[0] == I_DAG, kan
+        assert kan[0] == i_dag(), kan
         assert kan[1] is False, "ukens siste dag ble meldt målbar"
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.InvalidParameterValue):

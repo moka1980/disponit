@@ -43,6 +43,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 SKATTESVEIP_DSN = os.environ.get("DISPONIT_TEST_SKATTESVEIP_DSN")
 
@@ -104,7 +105,6 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m32-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = dt.date.today()
 
 
 # =====================================================================
@@ -140,7 +140,7 @@ def _adresse(mg, t, *, land="NO"):
         " VALUES (%s,%s,%s,'Storgata 1','0155','Oslo',%s,"
         " 'STORGATA 1','0155','OSLO','manuell','u-test','porten',"
         " %s,'u-test')",
-        (t, vid, sid, land, I_DAG - dt.timedelta(days=30)))
+        (t, vid, sid, land, i_dag() - dt.timedelta(days=30)))
     mg.commit()
     return vid
 
@@ -152,7 +152,7 @@ def _beregn(rt, t, kv, vid, *, satskode="standard", belop=100_000,
     rad = rt.execute(
         "SELECT * FROM m32_beregn(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (t, uid, ref or f"tx-{secrets.token_hex(4)}", kv, vid, satskode,
-         belop, dato or I_DAG, "u-test")).fetchone()
+         belop, dato or i_dag(), "u-test")).fetchone()
     rt.commit()
     return uid, rad
 
@@ -357,7 +357,7 @@ def test_land_uten_pakke_stopper_beregningen():
             rt.execute(
                 "SELECT * FROM m32_beregn(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (t, uuid.uuid4(), "tx-de", kv, vid, "standard",
-                 100_000, I_DAG, "u-test"))
+                 100_000, i_dag(), "u-test"))
         rt.rollback()
         # …OG INGEN VURDERING BLE SKREVET.
         _sett_kontekst(rt, t)
@@ -379,7 +379,7 @@ def test_ukjent_satskode_stopper_beregningen():
             rt.execute(
                 "SELECT * FROM m32_beregn(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (t, uuid.uuid4(), "tx-dk", kv, vid, "lav", 100_000,
-                 I_DAG, "u-test"))
+                 i_dag(), "u-test"))
         rt.rollback()
 
 
@@ -439,7 +439,7 @@ def test_pakken_som_gjaldt_da_ikke_den_som_gjelder_naa():
             " signert_av, dom_migrasjon)"
             " VALUES ('NO',2,'NOK',2,'halv_opp','EHF 3.0',%s,"
             " 'u-test','test')"
-            " ON CONFLICT DO NOTHING", (I_DAG,))
+            " ON CONFLICT DO NOTHING", (i_dag(),))
         mg.execute(
             "INSERT INTO landsats (landkode, regelversjon, satskode,"
             " promille, begrunnelse)"
@@ -447,19 +447,19 @@ def test_pakken_som_gjaldt_da_ikke_den_som_gjelder_naa():
             " ON CONFLICT DO NOTHING")
         mg.execute("UPDATE landpakke SET gyldig_til = %s"
                    " WHERE landkode='NO' AND regelversjon=1",
-                   (I_DAG - dt.timedelta(days=1),))
+                   (i_dag() - dt.timedelta(days=1),))
         mg.commit()
         try:
             kv = _krav(rt, t)
             vid = _adresse(mg, t, land="NO")
             # I GÅR: versjon 1, 25 %.
             _u1, gammel = _beregn(rt, t, kv, vid, belop=100_000,
-                                  dato=I_DAG - dt.timedelta(days=1))
+                                  dato=i_dag() - dt.timedelta(days=1))
             assert gammel[1] == 1, gammel
             assert gammel[2] == 250, gammel
             assert gammel[3] == 25_000, gammel
             # I DAG: versjon 2, 30 %.
-            _u2, ny = _beregn(rt, t, kv, vid, belop=100_000, dato=I_DAG)
+            _u2, ny = _beregn(rt, t, kv, vid, belop=100_000, dato=i_dag())
             assert ny[1] == 2, ny
             assert ny[2] == 300, ny
             assert ny[3] == 30_000, ny
@@ -506,7 +506,7 @@ def test_avrundingen_er_landets_og_deterministisk():
             " ('XA',1,'XAA',2,'halv_opp','test',%s,'u-test','test'),"
             " ('XB',1,'XBB',2,'halv_ned','test',%s,'u-test','test')"
             " ON CONFLICT DO NOTHING",
-            (I_DAG - dt.timedelta(days=1), I_DAG - dt.timedelta(days=1)))
+            (i_dag() - dt.timedelta(days=1), i_dag() - dt.timedelta(days=1)))
         mg.execute(
             "INSERT INTO landsats (landkode, regelversjon, satskode,"
             " promille, begrunnelse) VALUES"
@@ -561,7 +561,7 @@ def test_samme_transaksjon_vurderes_en_gang():
             rt.execute(
                 "SELECT * FROM m32_beregn(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (t, uuid.uuid4(), "tx-samme", kv, vid, "standard",
-                 200_000, I_DAG, "u-test"))
+                 200_000, i_dag(), "u-test"))
         rt.rollback()
 
 
@@ -728,7 +728,7 @@ def test_sveipen_sier_fra_naar_landpakken_er_borte():
         # PAKKEN UTLØPER I GÅR.
         mg.execute("UPDATE landpakke SET gyldig_til = %s"
                    " WHERE landkode='DK' AND regelversjon=1",
-                   (I_DAG - dt.timedelta(days=1),))
+                   (i_dag() - dt.timedelta(days=1),))
         mg.commit()
     try:
         sv = _sv()

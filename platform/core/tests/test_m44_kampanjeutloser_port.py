@@ -36,10 +36,11 @@ import yaml as _yaml
 
 from .test_api import (DSN, MIGRATOR_DSN, POLICIES, TENANT,  # noqa: F401
                        app, klient, migrator, miljo, pg)
-from .test_bestilling_kampanje_port import (I_DAG, _kampanjepolicy, _klar,
+from .test_bestilling_kampanje_port import (i_dag_iso, _kampanjepolicy, _klar,
                                             _sikre_m44_claimbar)
 from .test_m37 import _sett_kontekst
 from .test_m44_kampanje import _rt, _samtykke
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 PLAN_DSN = os.environ.get("DISPONIT_TEST_PLAN_DSN")
 pg_plan = pytest.mark.skipif(not (DSN and PLAN_DSN),
@@ -118,14 +119,14 @@ def test_kandidatdora_krever_innhold_adresse_plan_dato_og_samtykkehistorikk(
     aldri_samtykket, as_mid = _klar(samtykke=None, i_plan=False)
     from .test_m44_kampanje import _plan_direkte
     _plan_direkte(migrator, TENANT, aldri_samtykket, as_mid)
-    i_morgen, _ = _klar(dato=(date.today() + timedelta(days=1)).isoformat())
+    i_morgen, _ = _klar(dato=(i_dag() + timedelta(days=1)).isoformat())
     # Trukket ETTER planleggingen (plandøra nekter et trukket samtykke
     # ved planlegging): fortsatt kandidat — det er policyens sak, ikke
     # døras (port 6).
     trukket, tr_mid = _klar()
     c = _rt()
     try:
-        _samtykke(c, TENANT, tr_mid, "trukket", I_DAG)
+        _samtykke(c, TENANT, tr_mid, "trukket", i_dag_iso())
     finally:
         c.close()
     pa = _pa()
@@ -250,7 +251,7 @@ def test_trukket_samtykke_gir_brudd_en_gang(migrator, miljo, app):
     kid, mid = _klar()
     c = _rt()
     try:
-        _samtykke(c, TENANT, mid, "trukket", I_DAG)
+        _samtykke(c, TENANT, mid, "trukket", i_dag_iso())
     finally:
         c.close()
     pa = _pa()
