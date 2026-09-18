@@ -176,7 +176,11 @@ def maal(m, k: dict, tenanter: list[str]) -> dict:
     """Drillens egne funn, talt gjennom eierrollen tenant for tenant.
 
     `dubletter` teller rader som deler subjekt OG funntype — det er
-    formen en rulling kan skrive samme sannhet to ganger i."""
+    formen en rulling kan skrive samme sannhet to ganger i.
+
+    SUBJEKTKOLONNEN KOMMER FRA MODULENS OPPFØRING: registrene deler form,
+    ikke navn (`subjekt_id` i M-19, `vare_id` i M-27), og en hardkodet
+    kolonne her ville gjort den generiske drillen til M-19s egen."""
     # SET ROLE ER TRANSAKSJONELT: en `rollback()` rett etterpå ville tatt
     # rollen av igjen, og tellingen under hadde kjørt som migratoren.
     # Rollen committes derfor, og bare tenantkonteksten rulles tilbake.
@@ -187,7 +191,8 @@ def maal(m, k: dict, tenanter: list[str]) -> dict:
         m.execute("SELECT set_config('disponit.tenant', %s, true)", (tenant,))
         rad = m.execute(
             f"SELECT count(*), count(*) FILTER (WHERE apen),"
-            f" count(DISTINCT (subjekt_id, funntype)) FROM {k['funntabell']}"
+            f" count(DISTINCT ({k['subjektkolonne']}, funntype))"
+            f" FROM {k['funntabell']}"
             " WHERE tenant = %s", (tenant,)).fetchone()
         m.rollback()
         totalt += int(rad[0]); apne += int(rad[1]); distinkte += int(rad[2])
