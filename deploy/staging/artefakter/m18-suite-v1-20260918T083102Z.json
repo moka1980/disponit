@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m18-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 21,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5522
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m18_onboarding.py"
+    ],
+    "bevisrot_sha256": "b39f1bdb7296732a5200a8418db2449f001864e27cbe2c24b53c87c2e9ef9d27",
+    "commit": "a20af9a32c4d752673b988430423b3ea62d6ac19",
+    "modul": "m18_onboarding",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T08:31:02.899413+00:00"
+}

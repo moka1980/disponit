@@ -71,7 +71,7 @@ export const MODULSTATUS = {
   13: "i_drift",    // m13_avstemming: aktiv, produksjon
   17: "i_drift",    // m17_kundeservice: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (flippet sammen med M-37)
-  18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift
+  18: "i_drift",    // m18_onboarding: aktiv, produksjon
   23: "i_drift",    // m23_fordring: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   24: "i_drift",    // m24_leverandor: aktiv, produksjon

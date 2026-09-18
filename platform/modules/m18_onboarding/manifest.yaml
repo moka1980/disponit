@@ -30,8 +30,8 @@
 id: m18_onboarding
 navn: Kunde-onboardingagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 avhengigheter:
   - m02_revisjonslogg          # steg og statusendring i evidenskjeden
 kjerne: platform/modules/m18_onboarding
@@ -39,9 +39,25 @@ i18n_prefiks: onboarding
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m18-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m18-suite-v1-20260918T083102Z.json
+    artefakt_sha256: 22a4526f08b0326c0123918dbcf3cbb1730388e33de95fdf32f4b1fe01bc795f
     notat: >-
-      SUITEN KJØRER.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 21 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet i `m18_fasit.py` gir hver av onboardingregisterets tre
