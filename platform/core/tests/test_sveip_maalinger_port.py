@@ -318,4 +318,4 @@ def test_tenantkilden_kan_vaere_flere_tabeller():
     assert flere, "ingen modul har flere tenantkilder — testen måler ingenting"
     kilde = (Path(__file__).resolve().parents[3]
              / "deploy/staging/sveip-feilinjisering.py").read_text(encoding="utf-8")
-    assert "UNION" in kilde and "isinstance(kilder, str)" in kilde
+    assert "UNION" in kilde and "isinstance(kilde, str)" in kilde
