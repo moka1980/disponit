@@ -5,17 +5,19 @@
     "kandidat_feilet": false
   },
   "identiteter": {
-    "avbrutt_fil": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3/platform/drift/adressesveip.py",
-    "avbrutt_pid": 2939111,
-    "kandidat_fil": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3/platform/drift/adressesveip.py",
-    "kandidat_pid": 2939115,
+    "avbrutt_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/adressesveip.py",
+    "avbrutt_pid": 3001929,
+    "kandidat_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/adressesveip.py",
+    "kandidat_pid": 3001933,
     "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/adressesveip.py",
-    "rullback_pid": 2939113
+    "rullback_pid": 3001931
   },
   "krav_id": "m19-rollback-v1",
   "maalt": {
     "arbeidernokkel_fri": true,
     "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
     "inflight_backend_avsluttet": true,
     "inflight_backend_levde_etter_drap": true,
     "inflight_blokkerte_paa_laas": true,
@@ -33,12 +35,12 @@
   },
   "oppsett": {
     "arbeidernokkel": 619204773,
-    "avbrutt_backend_pid": 2939112,
-    "bevisrot_sha256": "063e1125fa71a546fea1452e6e390e739443c0833e44dac03ae61adda718586a",
-    "drillet_digest": "438965b87970a1fd651fb28163a0b4e508731209fc768e72097b649117f11f6c",
-    "drillet_katalog": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3",
-    "drillet_kjernedigest": "94aeea4eb87fa791c0899eb8cf4f6d66a8f275bff50f69a6885bef9d1b2fb9b5",
-    "drillet_release": "0ea900480ab9e4063e5e4aecc62ae8527c736da3",
+    "avbrutt_backend_pid": 3001930,
+    "bevisrot_sha256": "22f193e3fddcc517792efcb43052e4e09c651d01a757d760ad5207f347dd97a0",
+    "drillet_digest": "85912a5c5076a48f3b6de449dbdb4750fbd6076d4e5b90991833548415fe7fa2",
+    "drillet_katalog": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02",
+    "drillet_kjernedigest": "67d7622e6deadff04b273d85caa31c8915bd4bd50fb14026361002f94a4a76fc",
+    "drillet_release": "ffd8cb3b4c191c75d1953034273bd2e039080f02",
     "forgjenger_digest": "e401420ee4f330488b8ea676c08f75248e3051e3895b87bc04c7081abfb186a8",
     "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
     "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
@@ -48,12 +50,12 @@
     "maalerolle": "disponit_adresse_eier",
     "miljo": "staging",
     "modul": "m19_adresse",
-    "runde": "5201d425",
+    "runde": "672ed71d",
     "tenanter": [
-      "t-m19fasit-med_krav-5201d425",
-      "t-m19fasit-uten_krav-5201d425"
+      "t-m19fasit-med_krav-672ed71d",
+      "t-m19fasit-uten_krav-672ed71d"
     ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-18T00:50:45.223627+00:00"
+  "ts": "2026-09-18T01:48:05.516431+00:00"
 }

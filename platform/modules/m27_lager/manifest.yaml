@@ -97,8 +97,8 @@ staging_sjekkliste:
       - maalt.subjekter
       - maalt.sveip1_nye
       - maalt.sveip2_nye
-    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T010717Z.json
-    artefakt_sha256: 6936455ceeb19976f47bd809cda91215c75a2bef3386775efea9ace2a42955b2
+    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T014556Z.json
+    artefakt_sha256: b1174c16dbc9819caffcef9cba9e3416f535cd8733a38475d809873ed6f0092f
     notat: >-
       Runde 3943fa2e: 6 varer, 0 funnavvik. Første sveip ga 5 nye funn —
       også den rene varen, som fødes med sin siste bevegelse 200 døgn
@@ -116,8 +116,8 @@ staging_sjekkliste:
       - maalt.evidens_totalt
       - maalt.evidens_uten_aktor
       - maalt.evidens_delte_input_hash
-    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T010717Z.json
-    artefakt_sha256: 6936455ceeb19976f47bd809cda91215c75a2bef3386775efea9ace2a42955b2
+    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T014556Z.json
+    artefakt_sha256: b1174c16dbc9819caffcef9cba9e3416f535cd8733a38475d809873ed6f0092f
     notat: >-
       22 hendelser i kjeden (bestillingspunkt.satt: 5,
       bevegelse.registrert: 7, lagerterskel.satt: 1, telling.registrert:
@@ -177,8 +177,8 @@ staging_sjekkliste:
       - maalt.dubletter
       - maalt.kandidat_nye
       - maalt.release_digest_bundet
-    artefakt: deploy/staging/artefakter/m27-rollback-v1-20260918T010720Z.json
-    artefakt_sha256: 29855dc67be5be0242b1f8705157ecd4b9086d71e5c573ee53da88ada1d4f261
+    artefakt: deploy/staging/artefakter/m27-rollback-v1-20260918T014810Z.json
+    artefakt_sha256: 94190b5830c37db9612c8f26c12e025bbb96dcc26b0c1870db6b0fe3f8b3e6b0
     notat: >-
       Drillet 7bc276eb ← forgjenger 5f57464a (ulike kjernedigester;
       modulens egne filer er like, som de skal være i kjerneformen). Den

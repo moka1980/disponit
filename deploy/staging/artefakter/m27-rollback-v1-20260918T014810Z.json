@@ -5,17 +5,19 @@
     "kandidat_feilet": false
   },
   "identiteter": {
-    "avbrutt_fil": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec/platform/drift/lagersveip.py",
-    "avbrutt_pid": 2965598,
-    "kandidat_fil": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec/platform/drift/lagersveip.py",
-    "kandidat_pid": 2965611,
+    "avbrutt_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/lagersveip.py",
+    "avbrutt_pid": 3002002,
+    "kandidat_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/lagersveip.py",
+    "kandidat_pid": 3002006,
     "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/lagersveip.py",
-    "rullback_pid": 2965605
+    "rullback_pid": 3002004
   },
   "krav_id": "m27-rollback-v1",
   "maalt": {
     "arbeidernokkel_fri": true,
     "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
     "inflight_backend_avsluttet": true,
     "inflight_backend_levde_etter_drap": true,
     "inflight_blokkerte_paa_laas": true,
@@ -33,12 +35,12 @@
   },
   "oppsett": {
     "arbeidernokkel": 927446180,
-    "avbrutt_backend_pid": 2965599,
-    "bevisrot_sha256": "063e1125fa71a546fea1452e6e390e739443c0833e44dac03ae61adda718586a",
+    "avbrutt_backend_pid": 3002003,
+    "bevisrot_sha256": "f6599a86612ab6ad6c04a8247be4d45a257c136ab8c14ff79fe073737ea1ac21",
     "drillet_digest": "5f3d2c33aa1eaf7f8ae361fc4caa96a64d85be1d6a87f8a4c6672cd5214fc6be",
-    "drillet_katalog": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec",
-    "drillet_kjernedigest": "dcda9bafe3ed474ae3855ce50bc20048ceb3c509f040389154a97005c04c7eac",
-    "drillet_release": "7bc276eb68b14ef765de13e12330a581931969ec",
+    "drillet_katalog": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02",
+    "drillet_kjernedigest": "67d7622e6deadff04b273d85caa31c8915bd4bd50fb14026361002f94a4a76fc",
+    "drillet_release": "ffd8cb3b4c191c75d1953034273bd2e039080f02",
     "forgjenger_digest": "5f3d2c33aa1eaf7f8ae361fc4caa96a64d85be1d6a87f8a4c6672cd5214fc6be",
     "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
     "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
@@ -48,12 +50,12 @@
     "maalerolle": "disponit_beholdning_eier",
     "miljo": "staging",
     "modul": "m27_lager",
-    "runde": "c4e91b4b",
+    "runde": "b7004c4b",
     "tenanter": [
-      "t-m27fasit-med_terskel-c4e91b4b",
-      "t-m27fasit-uten_terskel-c4e91b4b"
+      "t-m27fasit-med_terskel-b7004c4b",
+      "t-m27fasit-uten_terskel-b7004c4b"
     ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-18T01:07:20.070945+00:00"
+  "ts": "2026-09-18T01:48:10.302269+00:00"
 }
