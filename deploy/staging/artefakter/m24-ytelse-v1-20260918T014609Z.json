@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m24-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0176,
+      0.0183,
+      0.017
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 5
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 5
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 5
+      }
+    ],
+    "sekunder": 0.0183,
+    "sekunder_per_tenant": 0.0037,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m24_leverandor",
+    "sveip": "leverandorsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:46:09.529185+00:00"
+}

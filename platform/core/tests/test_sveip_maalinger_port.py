@@ -198,7 +198,7 @@ def _rbart(**over):
             "drillet_kjernedigest": "c" * 64,
             "forgjenger_kjernedigest": "d" * 64,
             "arbeidernokkel": 619204773, "avbrutt_backend_pid": 4242,
-            "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(),
+            "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(MODUL),
             "form": "kjerne"},
         "identiteter": {
             "avbrutt_pid": 11, "rullback_pid": 12, "kandidat_pid": 13,
@@ -207,7 +207,8 @@ def _rbart(**over):
             "kandidat_fil": "/opt/disponit/releases/aa11/platform/drift/adressesveip.py"},
         "maalt": {
             "inflight_drept": True, "inflight_returkode": -9,
-            "inflight_blokkerte_paa_laas": True, "inflight_funn": 0,
+            "inflight_blokkerte_paa_laas": True,
+            "for_rader": 1, "for_apne": 1, "inflight_funn": 0,
             "inflight_backend_levde_etter_drap": True,
             "inflight_backend_avsluttet": True,
             "arbeidernokkel_fri": True,

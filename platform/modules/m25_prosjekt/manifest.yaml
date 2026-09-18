@@ -86,8 +86,8 @@ staging_sjekkliste:
       - maalt.subjekter
       - maalt.sveip1_nye
       - maalt.sveip2_nye
-    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T010731Z.json
-    artefakt_sha256: e5df7e543a3f0ac0659da72f14c42656cdf0b5d364cb735485ae2f6f5b0051c5
+    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T014554Z.json
+    artefakt_sha256: c989dabd139ca0b0f7a9e46c428e3c403787e21d7a7d98e158c399de458929e5
     notat: >-
       Runde 1660b91f: 6 prosjekter, 0 funnavvik. Første sveip ga
       6 nye funn — også det rene prosjektet, som fødes uten arbeid og
@@ -103,8 +103,8 @@ staging_sjekkliste:
       - maalt.evidens_totalt
       - maalt.evidens_uten_aktor
       - maalt.evidens_delte_input_hash
-    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T010731Z.json
-    artefakt_sha256: e5df7e543a3f0ac0659da72f14c42656cdf0b5d364cb735485ae2f6f5b0051c5
+    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T014554Z.json
+    artefakt_sha256: c989dabd139ca0b0f7a9e46c428e3c403787e21d7a7d98e158c399de458929e5
     notat: >-
       17 hendelser i kjeden (arbeid.registrert: 5, betalingsplan.satt: 5, prosjekt.registrert: 6, terskler.satt: 1), 0 uten
       aktør, 0 som deler input_hash med en annen.
@@ -162,8 +162,8 @@ staging_sjekkliste:
       - maalt.dubletter
       - maalt.kandidat_nye
       - maalt.release_digest_bundet
-    artefakt: deploy/staging/artefakter/m25-rollback-v1-20260918T010733Z.json
-    artefakt_sha256: 22ff5230944dbec4cf9f9b8a96691910bd80bbf26e5d1971daca546e3cb29244
+    artefakt: deploy/staging/artefakter/m25-rollback-v1-20260918T014808Z.json
+    artefakt_sha256: d127517e1b2f21e1d44a9c06f998e688ba11d44faf73164deb0338e562a5f460
     notat: >-
       Drillet 7bc276eb ← forgjenger 5f57464a (ulike kjernedigester;
       modulens egne filer er like, som de skal være i kjerneformen). Den

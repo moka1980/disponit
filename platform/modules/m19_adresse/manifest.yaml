@@ -179,8 +179,8 @@ staging_sjekkliste:
       - maalt.dubletter
       - maalt.kandidat_nye
       - maalt.release_digest_bundet
-    artefakt: deploy/staging/artefakter/m19-rollback-v1-20260918T005045Z.json
-    artefakt_sha256: 96f6d8d1375062c59a2f9d307c51ccaed73b08107392c6852f6775a796884ed6
+    artefakt: deploy/staging/artefakter/m19-rollback-v1-20260918T014805Z.json
+    artefakt_sha256: 9085b0995508ff73963dbf7cbf3a36aad9f79daf768e3e5ef4b9c4c3a74023a3
     notat: >-
       Drillet 0ea90048 ← forgjenger 5f57464a (ulike kjernedigester).
       Den drepte kjøringen skrev 0 funn, og arbeidernøkkelen ble fri —

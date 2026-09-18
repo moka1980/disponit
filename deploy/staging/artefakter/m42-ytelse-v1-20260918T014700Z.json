@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m42-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0169,
+      0.0202,
+      0.0331
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 16,
+        "tenanter": 7
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 16,
+        "tenanter": 7
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 16,
+        "tenanter": 7
+      }
+    ],
+    "sekunder": 0.0331,
+    "sekunder_per_tenant": 0.0047,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m42_kontovakt",
+    "sveip": "kontovaktsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:47:00.812587+00:00"
+}

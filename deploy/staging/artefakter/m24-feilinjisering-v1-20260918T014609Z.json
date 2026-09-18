@@ -1,0 +1,80 @@
+{
+  "bestatt": true,
+  "krav_id": "m24-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 17,
+    "apne_for": 17,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "avtale_uten_maling": [
+        4,
+        2
+      ],
+      "avtale_utlopt": [
+        3,
+        0
+      ],
+      "ingen_terskel": [
+        3,
+        0
+      ],
+      "pris_over_terskel": [
+        3,
+        0
+      ],
+      "sla_brudd": [
+        4,
+        0
+      ]
+    },
+    "per_type_for": {
+      "avtale_uten_maling": [
+        4,
+        2
+      ],
+      "avtale_utlopt": [
+        3,
+        0
+      ],
+      "ingen_terskel": [
+        3,
+        0
+      ],
+      "pris_over_terskel": [
+        3,
+        0
+      ],
+      "sla_brudd": [
+        4,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "25d7d89ad3b46ad0aa67ac4ff2910a19a92502ecb398c703884c59ffde5af9e5",
+    "funntabell": "leverandorfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m24_sveip_leverandorer(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_leverandor_eier",
+    "modul": "m24_leverandor",
+    "riggmodul": "m24_fasit",
+    "riggtenanter": [
+      "t-m24fasit-med_terskel-1f530396",
+      "t-m24fasit-uten_terskel-1f530396"
+    ],
+    "runde": "1f530396",
+    "sveipedor": "m24_sveip_leverandorer(int)",
+    "tenantkilde": "leveranseavtale",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:46:09.933372+00:00"
+}

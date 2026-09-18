@@ -21,7 +21,7 @@
           "under_bestillingspunkt"
         ],
         "merke": "under_punkt",
-        "subjekt_id": "760fa47c-9397-48c6-9569-457083c07e1e",
+        "subjekt_id": "6ad5fc75-eb46-4489-b0ac-99e7ecbbcae1",
         "ventet": "under_bestillingspunkt"
       },
       {
@@ -29,7 +29,7 @@
           "uten_bevegelse"
         ],
         "merke": "stille",
-        "subjekt_id": "39267a8d-3ead-4b6f-be37-20deb5af46ff",
+        "subjekt_id": "647ec7b6-03b8-4408-b387-7a5d0985986b",
         "ventet": "uten_bevegelse"
       },
       {
@@ -37,19 +37,19 @@
           "ikke_talt"
         ],
         "merke": "utalt",
-        "subjekt_id": "132f0fa9-cb8a-4df7-82fd-952efdc3739c",
+        "subjekt_id": "af9c8561-c46b-415b-a02a-feeeac93d6b6",
         "ventet": "ikke_talt"
       },
       {
         "fikk": [],
         "merke": "uten_punkt_ny",
-        "subjekt_id": "5d233363-9d97-4091-bec5-e852817f1849",
+        "subjekt_id": "8d1ad9fc-4a2f-4115-95cd-78acbfe971fd",
         "ventet": null
       },
       {
         "fikk": [],
         "merke": "ren",
-        "subjekt_id": "af0aafee-32d2-49f8-be64-21f9068d2621",
+        "subjekt_id": "5614cffd-792b-4bc4-afe4-cca2e5e34e43",
         "ventet": null
       },
       {
@@ -57,30 +57,30 @@
           "ingen_terskel"
         ],
         "merke": "ingen_terskel",
-        "subjekt_id": "6f26f2e8-e8a7-4f13-8ea9-933d31f57a9b",
+        "subjekt_id": "3735d425-49e6-4266-974e-4237f1ad0f10",
         "ventet": "ingen_terskel"
       }
     ],
     "rent_funn_for_kontroll": 1,
     "subjekter": 6,
     "sveip1_nye": 5,
-    "sveip1_tenanter": 9,
+    "sveip1_tenanter": 15,
     "sveip2_lukkede": 1,
     "sveip2_nye": 0,
-    "sveip2_oppdaterte": 17
+    "sveip2_oppdaterte": 31
   },
   "oppsett": {
-    "bevisrot_sha256": "8cbbe37e1bb3c87df3a353cf6ad55e11c2f31b312ec7968470b33db3692cdc1a",
+    "bevisrot_sha256": "86fae6d67663612e27a99107e94f53bfe8d28c5d11b960fc65e36b15e106c514",
     "evidenskilde": "m27_lager",
     "modul": "m27_lager",
     "riggmodul": "m27_fasit",
-    "runde": "3943fa2e",
-    "sett_sha256": "5cffc84803fd4360f08a61465b047fbaac34992b9d503b700625c9d3edd95d5a",
+    "runde": "f57dbe98",
+    "sett_sha256": "b6e1ca0f4cbbe1ce6f30f126cd8ba279d440790c598d66a2503142ae6176a263",
     "tenanter": [
-      "t-m27fasit-med_terskel-3943fa2e",
-      "t-m27fasit-uten_terskel-3943fa2e"
+      "t-m27fasit-med_terskel-f57dbe98",
+      "t-m27fasit-uten_terskel-f57dbe98"
     ],
     "vert": "disponit.com"
   },
-  "ts": "2026-09-18T01:07:17.268487+00:00"
+  "ts": "2026-09-18T01:45:56.301059+00:00"
 }

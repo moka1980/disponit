@@ -5401,15 +5401,57 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m25_prosjekt",
                          "platform/drift/prosjektsveip.py"),
     },
+    "m24_leverandor": {
+        "modul_fil": "leverandorsveip",
+        "funntabell": "leverandorfunn",
+        "subjektkolonne": "avtale_id",
+        "tenantkilde": "leveranseavtale",
+        "maalerolle": "disponit_leverandor_eier",
+        "sveipedor": "m24_sveip_leverandorer(int)",
+        "dsn_variabel": "DISPONIT_LEVERANDORSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m24-fasit-v1",
+        "feilinjisering_krav": "m24-feilinjisering-v1",
+        "ytelse_krav": "m24-ytelse-v1",
+        "rollback_krav": "m24-rollback-v1",
+        "riggmodul": "m24_fasit",
+        "releasefiler": ("platform/modules/m24_leverandor",
+                         "platform/drift/leverandorsveip.py"),
+    },
+    "m42_kontovakt": {
+        "modul_fil": "kontovaktsveip",
+        "funntabell": "kontofunn",
+        "subjektkolonne": "mottaker_id",
+        "tenantkilde": "betalingsmottaker",
+        "maalerolle": "disponit_kontovakt_eier",
+        "sveipedor": "m42_sveip_konto(int)",
+        "dsn_variabel": "DISPONIT_KONTOVAKTSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m42-fasit-v1",
+        "feilinjisering_krav": "m42-feilinjisering-v1",
+        "ytelse_krav": "m42-ytelse-v1",
+        "rollback_krav": "m42-rollback-v1",
+        "riggmodul": "m42_fasit",
+        "releasefiler": ("platform/modules/m42_kontovakt",
+                         "platform/drift/kontovaktsveip.py"),
+    },
 }
 
 #: Produsentflatene for de to generiske sveipmålingene.
 SVEIP_FEILINJISERING_BEVISROT = ("deploy/staging/sveip-feilinjisering.py",)
-SVEIP_ROLLBACK_BEVISROT = ("deploy/staging/rollback-sveipkjerne.py",)
+#: DET DELTE MASKINERIET ER EN DEL AV RIGGEN. `sveipfasit_felles` bærer
+#: både kontekstsettingen riggene bruker og dommen fasiten re-regner —
+#: en endring der ville flyttet målingen uten å røre en eneste riggfil.
+SVEIPFASIT_FELLES = "deploy/staging/sveipfasit_felles.py"
+SVEIP_ROLLBACK_BEVISROT = ("deploy/staging/rollback-sveipkjerne.py",
+                           SVEIPFASIT_FELLES)
 #: Fasitens bevisrot er PRODUSENTEN OG SETTET. Settet alene ville latt
 #: produsenten endres uten at noe falt; produsenten alene ville latt
 #: settet byttes ut under føttene på dommen.
-SVEIP_FASIT_BEVISROT = ("deploy/staging/sveip-fasit-artefakt.py",)
+SVEIP_FASIT_BEVISROT = ("deploy/staging/sveip-fasit-artefakt.py",
+                        SVEIPFASIT_FELLES)
 SVEIP_YTELSE_BEVISROT = ("deploy/staging/sveip-ytelse.py",)
 
 
@@ -5421,9 +5463,17 @@ def sveip_feilinjisering_bevisrot_sha256() -> str:
     return h.hexdigest()
 
 
-def sveip_rollback_bevisrot_sha256() -> str:
+def sveip_rollback_bevisrot_sha256(modul_id: str) -> str:
+    """Drillens bevisrot er PRODUSENTEN OG RIGGEN.
+
+    `min_rullbakk_funn` er kalibrert mot riggens sett: en rigg som lagde
+    like mange, men ANDRE subjekter, ville passert med samme tall og målt
+    noe annet. Feilinjiseringens bevisrot trenger IKKE riggen — dens
+    påstand, at registeret sto urørt, er uavhengig av hvilke subjekter
+    som står der."""
     h = hashlib.sha256()
-    for rel in SVEIP_ROLLBACK_BEVISROT:
+    for rel in SVEIP_ROLLBACK_BEVISROT + (
+            f"deploy/staging/{SVEIPMODULER[modul_id]['riggmodul']}.py",):
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
@@ -5728,9 +5778,11 @@ def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
         feil.append("oppsett.bevisrot_sha256 mangler")
     else:
         try:
-            if sha != sveip_rollback_bevisrot_sha256():
-                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes")
-        except OSError as e:
+            if sha != sveip_rollback_bevisrot_sha256(grense["modul"]):
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes"
+                            " — kjøringen brukte en annen produsentflate"
+                            " eller en annen rigg")
+        except (OSError, KeyError) as e:
             feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
     # TO ULIKE KATALOGER, TO ULIKE KJERNER. Det er kjernen som rulles;
     # modulens egne filer står som oftest stille gjennom en rulling, og
@@ -5764,7 +5816,8 @@ def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
     if melding:
         feil.append(melding)
     elif antall != 0:
-        feil.append(f"inflight_funn={antall} — en drept sveip skrev funn")
+        feil.append(f"inflight_funn={antall} — en drept sveip la til"
+                    " funnrader")
     # ARBEIDERNØKKELEN MÅ SLIPPE. Blir den hengende etter en drept
     # kjøring, er sveipen stengt ute av seg selv til sesjonen ryddes.
     if m.get("arbeidernokkel_fri") is not True:
@@ -6020,6 +6073,22 @@ registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=15,
 registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)
 
+#: M-42s grenser. Seks mottakere, og ALLE fire funntypene nåbare: begge
+#: tidsmålingene leser datoparametre. Gulvet for første sveip er lavt med
+#: vilje — døra skriver `kontoendring` SELV, så det funnet finnes allerede
+#: når sveipen kjører, og teller ikke som nytt.
+registrer_fasitgrense("m42_kontovakt", min_subjekter=6, min_evidens=15,
+                      tenantprefiks="t-m42fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m42_kontovakt", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=3)
+
+#: M-24s grenser. Seks avtaler, alle fem funntypene nåbare — dørene tar
+#: datoer, så både SLA, pris, utløp og stillhet kan rigges.
+registrer_fasitgrense("m24_leverandor", min_subjekter=6, min_evidens=15,
+                      tenantprefiks="t-m24fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m24_leverandor", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=5)
+
 registrer_suitegrense("m19_adresse", "m19",
                       ("platform/core/tests/test_m19_adresse.py",),
                       min_tester=3000, min_andel_tester=30)
@@ -6034,6 +6103,16 @@ registrer_suitegrense("m27_lager", "m27",
 registrer_suitegrense("m25_prosjekt", "m25",
                       ("platform/core/tests/test_m25_prosjekt.py",),
                       min_tester=3000, min_andel_tester=24)
+
+#: M-24s andel. Gulvet er MÅLT: 43 tester i modulens egen fil (18/9).
+registrer_suitegrense("m24_leverandor", "m24",
+                      ("platform/core/tests/test_m24_leverandor.py",),
+                      min_tester=3000, min_andel_tester=38)
+
+#: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+registrer_suitegrense("m42_kontovakt", "m42",
+                      ("platform/core/tests/test_m42_kontovakt.py",),
+                      min_tester=3000, min_andel_tester=22)
 
 
 def _grenser_m14_suite(grense: dict, art: dict) -> list[str]:

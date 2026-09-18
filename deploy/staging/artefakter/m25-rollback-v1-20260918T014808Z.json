@@ -5,17 +5,19 @@
     "kandidat_feilet": false
   },
   "identiteter": {
-    "avbrutt_fil": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec/platform/drift/prosjektsveip.py",
-    "avbrutt_pid": 2967661,
-    "kandidat_fil": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec/platform/drift/prosjektsveip.py",
-    "kandidat_pid": 2967674,
+    "avbrutt_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/prosjektsveip.py",
+    "avbrutt_pid": 3001977,
+    "kandidat_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/prosjektsveip.py",
+    "kandidat_pid": 3001982,
     "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/prosjektsveip.py",
-    "rullback_pid": 2967667
+    "rullback_pid": 3001980
   },
   "krav_id": "m25-rollback-v1",
   "maalt": {
     "arbeidernokkel_fri": true,
     "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
     "inflight_backend_avsluttet": true,
     "inflight_backend_levde_etter_drap": true,
     "inflight_blokkerte_paa_laas": true,
@@ -33,12 +35,12 @@
   },
   "oppsett": {
     "arbeidernokkel": 884310565,
-    "avbrutt_backend_pid": 2967663,
-    "bevisrot_sha256": "063e1125fa71a546fea1452e6e390e739443c0833e44dac03ae61adda718586a",
+    "avbrutt_backend_pid": 3001978,
+    "bevisrot_sha256": "b37f9546715bbd54fc71f1430b87b1ef72b6020d6879dfe4253048fad366f31f",
     "drillet_digest": "160c075b36b218fe25d26f681655c90012c2f8bf282dd666b5c895c2b9bacb08",
-    "drillet_katalog": "/opt/disponit/releases/7bc276eb68b14ef765de13e12330a581931969ec",
-    "drillet_kjernedigest": "dcda9bafe3ed474ae3855ce50bc20048ceb3c509f040389154a97005c04c7eac",
-    "drillet_release": "7bc276eb68b14ef765de13e12330a581931969ec",
+    "drillet_katalog": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02",
+    "drillet_kjernedigest": "67d7622e6deadff04b273d85caa31c8915bd4bd50fb14026361002f94a4a76fc",
+    "drillet_release": "ffd8cb3b4c191c75d1953034273bd2e039080f02",
     "forgjenger_digest": "160c075b36b218fe25d26f681655c90012c2f8bf282dd666b5c895c2b9bacb08",
     "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
     "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
@@ -48,12 +50,12 @@
     "maalerolle": "disponit_prosjekt_eier",
     "miljo": "staging",
     "modul": "m25_prosjekt",
-    "runde": "746ee17c",
+    "runde": "dbf7bdfc",
     "tenanter": [
-      "t-m25fasit-med_terskel-746ee17c",
-      "t-m25fasit-uten_terskel-746ee17c"
+      "t-m25fasit-med_terskel-dbf7bdfc",
+      "t-m25fasit-uten_terskel-dbf7bdfc"
     ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-18T01:07:33.792395+00:00"
+  "ts": "2026-09-18T01:48:08.806704+00:00"
 }

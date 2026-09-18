@@ -181,6 +181,8 @@
         "inflight_blokkerte_paa_laas",
         "inflight_backend_levde_etter_drap",
         "inflight_backend_avsluttet",
+        "for_rader",
+        "for_apne",
         "inflight_funn",
         "arbeidernokkel_fri",
         "rullbakk_funn",
@@ -246,6 +248,14 @@
         },
         "inflight_backend_avsluttet": {
           "type": "boolean"
+        },
+        "for_rader": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "for_apne": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

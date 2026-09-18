@@ -20,7 +20,7 @@
           "milepael_over_frist"
         ],
         "merke": "forsinket",
-        "subjekt_id": "c2f6e5b1-a249-4ebb-a4e4-a972bf831085",
+        "subjekt_id": "4da31308-7a16-4176-a226-341a6d4ac467",
         "ventet": "milepael_over_frist"
       },
       {
@@ -28,7 +28,7 @@
           "budsjett_overskredet"
         ],
         "merke": "over_budsjett",
-        "subjekt_id": "709aa5d6-b2a3-487b-ae05-84e4cbc4e36b",
+        "subjekt_id": "84b842a8-fd9e-46aa-ba78-4f7d8466bf65",
         "ventet": "budsjett_overskredet"
       },
       {
@@ -36,7 +36,7 @@
           "betalingsplan_mangler"
         ],
         "merke": "uten_plan",
-        "subjekt_id": "6827c11a-4a3c-4fae-8243-adb54592f54a",
+        "subjekt_id": "0d811826-df2f-4b0c-8818-ba3a4fe9eae4",
         "ventet": "betalingsplan_mangler"
       },
       {
@@ -44,13 +44,13 @@
           "ingen_arbeid_registrert"
         ],
         "merke": "stille",
-        "subjekt_id": "b7b317c1-df16-45a7-b6ec-a513c6f06845",
+        "subjekt_id": "6956a766-13a8-4aa5-8d58-996e0a287b90",
         "ventet": "ingen_arbeid_registrert"
       },
       {
         "fikk": [],
         "merke": "rent",
-        "subjekt_id": "91259f0d-50c1-466d-87f9-95de22d282e6",
+        "subjekt_id": "88746ecb-7bc0-4a12-a023-0a0ef387d1bf",
         "ventet": null
       },
       {
@@ -58,30 +58,30 @@
           "ingen_terskel"
         ],
         "merke": "ingen_terskel",
-        "subjekt_id": "25222024-e989-40bf-b82f-234e01bc3d34",
+        "subjekt_id": "9bd68a35-2a0c-4ca2-aea5-86489529a0a9",
         "ventet": "ingen_terskel"
       }
     ],
     "rent_funn_for_kontroll": 1,
     "subjekter": 6,
     "sveip1_nye": 6,
-    "sveip1_tenanter": 7,
+    "sveip1_tenanter": 13,
     "sveip2_lukkede": 1,
     "sveip2_nye": 0,
-    "sveip2_oppdaterte": 15
+    "sveip2_oppdaterte": 32
   },
   "oppsett": {
-    "bevisrot_sha256": "3d42a26a7ade43d66e77c70c68644307e6dca43316719ed1fd36d26589d55dfa",
+    "bevisrot_sha256": "f0569e1f11be80233e0025a909fa1d2a545c533f4d0cb481c767229354c4743c",
     "evidenskilde": "m25_prosjekt",
     "modul": "m25_prosjekt",
     "riggmodul": "m25_fasit",
-    "runde": "1660b91f",
-    "sett_sha256": "666ad5b0e60093fdba68cacb10d8c5a7cceef6a8dbf4c0fb9b401ffef8da6023",
+    "runde": "30d6bdae",
+    "sett_sha256": "8e14687825151edeff8ffb6eeacd9486bb550c6d375fdb8bf4781ebe8da5251a",
     "tenanter": [
-      "t-m25fasit-med_terskel-1660b91f",
-      "t-m25fasit-uten_terskel-1660b91f"
+      "t-m25fasit-med_terskel-30d6bdae",
+      "t-m25fasit-uten_terskel-30d6bdae"
     ],
     "vert": "disponit.com"
   },
-  "ts": "2026-09-18T01:07:31.585827+00:00"
+  "ts": "2026-09-18T01:45:54.084701+00:00"
 }
