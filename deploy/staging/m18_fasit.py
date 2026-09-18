@@ -105,6 +105,10 @@ def _bruker(mg, tenant: str, merke: str) -> str:
     M-18-handling, og modulen leser det bare. Riggen skriver derfor i en
     ANNEN tabell enn den modulen måles på — registeret selv røres kun
     gjennom dørene."""
+    # TENANTKONTEKST FØRST: `brukermedlemskap` har RLS, også mot
+    # migratoren. Uten konteksten avviser policyen raden — og feilen sier
+    # «insufficient privilege», ikke «du glemte konteksten».
+    felles.sett_kontekst(mg, tenant, AKTOR, "m18-fasit")
     rad = mg.execute(
         "INSERT INTO brukeridentitet (issuer, sub) VALUES ('https://fasit', %s)"
         " ON CONFLICT (issuer, sub) DO UPDATE SET sub = EXCLUDED.sub"
@@ -120,6 +124,7 @@ def _bruker(mg, tenant: str, merke: str) -> str:
 
 
 def _deaktiver(mg, tenant: str, bruker_id: str) -> None:
+    felles.sett_kontekst(mg, tenant, AKTOR, "m18-fasit")
     mg.execute("UPDATE brukermedlemskap SET aktiv = false"
                " WHERE tenant=%s AND bruker_id=%s", (tenant, bruker_id))
     mg.commit()

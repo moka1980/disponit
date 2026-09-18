@@ -77,8 +77,20 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "tenantkilde": {
-          "type": "string",
-          "minLength": 1
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
         },
         "maalerolle": {
           "type": "string",
