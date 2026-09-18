@@ -41,12 +41,20 @@
 # «ble DENNE adressen kontrollert, av hvem, hvordan». De to er ikke to
 # syn på samme måling.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# SERTIFISERT 17/9: seks av seks punkter målt på disponit.com. Suiten
+# og fasiten kom først (#557, #559, #560); feilinjiseringen, ytelsen og
+# rollbacken er målt med de GENERISKE sveipprodusentene, som M-19 er
+# første modul på.
+#
+# ROLLBACKEN GÅR I KJERNEFORMEN. Modulen har ingen egen release og
+# ruller med kjernen, så en rollback bytter ikke modulens filer — den
+# bytter kjernen sveipen kjører inni. Drillen måler derfor registerets
+# tilstand over rullingen, ikke modulbytene.
 id: m19_adresse
 navn: Adressevalideringsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m19-v1` bærer invarianten
 # `valideringskrav_hardkodet` — hva som teller som kontrollert, og hvor
 # lenge en kontroll er gyldig, er tenantens tall.
@@ -91,10 +99,10 @@ staging_sjekkliste:
       - maalt.subjekter
       - maalt.sveip1_nye
       - maalt.sveip2_nye
-    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T224653Z.json
-    artefakt_sha256: 04e4676dca5c47b068416d0a793b6986d42e36ba66eb99175325c43c3dee19dc
+    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T233441Z.json
+    artefakt_sha256: b668403f976f4f3f1e6859dfb07a723ca1a3707f1aa6885d160ad25819933b5d
     notat: >-
-      Runde 9a5defa6: 6 subjekter, 0 funnavvik. Første sveip ga
+      Runde 575fda32: 6 subjekter, 0 funnavvik. Første sveip ga
       6 nye funn (også det rene subjektet, som fødes ukontrollert);
       kontrollen kom mellom kjøringene, og andre sveip ga 0 nye og
       lukket 1. Dommen re-regnes av per-subjekt-tabellen.
@@ -109,21 +117,76 @@ staging_sjekkliste:
       - maalt.evidens_totalt
       - maalt.evidens_uten_aktor
       - maalt.evidens_delte_input_hash
-    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T224653Z.json
-    artefakt_sha256: 04e4676dca5c47b068416d0a793b6986d42e36ba66eb99175325c43c3dee19dc
+    artefakt: deploy/staging/artefakter/m19-fasit-v1-20260917T233441Z.json
+    artefakt_sha256: b668403f976f4f3f1e6859dfb07a723ca1a3707f1aa6885d160ad25819933b5d
     notat: >-
       17 hendelser i kjeden (adresse_registrert: 6, adressekontroll_registrert: 4, adressekrav_satt: 1, adressesubjekt_opprettet: 6),
       0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 17/9 PÅ disponit.com med den GENERISKE sveipprodusenten.
+    # Feilen kommer UTENFRA: kjøringen får runtime-tilkoblingen, som 112
+    # eksplisitt har revokert EXECUTE på sveipedøra fra. Det er den ekte
+    # funksjonen som kalles og den ekte feilveien som tas — en injeksjon
+    # som krever en bryter inne i modulen, måler bryteren.
+    status: ja
+    krav_id: m19-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m19-feilinjisering-v1-20260917T234416Z.json
+    artefakt_sha256: 19a1009f92f95a88a3064264223515d62070a39f580f0f8773a248dde0b9763e
     notat: >-
-      KREVER: adressesveipen bygget, og at en feil i den ikke lar en
-      ukontrollert adresse se kontrollert ut.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 40 åpne og 3 lukkede over 15 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
+      Injeksjonen har egen positiv kontroll: basen bekrefter at rollen
+      faktisk mangler EXECUTE. Målingen rigger sitt eget register først,
+      gjennom modulens fasitdriver: et tomt register står stille uansett
+      hva kjøringen gjorde.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 17/9 PÅ disponit.com: veggklokke rundt modulens egen `kjor()`,
+    # ikke rundt SQL-funksjonen alene — advisory-låsen,
+    # kontraktvalideringen og committen er en del av kostnaden.
+    status: ja
+    krav_id: m19-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m19-ytelse-v1-20260917T231531Z.json
+    artefakt_sha256: 445c5986dbee4525d49bafa8728aa5b25a4208a1ad1503abd0d29941d86cef4e
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0155 / 0,0144 / 0,0147 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0155 s mot taket på 60 — 0,0052 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 17/9 PÅ disponit.com med KJERNEFORMEN: M-19 har ingen egen
+    # release og ruller med kjernen, så drillen måler REGISTERETS
+    # tilstand over en rulling av kjernebytene. Avbruddet kommer utenfra:
+    # ACCESS EXCLUSIVE på funntabellen, sveipen blokkerer, prosessen
+    # drepes med SIGKILL midt i skrivingen.
+    status: ja
+    krav_id: m19-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m19-rollback-v1-20260917T233252Z.json
+    artefakt_sha256: bd43fa351609cf31d44b477bb6d4948b766b66e917112afaf52e3a2cc48c5de0
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 2a8d9460 ← forgjenger 5f57464a (ulike kjernedigester;
+      modulens egne filer er like, som de skal være i kjerneformen).
+      Den drepte kjøringen skrev 0 funn, og arbeidernøkkelen ble fri —
+      men FØRST etter at den foreldreløse økten ble avsluttet: en backend
+      som venter på lås merker ikke at klienten er borte, og ville
+      committet hele sveipen så snart låsen slapp. Forgjengerens bytes
+      skrev de 6 funnene uten dubletter, og de drillede bytene fant 0
+      nye.

@@ -103,7 +103,7 @@ export const MODULSTATUS = {
   // tilbakeholdelsen sterkere — modulen finnes for å sende, og v1
   // sender null.
   41: "bygges",     // m41_betaling: under_utvikling, ikke_i_drift
-  19: "bygges",     // m19_adresse: under_utvikling, ikke_i_drift
+  19: "i_drift",    // m19_adresse: aktiv, produksjon
   39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
   44: "i_drift",    // m44_kampanje: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)

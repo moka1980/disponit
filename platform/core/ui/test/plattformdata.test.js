@@ -91,7 +91,10 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-14 fra 2026-09-17: alle seks punkter ja — fasit, suite, bevisrunde,
     // ytelse og flippedrillen (`m14-rollback-v1`); manifestet flippet til
     // aktiv/produksjon i samme endring.
-    [2, 6, 14, 17, 23, 26, 37, 44, 56, 57], "i_drift-settet fulgte ikke manifestenes driftstilstand");
+    // M-19 fra 2026-09-17 (natt): første modul på de GENERISKE
+    // sveipprodusentene for feilinjisering, ytelse og rollback.
+    [2, 6, 14, 17, 19, 23, 26, 37, 44, 56, 57],
+    "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
 test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {

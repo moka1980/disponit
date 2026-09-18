@@ -3850,6 +3850,15 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
+    if krav_id.endswith("-feilinjisering-v1") and "modul" in grense \
+            and grense["modul"] in SVEIPMODULER:
+        return feil + _grenser_sveip_feilinjisering(grense, art)
+    if krav_id.endswith("-rollback-v1") and "modul" in grense \
+            and grense.get("modul") in SVEIPMODULER:
+        return feil + _grenser_sveip_rollback(grense, art)
+    if krav_id.endswith("-ytelse-v1") and "modul" in grense \
+            and grense.get("modul") in SVEIPMODULER:
+        return feil + _grenser_sveip_ytelse(grense, art)
     if krav_id == "m19-fasit-v1":
         return feil + _grenser_m19_fasit(grense, art)
     if krav_id in SUITE_GRENSER:
@@ -5312,6 +5321,374 @@ def _grenser_generisk_suite(grense: dict, art: dict) -> list[str]:
     return feil
 
 
+#: SVEIPMODULENE på den generiske lesten: hva en sveip heter, hvor
+#: funnene lander, hvilken rolle som IKKE har EXECUTE på døra (feilen
+#: injiseres utenfra, i transporten), og hvilke krav den fyller.
+SVEIPMODULER: dict[str, dict] = {
+    "m19_adresse": {
+        "modul_fil": "adressesveip",
+        "funntabell": "adressefunn",
+        # HVOR TENANTENE KOMMER FRA. Funntabellen har FORCE RLS, også mot
+        # eieren: en telling uten tenantkontekst gir null rader, og null
+        # lik null ser ut som et urørt register. Målingen går derfor
+        # tenant for tenant, over den samme listen sveipen selv bruker.
+        "tenantkilde": "adressesubjekt",
+        # …OG HVEM SOM FÅR SE DEN. Kryss-tenant-autoriteten er snever og
+        # eksplisitt (112): bare subjekttabellen, bare FOR SELECT, bare
+        # til eierrollen, og bare uten tenantkontekst. Migratoren er
+        # medlem av den rollen, så målingen kan ta den på — men den må
+        # TA den; uten rollen ser tabellen tom ut.
+        "maalerolle": "disponit_adresse_eier",
+        "dsn_variabel": "DISPONIT_ADRESSESVEIP_URL",
+        "sveipedor": "m19_sveip_adresser(int)",
+        # RUNTIME-ROLLEN er injeksjonen. 112 REVOKER eksplisitt EXECUTE
+        # på sveipedøra fra `disponit` — flaten skal aldri kunne sveipe.
+        # En kjøring over den tilkoblingen er derfor en EKTE driftsfeil
+        # (feil rolle i enheten), ikke en bryter rigget inne i modulen.
+        # Migratoren duger IKKE til dette: den er medlem av
+        # `disponit_adresse_eier` og arver dermed eierens EXECUTE.
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "feilinjisering_krav": "m19-feilinjisering-v1",
+        "ytelse_krav": "m19-ytelse-v1",
+        "rollback_krav": "m19-rollback-v1",
+        # RIGGEN er modulens egen fasitdriver: den vet hvilke subjekter
+        # som gir funn, og er alt målt mot kjent fasit.
+        "riggmodul": "m19_fasit",
+        # BYTENE SVEIPEN ER. M-19 har ingen egen release og ruller med
+        # kjernen, så digesten binder kjernefilene modulen består av.
+        "releasefiler": ("platform/modules/m19_adresse",
+                         "platform/drift/adressesveip.py"),
+    },
+}
+
+#: Produsentflatene for de to generiske sveipmålingene.
+SVEIP_FEILINJISERING_BEVISROT = ("deploy/staging/sveip-feilinjisering.py",)
+SVEIP_ROLLBACK_BEVISROT = ("deploy/staging/rollback-sveipkjerne.py",)
+SVEIP_YTELSE_BEVISROT = ("deploy/staging/sveip-ytelse.py",)
+
+
+def sveip_feilinjisering_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in SVEIP_FEILINJISERING_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def sveip_rollback_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in SVEIP_ROLLBACK_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+#: BYTENE SOM FAKTISK RULLER. En modul uten egen release bytter ikke
+#: sine egne filer i en rollback — den bytter KJERNEN den kjører inni.
+#: Det er derfor denne digesten som må være ULIK mellom de to
+#: katalogene; modulens egne filer står som oftest stille gjennom en
+#: rulling, og en port som krevde at DE var ulike, ville krevd at
+#: modulen ble endret for at en rollback skulle kunne måles.
+KJERNEBYTENE: tuple[str, ...] = ("platform/core", "platform/drift")
+
+
+def kjerne_digest(rot) -> str:
+    return release_digest(rot, KJERNEBYTENE)
+
+
+def sveipkjerne_digest(rot, modul_id: str) -> str:
+    """Digesten over modulens EGNE filer i en release-katalog."""
+    return release_digest(rot, SVEIPMODULER[modul_id]["releasefiler"])
+
+
+def sveip_ytelse_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in SVEIP_YTELSE_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def registrer_sveipgrenser(modul_id: str, *, maks_sekunder: float,
+                           min_tenanter: int,
+                           min_rullbakk_funn: int) -> None:
+    """Feilinjiserings-, ytelses- og rollbackgrensen for en sveipmodul."""
+    k = SVEIPMODULER[modul_id]
+    KRAVGRENSER[k["feilinjisering_krav"]] = {
+        "modul": modul_id,
+        # TO INJISERTE KJØRINGER, begge rene feil, og alarmen først på
+        # den andre: én feilet runde er drift, to på rad er en tilstand.
+        "krev_injiserte": 2,
+        "krev_alarm_paa_andre": True,
+        "krev_registeret_urort": True,
+        # ET TOMT REGISTER KAN IKKE VISE AT DET STO STILLE. Null åpne før
+        # og null etter er sant uansett hva kjøringen gjorde.
+        "krev_apne_for_minst": 1,
+        "punktbinding": {
+            "feilinjisering_til_unntakskø": (
+                "maalt.injisert_feilet", "maalt.registeret_urort",
+                "maalt.alarm_etter_andre", "maalt.apne_etter",
+                "maalt.injeksjonsrolle_har_execute"),
+        },
+    }
+    ARTEFAKTSKJEMAER[k["feilinjisering_krav"]] = \
+        "artefakt-sveip-feilinjisering-skjema.json"
+    KRAVGRENSER[k["ytelse_krav"]] = {
+        "modul": modul_id,
+        "maks_sekunder": maks_sekunder,
+        "min_tenanter": min_tenanter,
+        # FLERE KJØRINGER, og DEN DÅRLIGSTE teller: én kjøring er en
+        # anekdote, og en snittverdi skjuler nettopp den runden som
+        # sprakk taket.
+        "min_kjoringer": 3,
+        "punktbinding": {
+            "ytelse_bestatt": ("maalt.sekunder", "maalt.tenanter",
+                               "maalt.sekunder_per_tenant"),
+        },
+    }
+    ARTEFAKTSKJEMAER[k["ytelse_krav"]] = "artefakt-sveip-ytelse-skjema.json"
+    KRAVGRENSER[k["rollback_krav"]] = {
+        "modul": modul_id,
+        # RULLBAKKEN SKAL SKRIVE NOE. Et drill der forgjengerens bytes
+        # ikke fant et eneste funn måler ingen rulling.
+        "min_rullbakk_funn": min_rullbakk_funn,
+        "maks_dubletter": 0,
+        "maks_kandidat_nye": 0,
+        "krev_release_digest_bundet": True,
+        "punktbinding": {
+            "rollback_testet": (
+                "maalt.inflight_funn", "maalt.arbeidernokkel_fri",
+                "maalt.rullbakk_funn", "maalt.dubletter",
+                "maalt.kandidat_nye", "maalt.release_digest_bundet"),
+        },
+    }
+    ARTEFAKTSKJEMAER[k["rollback_krav"]] = \
+        "artefakt-sveip-rollback-skjema.json"
+
+
+def _grenser_sveip_feilinjisering(grense: dict, art: dict) -> list[str]:
+    """`<modul>-feilinjisering-v1` — en injisert driftsfeil gir rent
+    utfall, rører ikke registeret, og løfter alarmen på den ANDRE
+    sammenhengende feilen."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if o.get("modul") != grense["modul"]:
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    f" {grense['modul']!r}")
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler")
+    else:
+        try:
+            if sha != sveip_feilinjisering_bevisrot_sha256():
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes")
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    # DEN FRISKE KJØRINGEN FØRST: uten den vet vi ikke om feilen etterpå
+    # var vår injeksjon eller en rigg som aldri virket.
+    # DEN POSITIVE KONTROLLEN AV SELVE INJEKSJONEN: rollen vi kjørte
+    # som må FAKTISK mangle EXECUTE, målt av basen. Uten den kunne
+    # «feilet» kommet av hva som helst — en skrivefeil i DSN-en holder.
+    if m.get("injeksjonsrolle_har_execute") is not False:
+        feil.append("injeksjonsrolle_har_execute er ikke false — rollen"
+                    " hadde EXECUTE, og da er ikke feilen den vi tror")
+    if m.get("frisk_feilet") is not False:
+        feil.append("frisk_feilet er ikke false — riggen virket ikke, og da"
+                    " måler injeksjonen ingenting")
+    antall, melding = _teller(m, "injisert_feilet", "injisert_feilet")
+    if melding:
+        feil.append(melding)
+    elif antall < grense["krev_injiserte"]:
+        feil.append(f"injisert_feilet={antall}, krever"
+                    f" {grense['krev_injiserte']} rene feilutfall")
+    if grense.get("krev_alarm_paa_andre"):
+        if m.get("alarm_etter_forste") is not False:
+            feil.append("alarm_etter_forste er ikke false — én feilet runde"
+                        " er drift, ikke en tilstand")
+        if m.get("alarm_etter_andre") is not True:
+            feil.append("alarm_etter_andre er ikke true — to feil på rad"
+                        " skal melde fra; en stille sveip er verre enn en"
+                        " som stopper")
+    apne_for, melding = _teller(m, "apne_for", "apne_for")
+    if melding:
+        feil.append(melding)
+    elif apne_for < grense.get("krev_apne_for_minst", 0):
+        feil.append(f"apne_for={apne_for} — et tomt register står stille"
+                    " uansett hva kjøringen gjorde; målingen krever minst"
+                    f" {grense['krev_apne_for_minst']} åpent funn")
+    if grense.get("krev_registeret_urort"):
+        if m.get("registeret_urort") is not True:
+            feil.append("registeret_urort er ikke true — en feilende kjøring"
+                        " skrev eller lukket noe")
+        for a_, b_ in (("apne_for", "apne_etter"),
+                       ("lukkede_for", "lukkede_etter")):
+            if m.get(a_) != m.get(b_):
+                feil.append(f"{a_}={m.get(a_)} men {b_}={m.get(b_)} —"
+                            " halv skriving")
+        if m.get("per_type_for") != m.get("per_type_etter"):
+            feil.append("funntypene er ikke de samme før og etter — et tall"
+                        " kan stemme mens ett funn lukkes og et annet åpnes")
+    return feil
+
+
+def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
+    """`<modul>-rollback-v1` — kjerneformen for en sveipmodul uten egen
+    release: en avbrutt sveip på de drillede bytene, forgjengerens bytes
+    som fullfører, og de drillede bytene som godtar resultatet."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if o.get("modul") != grense["modul"]:
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    f" {grense['modul']!r}")
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler")
+    else:
+        try:
+            if sha != sveip_rollback_bevisrot_sha256():
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes")
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    # TO ULIKE KATALOGER, TO ULIKE KJERNER. Det er kjernen som rulles;
+    # modulens egne filer står som oftest stille gjennom en rulling, og
+    # en port på DEM ville krevd at modulen ble endret for at en rollback
+    # skulle kunne måles.
+    d, f_ = o.get("drillet_kjernedigest"), o.get("forgjenger_kjernedigest")
+    if not (isinstance(d, str) and len(d) == 64
+            and isinstance(f_, str) and len(f_) == 64):
+        feil.append("drillet_kjernedigest/forgjenger_kjernedigest mangler")
+    elif d == f_:
+        feil.append("drillet og forgjenger har SAMME kjernedigest — da ble"
+                    " ingenting rullet")
+    if o.get("drillet_release") == o.get("forgjenger_release"):
+        feil.append("drillet og forgjenger er samme release")
+    # (a) DEN AVBRUTTE KJØRINGEN: drept midt i, og registeret urørt.
+    if m.get("inflight_drept") is not True:
+        feil.append("inflight_drept er ikke true — kjøringen ble ikke"
+                    " avbrutt midt i, og da er det ingen rulling å måle")
+    if m.get("inflight_blokkerte_paa_laas") is not True:
+        feil.append("inflight_blokkerte_paa_laas er ikke true — sveipen"
+                    " nådde aldri skrivingen, og en prosess som ikke rakk"
+                    " noe er ikke avbrutt midt i")
+    # Å DREPE KLIENTEN ER IKKE Å STOPPE ARBEIDET. Backenden står og
+    # venter på låsen uten å merke at klienten er borte, og ville
+    # fullført sveipen så snart låsen slapp. Økten må avsluttes.
+    if m.get("inflight_backend_avsluttet") is not True:
+        feil.append("inflight_backend_avsluttet er ikke true — den"
+                    " foreldreløse økten ble aldri stoppet, og da måler"
+                    " ikke drillen et avbrudd")
+    antall, melding = _teller(m, "inflight_funn", "inflight_funn")
+    if melding:
+        feil.append(melding)
+    elif antall != 0:
+        feil.append(f"inflight_funn={antall} — en drept sveip skrev funn")
+    # ARBEIDERNØKKELEN MÅ SLIPPE. Blir den hengende etter en drept
+    # kjøring, er sveipen stengt ute av seg selv til sesjonen ryddes.
+    if m.get("arbeidernokkel_fri") is not True:
+        feil.append("arbeidernokkel_fri er ikke true — den drepte"
+                    " kjøringen holder fortsatt advisory-låsen")
+    # (b) RULLBAKKEN: forgjengerens bytes fullfører.
+    antall, melding = _teller(m, "rullbakk_funn", "rullbakk_funn")
+    if melding:
+        feil.append(melding)
+    elif antall < grense["min_rullbakk_funn"]:
+        feil.append(f"rullbakk_funn={antall}, krever"
+                    f" >= {grense['min_rullbakk_funn']}")
+    antall, melding = _teller(m, "dubletter", "dubletter")
+    if melding:
+        feil.append(melding)
+    elif antall > grense["maks_dubletter"]:
+        feil.append(f"dubletter={antall} — samme subjekt og funntype"
+                    " skrevet flere ganger over rullingen")
+    # (c) KANDIDATEN: de drillede bytene godtar det forgjengeren skrev.
+    antall, melding = _teller(m, "kandidat_nye", "kandidat_nye")
+    if melding:
+        feil.append(melding)
+    elif antall > grense["maks_kandidat_nye"]:
+        feil.append(f"kandidat_nye={antall} — de drillede bytene fant det"
+                    " samme om igjen; sveipen er ikke idempotent over"
+                    " rullingen")
+    # BYTENE ER BEVITNET, ikke antatt: hver kjøring rapporterer hvilken
+    # fil modulen faktisk ble lastet fra.
+    for felt, tekst in (("rullback_bytes_er_forgjengerens",
+                         "rullbakken kjørte ikke forgjengerens bytes"),
+                        ("kandidat_bytes_er_drillede",
+                         "kandidaten kjørte ikke de drillede bytene")):
+        if m.get(felt) is not True:
+            feil.append(f"{felt} er ikke true — {tekst}")
+    if grense.get("krev_release_digest_bundet") \
+            and m.get("release_digest_bundet") is not True:
+        feil.append("release_digest_bundet er ikke true — katalogene"
+                    " endret seg under drillen")
+    return feil
+
+
+def _grenser_sveip_ytelse(grense: dict, art: dict) -> list[str]:
+    """`<modul>-ytelse-v1` — sveipens kostnad, målt med veggklokke over
+    en ekte kjøring, mot et pinnet tak."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if o.get("modul") != grense["modul"]:
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    f" {grense['modul']!r}")
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler")
+    else:
+        try:
+            if sha != sveip_ytelse_bevisrot_sha256():
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes")
+        except OSError as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    sek, melding = _positiv(m, "sekunder", "sekunder")
+    if melding:
+        feil.append(melding)
+    elif sek > grense["maks_sekunder"]:
+        feil.append(f"sekunder={sek:g} > taket {grense['maks_sekunder']:g}")
+    ten, melding = _teller(m, "tenanter", "tenanter")
+    if melding:
+        feil.append(melding)
+    elif ten < grense["min_tenanter"]:
+        feil.append(f"tenanter={ten}, krever >= {grense['min_tenanter']} —"
+                    " en kjøring over ingenting måler ingenting")
+    # TALLET RE-REGNES: sekunder per tenant må stemme med de to over.
+    if ten and sek is not None:
+        regnet = round(sek / ten, 4)
+        oppgitt = m.get("sekunder_per_tenant")
+        if not isinstance(oppgitt, (int, float)) or abs(oppgitt - regnet) > 0.01:
+            feil.append(f"sekunder_per_tenant={oppgitt} stemmer ikke med"
+                        f" {sek:g}/{ten} = {regnet:g}")
+    if m.get("feilet") is not False:
+        feil.append("kjøringen feilet — en varighet uten fullført kjøring"
+                    " er ikke en ytelse")
+    kj = m.get("kjoringer")
+    if not isinstance(kj, list) or not all(
+            isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0
+            for x in kj):
+        feil.append("maalt.kjoringer er ikke en liste med positive tall")
+    else:
+        if len(kj) < grense["min_kjoringer"]:
+            feil.append(f"{len(kj)} kjøringer, krever"
+                        f" >= {grense['min_kjoringer']} — én kjøring er en"
+                        " anekdote")
+        # DEN DÅRLIGSTE ER DOMMEN. Rapporterte produsenten en annen av
+        # kjøringene, måler tallet flaks og ikke kostnad.
+        if sek is not None and abs(max(kj) - sek) > 1e-6:
+            feil.append(f"sekunder={sek:g} er ikke den DÅRLIGSTE av"
+                        f" kjøringene ({max(kj):g})")
+    return feil
+
+
 #: M-19s FASIT: settdriveren og produsenten. Bevisroten dekker begge —
 #: et artefakt som beviser en kjøring av ukjente bytes beviser ingenting.
 M19_FASIT_BEVISROT = ("deploy/staging/m19_fasit.py",
@@ -5444,6 +5821,12 @@ def _grenser_m19_fasit(grense: dict, art: dict) -> list[str]:
 #: FØRSTE MODUL PÅ DEN GENERISKE LESTEN (17/9): M-19 adresse. Andelen er
 #: modulens egen testfil, og gulvet er MÅLT (34 tester 17/9) — satt litt
 #: under, som de sju før den.
+#: M-19s sveipegrenser. Taket er MÅLT, ikke gjettet: sveipen tok under
+#: ett sekund over tre tenanter 17/9; taket står med rikelig margin for
+#: en base som vokser, men langt under timerens fem minutter.
+registrer_sveipgrenser("m19_adresse", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=6)
+
 registrer_suitegrense("m19_adresse", "m19",
                       ("platform/core/tests/test_m19_adresse.py",),
                       min_tester=3000, min_andel_tester=30)

@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m19-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0155,
+      0.0144,
+      0.0147
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 5,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 5,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 5,
+        "tenanter": 3
+      }
+    ],
+    "sekunder": 0.0155,
+    "sekunder_per_tenant": 0.0052,
+    "tenanter": 3
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m19_adresse",
+    "sveip": "adressesveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-17T23:15:31.468891+00:00"
+}

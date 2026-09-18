@@ -20,7 +20,7 @@
           "ukontrollert_adresse"
         ],
         "merke": "ukontrollert",
-        "subjekt_id": "7fa78432-e9a9-4739-8fad-c63774173852",
+        "subjekt_id": "47caf678-964c-4b34-993d-0d94f4af757c",
         "ventet": "ukontrollert_adresse"
       },
       {
@@ -28,7 +28,7 @@
           "kontroll_utlopt"
         ],
         "merke": "utlopt",
-        "subjekt_id": "998a11ba-5e5e-4cf5-8335-1eb73f2f15c5",
+        "subjekt_id": "772f836e-55ad-4020-9002-906e4a913455",
         "ventet": "kontroll_utlopt"
       },
       {
@@ -36,7 +36,7 @@
           "avvist_adresse"
         ],
         "merke": "avvist",
-        "subjekt_id": "ec5ba1c1-bd86-41ac-8d2d-e081f02443ac",
+        "subjekt_id": "6da43c96-e2d9-42f4-a719-f28c02a4a1f3",
         "ventet": "avvist_adresse"
       },
       {
@@ -44,13 +44,13 @@
           "utilstrekkelig_metode"
         ],
         "merke": "feil_metode",
-        "subjekt_id": "8e72a512-1b85-4646-8a2d-4d0668201725",
+        "subjekt_id": "bd37f50c-6479-47b1-b253-8f59fbf3760e",
         "ventet": "utilstrekkelig_metode"
       },
       {
         "fikk": [],
         "merke": "ren",
-        "subjekt_id": "0b4ad7ef-1b0b-4aad-b97d-9daca5336d29",
+        "subjekt_id": "f588c329-1211-4383-9159-2d65972a7e77",
         "ventet": null
       },
       {
@@ -58,34 +58,34 @@
           "ingen_krav"
         ],
         "merke": "ingen_krav",
-        "subjekt_id": "f9ff4dfc-a2c8-4055-abfd-283dc0db3930",
+        "subjekt_id": "e700f1aa-d4d4-4918-b914-db6f6288098b",
         "ventet": "ingen_krav"
       }
     ],
     "rent_funn_for_kontroll": 1,
     "subjekter": 6,
     "sveip1_nye": 6,
-    "sveip1_tenanter": 3,
+    "sveip1_tenanter": 11,
     "sveip2_lukkede": 1,
     "sveip2_nye": 0,
-    "sveip2_oppdaterte": 5
+    "sveip2_oppdaterte": 28
   },
   "oppsett": {
-    "bevisrot_sha256": "17266978ce13797577cbb68a96ec10bf0cd54d22f4f3687067ef626ed9bcc7ef",
+    "bevisrot_sha256": "4e3590cec7799c2fa5f0a52e45ee5189f8d7c8e103a1ba4ef09857549a90fdf2",
     "godkjente_metoder": [
       "dokumentert",
       "levering_bekreftet"
     ],
     "gyldig_dogn": 180,
     "modul": "m19_adresse",
-    "runde": "9a5defa6",
-    "sett_sha256": "2d451c7db54839e16b1008b60f7ceba2f99586eaa03dd1d8dc3eea8c8c293ddc",
+    "runde": "575fda32",
+    "sett_sha256": "ffacc236d14612f27c493b68d1e7dd57401bf3f4834bf076bbf1c7d466ee0b4e",
     "tenanter": [
-      "t-m19fasit-med_krav-9a5defa6",
-      "t-m19fasit-uten_krav-9a5defa6"
+      "t-m19fasit-med_krav-575fda32",
+      "t-m19fasit-uten_krav-575fda32"
     ],
     "ukontrollert_dogn": 30,
     "vert": "disponit.com"
   },
-  "ts": "2026-09-17T22:46:53.329524+00:00"
+  "ts": "2026-09-17T23:34:41.690230+00:00"
 }
