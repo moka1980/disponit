@@ -102,7 +102,7 @@ export const MODULSTATUS = {
   // AKTØREN på `kampanje.send`, ikke en manglende verifikator. Det gjør
   // tilbakeholdelsen sterkere — modulen finnes for å sende, og v1
   // sender null.
-  41: "bygges",     // m41_betaling: under_utvikling, ikke_i_drift
+  41: "i_drift",    // m41_betaling: aktiv, produksjon
   19: "i_drift",    // m19_adresse: aktiv, produksjon
   39: "bygges",     // m39_lonnsgrunnlag: under_utvikling, ikke_i_drift
   44: "i_drift",    // m44_kampanje: aktiv, produksjon — alle seks punkter ja

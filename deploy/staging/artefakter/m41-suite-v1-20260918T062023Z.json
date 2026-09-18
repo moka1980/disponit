@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m41-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 30,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5518
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m41_betaling.py"
+    ],
+    "bevisrot_sha256": "2f42085228132dbdbe86bca6976597b3dcdd84ee3a2981a817ea06d6c0d56755",
+    "commit": "16b7ac56b9ccc8c7a8efe514c0fd0e4ae82b06fc",
+    "modul": "m41_betaling",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T06:20:23.173109+00:00"
+}
