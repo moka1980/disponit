@@ -5437,6 +5437,45 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m41_betaling": {
+        "modul_fil": "betalingssveip",
+        "funntabell": "betalingsfunn",
+        "subjektkolonne": "subjekt_id",
+        "tenantkilde": "betalingssubjekt",
+        "maalerolle": "disponit_betaling_eier",
+        "sveipedor": "m41_sveip_betalinger(int)",
+        "dsn_variabel": "DISPONIT_BETALINGSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m41-fasit-v1",
+        "feilinjisering_krav": "m41-feilinjisering-v1",
+        "ytelse_krav": "m41-ytelse-v1",
+        "rollback_krav": "m41-rollback-v1",
+        "riggmodul": "m41_fasit",
+        "releasefiler": ("platform/modules/m41_betaling",
+                         "platform/drift/betalingssveip.py"),
+    },
+    "m39_lonnsgrunnlag": {
+        "modul_fil": "lonnssveip",
+        "funntabell": "lonnsfunn",
+        "subjektkolonne": "taker_id",
+        # TENANTKILDEN HAR ET FILTER her, og det er ikke pynt: sveipen
+        # ser bare tenanter med en AKTIV lønnstaker, så en riggtenant
+        # uten en slik blir aldri besøkt.
+        "tenantkilde": "lonnstaker",
+        "maalerolle": "disponit_lonn_eier",
+        "sveipedor": "m39_sveip_lonnsgrunnlag(int)",
+        "dsn_variabel": "DISPONIT_LONNSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m39-fasit-v1",
+        "feilinjisering_krav": "m39-feilinjisering-v1",
+        "ytelse_krav": "m39-ytelse-v1",
+        "rollback_krav": "m39-rollback-v1",
+        "riggmodul": "m39_fasit",
+        "releasefiler": ("platform/modules/m39_lonnsgrunnlag",
+                         "platform/drift/lonnssveip.py"),
+    },
 }
 
 #: Produsentflatene for de to generiske sveipmålingene.
@@ -6073,6 +6112,25 @@ registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=15,
 registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)
 
+#: M-41s grenser. Fire funntyper, alle nåbare — hele alders-aksen er en
+#: dørparameter. Gulvet for første sveip er FEM, altså settets faktiske
+#: antall: tre typer i tersklenes tenant, `ingen_terskel` i den andre, og
+#: det rene subjektet, som fødes uavklart. Et gulv under dette ville
+#: godtatt at en av dem stilnet.
+registrer_fasitgrense("m41_betaling", min_subjekter=6, min_evidens=13,
+                      tenantprefiks="t-m41fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m41_betaling", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=4)
+
+#: M-39s grenser. Fem funntyper, alle nåbare. Funnene aggregeres PER
+#: LØNNSTAKER, så hver merkelapp har sin egen taker med nøyaktig én dag.
+#: Gulvet er SEKS, settets faktiske antall: fire typer, `ingen_terskel`,
+#: og den rene takeren som fødes uten plan.
+registrer_fasitgrense("m39_lonnsgrunnlag", min_subjekter=6, min_evidens=17,
+                      tenantprefiks="t-m39fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m39_lonnsgrunnlag", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
 #: M-42s grenser. Seks mottakere, og ALLE fire funntypene nåbare: begge
 #: tidsmålingene leser datoparametre. Gulvet for første sveip er lavt med
 #: vilje — døra skriver `kontoendring` SELV, så det funnet finnes allerede
@@ -6108,6 +6166,16 @@ registrer_suitegrense("m25_prosjekt", "m25",
 registrer_suitegrense("m24_leverandor", "m24",
                       ("platform/core/tests/test_m24_leverandor.py",),
                       min_tester=3000, min_andel_tester=38)
+
+#: M-41s andel. Gulvet er MÅLT: 30 tester i modulens egen fil (18/9).
+registrer_suitegrense("m41_betaling", "m41",
+                      ("platform/core/tests/test_m41_betaling.py",),
+                      min_tester=3000, min_andel_tester=26)
+
+#: M-39s andel. Gulvet er MÅLT: 35 tester i modulens egen fil (18/9).
+registrer_suitegrense("m39_lonnsgrunnlag", "m39",
+                      ("platform/core/tests/test_m39_lonn.py",),
+                      min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
 registrer_suitegrense("m42_kontovakt", "m42",

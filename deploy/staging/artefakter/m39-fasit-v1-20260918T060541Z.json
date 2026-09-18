@@ -1,0 +1,87 @@
+{
+  "bestatt": true,
+  "krav_id": "m39-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "arbeidsplan_satt": 5,
+      "lonnstaker_opprettet": 6,
+      "lonnsterskler_satt": 1,
+      "timer_registrert": 6
+    },
+    "evidens_totalt": 18,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "time_uten_arbeidsplan"
+        ],
+        "merke": "uten_plan",
+        "subjekt_id": "4c697a8e-ef70-4757-af62-1c8c7e371612",
+        "ventet": "time_uten_arbeidsplan"
+      },
+      {
+        "fikk": [
+          "avvik_mot_plan"
+        ],
+        "merke": "avvik",
+        "subjekt_id": "b3f4e61d-0c69-4469-913f-3037dfbbb589",
+        "ventet": "avvik_mot_plan"
+      },
+      {
+        "fikk": [
+          "overtid"
+        ],
+        "merke": "over",
+        "subjekt_id": "1edbccb0-e2f8-4ca5-9344-6096bfad11a8",
+        "ventet": "overtid"
+      },
+      {
+        "fikk": [
+          "ukjent_prosjektkode"
+        ],
+        "merke": "feilkode",
+        "subjekt_id": "83e6914a-e9f2-4358-b475-db66004acf8f",
+        "ventet": "ukjent_prosjektkode"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "ae81e576-357e-46ac-9284-55186fb0a278",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskel"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "c7a607da-ed9d-474a-82b9-e602fb0f47e9",
+        "ventet": "ingen_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "34ca4ed78ff3fb9dcf67c9d070799c38e55b753fedb4c3bce90647d9eeed75d7",
+    "evidenskilde": "m39_lonn",
+    "modul": "m39_lonnsgrunnlag",
+    "riggmodul": "m39_fasit",
+    "runde": "33f0938f",
+    "sett_sha256": "04c8583b6283b4bb968b22bd5c41b550f867911c0b3609858f6a1789a20aa42b",
+    "tenanter": [
+      "t-m39fasit-med_terskel-33f0938f",
+      "t-m39fasit-uten_terskel-33f0938f"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T06:05:41.921297+00:00"
+}

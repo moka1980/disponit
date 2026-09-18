@@ -36,8 +36,8 @@
 id: m39_lonnsgrunnlag
 navn: Lønnsgrunnlagsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m39-v1` bærer invarianten
 # `timegrense_hardkodet` — hvor mye en timeliste kan avvike fra planen
 # før det er et funn, er tenantens tall og ikke modulens.
@@ -49,31 +49,128 @@ i18n_prefiks: lonn
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m39-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m39-suite-v1-20260918T063524Z.json
+    artefakt_sha256: 21ae823e64a7d10f7205c4aed79406581488c9e151f11d68f410b0220dcf7135
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5518 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m39_fasit.py` gir hver av lønnsgrunnlagets fem
+    # funntyper nøyaktig én lønnstaker, og én taker som skal være REN.
+    #
+    # FUNNENE AGGREGERES PER LØNNSTAKER, ikke per dag. Derfor har hver
+    # merkelapp sin EGEN taker med NØYAKTIG én dag: to dager på samme
+    # taker ville blandet to dommer i én rad.
+    #
+    # OVERTIDSFUNNET KREVER IKKE PLAN, så den planløse dagen ligger
+    # under normaltiden, og overtidsdagen er ført nøyaktig som planlagt
+    # — ellers hadde begge slått inn på samme taker.
+    status: ja
+    krav_id: m39-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m39-fasit-v1-20260918T060541Z.json
+    artefakt_sha256: 6054ce72799a68aa819fb2e21380e324e721e70128bc7821db01497b5026e543
     notat: >-
-      KREVER: timelister med KJENT fasit for hvilke timer som avviker
-      fra planen og hvilke som er overtid, kjørt likt lokalt og på
-      staging.
+      Runde 33f0938f: 6 lønnstakere, 0 funnavvik. Første sveip ga 6 nye
+      funn — også den rene takeren, som fødes uten arbeidsplan. Planen
+      som gjør den ren kom mellom kjøringene og er ført nøyaktig som
+      planlagt på samme kode, så ingen annen funntype tok plassen.
+      Andre sveip ga 0 nye og lukket 1.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m39-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m39-fasit-v1-20260918T060541Z.json
+    artefakt_sha256: 6054ce72799a68aa819fb2e21380e324e721e70128bc7821db01497b5026e543
     notat: >-
-      KREVER: at hver føring og hver retting står i evidenskjeden, med
-      hvem som gjorde den. Persondata og finansielle data i samme rad.
+      18 hendelser i kjeden (arbeidsplan_satt: 5,
+      lonnstaker_opprettet: 6, lonnsterskler_satt: 1, timer_registrert:
+      6), 0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m39-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m39-feilinjisering-v1-20260918T060542Z.json
+    artefakt_sha256: 0cf49bae70cc95e5bd089c8752c1b4ad1af7ea40270e0f8c906f2d56835b0f9e
     notat: >-
-      KREVER: lønnssveipen bygget, og at en feil i den ikke lar en time
-      uten arbeidsplan passere som målt.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 12 åpne og 4 lukkede over 5 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m39-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m39-ytelse-v1-20260918T060542Z.json
+    artefakt_sha256: d52da20cd6588109d8c8631fe06610d936220114586de3dc865375a0d44c8156
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0223 / 0,0185 / 0,0233 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0233 s mot taket på 60 — 0,0078 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m39-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m39-rollback-v1-20260918T060544Z.json
+    artefakt_sha256: 1adfef4d7e6f49fc57604b447cba739a44b04fc4ed01730f7478066d43fe9a18
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 980c6db7 ← forgjenger 5f57464a (ulike kjernedigester).
+      Riggen hadde 0 funnrader før drillen, og den drepte kjøringen la
+      ingen til. Arbeidernøkkelen ble fri først etter at den
+      foreldreløse økten ble avsluttet. Forgjengerens bytes skrev de 6
+      funnene uten dubletter, og de drillede bytene fant 0 nye.

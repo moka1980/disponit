@@ -305,3 +305,85 @@ def test_m42s_rigg_respekterer_fireoyne():
     kilde = (ROT / "deploy/staging/m42_fasit.py").read_text(encoding="utf-8")
     assert '"u-fasit"' not in kilde, \
         "én og samme aktør oppgir og verifiserer — vakten nekter"
+
+
+def test_m41s_tersklene_gir_et_vindu_for_utlopt_autorisasjon():
+    """`uavklart_betaling` og `autorisasjon_utlopt` leser BEGGE den siste
+    hendelsen, og begge treffer en autorisert betaling som har stått
+    lenge. Skal den ene kunne måles alene, må reautorisasjonsfristen være
+    STRENGT KORTERE enn uavklart-fristen — ellers finnes det ikke noe
+    aldersvindu der en autorisasjon er utløpt uten også å være uavklart.
+
+    Standardverdiene er motsatt (7 mot 3), så dette er et valg riggen
+    må ta, ikke noe den arver."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m41_fasit as f
+    assert f.REAUTORISASJON_DOGN < f.UAVKLART_DOGN
+    utlopt = next(r for r in f.SETT if r[1] == "autorisasjon_utlopt")
+    _m, _v, hendelser = utlopt
+    status, _belop, forventet, siden = hendelser[-1]
+    assert status == "autorisert"
+    # I VINDUET: forbi reautorisasjonsfristen, men innenfor uavklart.
+    assert f.REAUTORISASJON_DOGN < siden <= f.UAVKLART_DOGN
+    # …og uten forventet beløp, ellers slår `belopsavvik` også inn.
+    assert forventet is None
+
+
+def test_m41s_rene_subjekt_kureres_av_en_ny_hendelse():
+    """`betalingshendelse` er totalt frosset — en betaling kan ikke
+    skrives om i ettertid. Kuren må derfor være en NY hendelse som tar
+    subjektet ut av predikatet."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m41_fasit as f
+    ren = next(r for r in f.SETT if r[0] == f.RENSES)
+    assert ren[1] is None
+    status, _b, forventet, siden = ren[2][-1]
+    assert status == "opprettet" and siden > f.UAVKLART_DOGN
+    kur_status, _kb, kur_forventet, kur_siden = f.REN_HENDELSE
+    assert kur_status == "gjennomfort" and kur_siden == 0
+    # INGEN FORVENTET SUM å avvike fra, ellers bytter funnet bare type.
+    assert kur_forventet is None
+
+
+def test_m39s_takere_har_nøyaktig_en_dag_hver():
+    """Funnene aggregeres PER LØNNSTAKER, ikke per dag. To dager på samme
+    taker ville blandet to dommer i én rad, og settet kunne ikke lest
+    dommen per subjekt."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m39_fasit as f
+    for merke, _v, _plan, dag in f.SETT:
+        assert isinstance(dag, tuple) and len(dag) == 3, merke
+    merker = [r[0] for r in f.SETT] + [f.UTEN_TERSKEL[0]]
+    assert len(merker) == len(set(merker))
+
+
+def test_m39s_planlose_dag_ligger_under_normaltiden():
+    """`overtid` krever IKKE plan. En planløs dag over normaltiden ville
+    derfor gitt BÅDE `overtid` og `time_uten_arbeidsplan`, og dommen
+    hadde vært riktig av feil grunn."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m39_fasit as f
+    for merke, ventet, plan, (siden, minutter, _kode) in f.SETT:
+        if plan is None:
+            assert minutter <= f.NORMALTID_DAG, merke
+            assert siden > f.UTEN_PLAN_DOGN, merke
+    # OVERTIDSDAGEN er ført NØYAKTIG som planlagt, så avviket er null.
+    over = next(r for r in f.SETT if r[1] == "overtid")
+    planlagt = over[2][0]
+    assert over[3][1] == planlagt > f.NORMALTID_DAG
+
+
+def test_m39s_rene_taker_far_planen_sin_mellom_kjoringene():
+    """Den rene takeren fødes uten plan og får funnet i første sveip.
+    Planen som kommer mellom kjøringene må dekke dagen, være ført
+    nøyaktig som planlagt og på samme kode — ellers tar en annen
+    funntype plassen til den som skulle lukkes."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m39_fasit as f
+    ren = next(r for r in f.SETT if r[0] == f.RENSES)
+    _m, ventet, plan, (siden, minutter, kode) = ren
+    assert ventet is None and plan is None
+    p_minutter, p_kode, p_fra = f.REN_PLAN
+    assert p_minutter == minutter and p_kode == kode
+    assert p_fra > siden, "planen dekker ikke dagen den skal forklare"
+    assert p_minutter <= f.NORMALTID_DAG
