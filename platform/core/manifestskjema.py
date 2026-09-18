@@ -6117,7 +6117,7 @@ registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
 #: antall: tre typer i tersklenes tenant, `ingen_terskel` i den andre, og
 #: det rene subjektet, som fødes uavklart. Et gulv under dette ville
 #: godtatt at en av dem stilnet.
-registrer_fasitgrense("m41_betaling", min_subjekter=6, min_evidens=12,
+registrer_fasitgrense("m41_betaling", min_subjekter=6, min_evidens=13,
                       tenantprefiks="t-m41fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m41_betaling", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=4)
@@ -6126,7 +6126,7 @@ registrer_sveipgrenser("m41_betaling", maks_sekunder=60.0, min_tenanter=2,
 #: LØNNSTAKER, så hver merkelapp har sin egen taker med nøyaktig én dag.
 #: Gulvet er SEKS, settets faktiske antall: fire typer, `ingen_terskel`,
 #: og den rene takeren som fødes uten plan.
-registrer_fasitgrense("m39_lonnsgrunnlag", min_subjekter=6, min_evidens=12,
+registrer_fasitgrense("m39_lonnsgrunnlag", min_subjekter=6, min_evidens=17,
                       tenantprefiks="t-m39fasit-", min_sveip1_nye=6)
 registrer_sveipgrenser("m39_lonnsgrunnlag", maks_sekunder=60.0,
                        min_tenanter=2, min_rullbakk_funn=4)

@@ -1,0 +1,80 @@
+{
+  "bestatt": true,
+  "krav_id": "m39-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 12,
+    "apne_for": 12,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
+    "per_type_etter": {
+      "avvik_mot_plan": [
+        2,
+        1
+      ],
+      "ingen_terskel": [
+        2,
+        2
+      ],
+      "overtid": [
+        3,
+        0
+      ],
+      "time_uten_arbeidsplan": [
+        3,
+        1
+      ],
+      "ukjent_prosjektkode": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "avvik_mot_plan": [
+        2,
+        1
+      ],
+      "ingen_terskel": [
+        2,
+        2
+      ],
+      "overtid": [
+        3,
+        0
+      ],
+      "time_uten_arbeidsplan": [
+        3,
+        1
+      ],
+      "ukjent_prosjektkode": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "25d7d89ad3b46ad0aa67ac4ff2910a19a92502ecb398c703884c59ffde5af9e5",
+    "funntabell": "lonnsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m39_sveip_lonnsgrunnlag(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_lonn_eier",
+    "modul": "m39_lonnsgrunnlag",
+    "riggmodul": "m39_fasit",
+    "riggtenanter": [
+      "t-m39fasit-med_terskel-6bca19b8",
+      "t-m39fasit-uten_terskel-6bca19b8"
+    ],
+    "runde": "6bca19b8",
+    "sveipedor": "m39_sveip_lonnsgrunnlag(int)",
+    "tenantkilde": "lonnstaker",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T06:05:42.689025+00:00"
+}

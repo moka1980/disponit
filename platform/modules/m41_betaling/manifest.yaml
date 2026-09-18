@@ -65,29 +65,110 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m41_fasit.py` gir hver av betalingsregisterets fire
+    # funntyper nøyaktig ett subjekt, og to subjekter som skal være
+    # rene. ALLE fire er nåbare: hele alders-aksen går gjennom
+    # `inntruffet`, som er en dørparameter.
+    #
+    # TERSKLENE ER SATT MOTSATT AV STANDARDEN, med vilje:
+    # reautorisasjonsfristen er STRENGT KORTERE enn uavklart-fristen.
+    # Uten det finnes det ikke noe aldersvindu der en autorisasjon er
+    # utløpt UTEN også å være uavklart, og funntypen kunne ikke
+    # isoleres.
+    status: ja
+    krav_id: m41-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m41-fasit-v1-20260918T060538Z.json
+    artefakt_sha256: 5d4b3f205066e68e59670a90a21a7da15a63cf3c0774949d2237fb5b9852a5a1
     notat: >-
-      KREVER: en statushistorikk med KJENT fasit for hvilken status som
-      gjaldt når, og hvilken hendelse den kom fra, kjørt likt lokalt og
-      på staging.
+      Runde ec5e4d8e: 6 subjekter, 0 funnavvik. Første sveip ga 5 nye
+      funn — også det rene subjektet, som fødes `opprettet` og 60 døgn
+      gammelt. Oppgjøret som gjør det rent kom mellom kjøringene som en
+      NY hendelse (betalingshendelser er totalt frosset og kan ikke
+      rettes), og andre sveip ga 0 nye og lukket 1.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m41-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m41-fasit-v1-20260918T060538Z.json
+    artefakt_sha256: 5d4b3f205066e68e59670a90a21a7da15a63cf3c0774949d2237fb5b9852a5a1
     notat: >-
-      KREVER: at hver statusendring og hvert registrert betalingsmiddel
-      står i evidenskjeden, med hvem og hvilken kilde.
+      14 hendelser i kjeden (betalingsstatus.registrert: 7,
+      betalingsterskel.satt: 1, subjekt.registrert: 6), 0 uten aktør, 0
+      som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m41-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m41-feilinjisering-v1-20260918T060539Z.json
+    artefakt_sha256: a9652865ff1b91d05ad0645c0c4bf278f86193bca04b4aa28a2c79281995943e
     notat: >-
-      KREVER: betalingssveipen bygget, og at en feil i den ikke lar en
-      uavklart betaling forsvinne stille.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 10 åpne og 1 lukket over 5 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m41-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m41-ytelse-v1-20260918T060539Z.json
+    artefakt_sha256: 45da05e0dda544bf704b91da19e08fa0d2e16b1b86f2f7a2b249c289c81736b4
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0144 / 0,0148 / 0,0129 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0148 s mot taket på 60 — 0,0049 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m41-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m41-rollback-v1-20260918T060541Z.json
+    artefakt_sha256: 32e11f6ab823eb6bb95b1a571657f2484d2e4be614e48c3b501d60b5ba299c10
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 980c6db7 ← forgjenger 5f57464a (ulike kjernedigester).
+      Riggen hadde 0 funnrader før drillen, og den drepte kjøringen la
+      ingen til. Arbeidernøkkelen ble fri først etter at den
+      foreldreløse økten ble avsluttet. Forgjengerens bytes skrev de 5
+      funnene uten dubletter, og de drillede bytene fant 0 nye.
