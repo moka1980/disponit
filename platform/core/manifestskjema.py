@@ -5816,7 +5816,8 @@ def _grenser_sveip_rollback(grense: dict, art: dict) -> list[str]:
     if melding:
         feil.append(melding)
     elif antall != 0:
-        feil.append(f"inflight_funn={antall} — en drept sveip skrev funn")
+        feil.append(f"inflight_funn={antall} — en drept sveip la til"
+                    " funnrader")
     # ARBEIDERNØKKELEN MÅ SLIPPE. Blir den hengende etter en drept
     # kjøring, er sveipen stengt ute av seg selv til sesjonen ryddes.
     if m.get("arbeidernokkel_fri") is not True:

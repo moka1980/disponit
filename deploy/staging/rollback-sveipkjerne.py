@@ -7,8 +7,14 @@ rollback av modulen ER en rollback av kjernebytene sveipen består av,
 REGISTERETS tilstand over rullingen, i tre steg:
 
   (a) AVBRUTT: en sveip på de drillede bytene drepes MIDT I skrivingen —
-      registeret står urørt (ingen halve funn), og arbeidernøkkelen
+      den skriver INGEN NYE funn (ingen halve), og arbeidernøkkelen
       slippes, så sveipen ikke er stengt ute av sin egen døde sesjon.
+
+      MÅLT SOM DELTA, ikke mot null: noen moduler skriver et funn i
+      DØRA, i samme transaksjon som subjektet opprettes (M-42s
+      `kontoendring`), så riggens tenanter har alt rader før drillen
+      begynner. Påstanden er uansett den riktigere av de to — «den
+      drepte kjøringen la ingenting til», ikke «registeret var tomt».
       Å drepe KLIENTEN er ikke nok, og drillen måler nettopp det: en
       backend som står og venter på lås merker ikke at klienten er borte,
       og ville fullført og committet sveipen så snart låsen slapp. Økten
@@ -262,9 +268,10 @@ def main() -> int:
     _log(f"runde {runde}: {len(rigg['subjekter'])} subjekter i"
          f" {len(tenanter)} tenanter")
     inn = {"modul_fil": k["modul_fil"], "dsn_variabel": k["dsn_variabel"]}
+    # UTGANGSPUNKTET MÅLES, ikke antatt. Se filhodet: en dør kan ha
+    # skrevet funn alt ved riggingen.
     t0 = maal(m, k, tenanter)
-    if t0["rader"]:
-        raise SystemExit("AVBRUTT: riggens tenanter har alt funn før drillen")
+    _log(f"før drillen: {t0['rader']} funnrader ({t0['apne']} åpne) i riggen")
 
     # ------------------------------------------------------------------
     # (a) AVBRUTT: låsen tas utenfra, sveipen blokkerer, prosessen drepes.
@@ -310,8 +317,10 @@ def main() -> int:
          f" avsluttet={avsluttet}")
     laas.rollback()          # slipper ACCESS EXCLUSIVE
     t1 = maal(m, k, tenanter)
+    inflight_nye = t1["rader"] - t0["rader"]
     _log(f"avbrutt (drillet): drept={drept} returkode={p.returncode}"
-         f" — {t1['rader']} funnrader i riggen")
+         f" — {inflight_nye} NYE funnrader i riggen"
+         f" ({t0['rader']} → {t1['rader']})")
 
     # Arbeidernøkkelen SKAL være fri: den døde sesjonen slipper den.
     modul_lokalt = __import__(f"drift.{k['modul_fil']}", fromlist=["kjor"])
@@ -369,7 +378,8 @@ def main() -> int:
             "inflight_blokkerte_paa_laas": sto_i_lås,
             "inflight_backend_levde_etter_drap": levde,
             "inflight_backend_avsluttet": avsluttet,
-            "inflight_funn": t1["rader"],
+            "for_rader": t0["rader"], "for_apne": t0["apne"],
+            "inflight_funn": inflight_nye,
             "arbeidernokkel_fri": bool(fri),
             "rullbakk_funn": t2["apne"],
             "rullbakk_rader": t2["rader"],

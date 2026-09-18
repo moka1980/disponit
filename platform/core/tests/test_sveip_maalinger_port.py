@@ -207,7 +207,8 @@ def _rbart(**over):
             "kandidat_fil": "/opt/disponit/releases/aa11/platform/drift/adressesveip.py"},
         "maalt": {
             "inflight_drept": True, "inflight_returkode": -9,
-            "inflight_blokkerte_paa_laas": True, "inflight_funn": 0,
+            "inflight_blokkerte_paa_laas": True,
+            "for_rader": 1, "for_apne": 1, "inflight_funn": 0,
             "inflight_backend_levde_etter_drap": True,
             "inflight_backend_avsluttet": True,
             "arbeidernokkel_fri": True,
