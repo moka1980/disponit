@@ -198,7 +198,7 @@ def _rbart(**over):
             "drillet_kjernedigest": "c" * 64,
             "forgjenger_kjernedigest": "d" * 64,
             "arbeidernokkel": 619204773, "avbrutt_backend_pid": 4242,
-            "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(),
+            "bevisrot_sha256": m.sveip_rollback_bevisrot_sha256(MODUL),
             "form": "kjerne"},
         "identiteter": {
             "avbrutt_pid": 11, "rullback_pid": 12, "kandidat_pid": 13,

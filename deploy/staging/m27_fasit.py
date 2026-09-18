@@ -42,6 +42,8 @@ import hashlib
 import uuid
 from pathlib import Path
 
+import sveipfasit_felles as felles
+
 #: Tersklene settet måles mot — pinnet her, aldri utledet av kjøringen.
 STILLE_DOGN = 180
 UTEN_PUNKT_DOGN = 30
@@ -50,7 +52,11 @@ TELLEINTERVALL_DOGN = 365
 AKTOR = "m27-fasit"
 #: `kilde`-verdien modulens dører skriver i evidenskjeden.
 EVIDENSKILDE = "m27_lager"
-#: Funntabellens subjektkolonne. Registrene deler form, ikke navn.
+#: Funntabellen og subjektkolonnen. Navnene står ÉN gang, her, og
+#: leses av det delte maskineriet: en kopi der det ene ble rettet og
+#: det andre ikke, ville lest et ANNET register enn modulen skriver i
+#: — og talt null funn uten å si fra.
+FUNNTABELL = "lagerfunn"
 SUBJEKTKOLONNE = "vare_id"
 
 #: (merkelapp, forventet funntype eller None, punkt eller None,
@@ -125,10 +131,7 @@ def tenantnavn(runde: str, rolle: str) -> str:
 
 
 def _sk(conn, tenant: str):
-    conn.execute("SELECT set_config('disponit.tenant', %s, true),"
-                 " set_config('disponit.aktor', %s, true),"
-                 " set_config('disponit.request_id', %s, true)",
-                 (tenant, AKTOR, "m27-fasit"))
+    felles.sett_kontekst(conn, tenant, AKTOR, "m27-fasit")
 
 
 def lag_vare(rt, tenant: str, merke: str, punkt: int | None,
@@ -216,35 +219,8 @@ def forventet() -> dict[str, str | None]:
     return ut
 
 
-def apne_funn(m, tenant: str) -> dict[str, list[str]]:
-    """vare_id → åpne funntyper, lest med MIGRATORENS tilkobling (som
-    modulens egne tester): sveiperollen har bare EXECUTE på sveipedøra,
-    og runtime har ingen lesevei inn i funntabellen."""
-    _sk(m, tenant)
-    rader = m.execute(
-        "SELECT vare_id::text, funntype FROM lagerfunn"
-        " WHERE tenant=%s AND apen ORDER BY 1,2", (tenant,)).fetchall()
-    m.rollback()
-    ut: dict[str, list[str]] = {}
-    for vid, funntype in rader:
-        ut.setdefault(vid, []).append(funntype)
-    return ut
-
-
 def maal(m, rigg: dict) -> dict:
     """Dommen, RE-REGNET av registerets rader — aldri av riktig antall."""
-    fasit = forventet()
-    apne = {**apne_funn(m, rigg["med_terskel"]),
-            **apne_funn(m, rigg["uten_terskel"])}
-    avvik: list[str] = []
-    per: list[dict] = []
-    for merke, ventet in fasit.items():
-        sid = rigg["subjekter"][merke]["subjekt_id"]
-        fikk = sorted(apne.get(sid, []))
-        ok = (fikk == [ventet]) if ventet else (fikk == [])
-        if not ok:
-            avvik.append(f"{merke}: ventet {ventet or 'ingen funn'},"
-                         f" fikk {fikk or 'ingen'}")
-        per.append({"merke": merke, "ventet": ventet, "fikk": fikk,
-                    "subjekt_id": sid})
-    return {"per_subjekt": per, "avvik": avvik}
+    return felles.maal(m, rigg, funntabell=FUNNTABELL,
+                       subjektkolonne=SUBJEKTKOLONNE, forventet=forventet(),
+                       tenanter=riggtenanter(rigg), aktor=AKTOR)

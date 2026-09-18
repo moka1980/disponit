@@ -352,7 +352,7 @@ def main() -> int:
             "drillet_kjernedigest": d_kjerne,
             "forgjenger_kjernedigest": f_kjerne,
             "arbeidernokkel": nokkel, "avbrutt_backend_pid": bakgrunn,
-            "bevisrot_sha256": sveip_rollback_bevisrot_sha256(),
+            "bevisrot_sha256": sveip_rollback_bevisrot_sha256(a.modul),
             "form": "kjerne: sveipen ruller med kjernen — avbruddet tas"
                     " utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base,"
                     " underprosess per release-katalog",

@@ -34,6 +34,8 @@ import json
 import uuid
 from pathlib import Path
 
+import sveipfasit_felles as felles
+
 #: Tersklene settet måles mot — pinnet her, aldri utledet av kjøringen.
 BUDSJETTVARSEL_PROMILLE = 100      # 10 % over budsjett før det er et funn
 MILEPAEL_FRIST_DOGN = 7
@@ -42,7 +44,11 @@ STILLHET_DOGN = 30
 AKTOR = "m25-fasit"
 #: `kilde`-verdien modulens dører skriver i evidenskjeden.
 EVIDENSKILDE = "m25_prosjekt"
-#: Funntabellens subjektkolonne.
+#: Funntabellen og subjektkolonnen. Navnene står ÉN gang, her, og
+#: leses av det delte maskineriet: en kopi der det ene ble rettet og
+#: det andre ikke, ville lest et ANNET register enn modulen skriver i
+#: — og talt null funn uten å si fra.
+FUNNTABELL = "prosjektfunn"
 SUBJEKTKOLONNE = "prosjekt_id"
 
 #: Ingen funntype er unåbar for dette settet: alle dørene tar datoer.
@@ -103,10 +109,7 @@ def tenantnavn(runde: str, rolle: str) -> str:
 
 
 def _sk(conn, tenant: str):
-    conn.execute("SELECT set_config('disponit.tenant', %s, true),"
-                 " set_config('disponit.aktor', %s, true),"
-                 " set_config('disponit.request_id', %s, true)",
-                 (tenant, AKTOR, "m25-fasit"))
+    felles.sett_kontekst(conn, tenant, AKTOR, "m25-fasit")
 
 
 def lag_prosjekt(rt, tenant: str, merke: str, budsjett: int, start_siden: int,
@@ -195,33 +198,8 @@ def forventet() -> dict[str, str | None]:
     return ut
 
 
-def apne_funn(m, tenant: str) -> dict[str, list[str]]:
-    """prosjekt_id → åpne funntyper, lest med MIGRATORENS tilkobling."""
-    _sk(m, tenant)
-    rader = m.execute(
-        "SELECT prosjekt_id::text, funntype FROM prosjektfunn"
-        " WHERE tenant=%s AND apen ORDER BY 1,2", (tenant,)).fetchall()
-    m.rollback()
-    ut: dict[str, list[str]] = {}
-    for pid, funntype in rader:
-        ut.setdefault(pid, []).append(funntype)
-    return ut
-
-
 def maal(m, rigg: dict) -> dict:
-    """Dommen, RE-REGNET av registerets rader."""
-    fasit = forventet()
-    apne = {**apne_funn(m, rigg["med_terskel"]),
-            **apne_funn(m, rigg["uten_terskel"])}
-    avvik: list[str] = []
-    per: list[dict] = []
-    for merke, ventet in fasit.items():
-        sid = rigg["subjekter"][merke]["subjekt_id"]
-        fikk = sorted(apne.get(sid, []))
-        ok = (fikk == [ventet]) if ventet else (fikk == [])
-        if not ok:
-            avvik.append(f"{merke}: ventet {ventet or 'ingen funn'},"
-                         f" fikk {fikk or 'ingen'}")
-        per.append({"merke": merke, "ventet": ventet, "fikk": fikk,
-                    "subjekt_id": sid})
-    return {"per_subjekt": per, "avvik": avvik}
+    """Dommen, RE-REGNET av registerets rader — aldri av riktig antall."""
+    return felles.maal(m, rigg, funntabell=FUNNTABELL,
+                       subjektkolonne=SUBJEKTKOLONNE, forventet=forventet(),
+                       tenanter=riggtenanter(rigg), aktor=AKTOR)

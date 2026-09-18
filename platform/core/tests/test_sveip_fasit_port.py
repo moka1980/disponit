@@ -234,3 +234,61 @@ def test_m25s_rene_prosjekt_fodes_med_et_funn_og_bare_ett():
     siden, _min, kostnad = f.RENT_ARBEID
     assert siden == 0
     assert kostnad * 1000 <= budsjett * (1000 + f.BUDSJETTVARSEL_PROMILLE)
+
+
+def test_m24s_rene_avtale_fodes_med_et_funn_og_bare_ett():
+    """Den rene avtalen skal få NØYAKTIG ett funn i første sveip —
+    `avtale_uten_maling` — og ingen av de tre andre."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m24_fasit as f
+    ren = next(r for r in f.SETT if r[0] == f.RENSES)
+    _merke, ventet, fra_siden, til_om, leveranser = ren
+    assert ventet is None
+    # STILLE: ingen leveranser, og avtalen har løpt forbi grensen.
+    assert leveranser == [] and fra_siden > f.MALING_STILLHET_DOGN
+    # …MEN IKKE NÆR UTLØP: gyldigheten ligger godt utenfor varselvinduet,
+    # ellers hadde `avtale_utlopt` også slått inn.
+    assert til_om > f.AVTALE_VARSEL_DOGN
+    # RETTELSEN er innenfor både SLA og pris, så andre sveip lukker
+    # funnet uten å åpne et nytt.
+    siden, verdi, pris = f.REN_LEVERANSE
+    assert siden == 0 and verdi <= f.AVTALT_VERDI
+    assert pris * 1000 <= f.AVTALT_PRIS * (1000 + f.PRISSTIGNING_PROMILLE)
+
+
+def test_m42s_rene_mottaker_kureres_av_sveipen_ikke_av_dora():
+    """M-42s verifikasjonsdør LUKKER funnene selv. Hadde kuren vært en
+    verifikasjon, ville sveipen ikke hatt noe å lukke, og lukkeaksen vært
+    umålt selv om alt så grønt ut.
+
+    Kuren er derfor en ny oppgave med SAMME nummer: døra skriver
+    ingenting når nummeret står stille, og kandidaten forsvinner bare
+    fordi datoen flyttet seg."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m42_fasit as f
+    ren = next(r for r in f.SETT if r[0] == f.RENSES)
+    _merke, ventet, oppgaver, verifikasjon = ren
+    assert ventet is None
+    # Fødes UVERIFISERT og eldre enn grensen → funn i første sveip.
+    assert verifikasjon is None
+    assert len(oppgaver) == 1 and oppgaver[0][1] > f.UVERIFISERT_DOGN
+    # KUREN er en oppgave, ikke en verifikasjon…
+    kilde = (ROT / "deploy/staging/m42_fasit.py").read_text(encoding="utf-8")
+    kur = kilde.split("def kontroller_ren(", 1)[1].split("def ", 1)[0]
+    assert "m42_oppgi_konto" in kur
+    assert "m42_verifiser_konto" not in kur, \
+        "kuren verifiserer — da lukker DØRA funnet, ikke sveipen"
+    # …med SAMME nummer, så døra ikke skriver et `kontoendring`-funn.
+    assert f.REN_OPPGAVE[0] == oppgaver[0][0]
+    assert f.REN_OPPGAVE[1] == 0
+
+
+def test_m42s_terskellose_tenant_har_bare_en_oppgave():
+    """Døra skriver `kontoendring` SELV ved den andre oppgaven, uansett
+    om tenanten har terskler. To oppgaver i den terskelløse tenanten
+    ville gitt den et funn døra skrev — og settet hadde målt døra."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m42_fasit as f
+    _merke, ventet, oppgaver, _v = f.UTEN_TERSKEL
+    assert ventet == "ingen_terskel"
+    assert len(oppgaver) == 1
