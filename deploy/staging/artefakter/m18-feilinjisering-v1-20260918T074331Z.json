@@ -1,0 +1,66 @@
+{
+  "bestatt": true,
+  "krav_id": "m18-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 28,
+    "apne_for": 28,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "lop_uten_aktiv_eier": [
+        6,
+        0
+      ],
+      "steg_over_frist": [
+        11,
+        0
+      ],
+      "stoppet_lop": [
+        11,
+        2
+      ]
+    },
+    "per_type_for": {
+      "lop_uten_aktiv_eier": [
+        6,
+        0
+      ],
+      "steg_over_frist": [
+        11,
+        0
+      ],
+      "stoppet_lop": [
+        11,
+        2
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 13
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "onboardingfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m18_sveip_onboarding(int, int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_onboarding_eier",
+    "modul": "m18_onboarding",
+    "riggmodul": "m18_fasit",
+    "riggtenanter": [
+      "t-m18fasit-a-6d41f580",
+      "t-m18fasit-b-6d41f580"
+    ],
+    "runde": "6d41f580",
+    "sveipedor": "m18_sveip_onboarding(int, int)",
+    "tenantkilde": [
+      "onboardinglop"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T07:43:31.861350+00:00"
+}

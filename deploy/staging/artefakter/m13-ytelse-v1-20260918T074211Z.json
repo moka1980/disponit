@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m13-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0211,
+      0.0168,
+      0.0178
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 18,
+        "tenanter": 12
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 18,
+        "tenanter": 12
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 18,
+        "tenanter": 12
+      }
+    ],
+    "sekunder": 0.0211,
+    "sekunder_per_tenant": 0.0018,
+    "tenanter": 12
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m13_avstemming",
+    "sveip": "avstemmingssveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T07:42:11.537249+00:00"
+}

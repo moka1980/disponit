@@ -1,0 +1,67 @@
+{
+  "bestatt": true,
+  "krav_id": "m13-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 34,
+    "apne_for": 34,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 3,
+    "lukkede_for": 3,
+    "per_type_etter": {
+      "delvis_dekket_bilag": [
+        9,
+        0
+      ],
+      "forfalt_bilag_uten_dekning": [
+        10,
+        0
+      ],
+      "uavstemt_post_over_grense": [
+        15,
+        3
+      ]
+    },
+    "per_type_for": {
+      "delvis_dekket_bilag": [
+        9,
+        0
+      ],
+      "forfalt_bilag_uten_dekning": [
+        10,
+        0
+      ],
+      "uavstemt_post_over_grense": [
+        15,
+        3
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 20
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "avstemmingsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m13_sveip_avstemming(int, int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_avstemming_eier",
+    "modul": "m13_avstemming",
+    "riggmodul": "m13_fasit",
+    "riggtenanter": [
+      "t-m13fasit-a-eeac7d44",
+      "t-m13fasit-b-eeac7d44"
+    ],
+    "runde": "eeac7d44",
+    "sveipedor": "m13_sveip_avstemming(int, int)",
+    "tenantkilde": [
+      "bankpost",
+      "bilag"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T07:43:31.402551+00:00"
+}

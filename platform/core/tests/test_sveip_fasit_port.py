@@ -136,17 +136,39 @@ def test_riggkontrakten_er_hel_for_hver_sveipmodul():
 
 
 def _funntyper_fra_migrasjonen(funntabell: str) -> set[str]:
-    """Registerets LUKKEDE mengde funntyper, lest av CHECK-beskrankningen.
+    """Registerets LUKKEDE mengde funntyper, lest av CHECK-beskrankningen
+    i funntabellens egen `CREATE TABLE`.
 
     Utledet, ikke pinnet: en liste her ville vært en KOPI av det den skal
     kontrollere, og ville stått stille den dagen registeret fikk en
-    sjette funntype."""
-    naal = f"{funntabell}_type_lukket CHECK (funntype IN ("
+    sjette funntype.
+
+    LESER BEGGE SKRIVEMÅTENE. Noen registre navngir beskrankningen
+    (`<tabell>_type_lukket`), andre skriver den rett på kolonnen. En
+    port som bare kjente den ene ville sagt «fant ingen CHECK» om et
+    register som har en helt gyldig — og da måler porten formen på
+    SQL-en, ikke mengden."""
     for sti in sorted((ROT / "platform/core/db/migrations").glob("*.sql")):
         sql = sti.read_text(encoding="utf-8")
-        if naal in sql:
-            blokk = sql.split(naal, 1)[1].split("))", 1)[0]
-            return {x.strip().strip("',") for x in blokk.split()} - {""}
+        for start in (f"CREATE TABLE {funntabell} (",
+                      f"CREATE TABLE public.{funntabell} ("):
+            if start not in sql:
+                continue
+            blokk = sql.split(start, 1)[1].split("\n);", 1)[0]
+            if "funntype IN (" not in blokk:
+                continue
+            liste = blokk.split("funntype IN (", 1)[1]
+            # Balanser parentesene: lista slutter der den åpnende lukkes.
+            dybde, ut = 1, []
+            for tegn in liste:
+                if tegn == "(":
+                    dybde += 1
+                elif tegn == ")":
+                    dybde -= 1
+                    if dybde == 0:
+                        break
+                ut.append(tegn)
+            return {x.strip().strip("',") for x in "".join(ut).split()} - {""}
     raise AssertionError(f"fant ingen CHECK for {funntabell}")
 
 
@@ -387,3 +409,57 @@ def test_m39s_rene_taker_far_planen_sin_mellom_kjoringene():
     assert p_minutter == minutter and p_kode == kode
     assert p_fra > siden, "planen dekker ikke dagen den skal forklare"
     assert p_minutter <= f.NORMALTID_DAG
+
+
+def test_m18s_hvert_lop_har_noyaktig_ett_forsinket_steg():
+    """`steg_over_frist` gir ÉN RAD PER FORSINKET STEG, og alle tre
+    funntypene henger på samme `lop_id`. Et løp med to forsinkede steg
+    ville fått to rader av samme type, og dommen «nøyaktig én funntype»
+    hadde falt på riggen, ikke på modulen.
+
+    Malen med lange frister kan derfor ALDRI gi et forsinket steg, og
+    fristmalen må gi nøyaktig ett når steg 1 er fullført."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m18_fasit as f
+    # LANGE FRISTER: ingen av dem kan forfalle i settets levetid.
+    assert all(s["frist_dogn"] >= 365 for s in f.MAL_LANG)
+    for merke, _v, _t, mal, startet, _fu, _e, _a in f.SETT:
+        if mal == "lang":
+            assert startet < 365, merke
+    # FRISTMALEN: med steg 1 fullført og løpet fem døgn gammelt skal
+    # NØYAKTIG ETT ufullført steg være forbi fristen.
+    frist = next(r for r in f.SETT if r[3] == "frist")
+    _m, ventet, _t, _mal, startet, fullfor, _e, _a = frist
+    assert ventet == "steg_over_frist" and fullfor == [1]
+    over = [i for i, s in enumerate(f.MAL_FRIST, start=1)
+            if i not in fullfor and startet > s["frist_dogn"]]
+    assert over == [2], f"forventet nøyaktig ett forsinket steg, fikk {over}"
+    # …og løpet er ikke stille, fordi steg 1 fullføres i dag.
+    assert fullfor, "et løp uten fullført steg måles fra start og blir stille"
+
+
+def test_m18s_stoppede_lop_har_ingen_fullforte_steg():
+    """Stillheten måles fra SISTE fullføring når det finnes en, og
+    `fullfort_ts` settes til `now()` av døra — ingen dør tar den som
+    parameter. Et stoppet løp med et fullført steg er derfor unåbart for
+    et løp opprettet i dag, og settet må gi det NULL fullførte."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m18_fasit as f
+    for merke, ventet, _t, _mal, startet, fullfor, _e, _a in f.SETT:
+        if ventet == "stoppet_lop":
+            assert fullfor == [], merke
+            assert startet > f.DOGN_STILLE, merke
+
+
+def test_m18s_eierlose_lop_har_sin_EGEN_eier():
+    """Deaktiveringen treffer et MEDLEMSKAP, ikke et løp. Delte det
+    eierløse løpet eier med de andre, ville alle mistet eieren sin, og
+    tre subjekter hadde fått samme funn."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m18_fasit as f
+    egne = [r[0] for r in f.SETT if r[6]]
+    eierlose = [r[0] for r in f.SETT if r[1] == "lop_uten_aktiv_eier"]
+    assert egne == eierlose and len(egne) == 1
+    # …og det løpet er ferskt, så verken stillhet eller frist slår inn.
+    r = next(x for x in f.SETT if x[1] == "lop_uten_aktiv_eier")
+    assert r[4] == 0 and r[3] == "lang"

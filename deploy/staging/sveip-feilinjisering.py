@@ -61,6 +61,14 @@ def _log(*a):
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}]", *a, flush=True)
 
 
+def kilder(k: dict) -> list[str]:
+    """Tabellene tenantlisten hentes fra. M-13s sveip bruker en UNION av
+    to, og en måling som bare kjente den ene ville mistet hver tenant som
+    bare finnes i den andre."""
+    kilde = k["tenantkilde"]
+    return [kilde] if isinstance(kilde, str) else list(kilde)
+
+
 def tilstand(m, k: dict) -> dict:
     """Registerets funn, talt av migratoren TENANT FOR TENANT: antall
     åpne, antall lukkede, og summen av funntypene.
@@ -82,9 +90,10 @@ def tilstand(m, k: dict) -> dict:
     m.execute(f"SET ROLE {k['maalerolle']}")
     m.commit()
     m.execute("SELECT set_config('disponit.tenant', '', true)")
+    spørring = " UNION ".join(f"SELECT DISTINCT tenant FROM {tab}"
+                              for tab in kilder(k))
     tenanter = [r[0] for r in m.execute(
-        f"SELECT DISTINCT tenant FROM {k['tenantkilde']} ORDER BY 1"
-    ).fetchall()]
+        f"SELECT tenant FROM ({spørring}) x ORDER BY 1").fetchall()]
     m.rollback()
     per: dict[str, list[int]] = {}
     for tenant in tenanter:
@@ -177,7 +186,10 @@ def main() -> int:
         "krav_id": k["feilinjisering_krav"], "ts": ts, "bestatt": True,
         "oppsett": {"modul": a.modul, "vert": a.vert,
                     "funntabell": k["funntabell"],
-                    "tenantkilde": k["tenantkilde"],
+                    # ALLTID EN LISTE i artefaktet, også når registeret
+                    # bærer én tabell: én form er lettere å lese og å
+                    # validere enn to.
+                    "tenantkilde": kilder(k),
                     "maalerolle": k["maalerolle"],
                     "riggmodul": k["riggmodul"], "runde": runde,
                     "riggtenanter": rigg_modul.riggtenanter(rigg),

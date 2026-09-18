@@ -30,8 +30,8 @@
 id: m18_onboarding
 navn: Kunde-onboardingagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 avhengigheter:
   - m02_revisjonslogg          # steg og statusendring i evidenskjeden
 kjerne: platform/modules/m18_onboarding
@@ -39,31 +39,134 @@ i18n_prefiks: onboarding
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m18-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m18-suite-v1-20260918T083102Z.json
+    artefakt_sha256: 22a4526f08b0326c0123918dbcf3cbb1730388e33de95fdf32f4b1fe01bc795f
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 21 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m18_fasit.py` gir hver av onboardingregisterets tre
+    # funntyper nøyaktig ett løp, og tre løp som skal være rene.
+    #
+    # ALLE TRE FUNNTYPENE HENGER PÅ SAMME SUBJEKTNØKKEL, og
+    # `steg_over_frist` gir ÉN RAD PER forsinket steg. Et løp med to
+    # forsinkede steg ville fått to rader av samme type, og dommen
+    # «nøyaktig én funntype» hadde falt på riggen i stedet for på
+    # modulen. Hvert løp har derfor nøyaktig ett forsinket steg — eller
+    # ingen.
+    #
+    # HVER STEGPROFIL HAR SIN EGEN MAL: en mal med et pågående løp kan
+    # ikke redigeres.
+    #
+    # DET EIERLØSE LØPET HAR SIN EGEN EIER. Deaktiveringen treffer et
+    # MEDLEMSKAP, ikke et løp, så en delt eier ville gitt tre subjekter
+    # samme funn. Og den går utenom dørene: det finnes ingen dør for
+    # medlemskap, fordi det er en plattformhandling og ikke en
+    # M-18-handling.
+    status: ja
+    krav_id: m18-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m18-fasit-v1-20260918T074213Z.json
+    artefakt_sha256: 63e7ca98232677eedbd299fb03eff7979acde856b493e02980fb85dd9aafee4f
     notat: >-
-      KREVER: et løpssett med KJENT fasit for hvilke løp som er
-      stoppet og hvilke som går som de skal, kjørt likt lokalt og på
-      staging med begge datasett-identitetene bundet.
+      Runde 1590b2e9: 6 løp, 0 funnavvik. Første sveip ga 4 nye funn —
+      også det rene løpet, som fødes stille. Steget som gjør det rent
+      ble fullført mellom kjøringene, og andre sveip ga 0 nye og lukket
+      1. Stillheten måles fra siste fullføring, så ett steg i dag er
+      nok.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m18-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m18-fasit-v1-20260918T074213Z.json
+    artefakt_sha256: 63e7ca98232677eedbd299fb03eff7979acde856b493e02980fb85dd9aafee4f
     notat: >-
-      KREVER: at hvert steg og hver statusendring faktisk står i
-      evidenskjeden, målt som hendelser med identitet.
+      18 hendelser i kjeden (lop.fullfort: 1, lop.startet: 6,
+      mal.registrert: 3, mal.steg_satt: 3, steg.fullfort: 5), 0 uten
+      aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m18-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m18-feilinjisering-v1-20260918T074331Z.json
+    artefakt_sha256: 9732ff7f394c42666b5cda965d6bbd1d995ea112b262c0d29d2725f5292a236b
     notat: >-
-      KREVER: onboardingsveipen bygget, og at en feil i den ikke lar et
-      stoppet løp se ut som et løpende.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 28 åpne og 2 lukkede over 13 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m18-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m18-ytelse-v1-20260918T074214Z.json
+    artefakt_sha256: 68247fa4dc4f07653905f53c5ecaf43383d3df7ebd91f457e451bb5456039b83
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0183 / 0,0157 / 0,0154 s) over 5 tenanter; den
+      DÅRLIGSTE er dommen. 0,0183 s mot taket på 60 — 0,0037 s per
+      tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m18-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m18-rollback-v1-20260918T074216Z.json
+    artefakt_sha256: d00204d5d7071e8d858f5e5bdc8f51e16d7f43bc974bd5752998031de421e9a2
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 745fafd8 ← forgjenger 5f57464a (ulike kjernedigester).
+      Riggen hadde 0 funnrader før drillen, og den drepte kjøringen la
+      ingen til. Forgjengerens bytes skrev de 4 funnene uten dubletter,
+      og de drillede bytene fant 0 nye.

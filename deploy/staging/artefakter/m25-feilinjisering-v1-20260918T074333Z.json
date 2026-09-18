@@ -4,63 +4,63 @@
   "maalt": {
     "alarm_etter_andre": true,
     "alarm_etter_forste": false,
-    "apne_etter": 21,
-    "apne_for": 21,
+    "apne_etter": 56,
+    "apne_for": 56,
     "frisk_feilet": false,
     "injeksjonsrolle_har_execute": false,
     "injisert_feilet": 2,
     "injiserte_kjoringer": 2,
-    "lukkede_etter": 4,
-    "lukkede_for": 4,
+    "lukkede_etter": 5,
+    "lukkede_for": 5,
     "per_type_etter": {
       "betalingsplan_mangler": [
-        4,
+        10,
         1
       ],
       "budsjett_overskredet": [
-        4,
+        10,
         0
       ],
       "ingen_arbeid_registrert": [
-        5,
-        3
+        16,
+        4
       ],
       "ingen_terskel": [
-        4,
+        10,
         0
       ],
       "milepael_over_frist": [
-        4,
+        10,
         0
       ]
     },
     "per_type_for": {
       "betalingsplan_mangler": [
-        4,
+        10,
         1
       ],
       "budsjett_overskredet": [
-        4,
+        10,
         0
       ],
       "ingen_arbeid_registrert": [
-        5,
-        3
+        16,
+        4
       ],
       "ingen_terskel": [
-        4,
+        10,
         0
       ],
       "milepael_over_frist": [
-        4,
+        10,
         0
       ]
     },
     "registeret_urort": true,
-    "tenanter": 9
+    "tenanter": 21
   },
   "oppsett": {
-    "bevisrot_sha256": "25d7d89ad3b46ad0aa67ac4ff2910a19a92502ecb398c703884c59ffde5af9e5",
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
     "funntabell": "prosjektfunn",
     "injeksjon": "tilkobling som disponit — uten EXECUTE på m25_sveip_prosjekter(int)",
     "injeksjonsrolle": "disponit",
@@ -68,13 +68,15 @@
     "modul": "m25_prosjekt",
     "riggmodul": "m25_fasit",
     "riggtenanter": [
-      "t-m25fasit-med_terskel-f6f18018",
-      "t-m25fasit-uten_terskel-f6f18018"
+      "t-m25fasit-med_terskel-4efd8042",
+      "t-m25fasit-uten_terskel-4efd8042"
     ],
-    "runde": "f6f18018",
+    "runde": "4efd8042",
     "sveipedor": "m25_sveip_prosjekter(int)",
-    "tenantkilde": "prosjekt",
+    "tenantkilde": [
+      "prosjekt"
+    ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-18T01:07:32.456936+00:00"
+  "ts": "2026-09-18T07:43:33.153931+00:00"
 }

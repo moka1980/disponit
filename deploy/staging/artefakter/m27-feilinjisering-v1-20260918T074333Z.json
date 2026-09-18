@@ -4,55 +4,55 @@
   "maalt": {
     "alarm_etter_andre": true,
     "alarm_etter_forste": false,
-    "apne_etter": 22,
-    "apne_for": 22,
+    "apne_etter": 51,
+    "apne_for": 51,
     "frisk_feilet": false,
     "injeksjonsrolle_har_execute": false,
     "injisert_feilet": 2,
     "injiserte_kjoringer": 2,
-    "lukkede_etter": 3,
-    "lukkede_for": 3,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
     "per_type_etter": {
       "ikke_talt": [
-        5,
+        11,
         0
       ],
       "ingen_terskel": [
-        5,
+        11,
         0
       ],
       "under_bestillingspunkt": [
-        6,
+        12,
         0
       ],
       "uten_bevegelse": [
-        6,
-        3
+        17,
+        4
       ]
     },
     "per_type_for": {
       "ikke_talt": [
-        5,
+        11,
         0
       ],
       "ingen_terskel": [
-        5,
+        11,
         0
       ],
       "under_bestillingspunkt": [
-        6,
+        12,
         0
       ],
       "uten_bevegelse": [
-        6,
-        3
+        17,
+        4
       ]
     },
     "registeret_urort": true,
-    "tenanter": 11
+    "tenanter": 23
   },
   "oppsett": {
-    "bevisrot_sha256": "25d7d89ad3b46ad0aa67ac4ff2910a19a92502ecb398c703884c59ffde5af9e5",
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
     "funntabell": "lagerfunn",
     "injeksjon": "tilkobling som disponit — uten EXECUTE på m27_sveip_lager(int)",
     "injeksjonsrolle": "disponit",
@@ -60,13 +60,15 @@
     "modul": "m27_lager",
     "riggmodul": "m27_fasit",
     "riggtenanter": [
-      "t-m27fasit-med_terskel-491f8f98",
-      "t-m27fasit-uten_terskel-491f8f98"
+      "t-m27fasit-med_terskel-a21d5189",
+      "t-m27fasit-uten_terskel-a21d5189"
     ],
-    "runde": "491f8f98",
+    "runde": "a21d5189",
     "sveipedor": "m27_sveip_lager(int)",
-    "tenantkilde": "vare",
+    "tenantkilde": [
+      "vare"
+    ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-18T01:07:18.234335+00:00"
+  "ts": "2026-09-18T07:43:33.615034+00:00"
 }
