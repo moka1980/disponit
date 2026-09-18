@@ -292,3 +292,16 @@ def test_m42s_terskellose_tenant_har_bare_en_oppgave():
     _merke, ventet, oppgaver, _v = f.UTEN_TERSKEL
     assert ventet == "ingen_terskel"
     assert len(oppgaver) == 1
+
+
+def test_m42s_rigg_respekterer_fireoyne():
+    """`m42_verifikasjon_vakt` NEKTER at den som oppga kontoen verifiserer
+    den. Riggen må ha to personer — og det er ikke en formalitet: hele
+    modulens grunn til å finnes er at noen SÅ på kontoen, uavhengig av
+    den som oppga den. Riggen falt på nettopp dette første gang."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m42_fasit as f
+    assert f.OPPGIR != f.VERIFISERER
+    kilde = (ROT / "deploy/staging/m42_fasit.py").read_text(encoding="utf-8")
+    assert '"u-fasit"' not in kilde, \
+        "én og samme aktør oppgir og verifiserer — vakten nekter"

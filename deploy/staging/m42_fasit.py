@@ -43,6 +43,13 @@ REVERIFIKASJON_DOGN = 365
 UVERIFISERT_DOGN = 7
 
 AKTOR = "m42-fasit"
+#: FIRE ØYNE: `m42_verifikasjon_vakt` NEKTER at den som oppga kontoen
+#: verifiserer den — «er de samme, er ingenting verifisert». Riggen må
+#: derfor ha to personer, og det er ikke en formalitet: hele modulens
+#: grunn til å finnes er at et menneske SÅ på kontoen, uavhengig av den
+#: som oppga den.
+OPPGIR = "u-fasit-oppgir"
+VERIFISERER = "u-fasit-verifiserer"
 EVIDENSKILDE = "m42_kontovakt"
 FUNNTABELL = "kontofunn"
 SUBJEKTKOLONNE = "mottaker_id"
@@ -120,7 +127,7 @@ def lag_mottaker(rt, tenant: str, merke: str, oppgaver: list,
         rt.execute(
             "SELECT m42_oppgi_konto(%s,%s,%s,%s,%s,%s,"
             " current_date - %s, %s, %s)",
-            (tenant, oid, mid, nummer, "u-fasit", "portal", siden,
+            (tenant, oid, mid, nummer, OPPGIR, "portal", siden,
              f"fasitoppgave {merke}", AKTOR))
         rt.commit()
         oppgave_ider.append(str(oid))
@@ -130,7 +137,7 @@ def lag_mottaker(rt, tenant: str, merke: str, oppgaver: list,
         rt.execute(
             "SELECT m42_verifiser_konto(%s,%s,%s,%s,%s,%s,"
             " current_date - %s, %s)",
-            (tenant, uuid.uuid4(), oppgave_ider[indeks], metode, "u-fasit",
+            (tenant, uuid.uuid4(), oppgave_ider[indeks], metode, VERIFISERER,
              f"fasitverifikasjon {merke}", siden, AKTOR))
         rt.commit()
     return {"merke": merke, "subjekt_id": str(mid), "oppgaver": oppgave_ider}
@@ -173,7 +180,7 @@ def kontroller_ren(rt, rigg: dict) -> None:
         "SELECT m42_oppgi_konto(%s,%s,%s,%s,%s,%s,"
         " current_date - %s, %s, %s)",
         (rigg["med_terskel"], uuid.uuid4(), s["subjekt_id"], nummer,
-         "u-fasit", "portal", siden, "fasit: gjør mottakeren ren", AKTOR))
+         OPPGIR, "portal", siden, "fasit: gjør mottakeren ren", AKTOR))
     rt.commit()
 
 
