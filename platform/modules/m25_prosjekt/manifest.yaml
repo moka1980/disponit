@@ -123,8 +123,8 @@ staging_sjekkliste:
       - maalt.alarm_etter_andre
       - maalt.apne_etter
       - maalt.injeksjonsrolle_har_execute
-    artefakt: deploy/staging/artefakter/m25-feilinjisering-v1-20260918T010732Z.json
-    artefakt_sha256: 332d3d8bcf69d1e00e539e3c7eb33cc9effaab65efedd46f108b8676d346b59e
+    artefakt: deploy/staging/artefakter/m25-feilinjisering-v1-20260918T074333Z.json
+    artefakt_sha256: bee0839d23cf3ad990583d2553805e2d3256826255e587134c348938b21521c2
     notat: >-
       Frisk kjøring først (feilet=false), så to injiserte: begge rene
       feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
