@@ -184,7 +184,10 @@ def main() -> int:
         "krav_id": k["feilinjisering_krav"], "ts": ts, "bestatt": True,
         "oppsett": {"modul": a.modul, "vert": a.vert,
                     "funntabell": k["funntabell"],
-                    "tenantkilde": k["tenantkilde"],
+                    # ALLTID EN LISTE i artefaktet, også når registeret
+                    # bærer én tabell: én form er lettere å lese og å
+                    # validere enn to.
+                    "tenantkilde": list(kilder),
                     "maalerolle": k["maalerolle"],
                     "riggmodul": k["riggmodul"], "runde": runde,
                     "riggtenanter": rigg_modul.riggtenanter(rigg),

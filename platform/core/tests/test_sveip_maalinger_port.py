@@ -34,7 +34,7 @@ def _feilart(**over):
         "bestatt": True,
         "oppsett": {"modul": MODUL, "vert": "disponit.com",
                     "funntabell": "adressefunn",
-                    "tenantkilde": "adressesubjekt",
+                    "tenantkilde": ["adressesubjekt"],
                     "maalerolle": "disponit_adresse_eier",
                     "riggmodul": "m19_fasit", "runde": "abcd1234",
                     "riggtenanter": ["t-m19fasit-med_krav-abcd1234",
