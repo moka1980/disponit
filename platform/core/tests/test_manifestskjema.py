@@ -922,13 +922,15 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # 18/9 (natt): m24 og m42 — riggene deler nå også maskineriet, og
     # begge gikk hele lesten uten en eneste modulspesifikk produsent.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg", "m06_epost",
-                         "m14_fakturakontroll", "m17_kundeservice",
+                         "m13_avstemming", "m14_fakturakontroll",
+                         "m17_kundeservice",
                          "m19_adresse", "m23_fordring", "m24_leverandor",
                          "m25_prosjekt", "m26_prisbok", "m27_lager",
                          "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling", "m42_kontovakt",
                          "m44_kampanje", "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
-                          "m14_fakturakontroll", "m17_kundeservice",
+                          "m13_avstemming", "m14_fakturakontroll",
+                         "m17_kundeservice",
                           "m19_adresse", "m23_fordring", "m24_leverandor",
                           "m25_prosjekt", "m26_prisbok", "m27_lager",
                           "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling", "m42_kontovakt",

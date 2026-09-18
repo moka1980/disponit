@@ -68,7 +68,7 @@ export const MODULSTATUS = {
   // postering kan ikke trekkes tilbake ved å slette raden som laget
   // den. Ordet er `bygges` fordi manifestet finnes; ingen har kode
   // ennå, og ingen flippes av en byggemilepæl.
-  13: "bygges",     // m13_avstemming: under_utvikling, ikke_i_drift
+  13: "i_drift",    // m13_avstemming: aktiv, produksjon
   17: "i_drift",    // m17_kundeservice: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (flippet sammen med M-37)
   18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift

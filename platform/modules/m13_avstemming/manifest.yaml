@@ -23,8 +23,8 @@
 id: m13_avstemming
 navn: Bankavstemmingsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELL, MÅLT avhengighet: hver registrering og hver avstemmingsdom
 # bokføres i evidenskjeden (m02) — en avstemming som ikke kan gjenfinnes
 # er ikke en avstemming, den er en påstand.
@@ -35,9 +35,25 @@ i18n_prefiks: avstemming
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m13-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m13-suite-v1-20260918T081530Z.json
+    artefakt_sha256: 94de86d852d9a914a4ae37b622caf564dbbc902d50984d9d806a3d70bb6e9118
     notat: >-
-      SUITEN KJØRER.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 30 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet i `m13_fasit.py` gir hver av avstemmingsregisterets tre
