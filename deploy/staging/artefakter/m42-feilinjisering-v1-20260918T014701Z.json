@@ -1,0 +1,72 @@
+{
+  "bestatt": true,
+  "krav_id": "m42-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 21,
+    "apne_for": 21,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "ingen_terskel": [
+        2,
+        0
+      ],
+      "kontoendring": [
+        6,
+        0
+      ],
+      "uverifisert_konto": [
+        11,
+        2
+      ],
+      "verifikasjon_utlopt": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "ingen_terskel": [
+        2,
+        0
+      ],
+      "kontoendring": [
+        6,
+        0
+      ],
+      "uverifisert_konto": [
+        11,
+        2
+      ],
+      "verifikasjon_utlopt": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "25d7d89ad3b46ad0aa67ac4ff2910a19a92502ecb398c703884c59ffde5af9e5",
+    "funntabell": "kontofunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m42_sveip_konto(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_kontovakt_eier",
+    "modul": "m42_kontovakt",
+    "riggmodul": "m42_fasit",
+    "riggtenanter": [
+      "t-m42fasit-med_terskel-eab46fbd",
+      "t-m42fasit-uten_terskel-eab46fbd"
+    ],
+    "runde": "eab46fbd",
+    "sveipedor": "m42_sveip_konto(int)",
+    "tenantkilde": "betalingsmottaker",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:47:01.273473+00:00"
+}

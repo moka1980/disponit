@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/leverandorsveip.py",
+    "avbrutt_pid": 3001952,
+    "kandidat_fil": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02/platform/drift/leverandorsveip.py",
+    "kandidat_pid": 3001957,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/leverandorsveip.py",
+    "rullback_pid": 3001955
+  },
+  "krav_id": "m24-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 6,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 6,
+    "rullbakk_rader": 6
+  },
+  "oppsett": {
+    "arbeidernokkel": 884310563,
+    "avbrutt_backend_pid": 3001954,
+    "bevisrot_sha256": "98a174a4e927610110393e3723e380d187bde97851b348b784c106bf5089883b",
+    "drillet_digest": "c28c3cdc38837c0f661606ebf137b0cd84c5625cf1c845b91c82ed66ab779e7a",
+    "drillet_katalog": "/opt/disponit/releases/ffd8cb3b4c191c75d1953034273bd2e039080f02",
+    "drillet_kjernedigest": "67d7622e6deadff04b273d85caa31c8915bd4bd50fb14026361002f94a4a76fc",
+    "drillet_release": "ffd8cb3b4c191c75d1953034273bd2e039080f02",
+    "forgjenger_digest": "c28c3cdc38837c0f661606ebf137b0cd84c5625cf1c845b91c82ed66ab779e7a",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "leverandorfunn",
+    "maalerolle": "disponit_leverandor_eier",
+    "miljo": "staging",
+    "modul": "m24_leverandor",
+    "runde": "3b0d2e14",
+    "tenanter": [
+      "t-m24fasit-med_terskel-3b0d2e14",
+      "t-m24fasit-uten_terskel-3b0d2e14"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:48:07.122268+00:00"
+}

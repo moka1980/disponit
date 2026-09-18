@@ -74,30 +74,119 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m42_fasit.py` gir hver av kontoregisterets fire
+    # funntyper nøyaktig én mottaker, og to mottakere som skal være
+    # rene. ALLE fire er nåbare for et subjekt opprettet i dag: begge
+    # tidsmålingene leser DATOPARAMETRE (`oppgitt_dato`,
+    # `verifisert_dato`), ikke en `opprettet`-kolonne ingen dør rører.
+    #
+    # DØRA SKRIVER `kontoendring` SELV, i samme transaksjon som den
+    # andre oppgaven. Mottakeren i den terskelløse tenanten får derfor
+    # nøyaktig ÉN oppgave — ellers hadde settet målt døra i stedet for
+    # sveipen.
+    #
+    # DEN RENE KURERES MED EN NY OPPGAVE, ikke med en verifikasjon:
+    # verifikasjonsdøra LUKKER funnene selv, og da hadde sveipen ikke
+    # hatt noe å lukke.
+    status: ja
+    krav_id: m42-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m42-fasit-v1-20260918T014700Z.json
+    artefakt_sha256: 63f14fb77ce6e291877abbe80edfa4a50d7de38fc4645cc1d5580d7e60513eb7
     notat: >-
-      KREVER: et kontohistorikksett med KJENT fasit for hvilke endringer
-      som er funn, kjørt likt lokalt og på staging. Uten en målt
-      falsk-positiv-rate er «svindelsjekk bestått» et ord.
+      Runde 87d21b47: 6 mottakere, 0 funnavvik. Første sveip ga 10 nye
+      funn på tvers av basen, og andre sveip 0 nye og 1 lukket — den
+      rene mottakeren, som fødes uverifisert og 30 døgn gammel og
+      kureres med en ny oppgave mellom kjøringene. Dommen re-regnes av
+      per-subjekt-tabellen.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`.
+    #
+    # FIRE ØYNE STÅR I TALLENE: `konto.oppgitt` og `konto.verifisert` er
+    # skrevet av TO ULIKE aktører, fordi `m42_verifikasjon_vakt` nekter
+    # at den som oppga kontoen verifiserer den.
+    status: ja
+    krav_id: m42-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m42-fasit-v1-20260918T014700Z.json
+    artefakt_sha256: 63f14fb77ce6e291877abbe80edfa4a50d7de38fc4645cc1d5580d7e60513eb7
     notat: >-
-      KREVER: at hver kontoregistrering og hver verifikasjon står i
-      evidenskjeden, med hvem som verifiserte og med hvilken metode.
+      17 hendelser i kjeden (konto.oppgitt: 8, konto.verifisert: 2,
+      kontoterskel.satt: 1, mottaker.registrert: 6), 0 uten aktør, 0 som
+      deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først.
+    status: ja
+    krav_id: m42-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m42-feilinjisering-v1-20260918T014701Z.json
+    artefakt_sha256: ef14e538ed8e069741539fd27506595af560aab499313fea4f6aa42b2f9ed4da
     notat: >-
-      KREVER: kontosveipen bygget, og at en feil i den ikke lar en
-      kontoendring forsvinne stille. Dette er modulens hele poeng: en
-      stille sveip her er en svindel ingen oppdaget.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 21 åpne og 2 lukkede over 9 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m42-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m42-ytelse-v1-20260918T014700Z.json
+    artefakt_sha256: fb19ceb3ddf731d6563e6888c2f876dfc00e61b905c12c5928de8bfa2c5214a8
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0169 / 0,0202 / 0,0331 s) over 7 tenanter; den
+      DÅRLIGSTE er dommen. 0,0331 s mot taket på 60 — 0,0047 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    #
+    # UTGANGSPUNKTET ER IKKE NULL HER, og det er nettopp derfor drillen
+    # måler DELTAET: døra skrev ett `kontoendring`-funn allerede da
+    # riggen ble laget.
+    status: ja
+    krav_id: m42-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m42-rollback-v1-20260918T014811Z.json
+    artefakt_sha256: 311ddfc6a2dc20eca2e6abd9d37becdec024ab8483e1da4fb73bfc806624eec6
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet ffd8cb3b ← forgjenger 5f57464a (ulike kjernedigester).
+      Riggen hadde 1 funnrad før drillen — døras egen — og den drepte
+      kjøringen la ingen til. Arbeidernøkkelen ble fri først etter at
+      den foreldreløse økten ble avsluttet. Forgjengerens bytes skrev de
+      5 funnene uten dubletter, og de drillede bytene fant 0 nye.

@@ -1,0 +1,87 @@
+{
+  "bestatt": true,
+  "krav_id": "m24-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "avtale.registrert": 6,
+      "leverandor.registrert": 6,
+      "leveranse.registrert": 5,
+      "terskler.satt": 1
+    },
+    "evidens_totalt": 18,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "sla_brudd"
+        ],
+        "merke": "sla",
+        "subjekt_id": "72c0081a-1f92-45b3-8dfa-e824fcbb9f40",
+        "ventet": "sla_brudd"
+      },
+      {
+        "fikk": [
+          "pris_over_terskel"
+        ],
+        "merke": "pris",
+        "subjekt_id": "08f24801-8f0a-46d2-a4bb-e2e7d00ec355",
+        "ventet": "pris_over_terskel"
+      },
+      {
+        "fikk": [
+          "avtale_utlopt"
+        ],
+        "merke": "utlopt",
+        "subjekt_id": "6016c9cf-393c-4ce8-b185-776b635fa132",
+        "ventet": "avtale_utlopt"
+      },
+      {
+        "fikk": [
+          "avtale_uten_maling"
+        ],
+        "merke": "stille",
+        "subjekt_id": "85bfb89d-48ea-4147-ad0e-d42d1a401e56",
+        "ventet": "avtale_uten_maling"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "8e0ba6cf-2f97-40fb-90c5-720b7de686fa",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskel"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "2b1d049e-24c9-4ceb-ba4b-426eab3ece6e",
+        "ventet": "ingen_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 5,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "0b2a9e9a987b1176048bba19e0c4520e965f81fad495cfce1195ad5f2c7b988e",
+    "evidenskilde": "m24_leverandor",
+    "modul": "m24_leverandor",
+    "riggmodul": "m24_fasit",
+    "runde": "3808662d",
+    "sett_sha256": "074e630fbfb2f67377e1df27d13f1a1924cc4f860c288d1aa52938187def5f34",
+    "tenanter": [
+      "t-m24fasit-med_terskel-3808662d",
+      "t-m24fasit-uten_terskel-3808662d"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T01:46:09.171071+00:00"
+}

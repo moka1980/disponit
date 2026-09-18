@@ -6077,14 +6077,14 @@ registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
 #: tidsmålingene leser datoparametre. Gulvet for første sveip er lavt med
 #: vilje — døra skriver `kontoendring` SELV, så det funnet finnes allerede
 #: når sveipen kjører, og teller ikke som nytt.
-registrer_fasitgrense("m42_kontovakt", min_subjekter=6, min_evidens=12,
+registrer_fasitgrense("m42_kontovakt", min_subjekter=6, min_evidens=15,
                       tenantprefiks="t-m42fasit-", min_sveip1_nye=3)
 registrer_sveipgrenser("m42_kontovakt", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=3)
 
 #: M-24s grenser. Seks avtaler, alle fem funntypene nåbare — dørene tar
 #: datoer, så både SLA, pris, utløp og stillhet kan rigges.
-registrer_fasitgrense("m24_leverandor", min_subjekter=6, min_evidens=12,
+registrer_fasitgrense("m24_leverandor", min_subjekter=6, min_evidens=15,
                       tenantprefiks="t-m24fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m24_leverandor", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)

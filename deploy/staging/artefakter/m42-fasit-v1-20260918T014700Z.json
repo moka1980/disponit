@@ -1,0 +1,85 @@
+{
+  "bestatt": true,
+  "krav_id": "m42-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "konto.oppgitt": 8,
+      "konto.verifisert": 2,
+      "kontoterskel.satt": 1,
+      "mottaker.registrert": 6
+    },
+    "evidens_totalt": 17,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "kontoendring"
+        ],
+        "merke": "endret",
+        "subjekt_id": "54150831-3f80-4feb-a23e-6270a5a5d804",
+        "ventet": "kontoendring"
+      },
+      {
+        "fikk": [
+          "uverifisert_konto"
+        ],
+        "merke": "uverifisert",
+        "subjekt_id": "e827a098-7e71-42a5-b039-25557d237226",
+        "ventet": "uverifisert_konto"
+      },
+      {
+        "fikk": [
+          "verifikasjon_utlopt"
+        ],
+        "merke": "utlopt",
+        "subjekt_id": "dc868a3f-939e-418b-84ca-fa40882ddeda",
+        "ventet": "verifikasjon_utlopt"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "438ba6ec-6843-4622-aa59-17686bc091c7",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "fersk",
+        "subjekt_id": "961e122e-3d9f-4486-a3dd-60b906bcb1a2",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskel"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "4a6c5ba9-c0f3-4ea0-8d33-0677d3f069d7",
+        "ventet": "ingen_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 10,
+    "sveip1_tenanter": 7,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 16
+  },
+  "oppsett": {
+    "bevisrot_sha256": "41752123b34f4a1aac664180c0f96b653be2532b5979d50fda48c04e1966540d",
+    "evidenskilde": "m42_kontovakt",
+    "modul": "m42_kontovakt",
+    "riggmodul": "m42_fasit",
+    "runde": "87d21b47",
+    "sett_sha256": "df9233b14754ece91ea8da562fde6285f05c977afd40bb0258c474b53dbd33b2",
+    "tenanter": [
+      "t-m42fasit-med_terskel-87d21b47",
+      "t-m42fasit-uten_terskel-87d21b47"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T01:47:00.408402+00:00"
+}
