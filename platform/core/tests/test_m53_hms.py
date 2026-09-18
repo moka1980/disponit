@@ -154,11 +154,33 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m53-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = datetime.date.today()
+#: DAGEN SLIK BASEN SER DEN, ikke slik Python gjør.
+#:
+#: Her sto en `datetime.date.today()`, regnet ÉN gang ved import og i
+#: maskinens LOKALE sone. Modulen regner `current_date` i basens sone, og
+#: de to er ikke samme dag: krysset kjøringen midnatt mellom import og
+#: måling — eller sto sonene fra hverandre — ble et 40 døgn gammelt
+#: avvik 41 døgn, og en regel som utløp «i går» gjaldt fortsatt. CI falt
+#: på nettopp det 18/9 kl. 00:07, på to tester som ikke var gale.
+#:
+#: Datoen HENTES derfor per kall, over en egen tilkobling. Ett
+#: rundtur-kall er billigere enn en test som faller på klokka.
+_DATOKOBLING = None
+
+
+def i_dag() -> datetime.date:
+    global _DATOKOBLING
+    if _DATOKOBLING is None or _DATOKOBLING.closed:
+        _DATOKOBLING = psycopg.connect(
+            os.environ.get("DISPONIT_TEST_MIGRATOR_DSN")
+            or os.environ["DISPONIT_TEST_DSN"])
+    dag = _DATOKOBLING.execute("SELECT current_date").fetchone()[0]
+    _DATOKOBLING.rollback()
+    return dag
 
 
 def _dag(n: int) -> datetime.date:
-    return I_DAG + datetime.timedelta(days=n)
+    return i_dag() + datetime.timedelta(days=n)
 
 
 def _krav(c, tenant, *, maks=3650, varsel=60, tiltak=14, regel=60,
@@ -318,16 +340,20 @@ def test_anonymt_avvik_baerer_verken_aktoer_eller_tidspunkt():
         _regel(rt, t)
         aid, rad = _avvik(rt, t)
         _sett_kontekst(mg, t)
+        # `current_date` HENTES I SAMME SPØRRING som raden: en dato
+        # sammenlignet med Pythons `date.today()` måler prosessens
+        # starttid og tidssone, ikke basens dag.
         r = mg.execute(
             "SELECT melderform, meldt_av, meldt_ts, meldt_dato,"
             " (SELECT count(*) FROM hmsmelder m"
-            "   WHERE m.tenant=a.tenant AND m.avvik_id=a.avvik_id)"
+            "   WHERE m.tenant=a.tenant AND m.avvik_id=a.avvik_id),"
+            " current_date"
             " FROM hmsavvik a WHERE a.tenant=%s AND a.avvik_id=%s",
             (t, aid)).fetchone()
     assert r[0] == "anonym"
     assert r[1] is None, "aktøren ble skrevet på et anonymt avvik"
     assert r[2] is None, "tidspunktet ble skrevet på et anonymt avvik"
-    assert r[3] == I_DAG, "datoen skal stå — den peker ikke ut noen"
+    assert r[3] == r[5], "datoen skal stå — den peker ikke ut noen"
     assert r[4] == 0, "et anonymt avvik fikk en melderrad"
     assert rad[5] is False, "døra påstår at en melder ble lagret"
 
@@ -641,7 +667,7 @@ def test_tiltak_er_append_only():
         rt.execute(
             "SELECT * FROM m53_registrer_tiltak(%s,%s,%s,%s,%s,%s,%s)",
             (t, aid, tid, "Stillaset er sikret og kontrollert", False,
-             I_DAG, "u-kari"))
+             i_dag(), "u-kari"))
         rt.commit()
         for setning in (
                 "UPDATE hmstiltak SET beskrivelse='noe annet'",
@@ -666,7 +692,7 @@ def test_behandlet_avvik_kan_ikke_aapnes_igjen():
         _sett_kontekst(rt, t)
         rt.execute(
             "SELECT * FROM m53_registrer_tiltak(%s,%s,%s,%s,%s,%s,%s)",
-            (t, aid, uuid.uuid4(), "Stillaset er sikret", True, I_DAG,
+            (t, aid, uuid.uuid4(), "Stillaset er sikret", True, i_dag(),
              "u-kari"))
         rt.commit()
         _sett_kontekst(mg, t)
@@ -722,11 +748,17 @@ def _aldre(mg, tenant, avvik_id, dogn):
     # en CHECK, ikke en radvakt, og den gjelder også når vakten er av:
     # et avvik kan ikke være meldt før det skjedde, uansett hvem som
     # skriver.
+    # ALDEREN REGNES AV BASENS KLOKKE, ikke Pythons. `date.today()` står
+    # for hele prosessen og er dessuten LOKAL tid, mens sveipen regner
+    # `current_date` i basens sone. Krysset kjøringen midnatt mellom
+    # import og måling, ble et 40 døgn gammelt avvik 41 — og testen falt
+    # på noe som ikke var galt. CI traff nettopp det 18/9 kl. 00:07.
     mg.execute(
-        "UPDATE hmsavvik SET meldt_dato=%s, hendelsesdato=%s,"
-        " oppbevaring_til=%s + oppbevaring_dogn"
-        " WHERE tenant=%s AND avvik_id=%s",
-        (_dag(-dogn), _dag(-dogn), _dag(-dogn), tenant, avvik_id))
+        "UPDATE hmsavvik SET meldt_dato = current_date - %(d)s::int,"
+        " hendelsesdato = current_date - %(d)s::int,"
+        " oppbevaring_til = current_date - %(d)s::int + oppbevaring_dogn"
+        " WHERE tenant=%(t)s AND avvik_id=%(a)s",
+        {"d": dogn, "t": tenant, "a": avvik_id})
     mg.execute("ALTER TABLE hmsavvik ENABLE TRIGGER hmsavvik_frosset")
     mg.commit()
 
@@ -1109,12 +1141,12 @@ def test_gjenspill_av_et_tiltak_med_annet_innhold_nektes():
         kall = ("SELECT * FROM m53_registrer_tiltak(%s,%s,%s,%s,%s,"
                 "%s,%s)")
         rt.execute(kall, (t, aid, tid, "Stillaset er sikret og maalt",
-                          False, I_DAG, "u-kari"))
+                          False, i_dag(), "u-kari"))
         rt.commit()
         # IDENTISK GJENSPILL: stille ja.
         _sett_kontekst(rt, t)
         rt.execute(kall, (t, aid, tid, "Stillaset er sikret og maalt",
-                          False, I_DAG, "u-kari"))
+                          False, i_dag(), "u-kari"))
         rt.commit()
         _sett_kontekst(mg, t)
         n = mg.execute("SELECT count(*) FROM hmstiltak WHERE tenant=%s",
@@ -1124,7 +1156,7 @@ def test_gjenspill_av_et_tiltak_med_annet_innhold_nektes():
         _sett_kontekst(rt, t)
         with pytest.raises(psycopg.errors.InvalidParameterValue):
             rt.execute(kall, (t, aid, tid, "Noe helt annet ble gjort",
-                              True, I_DAG, "u-kari"))
+                              True, i_dag(), "u-kari"))
 
 
 @pg
