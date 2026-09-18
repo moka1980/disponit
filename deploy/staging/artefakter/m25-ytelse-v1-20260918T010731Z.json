@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m25-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0236,
+      0.0223,
+      0.0204
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 15,
+        "tenanter": 7
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 15,
+        "tenanter": 7
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 15,
+        "tenanter": 7
+      }
+    ],
+    "sekunder": 0.0236,
+    "sekunder_per_tenant": 0.0034,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m25_prosjekt",
+    "sveip": "prosjektsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:07:31.984270+00:00"
+}

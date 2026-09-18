@@ -88,7 +88,7 @@ export const MODULSTATUS = {
   14: "i_drift",    // m14_fakturakontroll: aktiv, produksjon — alle seks
                     // punkter ja 17/9 (fasit, suite, bevisrunde, ytelse og
                     // flippedrillen m14-rollback-v1)     // m14_fakturakontroll: under_utvikling, ikke_i_drift
-  25: "bygges",     // m25_prosjekt: under_utvikling, ikke_i_drift
+  25: "i_drift",    // m25_prosjekt: aktiv, produksjon
   26: "i_drift",    // m26_prisbok: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
   27: "i_drift",    // m27_lager: aktiv, produksjon
