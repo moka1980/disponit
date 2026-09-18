@@ -82,9 +82,16 @@ def tilstand(m, k: dict) -> dict:
     m.execute(f"SET ROLE {k['maalerolle']}")
     m.commit()
     m.execute("SELECT set_config('disponit.tenant', '', true)")
+    # TENANTKILDEN KAN VÆRE FLERE TABELLER. M-13s sveip henter listen
+    # fra en union av bankposter og bilag, og en måling som bare kjente
+    # den ene ville mistet hver tenant som bare finnes i den andre.
+    kilder = k["tenantkilde"]
+    if isinstance(kilder, str):
+        kilder = (kilder,)
+    spørring = " UNION ".join(f"SELECT DISTINCT tenant FROM {tab}"
+                              for tab in kilder)
     tenanter = [r[0] for r in m.execute(
-        f"SELECT DISTINCT tenant FROM {k['tenantkilde']} ORDER BY 1"
-    ).fetchall()]
+        f"SELECT tenant FROM ({spørring}) x ORDER BY 1").fetchall()]
     m.rollback()
     per: dict[str, list[int]] = {}
     for tenant in tenanter:

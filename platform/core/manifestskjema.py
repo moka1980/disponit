@@ -5331,10 +5331,15 @@ SVEIPMODULER: dict[str, dict] = {
     "m19_adresse": {
         "modul_fil": "adressesveip",
         "funntabell": "adressefunn",
-        # HVOR TENANTENE KOMMER FRA. Funntabellen har FORCE RLS, også mot
-        # eieren: en telling uten tenantkontekst gir null rader, og null
-        # lik null ser ut som et urørt register. Målingen går derfor
-        # tenant for tenant, over den samme listen sveipen selv bruker.
+        # HVOR TENANTENE KOMMER FRA — én tabell her, men feltet tar en
+        # LISTE: noen sveip henter listen fra en union (M-13), og en
+        # måling som bare kjente den ene tabellen ville mistet enhver
+        # tenant som bare finnes i den andre.
+        #
+        # Funntabellen har dessuten FORCE RLS, også mot eieren: en
+        # telling uten tenantkontekst gir null rader, og null lik null
+        # ser ut som et urørt register. Målingen går derfor tenant for
+        # tenant, over den samme listen sveipen selv bruker.
         "tenantkilde": "adressesubjekt",
         # …OG HVEM SOM FÅR SE DEN. Kryss-tenant-autoriteten er snever og
         # eksplisitt (112): bare subjekttabellen, bare FOR SELECT, bare
@@ -5436,6 +5441,46 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m42_fasit",
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
+    },
+    "m13_avstemming": {
+        "modul_fil": "avstemmingssveip",
+        "funntabell": "avstemmingsfunn",
+        "subjektkolonne": "objekt_id",
+        # TENANTLISTEN ER EN UNION av bankposter og bilag: ett objekt av
+        # hver type er nok til at tenanten besøkes. `bankpost` alene
+        # ville mistet en tenant som BARE har bilag — og settets tenant B
+        # er nettopp en slik.
+        "tenantkilde": ("bankpost", "bilag"),
+        "maalerolle": "disponit_avstemming_eier",
+        "sveipedor": "m13_sveip_avstemming(int, int)",
+        "dsn_variabel": "DISPONIT_AVSTEMMINGSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m13-fasit-v1",
+        "feilinjisering_krav": "m13-feilinjisering-v1",
+        "ytelse_krav": "m13-ytelse-v1",
+        "rollback_krav": "m13-rollback-v1",
+        "riggmodul": "m13_fasit",
+        "releasefiler": ("platform/modules/m13_avstemming",
+                         "platform/drift/avstemmingssveip.py"),
+    },
+    "m18_onboarding": {
+        "modul_fil": "onboardingsveip",
+        "funntabell": "onboardingfunn",
+        "subjektkolonne": "lop_id",
+        "tenantkilde": "onboardinglop",
+        "maalerolle": "disponit_onboarding_eier",
+        "sveipedor": "m18_sveip_onboarding(int, int)",
+        "dsn_variabel": "DISPONIT_ONBOARDINGSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m18-fasit-v1",
+        "feilinjisering_krav": "m18-feilinjisering-v1",
+        "ytelse_krav": "m18-ytelse-v1",
+        "rollback_krav": "m18-rollback-v1",
+        "riggmodul": "m18_fasit",
+        "releasefiler": ("platform/modules/m18_onboarding",
+                         "platform/drift/onboardingsveip.py"),
     },
     "m41_betaling": {
         "modul_fil": "betalingssveip",
@@ -6112,6 +6157,25 @@ registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=15,
 registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)
 
+#: M-13s grenser. Tre funntyper, alle nåbare — begge aldersaksene leser
+#: datoer som er dørparametre. Modulen har INGEN terskeltabell, og
+#: dermed ingen `ingen_terskel`-funntype: grensen er en sveipeparameter.
+#: Gulvet for første sveip er settets faktiske antall funn.
+registrer_fasitgrense("m13_avstemming", min_subjekter=6, min_evidens=7,
+                      tenantprefiks="t-m13fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=4)
+
+#: M-18s grenser. Tre funntyper, alle nåbare — men ALLE TRE henger på
+#: samme subjektnøkkel, og `steg_over_frist` gir én rad per forsinket
+#: steg. Settet må derfor gi hvert løp nøyaktig ett forsinket steg.
+#: Modulen har ingen terskeltabell: stillhetsgrensen er en
+#: sveipeparameter, og stegenes frister ligger på hver rad.
+registrer_fasitgrense("m18_onboarding", min_subjekter=6, min_evidens=7,
+                      tenantprefiks="t-m18fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=4)
+
 #: M-41s grenser. Fire funntyper, alle nåbare — hele alders-aksen er en
 #: dørparameter. Gulvet for første sveip er FEM, altså settets faktiske
 #: antall: tre typer i tersklenes tenant, `ingen_terskel` i den andre, og
@@ -6166,6 +6230,16 @@ registrer_suitegrense("m25_prosjekt", "m25",
 registrer_suitegrense("m24_leverandor", "m24",
                       ("platform/core/tests/test_m24_leverandor.py",),
                       min_tester=3000, min_andel_tester=38)
+
+#: M-13s andel. Gulvet er MÅLT: 30 tester i modulens egen fil (18/9).
+registrer_suitegrense("m13_avstemming", "m13",
+                      ("platform/core/tests/test_m13_avstemming.py",),
+                      min_tester=3000, min_andel_tester=26)
+
+#: M-18s andel. Gulvet er MÅLT: 21 tester i modulens egen fil (18/9).
+registrer_suitegrense("m18_onboarding", "m18",
+                      ("platform/core/tests/test_m18_onboarding.py",),
+                      min_tester=3000, min_andel_tester=18)
 
 #: M-41s andel. Gulvet er MÅLT: 30 tester i modulens egen fil (18/9).
 registrer_suitegrense("m41_betaling", "m41",

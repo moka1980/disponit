@@ -301,3 +301,21 @@ def test_riggkontrakten_er_oppfylt_av_modulens_fasitdriver():
         assert callable(getattr(rigg, "riggtenanter", None)), modul_id
         for rel in k["releasefiler"]:
             assert (rot / rel).exists(), (modul_id, rel)
+
+
+def test_tenantkilden_kan_vaere_flere_tabeller():
+    """Noen sveip henter tenantlisten fra en UNION. M-13 er den første:
+    en tenant kan finnes bare i `bilag`, uten en eneste bankpost. En
+    måling som bare kjente den ene tabellen ville talt null funn i den
+    tenanten — og null lik null ser ut som et urørt register.
+
+    Produsenten må derfor bygge en union, og registeret må kunne bære
+    flere tabeller."""
+    import manifestskjema as m
+    from pathlib import Path
+    flere = {mid: k["tenantkilde"] for mid, k in m.SVEIPMODULER.items()
+             if not isinstance(k["tenantkilde"], str)}
+    assert flere, "ingen modul har flere tenantkilder — testen måler ingenting"
+    kilde = (Path(__file__).resolve().parents[3]
+             / "deploy/staging/sveip-feilinjisering.py").read_text(encoding="utf-8")
+    assert "UNION" in kilde and "isinstance(kilder, str)" in kilde
