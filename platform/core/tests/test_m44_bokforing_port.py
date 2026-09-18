@@ -24,7 +24,7 @@ import pytest
 
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, klient, migrator, miljo, pg, token)
-from .test_bestilling_kampanje_port import I_DAG, _kampanjepolicy, _klar
+from .test_bestilling_kampanje_port import i_dag_iso, _kampanjepolicy, _klar
 from .test_m37 import _sett_kontekst, _signer_kvittering
 from .test_m44_kampanje import _rt, _samtykke
 from .test_m44_kampanjeutloser_port import _pa, _runde
@@ -114,7 +114,7 @@ def test_brudd_saken_kan_bli_et_komplett_oppdrag(migrator, miljo, app,
     kid, mid = _klar_med_ekte_adresse(klient, tok, adresse)
     c = _rt()
     try:
-        _samtykke(c, TENANT, mid, "trukket", I_DAG)
+        _samtykke(c, TENANT, mid, "trukket", i_dag_iso())
     finally:
         c.close()
     pa = _pa()
@@ -139,7 +139,7 @@ def test_brudd_saken_kan_bli_et_komplett_oppdrag(migrator, miljo, app,
     assert payload["handling"] == "kampanje.send"
     assert payload["kampanje_id"] == str(kid)
     assert payload["mottaker_id"] == str(mid)
-    assert payload["planlagt_sendt"] == I_DAG
+    assert payload["planlagt_sendt"] == i_dag_iso()
     assert payload["omfang"] == "mottaker"
     assert adresse not in str(payload) and "høstsjekk" not in str(payload)
     assert not {k for k in payload if "epost" in k or "kontakt" in k}

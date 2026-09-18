@@ -48,6 +48,7 @@ import pytest
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, dekker, klient, migrator, miljo)
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 MYNDIGHETSSVEIP_DSN = os.environ.get("DISPONIT_TEST_MYNDIGHETSSVEIP_DSN")
 
@@ -117,11 +118,10 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m47-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = datetime.date.today()
 
 
 def _dag(n: int) -> datetime.date:
-    return I_DAG + datetime.timedelta(days=n)
+    return i_dag() + datetime.timedelta(days=n)
 
 
 def _krav(c, tenant, *, varsel=14, eskalering=3, regelvarsel=60,
@@ -180,7 +180,7 @@ def _bevis(c, tenant, pid, *, dato=None, kvittering="KV-1",
     rad = c.execute(
         "SELECT * FROM m47_registrer_bevis("
         "%s,%s,%s,%s::date,%s,%s,NULL,%s)",
-        (tenant, bid, pid, dato or I_DAG, kvittering, person,
+        (tenant, bid, pid, dato or i_dag(), kvittering, person,
          aktor)).fetchone()
     c.commit()
     return bid, rad
@@ -537,7 +537,7 @@ def test_forsinkelsen_staar_paa_beviset(miljo):
         with pytest.raises(psycopg.errors.UniqueViolation):
             c.execute("SELECT * FROM m47_registrer_bevis("
                       "%s,%s,%s,%s::date,%s,%s,NULL,%s)",
-                      (tenant, uuid.uuid4(), pid, I_DAG, "KV-2",
+                      (tenant, uuid.uuid4(), pid, i_dag(), "KV-2",
                        "Kari", "u-test"))
         c.rollback()
 

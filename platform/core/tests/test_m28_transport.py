@@ -41,6 +41,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 TRANSPORTSVEIP_DSN = os.environ.get("DISPONIT_TEST_TRANSPORTSVEIP_DSN")
 
@@ -105,7 +106,6 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m28-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = dt.date.today()
 
 
 # =====================================================================
@@ -142,7 +142,7 @@ def _adresse(mg, t, *, land="NO", godkjent=True):
         " VALUES (%s,%s,%s,'Storgata 1','0155','Oslo',%s,"
         " 'STORGATA 1','0155','OSLO','manuell','u-test','porten',"
         " %s,'u-test')",
-        (t, vid, sid, land, I_DAG - dt.timedelta(days=30)))
+        (t, vid, sid, land, i_dag() - dt.timedelta(days=30)))
     if godkjent:
         mg.execute(
             "INSERT INTO adressekontroll (tenant, kontroll_id,"

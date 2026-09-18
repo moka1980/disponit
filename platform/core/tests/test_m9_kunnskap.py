@@ -55,6 +55,7 @@ import pytest
 from .test_api import (DSN, MIGRATOR_DSN, ANNEN_TENANT,  # noqa: F401
                        TENANT, app, klient, migrator, miljo)
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 ROT = Path(__file__).resolve().parents[3]
 MODULROT = ROT / "platform" / "modules" / "m09_kunnskap"
@@ -78,8 +79,12 @@ SVEIP_DSN = os.environ.get("DISPONIT_TEST_KUNNSKAPSSVEIP_DSN", "")
 sveiperolle = pytest.mark.skipif(
     not SVEIP_DSN, reason="DISPONIT_TEST_KUNNSKAPSSVEIP_DSN ikke satt")
 
-I_MORGEN = date.today() + timedelta(days=1)
-I_GAAR = date.today() - timedelta(days=1)
+def i_morgen():
+    return i_dag() + timedelta(days=1)
+
+
+def i_gaar():
+    return i_dag() - timedelta(days=1)
 
 #: Hvilken INVARIANT hver test dekker. Egen akse, og med vilje ikke
 #: `test_api.DEKNING`: den er FEILVEI-registeret, og
@@ -122,7 +127,7 @@ def _registrer(m, term, forklaring="En forklaring.", *, tenant=TENANT,
                gyldig_til=None, aktor="test", bid=None):
     return _dor(m, "SELECT m9_registrer_begrep(%s,%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, term, forklaring, eier, kilde,
-                 gyldig_til or I_MORGEN, aktor, bid), tenant)[0]
+                 gyldig_til or i_morgen(), aktor, bid), tenant)[0]
 
 
 def _ny_versjon(m, term, forklaring, *, tenant=TENANT, eier="juridisk",
@@ -130,7 +135,7 @@ def _ny_versjon(m, term, forklaring, *, tenant=TENANT, eier="juridisk",
                 bid=None):
     return _dor(m, "SELECT m9_ny_begrepsversjon(%s,%s,%s,%s,%s,%s,%s,%s)",
                 (tenant, term, forklaring, eier, kilde,
-                 gyldig_til or I_MORGEN, aktor, bid), tenant)[0]
+                 gyldig_til or i_morgen(), aktor, bid), tenant)[0]
 
 
 def _sok(m, sporring, *, tenant=TENANT, grense=50):
@@ -222,7 +227,7 @@ def test_begrep_uten_kilde_er_urepresenterbart_i_direkte_dml(rent):
                 " eier, kilde, gyldig_til, versjonsnr, gjeldende,"
                 " opprettet_av) VALUES (%s,%s,'avtale','x','eier',%s,"
                 " %s,1,true,'test')",
-                (TENANT, uuid.uuid4(), kilde, I_MORGEN))
+                (TENANT, uuid.uuid4(), kilde, i_morgen()))
         rent.rollback()
     # …og døren gir den SETNINGEN, ikke en constraint-melding.
     with pytest.raises(psycopg.errors.CheckViolation) as ei:
@@ -529,7 +534,7 @@ def test_publisert_begrep_kan_ikke_endres_paa_plass(rent):
     rent.execute("SET ROLE disponit_kunnskap_eier")
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         rent.execute("UPDATE begrep SET gyldig_til = %s WHERE begrep_id = %s",
-                     (I_MORGEN + timedelta(days=365), bid))
+                     (i_morgen() + timedelta(days=365), bid))
     rent.rollback()
     # DELETE avvises også — et publisert begrep slettes aldri.
     _sett_kontekst(rent, TENANT)
@@ -584,7 +589,7 @@ def test_to_gjeldende_versjoner_av_samme_term_er_urepresenterbart(rent):
             "INSERT INTO begrep (tenant, begrep_id, term, forklaring, eier,"
             " kilde, gyldig_til, versjonsnr, gjeldende, opprettet_av)"
             " VALUES (%s,%s,'avtale','Andre','eier','k',%s,2,true,'test')",
-            (TENANT, uuid.uuid4(), I_MORGEN))
+            (TENANT, uuid.uuid4(), i_morgen()))
     rent.rollback()
     # …og en avløst versjon blir ALDRI gjeldende igjen.
     _ny_versjon(rent, "avtale", "Andre.")
@@ -632,11 +637,11 @@ def test_utlopt_begrep_gir_funn_og_sveipen_er_idempotent(rent):
     som har vært utløpt i et år skal gi ett funn, ikke 365. `sist_sett_
     sveip` flyttes, `forst_sett` står.
     """
-    _registrer(rent, "avtale", "Utløpt tekst.", gyldig_til=I_GAAR)
+    _registrer(rent, "avtale", "Utløpt tekst.", gyldig_til=i_gaar())
     _registrer(rent, "frist", "Snart utløpt.",
-               gyldig_til=date.today() + timedelta(days=5))
+               gyldig_til=i_dag() + timedelta(days=5))
     _registrer(rent, "kunde", "Står lenge.",
-               gyldig_til=date.today() + timedelta(days=400))
+               gyldig_til=i_dag() + timedelta(days=400))
 
     første = _sveip(rent)
     funn = {f[2]: f for f in _funn(rent)}
@@ -673,12 +678,12 @@ def test_funn_lukkes_naar_en_ny_versjon_fornyer_datoen(rent):
     """Funnet er ikke evig. Fornyes begrepet — altså skrives en NY
     versjon med ny dato — lukkes funnet på den gamle raden. Raden består
     (at noe VAR utløpt er også historikk), men den er ikke lenger åpen."""
-    _registrer(rent, "avtale", "Utløpt tekst.", gyldig_til=I_GAAR)
+    _registrer(rent, "avtale", "Utløpt tekst.", gyldig_til=i_gaar())
     _sveip(rent)
     assert len(_funn(rent)) == 1
 
     _ny_versjon(rent, "avtale", "Fornyet tekst.",
-                gyldig_til=date.today() + timedelta(days=400))
+                gyldig_til=i_dag() + timedelta(days=400))
     resultat = _sveip(rent)
     assert _funn(rent) == [], "funnet ble ikke lukket av fornyelsen"
     assert resultat[3] >= 1, f"forventet minst ett lukket funn: {resultat}"
@@ -698,7 +703,7 @@ def test_funn_slettes_aldri_og_ferskheten_gaar_aldri_bakover(rent):
     """Vakten på funnet, målt direkte: DELETE avvises, identiteten er
     frosset, og `sist_sett_sveip` kan ikke settes tilbake — en ferskhet
     som kan settes tilbake er ingen ferskhet."""
-    _registrer(rent, "avtale", "Utløpt.", gyldig_til=I_GAAR)
+    _registrer(rent, "avtale", "Utløpt.", gyldig_til=i_gaar())
     _sveip(rent)
     _sett_kontekst(rent, TENANT)
     rent.execute("SET ROLE disponit_kunnskap_eier")
@@ -1054,7 +1059,7 @@ def test_sveipekjoringen_gir_en_json_linje_med_tallene(rent, tmp_path,
     """Én JSON-linje per kjøring, med tallene jobben faktisk målte — en
     jobb som ikke kunne måle rapporterer FUNN, aldri null."""
     from drift import kjor_begrepssveip as kjorer
-    _registrer(rent, "avtale", "Utløpt.", gyldig_til=I_GAAR)
+    _registrer(rent, "avtale", "Utløpt.", gyldig_til=i_gaar())
     monkeypatch.setenv("DISPONIT_BEGREPSSVEIPTILSTAND",
                        str(tmp_path / "t.json"))
     monkeypatch.setenv("DISPONIT_KUNNSKAPSSVEIP_URL", SVEIP_DSN)

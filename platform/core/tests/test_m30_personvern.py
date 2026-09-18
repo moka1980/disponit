@@ -60,6 +60,7 @@ import pytest
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, dekker, klient, migrator, miljo)
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 ROT = Path(__file__).resolve().parents[3]
 MIGRASJON = (ROT / "platform" / "core" / "db" / "migrations"
@@ -603,11 +604,11 @@ def test_mottatt_kan_ikke_ligge_fram_i_tid(migrator):
         # I DAG er lovlig — grensen er «fram i tid», ikke «i dag».
         sid = _registrer(c, ten, eier, mottatt="current_date")
         rad = _sak(migrator, ten, sid)
-        assert rad[7] == dt.date.today()
+        assert rad[7] == i_dag()
         # …og fristen er ÉN KALENDERMÅNED fram, ikke 30 døgn. Loven
         # teller måneder, og porten regner det samme tallet registeret
         # regner — ikke et omtrentlig ett.
-        assert rad[5] == _en_maaned(dt.date.today())
+        assert rad[5] == _en_maaned(i_dag())
     finally:
         c.close()
 
@@ -903,7 +904,7 @@ def test_forlengelse_uten_begrunnelse_avvises(migrator):
             (ten, sid, "Saken omfatter fire lagre.", "u-test")).fetchone()[0]
         c.commit()
         rad = _sak(migrator, ten, sid)
-        assert rad[6] == ny and ny == dt.date.today() + dt.timedelta(days=40)
+        assert rad[6] == ny and ny == i_dag() + dt.timedelta(days=40)
     finally:
         c.close()
 
@@ -947,7 +948,7 @@ def test_forlengelse_forbi_to_maaneder_avvises(migrator):
         c.execute(
             "SELECT m30_forleng_frist(%s,%s,"
             " (%s::date + interval '3 months')::date,%s,%s)",
-            (ten, sid, dt.date.today(), "kompleks", "u-test"))
+            (ten, sid, i_dag(), "kompleks", "u-test"))
         c.commit()
         assert _sak(migrator, ten, sid)[6] is not None
     finally:
@@ -1064,7 +1065,7 @@ def test_http_svar_uten_referanse_er_409(migrator, klient):
     r = _post(klient, cookie, csrf, "/v1/personvern",
               {"type": "innsyn", "subjekt_ref": "DSR-http",
                "eier_bruker_id": eier,
-               "mottatt": dt.date.today().isoformat(),
+               "mottatt": i_dag().isoformat(),
                "lager_id": []})
     assert r.status_code == 200, r.text
     sid = r.json()["sak_id"]
@@ -1084,7 +1085,7 @@ def test_http_svar_uten_referanse_er_409(migrator, klient):
     # 3. En forlengelse forbi art. 12-taket: kroppen ER velformet, det er
     #    LOVEN basen håndhever som sier nei → 409.
     r = _post(klient, cookie, csrf, f"/v1/personvern/{sid}/forleng",
-              {"forlenget_til": (dt.date.today()
+              {"forlenget_til": (i_dag()
                                  + dt.timedelta(days=200)).isoformat(),
                "begrunnelse": "veldig kompleks"})
     assert r.status_code == 409, r.text
@@ -1114,7 +1115,7 @@ def test_http_registrering_er_idempotent_paa_nokkelen(migrator, klient):
     nokkel = secrets.token_urlsafe(24)
     kropp = {"type": "sletting", "subjekt_ref": "DSR-idem",
              "eier_bruker_id": eier,
-             "mottatt": dt.date.today().isoformat(), "lager_id": lagre}
+             "mottatt": i_dag().isoformat(), "lager_id": lagre}
     r1 = _post(klient, cookie, csrf, "/v1/personvern", kropp, idem=nokkel)
     assert r1.status_code == 200 and r1.json()["ny"] is True, r1.text
     r2 = _post(klient, cookie, csrf, "/v1/personvern", kropp, idem=nokkel)
