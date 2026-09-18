@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m24-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 43,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5513
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m24_leverandor.py"
+    ],
+    "bevisrot_sha256": "c30ba2b7e69be763d56c2561fbcc80b9e7fb48fa850d65537cb42e7d68bc7106",
+    "commit": "94029fb8892d42862f8f2e3ce645dfb3d0053f7e",
+    "modul": "m24_leverandor",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T02:33:46.503163+00:00"
+}

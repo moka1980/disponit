@@ -74,7 +74,7 @@ export const MODULSTATUS = {
   18: "bygges",     // m18_onboarding: under_utvikling, ikke_i_drift
   23: "i_drift",    // m23_fordring: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
-  24: "bygges",     // m24_leverandor: under_utvikling, ikke_i_drift
+  24: "i_drift",    // m24_leverandor: aktiv, produksjon
   // KLYNGE 4 «det bransjemalene alt har lovet» (106-110) — registrert
   // 2/9 sammen med grensene m14-v1…m42-v1. Alle fem er navngitt som
   // VERIFIKATORER i bransjemaler vi sender ut: de betrodde partene som
