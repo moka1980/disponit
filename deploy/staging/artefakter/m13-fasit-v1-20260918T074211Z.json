@@ -1,0 +1,83 @@
+{
+  "bestatt": true,
+  "krav_id": "m13-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "avstemming.opprettet": 2,
+      "bankpost.registrert": 3,
+      "bilag.registrert": 3,
+      "konto.registrert": 1
+    },
+    "evidens_totalt": 9,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "uavstemt_post_over_grense"
+        ],
+        "merke": "uavstemt",
+        "subjekt_id": "5c5e1904-531a-4779-86ca-b1d6f5bcd8fb",
+        "ventet": "uavstemt_post_over_grense"
+      },
+      {
+        "fikk": [
+          "forfalt_bilag_uten_dekning"
+        ],
+        "merke": "forfalt",
+        "subjekt_id": "37e52c59-46bd-4923-b1f8-dd654ac34a3d",
+        "ventet": "forfalt_bilag_uten_dekning"
+      },
+      {
+        "fikk": [
+          "delvis_dekket_bilag"
+        ],
+        "merke": "delvis",
+        "subjekt_id": "5bf08569-8751-4967-b62d-aefc8fc830e1",
+        "ventet": "delvis_dekket_bilag"
+      },
+      {
+        "fikk": [],
+        "merke": "dekning",
+        "subjekt_id": "84ef8384-352d-43b0-af8a-d338a4605859",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "16e97c89-527a-439c-aa96-9d3b61b89a36",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "kurbilag",
+        "subjekt_id": "8ffec808-d0eb-4abd-ab2e-e5c36affed93",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 4,
+    "sveip1_tenanter": 12,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 18
+  },
+  "oppsett": {
+    "bevisrot_sha256": "aeaf77da04848a9c68f6a6a837d5289469b8ca96a6e72b99102b9e28fefd53f7",
+    "evidenskilde": "m13_avstemming",
+    "modul": "m13_avstemming",
+    "riggmodul": "m13_fasit",
+    "runde": "8d6dad55",
+    "sett_sha256": "55e71915a622dec8b6dd449ec7bc1ab652391291c042a4afbdcc765df19dc629",
+    "tenanter": [
+      "t-m13fasit-a-8d6dad55",
+      "t-m13fasit-b-8d6dad55"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T07:42:11.196112+00:00"
+}

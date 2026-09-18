@@ -6161,7 +6161,7 @@ registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
 #: datoer som er dørparametre. Modulen har INGEN terskeltabell, og
 #: dermed ingen `ingen_terskel`-funntype: grensen er en sveipeparameter.
 #: Gulvet for første sveip er settets faktiske antall funn.
-registrer_fasitgrense("m13_avstemming", min_subjekter=6, min_evidens=7,
+registrer_fasitgrense("m13_avstemming", min_subjekter=6, min_evidens=8,
                       tenantprefiks="t-m13fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=4)
@@ -6171,7 +6171,7 @@ registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
 #: steg. Settet må derfor gi hvert løp nøyaktig ett forsinket steg.
 #: Modulen har ingen terskeltabell: stillhetsgrensen er en
 #: sveipeparameter, og stegenes frister ligger på hver rad.
-registrer_fasitgrense("m18_onboarding", min_subjekter=6, min_evidens=7,
+registrer_fasitgrense("m18_onboarding", min_subjekter=6, min_evidens=17,
                       tenantprefiks="t-m18fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=4)

@@ -37,37 +37,113 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: suitekjøring på STAGING med modulens andel pinnet og
-      stagingidentitet bundet. Koden finnes nå (101); det som mangler er
-      målingen på staging, og punktet står nei til den er gjort.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m13_fasit.py` gir hver av avstemmingsregisterets tre
+    # funntyper nøyaktig ett objekt, og tre objekter som skal være rene.
+    #
+    # MODULEN HAR INGEN TERSKELTABELL: grensen er en sveipeparameter,
+    # så settet måles mot modulens egen standardverdi på 30 døgn — den
+    # samme arbeideren bruker. Den andre tenanten er derfor ikke der for
+    # en regel om tenanten, slik den er i M-19 og M-27, men for å måle
+    # at sveipen faktisk er KRYSS-TENANT: det forfalte bilaget ligger
+    # alene der, og en sveip som bare så den første tenanten ville
+    # mistet det.
+    #
+    # POSTEN SOM DEKKER er bokført like gammel som den uavstemte — det
+    # eneste som skiller dem er avstemmingen. Sto den innenfor grensen i
+    # stedet, ville raden vært ren uansett, og kontrollen hadde ikke
+    # målt noe.
+    status: ja
+    krav_id: m13-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m13-fasit-v1-20260918T074211Z.json
+    artefakt_sha256: e4517bc1e932f941c41112e140e30a754086ed963f04b9a408bdb5c44133db5b
     notat: >-
-      KREVER: et post/bilag-sett med KJENT fasit for hvilke par som
-      SKAL matche og hvilke som ikke skal, kjørt likt lokalt og på
-      staging med begge datasett-identitetene bundet. Fasiten må
-      inneholde de vanskelige tilfellene — delbetaling, øreavrunding,
-      og to bilag på samme beløp — ellers måler settet bare det lette.
+      Runde 8d6dad55: 6 objekter, 0 funnavvik. Første sveip ga 4 nye
+      funn — også den rene posten, som fødes uavstemt og 60 døgn gammel.
+      Avstemmingen som gjør den ren kom mellom kjøringene, mot et bilag
+      med forfall fram i tid, og andre sveip ga 0 nye og lukket 1.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m13-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m13-fasit-v1-20260918T074211Z.json
+    artefakt_sha256: e4517bc1e932f941c41112e140e30a754086ed963f04b9a408bdb5c44133db5b
     notat: >-
-      KREVER: at hver registrering og hver avstemmingsdom faktisk står
-      i evidenskjeden, målt som hendelser med identitet. Oppført som
-      avhengighet fordi det SKAL finnes; punktet står nei til målingen
-      er gjort.
+      9 hendelser i kjeden (avstemming.opprettet: 2,
+      bankpost.registrert: 3, bilag.registrert: 3, konto.registrert: 1),
+      0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m13-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m13-feilinjisering-v1-20260918T074331Z.json
+    artefakt_sha256: 59ca2e6f01aeaa65be3332917f70b2daef49502b3d480259a1966cc04126a6f7
     notat: >-
-      KREVER: avstemmingssveipen bygget, og at en feil i den ikke
-      etterlater en halvferdig avstemming — en post som er merket
-      matchet mot et bilag som ikke fikk sin motsatte merking.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 34 åpne og 3 lukkede over 20 tenanter, talt per funntype.
+      Tenantlisten er en UNION av bankposter og bilag; med bare den ene
+      tabellen ville målingen mistet hver tenant som bare har bilag.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m13-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m13-ytelse-v1-20260918T074211Z.json
+    artefakt_sha256: ed3758dd16a656d556b93464a5ae78eaa03a9f07c8b1a604f86f595ed7e03e53
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
-      den. Matchingen er den ene i klyngen som vokser kvadratisk hvis
-      den skrives naivt; grensen må settes før koden, ikke etter.
+      Tre kjøringer (0,0211 / 0,0168 / 0,0178 s) over 12 tenanter; den
+      DÅRLIGSTE er dommen. 0,0211 s mot taket på 60 — 0,0018 s per
+      tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m13-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m13-rollback-v1-20260918T074213Z.json
+    artefakt_sha256: 78710713ef2b239c0b860c291c4f93450c5592274a3b9937b87bd9e1d034b648
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 745fafd8 ← forgjenger 5f57464a (ulike kjernedigester).
+      Riggen hadde 0 funnrader før drillen, og den drepte kjøringen la
+      ingen til. Forgjengerens bytes skrev de 4 funnene uten dubletter,
+      og de drillede bytene fant 0 nye.

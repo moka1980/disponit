@@ -1,0 +1,84 @@
+{
+  "bestatt": true,
+  "krav_id": "m18-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "lop.fullfort": 1,
+      "lop.startet": 6,
+      "mal.registrert": 3,
+      "mal.steg_satt": 3,
+      "steg.fullfort": 5
+    },
+    "evidens_totalt": 18,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "stoppet_lop"
+        ],
+        "merke": "stoppet",
+        "subjekt_id": "79b80f89-4e46-4957-afc8-6b03463e1c2f",
+        "ventet": "stoppet_lop"
+      },
+      {
+        "fikk": [
+          "steg_over_frist"
+        ],
+        "merke": "frist",
+        "subjekt_id": "5d97727c-961d-4220-abaf-5d405745cf85",
+        "ventet": "steg_over_frist"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "29ec1132-ffb4-472c-b30d-04693248c262",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "avsluttet",
+        "subjekt_id": "94a187b8-ea6f-472b-913f-9dea4d128be9",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "lop_uten_aktiv_eier"
+        ],
+        "merke": "uten_eier",
+        "subjekt_id": "8092d5d9-9f4f-4943-b945-a03cb599c0a1",
+        "ventet": "lop_uten_aktiv_eier"
+      },
+      {
+        "fikk": [],
+        "merke": "rent_b",
+        "subjekt_id": "e0408a70-7bb2-4f00-8642-8d33b0205ffb",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 4,
+    "sveip1_tenanter": 5,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 12
+  },
+  "oppsett": {
+    "bevisrot_sha256": "b1bbf24291bea21d2c168119b6a5ecdee5e12b93de803789767a5fc8b53fbe2d",
+    "evidenskilde": "m18_onboarding",
+    "modul": "m18_onboarding",
+    "riggmodul": "m18_fasit",
+    "runde": "1590b2e9",
+    "sett_sha256": "cf753a575293ac0cf9c4732a9a07fb400fcb0633c74172aa711445672834f1f2",
+    "tenanter": [
+      "t-m18fasit-a-1590b2e9",
+      "t-m18fasit-b-1590b2e9"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T07:42:13.853715+00:00"
+}
