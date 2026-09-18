@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m25-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 28,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5509
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m25_prosjekt.py"
+    ],
+    "bevisrot_sha256": "30a881b684ad0bd1888c2aea55bdd0eb4238081271331b4a26b20f2d4df778d3",
+    "commit": "c5050b3aed37ba1ccc882777a544cf19cc29c222",
+    "modul": "m25_prosjekt",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:20:32.125721+00:00"
+}

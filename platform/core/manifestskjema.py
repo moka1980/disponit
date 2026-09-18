@@ -3850,6 +3850,9 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _grenser_m37_rollback(grense, art)
     if krav_id == "m14-fasit-v1":
         return feil + _grenser_m14_fasit(grense, art)
+    if krav_id.endswith("-fasit-v1") and "modul" in grense \
+            and grense.get("modul") in SVEIPMODULER:
+        return feil + _grenser_generisk_fasit(grense, art)
     if krav_id.endswith("-feilinjisering-v1") and "modul" in grense \
             and grense["modul"] in SVEIPMODULER:
         return feil + _grenser_sveip_feilinjisering(grense, art)
@@ -5355,16 +5358,58 @@ SVEIPMODULER: dict[str, dict] = {
         # RIGGEN er modulens egen fasitdriver: den vet hvilke subjekter
         # som gir funn, og er alt målt mot kjent fasit.
         "riggmodul": "m19_fasit",
+        # FUNNTABELLENS SUBJEKTKOLONNE. Registrene deler form, ikke navn.
+        "subjektkolonne": "subjekt_id",
         # BYTENE SVEIPEN ER. M-19 har ingen egen release og ruller med
         # kjernen, så digesten binder kjernefilene modulen består av.
         "releasefiler": ("platform/modules/m19_adresse",
                          "platform/drift/adressesveip.py"),
+    },
+    "m27_lager": {
+        "modul_fil": "lagersveip",
+        "funntabell": "lagerfunn",
+        "subjektkolonne": "vare_id",
+        "tenantkilde": "vare",
+        "maalerolle": "disponit_beholdning_eier",
+        "sveipedor": "m27_sveip_lager(int)",
+        "dsn_variabel": "DISPONIT_LAGERSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m27-fasit-v1",
+        "feilinjisering_krav": "m27-feilinjisering-v1",
+        "ytelse_krav": "m27-ytelse-v1",
+        "rollback_krav": "m27-rollback-v1",
+        "riggmodul": "m27_fasit",
+        "releasefiler": ("platform/modules/m27_lager",
+                         "platform/drift/lagersveip.py"),
+    },
+    "m25_prosjekt": {
+        "modul_fil": "prosjektsveip",
+        "funntabell": "prosjektfunn",
+        "subjektkolonne": "prosjekt_id",
+        "tenantkilde": "prosjekt",
+        "maalerolle": "disponit_prosjekt_eier",
+        "sveipedor": "m25_sveip_prosjekter(int)",
+        "dsn_variabel": "DISPONIT_PROSJEKTSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m25-fasit-v1",
+        "feilinjisering_krav": "m25-feilinjisering-v1",
+        "ytelse_krav": "m25-ytelse-v1",
+        "rollback_krav": "m25-rollback-v1",
+        "riggmodul": "m25_fasit",
+        "releasefiler": ("platform/modules/m25_prosjekt",
+                         "platform/drift/prosjektsveip.py"),
     },
 }
 
 #: Produsentflatene for de to generiske sveipmålingene.
 SVEIP_FEILINJISERING_BEVISROT = ("deploy/staging/sveip-feilinjisering.py",)
 SVEIP_ROLLBACK_BEVISROT = ("deploy/staging/rollback-sveipkjerne.py",)
+#: Fasitens bevisrot er PRODUSENTEN OG SETTET. Settet alene ville latt
+#: produsenten endres uten at noe falt; produsenten alene ville latt
+#: settet byttes ut under føttene på dommen.
+SVEIP_FASIT_BEVISROT = ("deploy/staging/sveip-fasit-artefakt.py",)
 SVEIP_YTELSE_BEVISROT = ("deploy/staging/sveip-ytelse.py",)
 
 
@@ -5397,6 +5442,15 @@ def kjerne_digest(rot) -> str:
     return release_digest(rot, KJERNEBYTENE)
 
 
+def sveip_fasit_bevisrot_sha256(modul_id: str) -> str:
+    h = hashlib.sha256()
+    for rel in SVEIP_FASIT_BEVISROT + (
+            f"deploy/staging/{SVEIPMODULER[modul_id]['riggmodul']}.py",):
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
 def sveipkjerne_digest(rot, modul_id: str) -> str:
     """Digesten over modulens EGNE filer i en release-katalog."""
     return release_digest(rot, SVEIPMODULER[modul_id]["releasefiler"])
@@ -5408,6 +5462,128 @@ def sveip_ytelse_bevisrot_sha256() -> str:
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
+
+
+def registrer_fasitgrense(modul_id: str, *, min_subjekter: int,
+                          min_evidens: int, tenantprefiks: str,
+                          min_sveip1_nye: int) -> None:
+    """Fasitgrensen for en sveipmodul — settet mot kjent dom.
+
+    ÉN GRENSE, TO PUNKTER: fasiten måler både dommen (datasettet) og
+    evidenskjeden, og hvert punkt binder seg til sine egne målinger."""
+    k = SVEIPMODULER[modul_id]
+    KRAVGRENSER[k["fasit_krav"]] = {
+        "modul": modul_id,
+        "maks_funnavvik": 0,
+        "min_subjekter": min_subjekter,
+        "min_sveip1_nye": min_sveip1_nye,
+        "min_sveip1_tenanter": 2,
+        # ANDRE KJØRING SKAL IKKE FINNE NOE NYTT. En sveip som finner
+        # det samme om igjen hver runde fyller køen med duplikater av
+        # samme sannhet.
+        "maks_sveip2_nye": 0,
+        # …OG DEN SKAL LUKKE. Uten dette kunne lukkeveien vært død uten
+        # at noen merket det.
+        "min_sveip2_lukkede": 1,
+        "min_rent_funn_for_kontroll": 1,
+        "min_evidens": min_evidens,
+        "tenantprefiks": tenantprefiks,
+        "punktbinding": {
+            "syntetisk_datasett_likt_lokalt": (
+                "maalt.funnavvik", "maalt.subjekter",
+                "maalt.sveip1_nye", "maalt.sveip2_nye"),
+            "revisjonslogg_korrekt": (
+                "maalt.evidens_totalt", "maalt.evidens_uten_aktor",
+                "maalt.evidens_delte_input_hash"),
+        },
+    }
+    ARTEFAKTSKJEMAER[k["fasit_krav"]] = "artefakt-sveip-fasit-skjema.json"
+
+
+def _grenser_generisk_fasit(grense: dict, art: dict) -> list[str]:
+    """`<modul>-fasit-v1` — dommen RE-REGNES av per-subjekt-tabellen.
+
+    Et `funnavvik: 0` uten radene bak seg er produsentens påstand, ikke
+    en måling."""
+    feil: list[str] = []
+    m = art.get("maalt")
+    if not isinstance(m, dict):
+        return ["artefaktet mangler `maalt`"]
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if o.get("modul") != grense["modul"]:
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    f" {grense['modul']!r}")
+    sha = o.get("bevisrot_sha256")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        feil.append("oppsett.bevisrot_sha256 mangler")
+    else:
+        try:
+            if sha != sveip_fasit_bevisrot_sha256(grense["modul"]):
+                feil.append("bevisrot_sha256 er ikke de innsjekkede bytenes"
+                            " — kjøringen brukte en annen produsentflate"
+                            " eller et annet sett")
+        except (OSError, KeyError) as e:
+            feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    ten = o.get("tenanter")
+    if not (isinstance(ten, list) and len(ten) >= 2
+            and all(isinstance(x, str) and x.startswith(grense["tenantprefiks"])
+                    for x in ten)):
+        feil.append(f"oppsett.tenanter er ikke minst to navn på"
+                    f" {grense['tenantprefiks']}… — regelen om HELE"
+                    " tenanten kan ikke måles i én tenant")
+    for felt, minst in (("subjekter", grense["min_subjekter"]),
+                        ("sveip1_nye", grense["min_sveip1_nye"]),
+                        ("sveip1_tenanter", grense["min_sveip1_tenanter"]),
+                        ("sveip2_lukkede", grense["min_sveip2_lukkede"]),
+                        ("rent_funn_for_kontroll",
+                         grense["min_rent_funn_for_kontroll"]),
+                        ("evidens_totalt", grense["min_evidens"])):
+        antall, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif antall < minst:
+            feil.append(f"{felt}={antall}, krever >= {minst}")
+    for felt, maks in (("funnavvik", grense["maks_funnavvik"]),
+                       ("funnavvik_etter_andre", grense["maks_funnavvik"]),
+                       ("sveip2_nye", grense["maks_sveip2_nye"]),
+                       ("evidens_uten_aktor", 0),
+                       ("evidens_delte_input_hash", 0)):
+        antall, melding = _teller(m, felt, felt)
+        if melding:
+            feil.append(melding)
+        elif antall > maks:
+            feil.append(f"{felt}={antall}, taket er {maks}")
+    # DOMMEN RE-REGNES AV RADENE. Et subjekt som fikk feil funntype skal
+    # felles selv om produsenten påstår null avvik.
+    per = m.get("per_subjekt")
+    if not isinstance(per, list) or not per:
+        return feil + ["maalt.per_subjekt mangler — da er `funnavvik` bare"
+                       " en påstand"]
+    regnet = 0
+    rene = 0
+    for rad in per:
+        if not isinstance(rad, dict):
+            feil.append("en rad i per_subjekt er ikke et objekt")
+            continue
+        ventet, fikk = rad.get("ventet"), rad.get("fikk")
+        if not isinstance(fikk, list):
+            feil.append(f"per_subjekt/{rad.get('merke')}: `fikk` er ikke"
+                        " en liste")
+            continue
+        if ventet is None:
+            rene += 1
+            if fikk:
+                regnet += 1
+        elif sorted(fikk) != [ventet]:
+            regnet += 1
+    if regnet != m.get("funnavvik"):
+        feil.append(f"funnavvik={m.get('funnavvik')} stemmer ikke med"
+                    f" per_subjekt, som gir {regnet}")
+    # …OG SETTET MÅ HA ET RENT SUBJEKT. Uten det måler fasiten bare at
+    # sveipen finner NOE, aldri at den lar det riktige være i fred.
+    if rene < 1:
+        feil.append("settet har ingen subjekter som skal være RENE")
+    return feil
 
 
 def registrer_sveipgrenser(modul_id: str, *, maks_sekunder: float,
@@ -5827,9 +6003,37 @@ def _grenser_m19_fasit(grense: dict, art: dict) -> list[str]:
 registrer_sveipgrenser("m19_adresse", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=6)
 
+#: M-27s grenser. Gulvene står LITT UNDER DET MÅLTE (18/9): fem funn i
+#: første sveip — fire funntyper pluss den rene, som fødes med et funn —
+#: og 22 hendelser i evidenskjeden fra dørene riggen kaller.
+registrer_fasitgrense("m27_lager", min_subjekter=6, min_evidens=20,
+                      tenantprefiks="t-m27fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m27_lager", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=5)
+
+#: M-25s grenser. Alle fem funntypene er NÅBARE: dørene tar datoer, så
+#: både frist, budsjett, stillhet og en manglende plan kan rigges.
+#: Gulvene står LITT UNDER DET MÅLTE (18/9): seks funn i første sveip og
+#: 17 hendelser i evidenskjeden.
+registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=15,
+                      tenantprefiks="t-m25fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=5)
+
 registrer_suitegrense("m19_adresse", "m19",
                       ("platform/core/tests/test_m19_adresse.py",),
                       min_tester=3000, min_andel_tester=30)
+
+#: M-27s andel. Gulvet er MÅLT: 29 tester i modulens egen fil (18/9), og
+#: gulvet står litt under.
+registrer_suitegrense("m27_lager", "m27",
+                      ("platform/core/tests/test_m27_lager.py",),
+                      min_tester=3000, min_andel_tester=25)
+
+#: M-25s andel. Gulvet er MÅLT: 28 tester i modulens egen fil (18/9).
+registrer_suitegrense("m25_prosjekt", "m25",
+                      ("platform/core/tests/test_m25_prosjekt.py",),
+                      min_tester=3000, min_andel_tester=24)
 
 
 def _grenser_m14_suite(grense: dict, art: dict) -> list[str]:

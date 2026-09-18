@@ -1,0 +1,87 @@
+{
+  "bestatt": true,
+  "krav_id": "m25-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "arbeid.registrert": 5,
+      "betalingsplan.satt": 5,
+      "prosjekt.registrert": 6,
+      "terskler.satt": 1
+    },
+    "evidens_totalt": 17,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "milepael_over_frist"
+        ],
+        "merke": "forsinket",
+        "subjekt_id": "c2f6e5b1-a249-4ebb-a4e4-a972bf831085",
+        "ventet": "milepael_over_frist"
+      },
+      {
+        "fikk": [
+          "budsjett_overskredet"
+        ],
+        "merke": "over_budsjett",
+        "subjekt_id": "709aa5d6-b2a3-487b-ae05-84e4cbc4e36b",
+        "ventet": "budsjett_overskredet"
+      },
+      {
+        "fikk": [
+          "betalingsplan_mangler"
+        ],
+        "merke": "uten_plan",
+        "subjekt_id": "6827c11a-4a3c-4fae-8243-adb54592f54a",
+        "ventet": "betalingsplan_mangler"
+      },
+      {
+        "fikk": [
+          "ingen_arbeid_registrert"
+        ],
+        "merke": "stille",
+        "subjekt_id": "b7b317c1-df16-45a7-b6ec-a513c6f06845",
+        "ventet": "ingen_arbeid_registrert"
+      },
+      {
+        "fikk": [],
+        "merke": "rent",
+        "subjekt_id": "91259f0d-50c1-466d-87f9-95de22d282e6",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskel"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "25222024-e989-40bf-b82f-234e01bc3d34",
+        "ventet": "ingen_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 7,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 15
+  },
+  "oppsett": {
+    "bevisrot_sha256": "3d42a26a7ade43d66e77c70c68644307e6dca43316719ed1fd36d26589d55dfa",
+    "evidenskilde": "m25_prosjekt",
+    "modul": "m25_prosjekt",
+    "riggmodul": "m25_fasit",
+    "runde": "1660b91f",
+    "sett_sha256": "666ad5b0e60093fdba68cacb10d8c5a7cceef6a8dbf4c0fb9b401ffef8da6023",
+    "tenanter": [
+      "t-m25fasit-med_terskel-1660b91f",
+      "t-m25fasit-uten_terskel-1660b91f"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T01:07:31.585827+00:00"
+}

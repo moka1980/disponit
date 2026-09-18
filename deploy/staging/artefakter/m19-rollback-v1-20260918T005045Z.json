@@ -5,12 +5,12 @@
     "kandidat_feilet": false
   },
   "identiteter": {
-    "avbrutt_fil": "/opt/disponit/releases/2a8d94602714954bfd869511f8033d2a613d5d6b/platform/drift/adressesveip.py",
-    "avbrutt_pid": 2926153,
-    "kandidat_fil": "/opt/disponit/releases/2a8d94602714954bfd869511f8033d2a613d5d6b/platform/drift/adressesveip.py",
-    "kandidat_pid": 2926158,
+    "avbrutt_fil": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3/platform/drift/adressesveip.py",
+    "avbrutt_pid": 2939111,
+    "kandidat_fil": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3/platform/drift/adressesveip.py",
+    "kandidat_pid": 2939115,
     "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/adressesveip.py",
-    "rullback_pid": 2926156
+    "rullback_pid": 2939113
   },
   "krav_id": "m19-rollback-v1",
   "maalt": {
@@ -25,7 +25,7 @@
     "kandidat_apne": 6,
     "kandidat_bytes_er_drillede": true,
     "kandidat_nye": 0,
-    "modul_digest_likt": true,
+    "modul_digest_likt": false,
     "release_digest_bundet": true,
     "rullback_bytes_er_forgjengerens": true,
     "rullbakk_funn": 6,
@@ -33,12 +33,12 @@
   },
   "oppsett": {
     "arbeidernokkel": 619204773,
-    "avbrutt_backend_pid": 2926154,
-    "bevisrot_sha256": "0af76e8d8097917bfb43d8cdddf7593c9a14176da47bdba5aefc43dde4d13c21",
-    "drillet_digest": "e401420ee4f330488b8ea676c08f75248e3051e3895b87bc04c7081abfb186a8",
-    "drillet_katalog": "/opt/disponit/releases/2a8d94602714954bfd869511f8033d2a613d5d6b",
+    "avbrutt_backend_pid": 2939112,
+    "bevisrot_sha256": "063e1125fa71a546fea1452e6e390e739443c0833e44dac03ae61adda718586a",
+    "drillet_digest": "438965b87970a1fd651fb28163a0b4e508731209fc768e72097b649117f11f6c",
+    "drillet_katalog": "/opt/disponit/releases/0ea900480ab9e4063e5e4aecc62ae8527c736da3",
     "drillet_kjernedigest": "94aeea4eb87fa791c0899eb8cf4f6d66a8f275bff50f69a6885bef9d1b2fb9b5",
-    "drillet_release": "2a8d94602714954bfd869511f8033d2a613d5d6b",
+    "drillet_release": "0ea900480ab9e4063e5e4aecc62ae8527c736da3",
     "forgjenger_digest": "e401420ee4f330488b8ea676c08f75248e3051e3895b87bc04c7081abfb186a8",
     "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
     "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
@@ -48,12 +48,12 @@
     "maalerolle": "disponit_adresse_eier",
     "miljo": "staging",
     "modul": "m19_adresse",
-    "runde": "7725b0d1",
+    "runde": "5201d425",
     "tenanter": [
-      "t-m19fasit-med_krav-7725b0d1",
-      "t-m19fasit-uten_krav-7725b0d1"
+      "t-m19fasit-med_krav-5201d425",
+      "t-m19fasit-uten_krav-5201d425"
     ],
     "vert": "cloud-server-10605510"
   },
-  "ts": "2026-09-17T23:32:52.922646+00:00"
+  "ts": "2026-09-18T00:50:45.223627+00:00"
 }

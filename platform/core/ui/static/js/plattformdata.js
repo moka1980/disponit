@@ -88,10 +88,10 @@ export const MODULSTATUS = {
   14: "i_drift",    // m14_fakturakontroll: aktiv, produksjon — alle seks
                     // punkter ja 17/9 (fasit, suite, bevisrunde, ytelse og
                     // flippedrillen m14-rollback-v1)     // m14_fakturakontroll: under_utvikling, ikke_i_drift
-  25: "bygges",     // m25_prosjekt: under_utvikling, ikke_i_drift
+  25: "i_drift",    // m25_prosjekt: aktiv, produksjon
   26: "i_drift",    // m26_prisbok: aktiv, produksjon — alle seks punkter ja
                     // 17/9 (fasit, suite, bevisrunde, ytelse, flippedrillen)
-  27: "bygges",     // m27_lager: under_utvikling, ikke_i_drift
+  27: "i_drift",    // m27_lager: aktiv, produksjon
   42: "bygges",     // m42_kontovakt: under_utvikling, ikke_i_drift
   // KLYNGE 5 «resten av det bransjemalene alt har lovet» (111-114) —
   // registrert 3/9 sammen med grensene m41-v1…m44-v1. Dette er de fire

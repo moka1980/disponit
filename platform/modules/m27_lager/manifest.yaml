@@ -45,8 +45,8 @@
 id: m27_lager
 navn: Lager- og logistikkagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m27-v1` bærer invarianten
 # `bestillingspunkt_hardkodet` — punktet SKAL være en policyverdi og
 # ikke en konstant i koden.
@@ -58,31 +58,132 @@ i18n_prefiks: lager
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m27-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m27-suite-v1-20260918T010558Z.json
+    artefakt_sha256: 11756ee550759e120bbce9ae72f0fa097ac541be9ee8b29ee532a9124df57a45
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5509 tester, 0 feilet, 0 hoppet; modulens andel 29 tester, 0 feilet,
+      0 hoppet. Bevisroten dekker produsenten OG andelen, så en endret
+      testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m27_fasit.py` gir hver av lagerregisterets NÅBARE
+    # funntyper nøyaktig én vare, og to varer som skal være rene. Alt
+    # gjennom modulens egne dører; sveipen kalt gjennom `modul.kjor()`,
+    # som arbeideren.
+    #
+    # `uten_bestillingspunkt` er IKKE NÅBAR for en vare opprettet i dag,
+    # og det er regelen som virker: kandidaten krever at nådefristen er
+    # passert, og registreringsdøra har ingen parameter for `opprettet`.
+    # Settet bærer en NEGATIV KONTROLL i stedet — en vare uten punkt som
+    # skal stå uten funn. Unntaket står i `UNAABARE`, med grunn, og
+    # porten krever at settet ellers dekker hele CHECK-beskrankningen.
+    status: ja
+    krav_id: m27-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T010717Z.json
+    artefakt_sha256: 6936455ceeb19976f47bd809cda91215c75a2bef3386775efea9ace2a42955b2
     notat: >-
-      KREVER: et bevegelsessett med KJENT fasit for sluttbeholdning og
-      for hvilke varer som er under bestillingspunktet, kjørt likt
-      lokalt og på staging.
+      Runde 3943fa2e: 6 varer, 0 funnavvik. Første sveip ga 5 nye funn —
+      også den rene varen, som fødes med sin siste bevegelse 200 døgn
+      tilbake. Bevegelsen som gjør den ren kom mellom kjøringene, og
+      andre sveip ga 0 nye og lukket 1. Dommen re-regnes av
+      per-subjekt-tabellen.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m27-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m27-fasit-v1-20260918T010717Z.json
+    artefakt_sha256: 6936455ceeb19976f47bd809cda91215c75a2bef3386775efea9ace2a42955b2
     notat: >-
-      KREVER: at hver bevegelse faktisk står i evidenskjeden, målt som
-      hendelser med identitet.
+      22 hendelser i kjeden (bestillingspunkt.satt: 5,
+      bevegelse.registrert: 7, lagerterskel.satt: 1, telling.registrert:
+      3, vare.registrert: 6), 0 uten aktør, 0 som deler input_hash med en
+      annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m27-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m27-feilinjisering-v1-20260918T010718Z.json
+    artefakt_sha256: d21ddc4b35626880f75be6146c2c6d4c60b3ae22b55f10817337024272e83e66
     notat: >-
-      KREVER: lagersveipen bygget, og at en feil i den ikke lar en vare
-      under bestillingspunktet forsvinne stille.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 22 åpne og 3 lukkede over 11 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m27-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m27-ytelse-v1-20260918T010717Z.json
+    artefakt_sha256: 7600bc69dbcc3038d1ab2239972328fe09fc77cb858262a2eea989fc3cc85e5c
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0277 / 0,0338 / 0,0281 s) over 9 tenanter; den
+      DÅRLIGSTE er dommen. 0,0338 s mot taket på 60 — 0,0038 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: M-27 har ingen egen release og ruller
+    # med kjernen, så drillen måler REGISTERETS tilstand over en rulling
+    # av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE på
+    # funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL midt
+    # i skrivingen.
+    status: ja
+    krav_id: m27-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m27-rollback-v1-20260918T010720Z.json
+    artefakt_sha256: 29855dc67be5be0242b1f8705157ecd4b9086d71e5c573ee53da88ada1d4f261
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 7bc276eb ← forgjenger 5f57464a (ulike kjernedigester;
+      modulens egne filer er like, som de skal være i kjerneformen). Den
+      drepte kjøringen skrev 0 funn, og arbeidernøkkelen ble fri — men
+      FØRST etter at den foreldreløse økten ble avsluttet: en backend som
+      venter på lås merker ikke at klienten er borte. Forgjengerens bytes
+      skrev de 5 funnene uten dubletter, og de drillede bytene fant 0
+      nye.

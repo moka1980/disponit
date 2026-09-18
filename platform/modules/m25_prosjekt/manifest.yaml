@@ -37,8 +37,8 @@
 id: m25_prosjekt
 navn: Prosjekt- og kontraktagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m25-v1` bærer invarianten
 # `budsjettvarsel_hardkodet` — hvor stor overskridelse som er et funn,
 # er tenantens tall og ikke modulens.
@@ -50,31 +50,125 @@ i18n_prefiks: prosjekt
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m25-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m25-suite-v1-20260918T012032Z.json
+    artefakt_sha256: 084ec3351b915b0f97f359c125be72fc1d36c2fd31cd1bddd3368a72e1b679ec
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5509 tester, 0 feilet, 0 hoppet; modulens andel 28 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m25_fasit.py` gir hver av prosjektregisterets fem
+    # funntyper nøyaktig ett prosjekt, og ett prosjekt som skal være
+    # RENT. Alt gjennom modulens egne dører; sveipen kalt gjennom
+    # `modul.kjor()`, som arbeideren.
+    #
+    # FUNNTYPENE OVERLAPPER, og settet er bygget for å skille dem: et
+    # prosjekt uten milepæler ville også vært stille, så det som måles
+    # på budsjettet har både en plan i rute og ferskt arbeid.
+    status: ja
+    krav_id: m25-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T010731Z.json
+    artefakt_sha256: e5df7e543a3f0ac0659da72f14c42656cdf0b5d364cb735485ae2f6f5b0051c5
     notat: >-
-      KREVER: et prosjektsett med KJENT fasit for hvilke milepæler som
-      er dokumentert og hvilke budsjetter som er overskredet, kjørt
-      likt lokalt og på staging.
+      Runde 1660b91f: 6 prosjekter, 0 funnavvik. Første sveip ga
+      6 nye funn — også det rene prosjektet, som fødes uten arbeid og
+      med start 200 døgn tilbake. Arbeidet som gjør det rent kom mellom
+      kjøringene, og andre sveip ga 0 nye og lukket 1. Dommen
+      re-regnes av per-subjekt-tabellen.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`.
+    status: ja
+    krav_id: m25-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m25-fasit-v1-20260918T010731Z.json
+    artefakt_sha256: e5df7e543a3f0ac0659da72f14c42656cdf0b5d364cb735485ae2f6f5b0051c5
     notat: >-
-      KREVER: at hver milepælsmarkering faktisk står i evidenskjeden,
-      med hvem som gjorde den og hva som dokumenterer den.
+      17 hendelser i kjeden (arbeid.registrert: 5, betalingsplan.satt: 5, prosjekt.registrert: 6, terskler.satt: 1), 0 uten
+      aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m25-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m25-feilinjisering-v1-20260918T010732Z.json
+    artefakt_sha256: 332d3d8bcf69d1e00e539e3c7eb33cc9effaab65efedd46f108b8676d346b59e
     notat: >-
-      KREVER: prosjektsveipen bygget, og at en feil i den ikke lar en
-      budsjettoverskridelse forsvinne stille.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 21 åpne og 4 lukkede over 9 tenanter, talt per funntype,
+      fordi en sum kan stemme mens ett funn lukkes og et annet åpnes.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m25-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m25-ytelse-v1-20260918T010731Z.json
+    artefakt_sha256: cdb28577605a106a2fb5743ababc1e36ec078f39bb1b0007cda2ffa5bd84b5f5
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0236 / 0,0223 / 0,0204 s) over 7 tenanter; den
+      DÅRLIGSTE er dommen. 0,0236 s mot taket på 60 — 0,0034 s per
+      tenant. Porten re-regner tallet og nekter en varighet som ikke er
+      maksimum av kjøringene.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: M-25 har ingen egen release og ruller
+    # med kjernen, så drillen måler REGISTERETS tilstand over en rulling
+    # av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE på
+    # funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL midt
+    # i skrivingen.
+    status: ja
+    krav_id: m25-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m25-rollback-v1-20260918T010733Z.json
+    artefakt_sha256: 22ff5230944dbec4cf9f9b8a96691910bd80bbf26e5d1971daca546e3cb29244
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 7bc276eb ← forgjenger 5f57464a (ulike kjernedigester;
+      modulens egne filer er like, som de skal være i kjerneformen). Den
+      drepte kjøringen skrev 0 funn, og arbeidernøkkelen ble fri — men
+      FØRST etter at den foreldreløse økten ble avsluttet: en backend som
+      venter på lås merker ikke at klienten er borte. Forgjengerens bytes
+      skrev de 6 funnene uten dubletter, og de drillede bytene fant 0
+      nye.
