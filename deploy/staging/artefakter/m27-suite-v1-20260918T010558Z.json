@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m27-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 29,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5509
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m27_lager.py"
+    ],
+    "bevisrot_sha256": "3b54348f211c011603ba662801f3574124ec52ae58157d288ef806bb225c55ef",
+    "commit": "6d83d93bea4f80afd19a08214932668603107e86",
+    "modul": "m27_lager",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:05:58.358391+00:00"
+}

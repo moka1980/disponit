@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m27-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0277,
+      0.0338,
+      0.0281
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 17,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 17,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 17,
+        "tenanter": 9
+      }
+    ],
+    "sekunder": 0.0338,
+    "sekunder_per_tenant": 0.0038,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m27_lager",
+    "sveip": "lagersveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-09-18T01:07:17.718198+00:00"
+}

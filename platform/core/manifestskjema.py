@@ -6003,19 +6003,19 @@ def _grenser_m19_fasit(grense: dict, art: dict) -> list[str]:
 registrer_sveipgrenser("m19_adresse", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=6)
 
-#: M-27s grenser. Settet har seks varer, og gulvene står under det
-#: MÅLTE: fem funn i første sveip (fire funntyper + den rene, som fødes
-#: med et funn) og evidenskjeden fra dørene riggen kaller.
-registrer_fasitgrense("m27_lager", min_subjekter=6, min_evidens=12,
+#: M-27s grenser. Gulvene står LITT UNDER DET MÅLTE (18/9): fem funn i
+#: første sveip — fire funntyper pluss den rene, som fødes med et funn —
+#: og 22 hendelser i evidenskjeden fra dørene riggen kaller.
+registrer_fasitgrense("m27_lager", min_subjekter=6, min_evidens=20,
                       tenantprefiks="t-m27fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m27_lager", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)
 
-#: M-25s grenser. Settet har seks prosjekter, og alle fem funntypene er
-#: NÅBARE: dørene tar datoer, så både frist, budsjett, stillhet og en
-#: manglende plan kan rigges. Fem funn i første sveip — fire funntyper
-#: pluss det rene, som fødes uten arbeid.
-registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=12,
+#: M-25s grenser. Alle fem funntypene er NÅBARE: dørene tar datoer, så
+#: både frist, budsjett, stillhet og en manglende plan kan rigges.
+#: Gulvene står LITT UNDER DET MÅLTE (18/9): seks funn i første sveip og
+#: 17 hendelser i evidenskjeden.
+registrer_fasitgrense("m25_prosjekt", min_subjekter=6, min_evidens=15,
                       tenantprefiks="t-m25fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=5)

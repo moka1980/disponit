@@ -1,0 +1,86 @@
+{
+  "bestatt": true,
+  "krav_id": "m27-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "bestillingspunkt.satt": 5,
+      "bevegelse.registrert": 7,
+      "lagerterskel.satt": 1,
+      "telling.registrert": 3,
+      "vare.registrert": 6
+    },
+    "evidens_totalt": 22,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "under_bestillingspunkt"
+        ],
+        "merke": "under_punkt",
+        "subjekt_id": "760fa47c-9397-48c6-9569-457083c07e1e",
+        "ventet": "under_bestillingspunkt"
+      },
+      {
+        "fikk": [
+          "uten_bevegelse"
+        ],
+        "merke": "stille",
+        "subjekt_id": "39267a8d-3ead-4b6f-be37-20deb5af46ff",
+        "ventet": "uten_bevegelse"
+      },
+      {
+        "fikk": [
+          "ikke_talt"
+        ],
+        "merke": "utalt",
+        "subjekt_id": "132f0fa9-cb8a-4df7-82fd-952efdc3739c",
+        "ventet": "ikke_talt"
+      },
+      {
+        "fikk": [],
+        "merke": "uten_punkt_ny",
+        "subjekt_id": "5d233363-9d97-4091-bec5-e852817f1849",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "af0aafee-32d2-49f8-be64-21f9068d2621",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskel"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "6f26f2e8-e8a7-4f13-8ea9-933d31f57a9b",
+        "ventet": "ingen_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 5,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 17
+  },
+  "oppsett": {
+    "bevisrot_sha256": "8cbbe37e1bb3c87df3a353cf6ad55e11c2f31b312ec7968470b33db3692cdc1a",
+    "evidenskilde": "m27_lager",
+    "modul": "m27_lager",
+    "riggmodul": "m27_fasit",
+    "runde": "3943fa2e",
+    "sett_sha256": "5cffc84803fd4360f08a61465b047fbaac34992b9d503b700625c9d3edd95d5a",
+    "tenanter": [
+      "t-m27fasit-med_terskel-3943fa2e",
+      "t-m27fasit-uten_terskel-3943fa2e"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-09-18T01:07:17.268487+00:00"
+}
