@@ -42,6 +42,7 @@ import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
 from .test_m37 import _sett_kontekst
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 MOTESVEIP_DSN = os.environ.get("DISPONIT_TEST_MOTESVEIP_DSN")
 
@@ -136,11 +137,10 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m7-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = datetime.date.today()
 
 
 def _dag(n: int) -> datetime.date:
-    return I_DAG + datetime.timedelta(days=n)
+    return i_dag() + datetime.timedelta(days=n)
 
 
 

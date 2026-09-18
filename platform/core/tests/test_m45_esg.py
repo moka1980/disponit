@@ -40,6 +40,7 @@ import psycopg
 import pytest
 
 from .test_api import DSN, MIGRATOR_DSN  # noqa: F401
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
 ESGSVEIP_DSN = os.environ.get("DISPONIT_TEST_ESGSVEIP_DSN")
 
@@ -127,7 +128,6 @@ def _tenantnavn(merke: str) -> str:
     return f"t-m45-{merke}-{secrets.token_hex(4)}"
 
 
-I_DAG = dt.date.today()
 
 
 def _nektes(mg, t, sql, args, *, teller_sql, teller_args):

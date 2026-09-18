@@ -26,7 +26,7 @@ import pytest
 
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
                        app, klient, migrator, miljo, pg, token)
-from .test_bestilling_kampanje_port import (I_DAG, _kampanjepolicy, _klar,
+from .test_bestilling_kampanje_port import (i_dag_iso, _kampanjepolicy, _klar,
                                             _payload)
 from .test_m37 import _sett_kontekst, _signer_kvittering
 from .test_m44_kampanje import _rt, _samtykke
@@ -144,7 +144,7 @@ def test_kampanjen_gaar_ut_hele_veien(migrator, miljo, app, klient, token):
     assert kv["resultat"] == "utfort"
     assert kv["ressurs_id"] == f"kampanje:{kid}:{mid}"
     assert kv["malversjon"] == "kampanje-v1"
-    assert kv["planlagt_sendt"] == I_DAG
+    assert kv["planlagt_sendt"] == i_dag_iso()
     assert adresse not in str(kv) and "høstsjekk" not in str(kv).lower()
     # …og adressen står heller ikke i oppdragets payload.
     assert adresse not in str(_payload(migrator, oid))
@@ -166,7 +166,7 @@ def test_samtykke_trukket_mellom_bestilling_og_claim_leverer_ikke(
     oid = _bestilt_av_utloseren(app, kid)
     c = _rt()
     try:
-        _samtykke(c, TENANT, mid, "trukket", I_DAG)
+        _samtykke(c, TENANT, mid, "trukket", i_dag_iso())
     finally:
         c.close()
     mtk, _ = _onboard_token(klient, migrator, "m44_kampanje",

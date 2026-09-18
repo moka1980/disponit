@@ -37,11 +37,21 @@ from .test_m37 import _sett_kontekst
 from .test_m44_kampanje import (_grense, _kampanje, _mottaker, _plan, _rt,
                                 _samtykke)
 from .test_outbox_bestilling import _adminsesjon
+from ._basedato import i_dag  # dagen fra BASEN, aldri fra Python
 
-I_DAG = date.today().isoformat()
-# Samtykket er 130 døgn gammelt uansett når testen kjører — godt innenfor
-# riggens vindu på 730 døgn, så «tillat» er stabil over tid.
-SAMTYKKEDATO = (date.today() - timedelta(days=130)).isoformat()
+def i_dag_iso() -> str:
+    """Basens dag som ISO-streng.
+
+    Her sto en modulnivå-konstant regnet ved import. Den er nå en
+    funksjon: en dato bundet ved import er maskinens lokale dag, og
+    dørene måler mot basens `current_date`."""
+    return i_dag().isoformat()
+
+
+def samtykkedato() -> str:
+    """Samtykket er 130 døgn gammelt uansett når testen kjører — godt
+    innenfor riggens vindu på 730 døgn, så «tillat» er stabil over tid."""
+    return (i_dag() - timedelta(days=130)).isoformat()
 
 
 def test_bestillingstypen_er_deklarert_og_lukket():
@@ -75,7 +85,7 @@ def test_bestillingstypen_er_deklarert_og_lukket():
                   {"bestillingstype": "kampanje.send",
                    "kampanje_ref": "kampanje:" + k,
                    "mottaker_ref": "mottaker:" + m, "omfang": "mottaker",
-                   "planlagt_sendt": I_DAG},
+                   "planlagt_sendt": i_dag_iso()},
                   {"bestillingstype": "kampanje.send",
                    "kampanje_ref": "fordring:" + k,
                    "mottaker_ref": "mottaker:" + m, "omfang": "mottaker"}):
@@ -160,9 +170,14 @@ def _innhold(c, tenant, kid):
 
 
 def _klar(*, med_kontakt=True, med_innhold=True, i_plan=True,
-          samtykke=("bekreftet", SAMTYKKEDATO), dato=I_DAG, mid=None):
+          samtykke=("bekreftet", None), dato=None, mid=None):
     """Grense (5 per 7 d, gyldig 730 d) + mottaker + samtykke + kampanje
     med innhold + plan → (kampanje_id, mottaker_id)."""
+    # STANDARDVERDIENE LØSES HER, ikke i signaturen: et default-argument
+    # bindes ved import, og da er datoen maskinens — ikke basens.
+    if samtykke and samtykke[1] is None:
+        samtykke = (samtykke[0], samtykkedato())
+    dato = dato or i_dag_iso()
     c = _rt()
     try:
         _grense(c, TENANT, maks=5, periode=7, gyldig=730)
@@ -226,7 +241,7 @@ def test_klar_mottaker_gir_tillat_og_et_oppdrag_uten_adresse_og_tekst(
     oid = r.json()["oppdrag_id"]
     payload = _payload(migrator, oid)
     assert payload == {"kampanje_id": str(kid), "mottaker_id": str(mid),
-                       "planlagt_sendt": I_DAG, "omfang": "mottaker"}
+                       "planlagt_sendt": i_dag_iso(), "omfang": "mottaker"}
     _sett_kontekst(migrator, TENANT)
     rad = migrator.execute(
         "SELECT oppdragstype, handling, eiermodul FROM oppdrag"
@@ -260,7 +275,7 @@ def test_trukket_samtykke_etter_planleggingen_er_en_sak(klient, migrator,
     kid, mid = _klar()
     c = _rt()
     try:
-        _samtykke(c, TENANT, mid, "trukket", I_DAG)   # etter planen
+        _samtykke(c, TENANT, mid, "trukket", i_dag_iso())   # etter planen
     finally:
         c.close()
     cookie, csrf = _adminsesjon()
