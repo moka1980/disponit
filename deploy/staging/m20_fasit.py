@@ -1,4 +1,4 @@
-"""M-20s fasitsett: fire utkast og to kilder i to tenanter med KJENT dom.
+"""M-20s fasitsett: fire utkast og to kilder i ÉN tenant med KJENT dom.
 
 Innholdsregisteret har seks funntyper på én generisk nøkkel,
 `referanse` — et utkast, en kilde eller en publisering etter typen.
@@ -14,8 +14,13 @@ beviset»).
                                                kjøringene
     4. (k_lang)                             — kilden gjelder 365 døgn
     5. (ok)                                 — klart og vist, ikke publisert
-  tenant B (samme krav)
-    6. `klart_utkast_uten_forhaandsvisning` — andre tenant, samme regel
+
+ÉN TENANT, MED VILJE. Kravhendelsen i `m20_sett_krav` bærer bare
+versjonsnummeret (ingen tenant, ingen verdier), så første krav i to
+tenanter gir alltid samme `input_hash` — evidenskjeden ville målt en
+kollisjon riggen selv laget. Sveipen besøker likevel flere tenanter:
+den går over alle med krav, og tidligere runders tenanter står (alt er
+append-only).
 
 Hvert utkast er sin egen side: et utkast på en side som alt har et
 utkast i arbeid, ville bygget på det.
@@ -55,9 +60,6 @@ RENSES = "ren"
 NEGATIV_KONTROLL = "ok"
 
 KRAV = (365, 60, 30)
-#: B har et annet varsel: evidenshashen tar ikke med tenanten, og like
-#: krav i to tenanter ville gitt samme `input_hash` (som i M-49).
-KRAV_B = (365, 60, 31)
 
 #: (merkelapp, forventet, tenantnøkkel, kilde, vises?, publiseres?)
 UTKAST: tuple[tuple[str, str | None, str, str, bool, bool], ...] = (
@@ -70,15 +72,12 @@ UTKAST: tuple[tuple[str, str | None, str, str, bool, bool], ...] = (
     # nettopp det andre sveip skal lukke.
     ("ren", None, "a", "k_lang", False, False),
     ("ok", None, "a", "k_lang", True, False),
-    ("klar_b", "klart_utkast_uten_forhaandsvisning", "b", "k_b", False,
-     False),
 )
 
 #: (merkelapp, forventet, tenantnøkkel, gyldig_til om N døgn)
 KILDER: tuple[tuple[str, str | None, str, int], ...] = (
     ("k_lang", None, "a", 365),
     ("k_snart", "kilde_utloper_snart_uavklart", "a", 5),
-    ("k_b", None, "b", 365),
 )
 
 
@@ -105,15 +104,13 @@ def _vis(rt, tenant: str, uid: str) -> str:
 
 
 def forbered(rt, runde: str) -> dict:
-    """Begge tenantene — men UTEN visningen av det rene utkastet: den
+    """Tenanten — men UTEN visningen av det rene utkastet: den
     kommer mellom kjøringene."""
-    rigg = {"a": tenantnavn(runde, "a"), "b": tenantnavn(runde, "b"),
-            "subjekter": {}, "kilder": {}}
-    for t, krav in (("a", KRAV), ("b", KRAV_B)):
-        _sk(rt, rigg[t])
-        rt.execute("SELECT m20_sett_krav(%s,%s,%s,%s,%s)",
-                   (rigg[t], *krav, AKTOR))
-        rt.commit()
+    rigg = {"a": tenantnavn(runde, "a"), "subjekter": {}, "kilder": {}}
+    _sk(rt, rigg["a"])
+    rt.execute("SELECT m20_sett_krav(%s,%s,%s,%s,%s)",
+               (rigg["a"], *KRAV, AKTOR))
+    rt.commit()
     for merke, _v, tkey, dogn in KILDER:
         tenant = rigg[tkey]
         _sk(rt, tenant)
@@ -154,7 +151,7 @@ def forbered(rt, runde: str) -> dict:
 
 
 def riggtenanter(rigg: dict) -> list[str]:
-    return [rigg["a"], rigg["b"]]
+    return [rigg["a"]]
 
 
 def kontroller_ren(rt, rigg: dict) -> None:
