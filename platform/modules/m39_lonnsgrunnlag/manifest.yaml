@@ -49,14 +49,28 @@ i18n_prefiks: lonn
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # MÅLES PÅ NYTT 18/11: vindustesten i test_m39_lonn.py brukte faste
-    # datoer og ble rød da de falt ut av vinduet. Testfila er i
-    # bevisroten, så artefaktet fra 18/9 gjelder andre bytes. Punktet
-    # står umålt i commiten som måles, og bindes i neste.
-    status: nei
+    # MÅLT PÅ NYTT 18/11 PÅ disponit-srv med den generiske
+    # suiteprodusenten, fersk base fra utsjekket (commit 79589e0).
+    # Vindustesten i test_m39_lonn.py brukte faste datoer og ble rød da
+    # de falt ut av vinduet; testfila er i bevisroten, så artefaktet fra
+    # 18/9 gjaldt andre bytes.
+    status: ja
+    krav_id: m39-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m39-suite-v1-20261118T212447Z.json
+    artefakt_sha256: 94c2b8e1356eeb12fd248e4dd09c7c6fdb24b4d17565fff70fbd790073c6e9d8
     notat: >-
-      KREVER: suiteartefaktet målt på nytt på disponit-srv mot
-      utsjekket med den rettede testfila.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/9 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet i `m39_fasit.py` gir hver av lønnsgrunnlagets fem
