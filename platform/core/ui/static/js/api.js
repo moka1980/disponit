@@ -1090,6 +1090,18 @@ export const settProduktAktiv = (produktId, aktiv, idem) =>
 //
 // OG DET FINNES INGEN «SETT BEHOLDNING». En telling sender det TALTE
 // antallet, og basen skriver differansen som en linje.
+// «Kom i gang»: anbefalingen kommer fra /v1/oppsett og går til modulens
+// EGEN grensevei. Stien godtas bare i den formen — et svar som pekte et
+// annet sted, skal ikke bli en vilkårlig POST fra klienten.
+const ANBEFALT_STI = /^\/v1\/[a-z]+\/(terskler|krav|purreplan|profil)$/;
+export function brukAnbefalteGrenser(anbefalt, idem) {
+  if (!anbefalt || !ANBEFALT_STI.test(anbefalt.sti)) {
+    return Promise.reject(new Error("ukjent anbefalingssti"));
+  }
+  return _muter(anbefalt.sti, "POST", anbefalt.kropp,
+                idem || nyIdempotensnokkel());
+}
+
 export const settLagerterskler = (terskler, idem) =>
   _muter("/v1/lager/terskler", "POST", terskler,
          idem || nyIdempotensnokkel());
