@@ -7083,5 +7083,18 @@
   "ui.parter.import.rapport_en": "1 av {lest} rader kan lagres.",
   "ui.parter.import.rapport_en_av_en": "1 av 1 rad kan lagres.",
   "ui.parter.import.lagret_en": "1 kunde er lagret.",
-  "ui.epost.svar.avsluttede": "Vis {n} avsluttede utkast"
+  "ui.epost.svar.avsluttede": "Vis {n} avsluttede utkast",
+  "ui.oppsett.tittel": "Kom i gang",
+  "ui.oppsett.tittel_klar": "Modulene dine",
+  "ui.oppsett.status": "{klare} av {totalt} moduler er satt opp",
+  "ui.oppsett.fremdrift": "Fremdrift i oppsettet",
+  "ui.oppsett.mangler_krav": "Mangler grensene sine. Modulen måler ingenting før de er satt.",
+  "ui.oppsett.sett_opp": "Sett opp",
+  "ui.oppsett.alt_klart": "Alt er satt opp. Modulene går gjennom alt hver natt og sier fra her.",
+  "ui.oppsett.i_drift": "I drift",
+  "ui.oppsett.ingen_funn": "ingen funn",
+  "ui.oppsett.ett_funn": "1 åpent funn",
+  "ui.oppsett.funn": "{antall} åpne funn",
+  "ui.oppsett.funn_ukjent": "i drift",
+  "ui.oppsett.utilgjengelig": "ikke tilgjengelig nå"
 }

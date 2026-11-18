@@ -485,6 +485,26 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
 .dash-handling { font-family: var(--font-mono); font-size: .92em; }
 .dash-kropp { min-height: 3rem; }
 
+/* «Kom i gang»: fremdrift, ett kort per modul som mangler krav (knappen
+   står nederst i kortet så den havner på samme linje i hele raden), og
+   brikker for modulene i drift — sortert med flest åpne funn først. */
+.dash-oppsett { margin: var(--sp-2) 0 var(--sp-4); display: grid; gap: var(--sp-3); }
+.dash-oppsett > h2 { margin: 0; font-size: var(--fs-h2); }
+.oppsett-status { margin: 0; font-weight: 600; }
+.oppsett-fremdrift { width: 100%; height: .5rem; accent-color: var(--info); }
+.oppsett-flis { list-style: none; margin: 0; padding: 0; display: grid;
+  gap: var(--sp-3); grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+.oppsett-kort { display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-4); }
+.oppsett-kort h3 { margin: 0; font-size: var(--fs-lg); }
+.oppsett-kort p { margin: 0; flex: 1; font-size: var(--fs-sm); }
+.oppsett-kort .knapp { align-self: flex-start; min-height: var(--touch-min); }
+.oppsett-under { margin: var(--sp-2) 0 0; font-size: var(--fs-sm);
+  color: var(--muted); font-weight: 600; }
+.oppsett-brikker a.brikke { color: var(--ink); text-decoration: none; }
+.oppsett-brikker a.brikke:hover, .oppsett-brikker a.brikke:focus-visible {
+  background: var(--flate); }
+
 /* Varselinnboksen. Ulest markeres med BÅDE en kantstripe og fet tekst. */
 .varselliste { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
 .varselrad { border: 1px solid var(--line); border-radius: var(--radius-sm);

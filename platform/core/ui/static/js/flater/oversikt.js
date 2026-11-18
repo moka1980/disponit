@@ -19,6 +19,7 @@ import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
 import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
          BeslutningBadge, KategoriTag } from "../komponenter.js";
 import { flateHode } from "./felles.js";
+import { byggRuter } from "../sitekart.js";
 
 function stat(klasse, tall, tekst) {
   return el("div", { class: `stat ${klasse}`.trim() },
@@ -106,12 +107,112 @@ function aktivitetsliste(rader) {
     lenkeknapp(t("ui.dashbord.til_beslutninger"), "#/beslutninger"));
 }
 
+// «Kom i gang»: én rad per tildelt modul fra `/v1/oppsett`. Serveren har
+// alt avgjort hvilke moduler økten får se; her slås bare ruten opp, så
+// knappen fører rett til skjemaet som mangler. Blokken står ØVERST fordi
+// en ny kunde ellers møter fire nuller og ingen vei videre.
+function ruteForModul(ctx) {
+  const kart = new Map();
+  for (const r of byggRuter({ scopes: ctx.scopes || [] })) {
+    if (r.modulflate != null && !kart.has(r.modulflate)) {
+      kart.set(r.modulflate, r.nokkel);
+    }
+  }
+  return kart;
+}
+
+function funnTekst(n) {
+  if (n == null) return t("ui.oppsett.funn_ukjent");
+  if (n === 0) return t("ui.oppsett.ingen_funn");
+  return t(n === 1 ? "ui.oppsett.ett_funn" : "ui.oppsett.funn")
+    .replace("{antall}", String(n));
+}
+
+function oppsettInnhold(d, ruter) {
+  const moduler = (d.moduler || []).filter((m) => ruter.has(m.modul));
+  if (!moduler.length) return null;
+  const mangler = moduler.filter((m) => m.tilgjengelig && m.klar === false);
+  const klare = moduler.filter((m) => m.tilgjengelig && m.klar !== false);
+  const borte = moduler.filter((m) => !m.tilgjengelig);
+  const navn = (m) => t(`ui.nav.${ruter.get(m.modul)}`);
+  const hash = (m) => `#/${ruter.get(m.modul)}`;
+
+  const totalt = moduler.length;
+  const ferdig = totalt - mangler.length;
+  const ut = [el("p", { class: "oppsett-status" },
+    el("span", { text: t("ui.oppsett.status")
+      .replace("{klare}", String(ferdig)).replace("{totalt}", String(totalt)) })),
+  el("progress", { class: "oppsett-fremdrift", max: String(totalt),
+    value: String(ferdig), "aria-label": t("ui.oppsett.fremdrift") })];
+
+  if (mangler.length) {
+    const ul = el("ul", { class: "oppsett-flis" });
+    for (const m of mangler) {
+      const knapp = el("a", { class: "knapp primar", href: hash(m),
+        text: t("ui.oppsett.sett_opp") });
+      knapp.setAttribute("aria-label",
+        `${t("ui.oppsett.sett_opp")}: ${navn(m)}`);
+      ul.append(el("li", { class: "kort oppsett-kort" },
+        el("h3", { text: navn(m) }),
+        el("p", { class: "muted", text: t("ui.oppsett.mangler_krav") }),
+        knapp));
+    }
+    ut.push(ul);
+  } else {
+    ut.push(el("p", { class: "muted", text: t("ui.oppsett.alt_klart") }));
+  }
+
+  if (klare.length || borte.length) {
+    const rad = el("ul", { class: "brikkerad oppsett-brikker",
+      "aria-label": t("ui.oppsett.i_drift") });
+    const sortert = [...klare].sort(
+      (a, b) => (b.apne_funn || 0) - (a.apne_funn || 0));
+    for (const m of sortert) {
+      rad.append(el("li", {},
+        el("a", { class: "brikke brikke-tekst", href: hash(m) },
+          el("span", { class: "brikke-navn", text: navn(m) }),
+          el("span", { class: m.apne_funn ? "" : "muted",
+            text: funnTekst(m.apne_funn) }))));
+    }
+    for (const m of borte) {
+      rad.append(el("li", {},
+        el("a", { class: "brikke brikke-tekst", href: hash(m) },
+          el("span", { class: "brikke-navn", text: navn(m) }),
+          el("span", { class: "muted",
+            text: t("ui.oppsett.utilgjengelig") }))));
+    }
+    ut.push(el("h3", { class: "oppsett-under", text: t("ui.oppsett.i_drift") }),
+      rad);
+  }
+  return { tittel: mangler.length ? t("ui.oppsett.tittel")
+    : t("ui.oppsett.tittel_klar"), noder: ut };
+}
+
+function oppsettBlokk(ctx) {
+  const ruter = ruteForModul(ctx);
+  const rot = el("section", { class: "kort dash-oppsett",
+    "aria-labelledby": "oppsett-tittel" });
+  rot.hidden = true;
+  hentJson("/v1/oppsett").then((d) => {
+    const innhold = oppsettInnhold(d, ruter);
+    if (!innhold) return;
+    sett(rot, el("h2", { id: "oppsett-tittel", text: innhold.tittel }),
+      ...innhold.noder);
+    rot.hidden = false;
+  }).catch((e) => {
+    if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+    // Andre feil: blokken forblir skjult — dashbordet under står uansett.
+  });
+  return rot;
+}
+
 export function visOversikt(hoved, ctx) {
   // KPI-kortene beholder heltside-semantikken de alltid har hatt: feiler
   // selve helsebildet, feiler siden — det er dashbordets rygg. De to
   // listene under er blokker med egne løp.
   sett(hoved,
     ...flateHode(t("ui.oversikt.tittel"), t("ui.oversikt.undertittel")),
+    oppsettBlokk(ctx),
     el("div", { class: "dash-kpi" }));
 
   const kpi = hoved.querySelector(".dash-kpi");

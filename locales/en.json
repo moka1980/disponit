@@ -7083,5 +7083,18 @@
   "ui.parter.import.rapport_en": "1 of {lest} rows can be saved.",
   "ui.parter.import.rapport_en_av_en": "1 of 1 row can be saved.",
   "ui.parter.import.lagret_en": "1 customer is saved.",
-  "ui.epost.svar.avsluttede": "Show {n} closed drafts"
+  "ui.epost.svar.avsluttede": "Show {n} closed drafts",
+  "ui.oppsett.tittel": "Get started",
+  "ui.oppsett.tittel_klar": "Your modules",
+  "ui.oppsett.status": "{klare} of {totalt} modules are set up",
+  "ui.oppsett.fremdrift": "Setup progress",
+  "ui.oppsett.mangler_krav": "Its limits are missing. The module measures nothing until they are set.",
+  "ui.oppsett.sett_opp": "Set up",
+  "ui.oppsett.alt_klart": "Everything is set up. The modules check everything each night and report here.",
+  "ui.oppsett.i_drift": "Running",
+  "ui.oppsett.ingen_funn": "no findings",
+  "ui.oppsett.ett_funn": "1 open finding",
+  "ui.oppsett.funn": "{antall} open findings",
+  "ui.oppsett.funn_ukjent": "running",
+  "ui.oppsett.utilgjengelig": "not available right now"
 }
