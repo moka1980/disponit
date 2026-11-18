@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m50-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0185,
+      0.0205,
+      0.0185
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 3
+      }
+    ],
+    "sekunder": 0.0205,
+    "sekunder_per_tenant": 0.0068,
+    "tenanter": 3
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m50_postjournal",
+    "sveip": "postjournalsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:08:49.146291+00:00"
+}
