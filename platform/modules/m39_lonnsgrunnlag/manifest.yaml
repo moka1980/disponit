@@ -49,8 +49,11 @@ i18n_prefiks: lonn
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
-    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    # MÅLT PÅ NYTT 18/11 PÅ disponit-srv med den generiske
+    # suiteprodusenten, fersk base fra utsjekket (commit 79589e0).
+    # Vindustesten i test_m39_lonn.py brukte faste datoer og ble rød da
+    # de falt ut av vinduet; testfila er i bevisroten, så artefaktet fra
+    # 18/9 gjaldt andre bytes.
     status: ja
     krav_id: m39-suite-v1
     bevismaalinger:
@@ -62,10 +65,10 @@ staging_sjekkliste:
       - maalt.tester_totalt
       - maalt.tester_hoppet
       - maalt.suite_exitkode
-    artefakt: deploy/staging/artefakter/m39-suite-v1-20260918T063524Z.json
-    artefakt_sha256: 21ae823e64a7d10f7205c4aed79406581488c9e151f11d68f410b0220dcf7135
+    artefakt: deploy/staging/artefakter/m39-suite-v1-20261118T212447Z.json
+    artefakt_sha256: 94c2b8e1356eeb12fd248e4dd09c7c6fdb24b4d17565fff70fbd790073c6e9d8
     notat: >-
-      5518 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
       0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
       så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
