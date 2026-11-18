@@ -7105,5 +7105,16 @@
   "ui.oppsett.enhet.dogn": "{n} days",
   "ui.oppsett.enhet.prosent": "{n} %",
   "ui.oppsett.enhet.kr": "NOK {n}",
-  "ui.oppsett.enhet.timer": "{n} h"
+  "ui.oppsett.enhet.timer": "{n} h",
+  "ui.oppsett.auto.tittel": "Runs by itself",
+  "ui.oppsett.auto.paa": "on",
+  "ui.oppsett.auto.av": "off",
+  "ui.oppsett.auto.purring_send": "Reminders are sent",
+  "ui.oppsett.auto.faktura_bokfor": "Invoices are booked",
+  "ui.oppsett.auto.tilbud_generer": "Quotes are sent",
+  "ui.oppsett.auto.kampanje_send": "Campaigns are sent",
+  "ui.oppsett.auto.kundeservice_svar_send": "Approved replies are sent",
+  "ui.oppsett.auto.av_tekst": "What is off, the agent does not do on its own. It finds and suggests, and a person carries it out.",
+  "ui.oppsett.auto.endre": "Turn on in the policy",
+  "ui.oppsett.auto.ingen_policy": "The company has no active policy yet, so nothing runs by itself."
 }

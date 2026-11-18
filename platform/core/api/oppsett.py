@@ -99,6 +99,41 @@ ANBEFALT: dict[int, tuple[str, dict[str, int]]] = {
 ALDRI_ANBEFALT = frozenset({49, 52, 55})
 SKRIVESCOPE = "bestilling:opprett"
 
+# Handlingene autopiloten (`core/plan/*.py`, aktør `agent:<x>`) bestiller
+# av seg selv. «På» betyr at den aktive policyen nevner handlingen OG
+# tillater den for `agent` — uten det stopper bestillingsveien den med
+# `rolle_ikke_tillatt`, og en bryter som sa «på» ville løyet.
+AUTOMATISKE: tuple[tuple[str, int], ...] = (
+    ("purring.send", 23),
+    ("faktura.bokfor", 14),
+    ("tilbud.generer", 26),
+    ("kampanje.send", 44),
+    ("kundeservice.svar.send", 17),
+)
+POLICYSCOPE = "policy:read"
+
+
+def automatikk(conn, tenant: str, tildelt: set[int]) -> list[dict] | None:
+    """-> [{handling, modul, paa}] for tildelte moduler, eller None når
+    tenanten ikke har nøyaktig én aktiv policy (bestillingsveiens krav)."""
+    import json
+    try:
+        with conn.transaction():
+            rader = conn.execute(
+                "SELECT innhold FROM policyer WHERE tenant=%s AND aktiv",
+                (tenant,)).fetchall()
+    except psycopg.Error:
+        return None
+    if len(rader) != 1:
+        return None
+    innhold = rader[0][0]
+    if isinstance(innhold, (str, bytes)):
+        innhold = json.loads(innhold)
+    agent = {h.get("id") for h in (innhold or {}).get("handlinger") or []
+             if "agent" in (h.get("tillatt_for") or [])}
+    return [{"handling": h, "modul": nr, "paa": h in agent}
+            for h, nr in AUTOMATISKE if nr in tildelt]
+
 
 def les_modul(conn, tenant: str, apimodul: str, klarflagg: str | None) -> dict:
     """Én moduls status, i eget savepoint. Kaster aldri psycopg-feil videre."""
@@ -131,7 +166,10 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
             sti, kropp = ANBEFALT[nr]
             rad["anbefalt"] = {"sti": sti, "kropp": dict(kropp)}
         moduler.append(rad)
-    return {"moduler": moduler}
+    svar = {"moduler": moduler}
+    if POLICYSCOPE in scopes:
+        svar["automatikk"] = automatikk(conn, tenant, tildelt)
+    return svar
 
 
 def oppsett(tjeneste, request):

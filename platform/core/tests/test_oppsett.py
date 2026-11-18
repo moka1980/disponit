@@ -211,3 +211,65 @@ def test_hvert_anbefalt_felt_har_etikett_i_dashbordet():
         blokk = blokk[:blokk.index("}")]
         for felt in kropp:
             assert f"{felt}: \"ui." in blokk, (nr, felt)
+
+
+class _FalskConn:
+    def __init__(self, rader):
+        self.rader = rader
+
+    def transaction(self):
+        import contextlib
+        return contextlib.nullcontext()
+
+    def execute(self, *_a):
+        rader = self.rader
+
+        class _R:
+            def fetchall(self):
+                return rader
+        return _R()
+
+
+def test_automatikk_er_paa_bare_naar_agenten_er_tillatt():
+    from api import oppsett
+    policy = {"handlinger": [
+        {"id": "purring.send", "tillatt_for": ["agent", "bestiller"]},
+        {"id": "kampanje.send", "tillatt_for": ["bestiller"]}]}
+    svar = oppsett.automatikk(_FalskConn([(policy,)]), "t", {23, 44, 14})
+    assert svar == [
+        {"handling": "purring.send", "modul": 23, "paa": True},
+        {"handling": "faktura.bokfor", "modul": 14, "paa": False},
+        {"handling": "kampanje.send", "modul": 44, "paa": False}]
+
+
+def test_automatikk_uten_en_aktiv_policy_er_ukjent():
+    from api import oppsett
+    assert oppsett.automatikk(_FalskConn([]), "t", {23}) is None
+    assert oppsett.automatikk(_FalskConn([({},), ({},)]), "t", {23}) is None
+
+
+def test_automatikk_vises_bare_med_policy_read(monkeypatch):
+    from api import oppsett
+    monkeypatch.setattr(oppsett, "automatikk", lambda *a: [])
+    monkeypatch.setattr(oppsett, "les_modul", lambda *a: {
+        "tilgjengelig": True, "klar": True, "apne_funn": 0})
+    assert "automatikk" not in oppsett.svar_for(
+        None, "t", {"decisions:read"}, [23])
+    assert oppsett.svar_for(None, "t", {"decisions:read", "policy:read"},
+                            [23])["automatikk"] == []
+
+
+def test_hver_automatiske_handling_har_bestillingstype_og_utloser():
+    """En handling dashbordet kaller automatisk, må ha en bestillingstype
+    eid av samme modul OG en utløser i core/plan som bestiller som agent."""
+    from pathlib import Path
+    from api import oppsett
+    from api.bestilling import BESTILLINGSTYPER
+    plan = Path(__file__).resolve().parents[1] / "plan"
+    kilder = {f.name: f.read_text(encoding="utf-8")
+              for f in plan.glob("*.py")}
+    for handling, nr in oppsett.AUTOMATISKE:
+        bt = BESTILLINGSTYPER[handling]
+        assert bt.eiermodul.startswith(f"m{nr}_"), (handling, bt.eiermodul)
+        assert any(f'"{handling}"' in k and 'AKTOR = "agent:' in k
+                   for k in kilder.values()), handling

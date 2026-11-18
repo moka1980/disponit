@@ -20,7 +20,7 @@ import { hentJson, brukAnbefalteGrenser, nyIdempotensnokkel, UautorisertFeil,
 import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
          BeslutningBadge, KategoriTag } from "../komponenter.js";
 import { flateHode } from "./felles.js";
-import { byggRuter } from "../sitekart.js";
+import { byggRuter, kanForvaltePolicy } from "../sitekart.js";
 
 function stat(klasse, tall, tekst) {
   return el("div", { class: `stat ${klasse}`.trim() },
@@ -206,6 +206,39 @@ function anbefaltListe(modul, anbefalt, sprak) {
   return dl;
 }
 
+// «Går av seg selv»: autopilotens handlinger og om kundens policy slår
+// dem på. Serveren avgjør (samme regel som bestillingsveien: handlingen
+// må være tillatt for `agent`); her vises bare svaret.
+function automatikkDel(liste, ctx) {
+  const tittel = el("h3", { class: "oppsett-under",
+    text: t("ui.oppsett.auto.tittel") });
+  if (liste === null) {
+    return [tittel, el("p", { class: "muted",
+      text: t("ui.oppsett.auto.ingen_policy") })];
+  }
+  if (!liste.length) return [];
+  const rad = el("ul", { class: "brikkerad oppsett-auto",
+    "aria-label": t("ui.oppsett.auto.tittel") });
+  for (const a of liste) {
+    const navn = t(`ui.oppsett.auto.${a.handling.replaceAll(".", "_")}`);
+    rad.append(el("li", { class: `brikke brikke-tekst ${a.paa ? "paa" : "av"}` },
+      el("span", { class: "brikke-navn", text: navn }),
+      el("span", { class: a.paa ? "" : "muted",
+        text: t(a.paa ? "ui.oppsett.auto.paa" : "ui.oppsett.auto.av") })));
+  }
+  const ut = [tittel, rad];
+  if (liste.some((a) => !a.paa)) {
+    const tekst = el("p", { class: "muted oppsett-auto-tekst",
+      text: t("ui.oppsett.auto.av_tekst") });
+    if (kanForvaltePolicy({ scopes: ctx.scopes || [] })) {
+      tekst.append(" ", el("a", { href: "#/policyadmin",
+        text: t("ui.oppsett.auto.endre") }));
+    }
+    ut.push(tekst);
+  }
+  return ut;
+}
+
 function oppsettInnhold(d, ruter, ctx, paaLagret) {
   const moduler = (d.moduler || []).filter((m) => ruter.has(m.modul));
   if (!moduler.length) return null;
@@ -291,6 +324,7 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
     ut.push(el("h3", { class: "oppsett-under", text: t("ui.oppsett.i_drift") }),
       rad);
   }
+  if (d.automatikk !== undefined) ut.push(...automatikkDel(d.automatikk, ctx));
   return { tittel: mangler.length ? t("ui.oppsett.tittel")
     : t("ui.oppsett.tittel_klar"), noder: ut };
 }

@@ -184,3 +184,47 @@ test("Anbefalingssti utenfor formen avvises i klienten", async () => {
     { sti: "/v1/firma/slett", kropp: {} }));
   assert.equal(POSTER.length, 0);
 });
+
+const KLAR = [{ modul: 23, tilgjengelig: true, klar: true, apne_funn: 0 }];
+
+test("Går av seg selv: på og av, lenke til policyen bare for forvalter", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR,
+    automatikk: [
+      { handling: "purring.send", modul: 23, paa: true },
+      { handling: "kampanje.send", modul: 44, paa: false }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx([...OKONOMI, "policy:read", "policy:write"]));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => blokk.querySelector(".oppsett-auto")));
+  const brikker = [...blokk.querySelectorAll(".oppsett-auto .brikke")];
+  assert.equal(brikker.length, 2);
+  assert.ok(brikker[0].classList.contains("paa"));
+  assert.ok(brikker[0].textContent.includes(t("ui.oppsett.auto.purring_send")));
+  assert.ok(brikker[1].textContent.includes(t("ui.oppsett.auto.av")));
+  assert.equal(blokk.querySelector('a[href="#/policyadmin"]').textContent,
+    t("ui.oppsett.auto.endre"));
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+
+  const h2 = nyHoved();
+  visOversikt(h2, ctx([...OKONOMI, "policy:read"]));
+  const b2 = h2.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => b2.querySelector(".oppsett-auto")));
+  assert.equal(b2.querySelector('a[href="#/policyadmin"]'), null);
+});
+
+test("Går av seg selv: uten aktiv policy sies det rett ut; uten felt ingen seksjon", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR,
+    automatikk: null } };
+  const h = nyHoved();
+  visOversikt(h, ctx([...OKONOMI, "policy:read"]));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden));
+  assert.ok(blokk.textContent.includes(t("ui.oppsett.auto.ingen_policy")));
+
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR } };
+  const h2 = nyHoved();
+  visOversikt(h2, ctx());
+  const b2 = h2.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !b2.hidden));
+  assert.equal(b2.textContent.includes(t("ui.oppsett.auto.tittel")), false);
+});
