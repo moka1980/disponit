@@ -5514,6 +5514,24 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m51_fasit",
         "releasefiler": ("platform/modules/m51_tilskudd",
                          "platform/drift/tilskuddssveip.py"),
+    "m52_tollkode": {
+        "modul_fil": "tollkodesveip",
+        "funntabell": "tollfunn",
+        # Funnraden bærer nøyaktig én av tre nøkler.
+        "subjektkolonne": "coalesce(nomenklatur_id, vare_id, forslag_id)",
+        "tenantkilde": ("nomenklatur", "tollvare"),
+        "maalerolle": "disponit_tollkode_eier",
+        "sveipedor": "m52_sveip_tollkode(int)",
+        "dsn_variabel": "DISPONIT_TOLLKODESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m52-fasit-v1",
+        "feilinjisering_krav": "m52-feilinjisering-v1",
+        "ytelse_krav": "m52-ytelse-v1",
+        "rollback_krav": "m52-rollback-v1",
+        "riggmodul": "m52_fasit",
+        "releasefiler": ("platform/modules/m52_tollkode",
+                         "platform/drift/tollkodesveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6366,6 +6384,15 @@ registrer_sveipgrenser("m51_tilskudd", maks_sekunder=60.0, min_tenanter=2,
 
 registrer_suitegrense("m51_tilskudd", "m51",
                       ("platform/core/tests/test_m51_tilskudd.py",),
+# M-52: gulvene er litt under det målte 18/11 (9 subjekter, 22
+# evidenshendelser; seks typer + det rene uklare forslaget).
+registrer_fasitgrense("m52_tollkode", min_subjekter=9, min_evidens=20,
+                      tenantprefiks="t-m52fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m52_tollkode", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m52_tollkode", "m52",
+                      ("platform/core/tests/test_m52_tollkode.py",),
                       min_tester=3000, min_andel_tester=30)
 
 registrer_suitegrense("m42_kontovakt", "m42",

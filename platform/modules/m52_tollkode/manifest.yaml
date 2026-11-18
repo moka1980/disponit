@@ -29,8 +29,8 @@
 id: m52_tollkode
 navn: Toll- og HS-kodeagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m52-v1` bærer invarianten
 # `forslag_uten_grunnlag` — en kode uten hva den hviler på er en
 # gjetning i rettslig form.
@@ -43,32 +43,142 @@ i18n_prefiks: tollkode
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m52-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m52-suite-v1-20261118T231723Z.json
+    artefakt_sha256: dfc4a1ba86065699145f15c3ca7393b9c25e09cfb17c7b48545ec5659ee4b1ff
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 31 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m52_fasit.py`:
+    #
+    # M-52s fasitsett: fire nomenklaturer og fem forslag med KJENT dom.
+    #
+    # Tollregisteret har sju funntyper over tre nøkler; settet bruker to:
+    # nomenklaturen (`nomenklatur_id`) og forslaget (`forslag_id`). Subjektet
+    # leses som `coalesce(nomenklatur_id, vare_id, forslag_id)`.
+    #
+    #   nomenklatur 1. `nomenklatur_utloper_snart` — gyldig til om 5 døgn
+    #               2. `nomenklatur_utlopt`        — avviklet etter forslaget;
+    #                                                eget system (`kn`), så
+    #                                                ingenting avløser den
+    #               3. `ingen_krav`                — tenant B har ingen krav
+    #               4. (n_gyldig)                  — `hs` uten sluttdato
+    #   forslag     5. `forslag_under_terskel`     — 50 % mot terskel 70
+    #               6. `forslag_ikke_klart`        — 90 %, ikke merket klart
+    #               7. `forslag_mot_utlopt_nomenklatur` — 90 %, merket klart
+    #                                                FØR nomenklaturen avvikles
+    #               8. (ren)                       — 90 %, ikke klart; merkes
+    #                                                klart MELLOM kjøringene
+    #               9. (ok)                        — 90 %, merket klart
+    #
+    # Hver vare har ett forslag, og sveipen leser det NYESTE per vare.
+    #
+    # To ting avgjør rekkefølgen. `m52_avgi_forslag` og `m52_merk_klart`
+    # nekter mot en nomenklatur som ikke gjelder, så forslaget mot den
+    # utløpte avgis OG merkes klart før avviklingen — uten klarmerkingen ville
+    # det også fått `forslag_ikke_klart`. Og en utløpt nomenklatur er bare et
+    # funn når ingen gyldig nomenklatur av SAMME system har avløst den.
+    status: ja
+    krav_id: m52-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m52-fasit-v1-20261118T221953Z.json
+    artefakt_sha256: 6f06acf6106c81caa495af33594d2347486875af9bc1da60e9ac1a8794d27c11
     notat: >-
-      KREVER: varer med KJENT riktig HS-kode, kjørt likt lokalt og på
-      staging. Et forslag som varierer mellom miljøene er ikke et
-      forslag — det er en tilfeldighet i rettslig form.
+      Runde 4943fe63: 9 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m52-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m52-fasit-v1-20261118T221953Z.json
+    artefakt_sha256: 6f06acf6106c81caa495af33594d2347486875af9bc1da60e9ac1a8794d27c11
     notat: >-
-      KREVER: at hvert forslag har nomenklaturversjon og grunnlag i
-      evidenskjeden. Uten dem kan ingen etterprøve hvorfor koden ble
-      foreslått.
+      22 hendelser i kjeden (nomenklatur_gyldig_til_satt: 1,
+      nomenklatur_registrert: 4, tollforslag_avgitt: 5, tollforslag_klart:
+      3, tollkrav_satt: 2, vare_registrert: 5, varenummer_registrert: 2), 0
+      uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m52-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m52-feilinjisering-v1-20261118T221954Z.json
+    artefakt_sha256: 43db387de0f595354d41ab16e32495956e54bcc48a1daeac02b775399e2fa3b5
     notat: >-
-      KREVER: tollkodesveipen bygget, og at en feil i den ikke lar et
-      forslag uten grunnlag se begrunnet ut.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 20 åpne og 2 lukkede over 11 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m52-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m52-ytelse-v1-20261118T221954Z.json
+    artefakt_sha256: a692a91781436663f2991f218d027b98c1ab09183d8fd279383d0d6a1b48f51d
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0325 / 0,0389 / 0,0525 s) over 9 tenanter; den
+      DÅRLIGSTE er dommen. 0,0525 s mot taket på 60 — 0,0058 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m52-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m52-rollback-v1-20261118T221956Z.json
+    artefakt_sha256: 3064ebfc44849922b10dca306dcd78329458660bdc85e73529a1c65b3419388c
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 2bd5fbfa ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
