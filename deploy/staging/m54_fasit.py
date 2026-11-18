@@ -106,10 +106,12 @@ def _avviket(rt, tenant: str, vid: str) -> str:
 
 def _rett(rt, tenant: str, vid: str, merke: str, *, klar: bool) -> None:
     rid = str(uuid.uuid4())
+    # Avviket FØR konteksten: oppslaget ruller tilbake, og tenant-
+    # konteksten er transaksjonslokal — den ville forsvunnet med det.
+    aid = _avviket(rt, tenant, vid)
     _sk(rt, tenant)
     rt.execute("SELECT m54_registrer_retting(%s,%s,%s,'Invoice/A',NULL,'a',"
-               "%s,%s)", (tenant, rid, _avviket(rt, tenant, vid),
-                          f"fasit {merke}", AKTOR))
+               "%s,%s)", (tenant, rid, aid, f"fasit {merke}", AKTOR))
     rt.commit()
     if klar:
         _sk(rt, tenant)
