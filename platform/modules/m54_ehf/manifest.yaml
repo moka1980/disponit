@@ -30,8 +30,8 @@
 id: m54_ehf
 navn: EHF- og Peppol-avviksretter
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m54-v1` bærer invarianten
 # `validering_uten_skjemaversjon` — en dom uten versjonen den ble tatt
 # under kan ingen etterprøve når standarden har flyttet seg.
@@ -44,9 +44,25 @@ i18n_prefiks: ehf
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m54-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m54-suite-v1-20261118T230303Z.json
+    artefakt_sha256: 0f2fa904dc11cb3834d902c2d12cb8c0ce32fa7fac462544345cc1d25b147a42
     notat: >-
-      SUITEN KJØRER.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 41 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m54_fasit.py`:
