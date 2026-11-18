@@ -34,6 +34,7 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 // FUNNTYPE → MERKETEKST. Lukket tabell, ikke strengbygging: en funntype
 // flaten ikke kjenner skal ikke bli et merke som heter
@@ -501,6 +502,7 @@ function startSkjema(ctx, last, maler, kvitter) {
     type: "text", required: true, maxlength: 300 });
   const eier = el("input", { id: "ob-start-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const dato = el("input", { id: "ob-start-dato", name: "startet",
     type: "date", required: true });
   const knapp = el("button", { type: "submit",

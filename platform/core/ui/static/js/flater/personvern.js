@@ -44,6 +44,7 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 // GDPR-rettighetene, i lovens rekkefølge (art. 15-21). Speiler det
 // lukkede settet i 099 — flaten tilbyr aldri en type registeret nekter.
@@ -202,6 +203,7 @@ function registrerSkjema(ctx, last) {
     type: "text", required: true, maxlength: 200 });
   const eier = el("input", { id: "pv-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const mottatt = el("input", { id: "pv-mottatt", name: "mottatt",
     type: "date", required: true });
   const lagre = el("input", { id: "pv-lagre", name: "lager_id",
