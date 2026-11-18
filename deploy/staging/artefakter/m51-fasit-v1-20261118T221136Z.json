@@ -1,0 +1,102 @@
+{
+  "bestatt": true,
+  "krav_id": "m51-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "estimatpost_lagt_til": 5,
+      "kildepost_registrert": 5,
+      "stotteordning_registrert": 8,
+      "tilskuddsestimat_opprettet": 6,
+      "tilskuddskrav_satt": 1
+    },
+    "evidens_totalt": 25,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "ingen_estimat"
+        ],
+        "merke": "ingen_estimat",
+        "subjekt_id": "1b50374d-fdd9-423b-b8a1-2c0d26f12a17",
+        "ventet": "ingen_estimat"
+      },
+      {
+        "fikk": [
+          "estimat_uten_poster"
+        ],
+        "merke": "uten_poster",
+        "subjekt_id": "a2729585-ef11-4385-8714-4b167700693b",
+        "ventet": "estimat_uten_poster"
+      },
+      {
+        "fikk": [
+          "estimat_over_ordningstak"
+        ],
+        "merke": "over_tak",
+        "subjekt_id": "713dc173-54ca-4eff-8720-aaefa605cd64",
+        "ventet": "estimat_over_ordningstak"
+      },
+      {
+        "fikk": [
+          "frist_naermer_seg"
+        ],
+        "merke": "naermer",
+        "subjekt_id": "91c97964-2b7d-4a57-8555-4b6aba1b4f29",
+        "ventet": "frist_naermer_seg"
+      },
+      {
+        "fikk": [
+          "frist_passert"
+        ],
+        "merke": "passert",
+        "subjekt_id": "7d699389-70a1-43d8-b785-dbccd67f2e53",
+        "ventet": "frist_passert"
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "uten_krav",
+        "subjekt_id": "9e4ff4cc-68d5-4e0e-b828-e8cc069ac7ce",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "1f82dfe2-7470-44a2-9ec6-eb368aac6335",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "beholdes",
+        "subjekt_id": "a47b6b9a-ee25-40e1-9a00-f8f0b084d1d1",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 8,
+    "sveip1_nye": 7,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "fc6c40c6a838ed957e43652bc13797818444314310073fe4ad9ab5b59a72f908",
+    "evidenskilde": "m51_tilskudd",
+    "modul": "m51_tilskudd",
+    "riggmodul": "m51_fasit",
+    "runde": "64f788aa",
+    "sett_sha256": "8db042917862289b3cec7b252f634707b3013f474784af3a9568b42e5efb1b0d",
+    "tenanter": [
+      "t-m51fasit-a-64f788aa",
+      "t-m51fasit-b-64f788aa"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:11:36.780358+00:00"
+}

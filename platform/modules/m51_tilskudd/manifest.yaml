@@ -49,32 +49,135 @@ i18n_prefiks: tilskudd
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m51-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m51-suite-v1-20261118T224854Z.json
+    artefakt_sha256: f507deb6ad45258b7041af2414661e263473240e1d145bbdb2e4503c73e0b328
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 38 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m51_fasit.py`:
+    #
+    # M-51s fasitsett: åtte støtteordninger med KJENT dom.
+    #
+    # Tilskuddsregisteret har sju funntyper, alle på `ordning_id`. Hver aktiv
+    # ordning har en søknadsfrist, og to av typene leser den — så ordninger
+    # som skal måle noe annet har fristen om 200 døgn, langt utenfor varselet
+    # på 21. Et estimat med poster som ikke er ferdigstilt er den nøytrale
+    # tilstanden: det gir verken `ingen_estimat` eller `estimat_uten_poster`.
+    #
+    #   1. `ingen_estimat`            — aktiv ordning uten estimat
+    #   2. `estimat_uten_poster`      — estimat uten et eneste beløp
+    #   3. `estimat_over_ordningstak` — sum 500 kr mot et tak på 300
+    #   4. `frist_naermer_seg`        — frist om 5 døgn, estimatet ikke klart
+    #   5. `frist_passert`            — frist for 5 døgn siden, ikke klart
+    #   6. `ingen_krav`               — tenant B har ingen krav
+    #   7. (ren)                      — uten estimat, får estimat og post
+    #                                   MELLOM kjøringene
+    #   8. (beholdes)                 — estimat med post, frist om 200 døgn
+    #
+    # Søknadsfristen er en dørparameter uten nedre grense, så både nær og
+    # passert frist lages på dagen.
+    status: ja
+    krav_id: m51-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m51-fasit-v1-20261118T221136Z.json
+    artefakt_sha256: 34300de753f208f941b5301aa866b8127043414ba9dc563953f93b613bcdf8a9
     notat: >-
-      KREVER: en ordning med KJENT fasit for hvilket beløp reglene gir
-      på et gitt prosjekt, kjørt likt lokalt og på staging. Regnestykket
-      i heltall må gi samme øre begge steder.
+      Runde 64f788aa: 8 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m51-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m51-fasit-v1-20261118T221136Z.json
+    artefakt_sha256: 34300de753f208f941b5301aa866b8127043414ba9dc563953f93b613bcdf8a9
     notat: >-
-      KREVER: at hvert tall i et utkast peker på kildeposten sin. Det er
-      dette som skiller et estimat fra en uriktig opplysning.
+      25 hendelser i kjeden (estimatpost_lagt_til: 5, kildepost_registrert:
+      5, stotteordning_registrert: 8, tilskuddsestimat_opprettet: 6,
+      tilskuddskrav_satt: 1), 0 uten aktør, 0 som deler input_hash med en
+      annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m51-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m51-feilinjisering-v1-20261118T221137Z.json
+    artefakt_sha256: fed2715240049ac37a8725033d8645065e5484e21b8e8199c9266661a44c47da
     notat: >-
-      KREVER: tilskuddssveipen bygget, og at en feil i den ikke lar et
-      beløp uten kildepost se sporet ut. Et usporet tall er den
-      uriktige opplysningen dommen handler om.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 13 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m51-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m51-ytelse-v1-20261118T221137Z.json
+    artefakt_sha256: cebf3a0b91260370aea089c941efad826f26b86bdbe97788686f4e2f2954e55b
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0166 / 0,0167 / 0,0191 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0191 s mot taket på 60 — 0,0064 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m51-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m51-rollback-v1-20261118T221139Z.json
+    artefakt_sha256: affcb5d5e3fcab3139335602febf20a08d0eb9b0d1a26b477f3c6183d5814209
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 5ec3c23a ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

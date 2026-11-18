@@ -14,6 +14,7 @@ og et artefakt fra en annen produsentflate eller et annet sett.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -149,7 +150,9 @@ def _funntyper_fra_migrasjonen(funntabell: str) -> set[str]:
     register som har en helt gyldig — og da måler porten formen på
     SQL-en, ikke mengden."""
     for sti in sorted((ROT / "platform/core/db/migrations").glob("*.sql")):
-        sql = sti.read_text(encoding="utf-8")
+        # SQL-KOMMENTARER UT FØRST: noen registre kommenterer hver funntype
+        # inne i lista (M-51), og ordene der er ikke funntyper.
+        sql = re.sub(r"--[^\n]*", "", sti.read_text(encoding="utf-8"))
         for start in (f"CREATE TABLE {funntabell} (",
                       f"CREATE TABLE public.{funntabell} ("):
             if start not in sql:

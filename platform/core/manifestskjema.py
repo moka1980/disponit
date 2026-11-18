@@ -5497,6 +5497,23 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m50_fasit",
         "releasefiler": ("platform/modules/m50_postjournal",
                          "platform/drift/postjournalsveip.py"),
+    "m51_tilskudd": {
+        "modul_fil": "tilskuddssveip",
+        "funntabell": "tilskuddsfunn",
+        "subjektkolonne": "ordning_id",
+        "tenantkilde": "stotteordning",
+        "maalerolle": "disponit_tilskudd_eier",
+        "sveipedor": "m51_sveip_tilskudd(int)",
+        "dsn_variabel": "DISPONIT_TILSKUDDSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m51-fasit-v1",
+        "feilinjisering_krav": "m51-feilinjisering-v1",
+        "ytelse_krav": "m51-ytelse-v1",
+        "rollback_krav": "m51-rollback-v1",
+        "riggmodul": "m51_fasit",
+        "releasefiler": ("platform/modules/m51_tilskudd",
+                         "platform/drift/tilskuddssveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6340,6 +6357,16 @@ registrer_sveipgrenser("m50_postjournal", maks_sekunder=60.0,
 registrer_suitegrense("m50_postjournal", "m50",
                       ("platform/core/tests/test_m50_postjournal.py",),
                       min_tester=3000, min_andel_tester=22)
+# M-51: gulvene er litt under det målte 18/11 (8 subjekter, 25
+# evidenshendelser; seks typer + den rene som fødes uten estimat).
+registrer_fasitgrense("m51_tilskudd", min_subjekter=8, min_evidens=22,
+                      tenantprefiks="t-m51fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m51_tilskudd", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m51_tilskudd", "m51",
+                      ("platform/core/tests/test_m51_tilskudd.py",),
+                      min_tester=3000, min_andel_tester=30)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
