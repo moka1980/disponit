@@ -1095,6 +1095,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def utrulling(request: Request) -> Response:
         return lesing.utrulling(tjeneste, request)
 
+    def firma_medlemmer(request: Request) -> Response:
+        from . import medlemmer as medlemsmodul
+        return medlemsmodul.medlemmer(tjeneste, request)
+
     def oppsett(request: Request) -> Response:
         from . import oppsett as oppsettmodul
         return oppsettmodul.oppsett(tjeneste, request)
@@ -3683,6 +3687,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # statisk serverte klientbunten der hvem som helst kunne lese hver
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
+        Route("/v1/firma/medlemmer", firma_medlemmer, methods=["GET"]),
         Route("/v1/oppsett", oppsett, methods=["GET"]),
         Route("/v1/modellstyring", modellstyring, methods=["GET"]),
         Route("/v1/kontinuitet", kontinuitet, methods=["GET"]),
@@ -5155,6 +5160,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en
     # utvidelse av svaret, ikke en annen inngang.
     ("GET",  "/v1/utrulling"):               "decisions:read",
+    # Eiervelgeren: id og visningsnavn på tenantens aktive medlemmer,
+    # aldri e-post (medlemmer.py).
+    ("GET",  "/v1/firma/medlemmer"):         "decisions:read",
     # «Kom i gang»: hver modul i svaret er i tillegg gatet på sitt EGET
     # lesescope inne i endepunktet (oppsett.svar_for).
     ("GET",  "/v1/oppsett"):                 "decisions:read",

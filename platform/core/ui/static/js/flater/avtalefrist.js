@@ -35,6 +35,7 @@ import {
 import { Tidspunkt, meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 const GJENTAKELSER = ["engang", "aarlig", "kvartalsvis", "manedlig"];
 
@@ -148,6 +149,7 @@ function registrerSkjema(ctx, last) {
     type: "text", required: true, maxlength: 200 });
   const eier = el("input", { id: "plikt-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const kilde = el("input", { id: "plikt-kilde", name: "kilde",
     type: "text", required: true, maxlength: 500 });
   const frist = el("input", { id: "plikt-frist", name: "frist",

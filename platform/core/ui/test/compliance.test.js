@@ -454,7 +454,11 @@ test("Compliance: flaten har ingen innsendingsvei (v1-dommen)", async () => {
     knapp.dispatchEvent(new window.Event("click", { bubbles: true }));
   }
   await vent(() => false, 5);
-  const utenfor = KALL.filter((k) => !k.sti.startsWith("/v1/compliance"));
+  // ÉN LESNING er tillatt utenfor registeret: eiervelgerens medlemsliste
+  // (GET, navn og id). Den henter, den sender ingenting — og den er
+  // navngitt her, så enhver ANNEN adresse fortsatt feller porten.
+  const utenfor = KALL.filter((k) => !k.sti.startsWith("/v1/compliance")
+    && !(k.sti === "/v1/firma/medlemmer" && k.metode === "GET"));
   assert.deepEqual(utenfor, [],
     "flaten kalte noe utenfor sitt eget register");
   // …og undertittelen SIER at registeret ikke sender noe, så ingen leter
@@ -494,4 +498,26 @@ test("Compliance: ingen hardkodet tekst (pseudo-locale)", async () => {
   } finally {
     settI18nForTest(NB, "nb");
   }
+});
+
+test("Compliance: eieren velges blant medlemmene ved navn", async () => {
+  SVAR = { "/v1/compliance": KONTROLLER, "/v1/firma/medlemmer": {
+    medlemmer: [{ bruker_id: "bid_k", navn: "Kari Nordmann" }] } };
+  SISTE = null;
+  const h = nyHoved();
+  visCompliance(h, ctx());
+  await vent(() => h.querySelector("select#kontroll-eier") !== null);
+  const valg = h.querySelector("select#kontroll-eier");
+  assert.equal(valg.value, "");
+  assert.ok(h.querySelector('label[for="kontroll-eier"]'));
+  assert.ok([...valg.options].some((o) => o.textContent === "Kari Nordmann"));
+  h.querySelector("#kontroll-rammeverk").value = "ISO 27001";
+  h.querySelector("#kontroll-krav").value = "A.5.1";
+  h.querySelector("#kontroll-beskrivelse").value = "Policy";
+  valg.value = "bid_k";
+  h.querySelector("#kontroll-dogn").value = "365";
+  h.querySelector("#kontroll-krav").closest("form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }));
+  await vent(() => SISTE !== null);
+  assert.equal(SISTE.kropp.eier_bruker_id, "bid_k");
 });

@@ -42,6 +42,7 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 const FORNYELSESTYPER = ["automatisk", "manuell", "engang"];
 const VALUTAER = ["NOK", "EUR", "USD", "GBP", "SEK", "DKK", "CHF"];
@@ -208,6 +209,7 @@ function registrerSkjema(ctx, last) {
     name: "leverandor", type: "text", required: true, maxlength: 200 });
   const eier = el("input", { id: "lisens-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const kilde = el("input", { id: "lisens-kilde", name: "kilde",
     type: "text", required: true, maxlength: 500 });
   const fornyelsesdato = el("input", { id: "lisens-fornyelsesdato",

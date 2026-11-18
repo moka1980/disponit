@@ -41,6 +41,7 @@ import {
 import { Tidspunkt, meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 const KRITIKALITETER = ["lav", "middels", "hoy", "kritisk"];
 const SUBJEKTTYPER = ["person", "tjenestekonto"];
@@ -289,6 +290,7 @@ function tilgangsskjema(ctx, objekter, last) {
   const niva = valgfelt("tilgang-niva", "niva", NIVAER, "ui.tilgang.niva");
   const eier = el("input", { id: "tilgang-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const hjemmel = el("input", { id: "tilgang-hjemmel", name: "hjemmel",
     type: "text", required: true, maxlength: 500 });
   const dogn = el("input", { id: "tilgang-dogn", name: "gjennomgang_dogn",
