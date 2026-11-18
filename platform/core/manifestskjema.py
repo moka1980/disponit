@@ -5442,6 +5442,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m49_sanksjon": {
+        "modul_fil": "sanksjonssveip",
+        "funntabell": "sanksjonsfunn",
+        "subjektkolonne": "subjekt_id",
+        "tenantkilde": "sanksjonssubjekt",
+        "maalerolle": "disponit_sanksjon_eier",
+        "sveipedor": "m49_sveip_sanksjoner(int)",
+        "dsn_variabel": "DISPONIT_SANKSJONSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m49-fasit-v1",
+        "feilinjisering_krav": "m49-feilinjisering-v1",
+        "ytelse_krav": "m49-ytelse-v1",
+        "rollback_krav": "m49-rollback-v1",
+        "riggmodul": "m49_fasit",
+        "releasefiler": ("platform/modules/m49_sanksjon",
+                         "platform/drift/sanksjonssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6270,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-49: provisoriske gulv — heves til litt under det målte. Sju nye
+# funn i første sveip (seks typer + det rene ukontrollerte subjektet).
+registrer_fasitgrense("m49_sanksjon", min_subjekter=8, min_evidens=10,
+                      tenantprefiks="t-m49fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m49_sanksjon", maks_sekunder=60.0, min_tenanter=3,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m49_sanksjon", "m49",
+                      ("platform/core/tests/test_m49_sanksjon.py",),
+                      min_tester=3000, min_andel_tester=25)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
