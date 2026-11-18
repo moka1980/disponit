@@ -2643,3 +2643,33 @@ def test_klarheten_maales_med_en_delt_kropp():
     assert 'disponit-api.service(/ready)' in selvrevers, \
         "selvrevers dømmer API-et uten /ready — is-active er prosessen," \
         " ikke svaret"
+
+
+def test_helsesjekkens_tilstandskatalog_eies_av_systemd():
+    """`/run` er tmpfs og `disponit-helse` kan ikke lage kataloger der.
+    Uten RuntimeDirectory døde hver kjøring på `install -d` fra 10/9 til
+    18/11, mens SuccessExitStatus=1 meldte den som vellykket."""
+    unit = (ROT / "deploy" / "staging"
+            / "disponit-helse.service").read_text(encoding="utf-8")
+    for linje in ("RuntimeDirectory=disponit-health",
+                  "RuntimeDirectoryPreserve=yes"):
+        assert linje in unit, f"helse-uniten mangler {linje!r}"
+    status = [l for l in unit.splitlines()
+              if l.startswith("SuccessExitStatus=")]
+    assert status == ["SuccessExitStatus=0 1"], \
+        "exit 2 (blind sjekk) må aldri regnes som vellykket"
+
+
+def test_blind_helsesjekk_feiler_med_exit_2(tmp_path):
+    """Kan skriptet ikke føre tilstand, skal kjøringen synes som failed."""
+    import subprocess
+    kilde = (ROT / "deploy" / "staging" / "helse-sjekk.sh").read_text(
+        encoding="utf-8")
+    assert "TILSTAND=/run/disponit-health\n" in kilde
+    skript = tmp_path / "helse-sjekk.sh"
+    skript.write_text(kilde.replace(
+        "TILSTAND=/run/disponit-health\n",
+        "TILSTAND=/proc/disponit-finnes-ikke/health\n"), encoding="utf-8")
+    res = subprocess.run(["bash", str(skript)], capture_output=True,
+                         timeout=30)
+    assert res.returncode == 2, (res.returncode, res.stderr)
