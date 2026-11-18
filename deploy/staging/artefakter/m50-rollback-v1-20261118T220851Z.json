@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/5ec3c23a061d6476197745524bb13f7e3e44bab3/platform/drift/postjournalsveip.py",
+    "avbrutt_pid": 3908179,
+    "kandidat_fil": "/opt/disponit/releases/5ec3c23a061d6476197745524bb13f7e3e44bab3/platform/drift/postjournalsveip.py",
+    "kandidat_pid": 3908197,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/postjournalsveip.py",
+    "rullback_pid": 3908192
+  },
+  "krav_id": "m50-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 7,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 7,
+    "rullbakk_rader": 7
+  },
+  "oppsett": {
+    "arbeidernokkel": 509337184,
+    "avbrutt_backend_pid": 3908183,
+    "bevisrot_sha256": "fb9ff1a7ddaa38f17755e97a97ff8d4e30d9a7eec9d88a6e45c0923d46989500",
+    "drillet_digest": "5ee03edf3b9966ae03c6f8366ac30d09f10b5f7788e0765ce06df997c85773b8",
+    "drillet_katalog": "/opt/disponit/releases/5ec3c23a061d6476197745524bb13f7e3e44bab3",
+    "drillet_kjernedigest": "32a24712d43b19d154570fb3b3c00e53f61c104ae7f440c0feff57582f85cb99",
+    "drillet_release": "5ec3c23a061d6476197745524bb13f7e3e44bab3",
+    "forgjenger_digest": "5ee03edf3b9966ae03c6f8366ac30d09f10b5f7788e0765ce06df997c85773b8",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "journalfunn",
+    "maalerolle": "disponit_postjournal_eier",
+    "miljo": "staging",
+    "modul": "m50_postjournal",
+    "runde": "fbcf0942",
+    "tenanter": [
+      "t-m50fasit-a-fbcf0942",
+      "t-m50fasit-b-fbcf0942"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:08:51.209931+00:00"
+}

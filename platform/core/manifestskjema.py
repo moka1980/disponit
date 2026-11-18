@@ -5478,6 +5478,25 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m47_fasit",
         "releasefiler": ("platform/modules/m47_myndighetsrapport",
                          "platform/drift/myndighetssveip.py"),
+    "m50_postjournal": {
+        "modul_fil": "postjournalsveip",
+        "funntabell": "journalfunn",
+        # TRE SUBJEKTSLAG: funnraden bærer nøyaktig én av nøklene
+        # (`journalfunn_en_noekkel`).
+        "subjektkolonne": "coalesce(kilde_id, post_id, person_id)",
+        "tenantkilde": ("journalkilde", "journalpost"),
+        "maalerolle": "disponit_postjournal_eier",
+        "sveipedor": "m50_sveip_postjournal(int)",
+        "dsn_variabel": "DISPONIT_POSTJOURNALSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m50-fasit-v1",
+        "feilinjisering_krav": "m50-feilinjisering-v1",
+        "ytelse_krav": "m50-ytelse-v1",
+        "rollback_krav": "m50-rollback-v1",
+        "riggmodul": "m50_fasit",
+        "releasefiler": ("platform/modules/m50_postjournal",
+                         "platform/drift/postjournalsveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6310,6 +6329,16 @@ registrer_sveipgrenser("m47_myndighetsrapport", maks_sekunder=60.0,
 
 registrer_suitegrense("m47_myndighetsrapport", "m47",
                       ("platform/core/tests/test_m47_myndighetsrapport.py",),
+# M-50: gulvene er litt under det målte 18/11 (11 subjekter, 10
+# evidenshendelser; seks typer + den rene som fødes passert).
+registrer_fasitgrense("m50_postjournal", min_subjekter=11,
+                      min_evidens=9, tenantprefiks="t-m50fasit-",
+                      min_sveip1_nye=7)
+registrer_sveipgrenser("m50_postjournal", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=7)
+
+registrer_suitegrense("m50_postjournal", "m50",
+                      ("platform/core/tests/test_m50_postjournal.py",),
                       min_tester=3000, min_andel_tester=22)
 
 registrer_suitegrense("m42_kontovakt", "m42",

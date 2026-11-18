@@ -1,0 +1,121 @@
+{
+  "bestatt": true,
+  "krav_id": "m50-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "kilde_avvikles": 1,
+      "kilde_registrert": 4,
+      "krav_satt": 1,
+      "person_anonymisert": 1,
+      "post_registrert": 2,
+      "sak_opprettet": 1
+    },
+    "evidens_totalt": 10,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [],
+        "merke": "k_gyldig",
+        "subjekt_id": "f726646e-3744-4422-9dd9-50221fc21e84",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "kilde_utloper_snart"
+        ],
+        "merke": "k_utloper",
+        "subjekt_id": "f3f0395d-c6c3-4670-84fd-7345ab88fe91",
+        "ventet": "kilde_utloper_snart"
+      },
+      {
+        "fikk": [
+          "kilde_utlopt"
+        ],
+        "merke": "k_utlopt",
+        "subjekt_id": "8d14af38-e229-42c7-a5c8-b99543596335",
+        "ventet": "kilde_utlopt"
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "k_uten_krav",
+        "subjekt_id": "d0fbd917-9532-42ff-ac49-997cde04ded0",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [],
+        "merke": "p_gyldig",
+        "subjekt_id": "bd8d56ca-4535-48e7-b437-1106644c2cbc",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "slettefrist_passert"
+        ],
+        "merke": "passert",
+        "subjekt_id": "4ba7444d-3914-4bde-a9a8-4cc2a495b2a7",
+        "ventet": "slettefrist_passert"
+      },
+      {
+        "fikk": [
+          "slettefrist_naermer_seg"
+        ],
+        "merke": "naermer",
+        "subjekt_id": "ac00794c-41d1-4777-903e-abc5d7304005",
+        "ventet": "slettefrist_naermer_seg"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "042e4c57-f599-4c61-ba0a-7f7c782529cc",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "beholdes",
+        "subjekt_id": "4fff9c03-59b6-474b-84fa-041f6538fcf3",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "post_mot_utlopt_kilde"
+        ],
+        "merke": "mot_utlopt",
+        "subjekt_id": "5d20b917-b7ff-4ad7-8c40-a54eef2ed290",
+        "ventet": "post_mot_utlopt_kilde"
+      },
+      {
+        "fikk": [],
+        "merke": "i_utlopt",
+        "subjekt_id": "a48b8d29-3c6d-4bd2-b5aa-a80db19aad2f",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 11,
+    "sveip1_nye": 7,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "672ce9aef968baa484283618358d8eef18975de9aa3480210bf7afeb11c3e9a2",
+    "evidenskilde": "m50_postjournal",
+    "modul": "m50_postjournal",
+    "riggmodul": "m50_fasit",
+    "runde": "01de8ddf",
+    "sett_sha256": "9d247af2ff089bb831614b1abaa8427f975ba8371df97c0516c0731fb66e42ba",
+    "tenanter": [
+      "t-m50fasit-a-01de8ddf",
+      "t-m50fasit-b-01de8ddf"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:08:48.734084+00:00"
+}
