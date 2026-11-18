@@ -62,31 +62,120 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m53_fasit.py`:
+    #
+    # M-53s fasitsett: fem regler og tre avvik med KJENT dom.
+    #
+    # HMS-registeret har åtte funntyper over to nøkler: regelen (`regel_id`)
+    # og avviket (`avvik_id`). Subjektet leses som
+    # `coalesce(regel_id, avvik_id)` (`hmsfunn_en_noekkel`).
+    #
+    #   regel  1. `regelverk_utloper_snart` — gyldig til om 5 døgn (varsel 60)
+    #          2. `regelverk_utlopt`        — gyldig til for 10 døgn siden; egen
+    #                                          avvikstype, så ingenting avløser den
+    #          3. `ingen_krav`              — tenant B har ingen krav
+    #          4. (ren)                     — utløpt; en ny regel for samme
+    #                                          avvikstype registreres MELLOM
+    #                                          kjøringene og avløser den
+    #   avvik  5. `oppbevaring_naermer_seg` — regelen gir 10 døgns oppbevaring
+    #          6. `for_tidlig_anonymisert`  — anonymisert før oppbevaringen gikk ut
+    #          7. (ok)                      — meldt mot en regel med 3650 døgn
+    #
+    # `meldt_dato` er i dag og ingen dørparameter, så de tre typene som krever
+    # at tid har gått (`avvik_ubehandlet`, `oppbevaring_utlopt`) eller at en
+    # regel avvikles etter et avvik (`avvik_mot_utlopt_regelverk`), står i
+    # UNAABARE.
+    #
+    # Avvikene meldes NAVNGITT: et anonymt avvik har ingen aktør, og en
+    # hendelse uten aktør feller evidenskjeden.
+    status: ja
+    krav_id: m53-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m53-fasit-v1-20261118T223326Z.json
+    artefakt_sha256: 7b9045c931b4f4283bb260566919db43b66d89d71b7c67264c91db2d96c0bd55
     notat: >-
-      KREVER: avvik med KJENT fasit, OG et anonymt avvik i settet.
-      Anonymitet som bare er testet med ekte navn er ikke testet.
+      Runde 0f489308: 9 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m53-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m53-fasit-v1-20261118T223326Z.json
+    artefakt_sha256: 7b9045c931b4f4283bb260566919db43b66d89d71b7c67264c91db2d96c0bd55
     notat: >-
-      KREVER: at evidenskjeden IKKE bærer varslerens identitet. Dette
-      er den ene modulen der en fullstendig revisjonslogg er feil —
-      loggen skal vise at et avvik ble mottatt, ikke av hvem.
+      12 hendelser i kjeden (avvik_anonymisert: 1, avvik_meldt: 3,
+      regel_registrert: 7, sett_krav: 1), 0 uten aktør, 0 som deler
+      input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m53-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m53-feilinjisering-v1-20261118T223327Z.json
+    artefakt_sha256: 6cd5a16fe680a4fbccf4f54cbecb5f0d0cedc93881d43fb360c2521cbc5d71e5
     notat: >-
-      KREVER: HMS-sveipen bygget, og at en feil i den ikke avslører en
-      anonym varsler gjennom en feilmelding, en telling eller en
-      tidsrekkefølge.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 12 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m53-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m53-ytelse-v1-20261118T223327Z.json
+    artefakt_sha256: 5ff07cb8bb3fa83bf1839e005a302c0642666dbeb47afaf155346414b39eb193
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0183 / 0,0155 / 0,0144 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0183 s mot taket på 60 — 0,0061 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m53-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m53-rollback-v1-20261118T223329Z.json
+    artefakt_sha256: 7370cf524b1b9d70fc4de30a4ba5be5581b971abf1c0fac58b3168fab6f95627
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen. OG:
-      en rullbakk må ikke gjenopprette rader M-30 har slettet.
+      Drillet 4ce84f81 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 6 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
