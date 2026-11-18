@@ -123,7 +123,7 @@ export const MODULSTATUS = {
   // navnelikhet aldri kan avfeies maskinelt. v1 blokkerer ikke.
   //
   // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
-  48: "bygges",     // m48_motpart: under_utvikling, ikke_i_drift
+  48: "i_drift",    // m48_motpart: aktiv, produksjon
   49: "bygges",     // m49_sanksjon: under_utvikling, ikke_i_drift
   46: "bygges",     // m46_anbud: under_utvikling, ikke_i_drift
   51: "bygges",     // m51_tilskudd: under_utvikling, ikke_i_drift
