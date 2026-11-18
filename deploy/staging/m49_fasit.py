@@ -53,7 +53,11 @@ RENSES = "ren"
 NEGATIV_KONTROLL = "ok"
 
 KRAV_A = (85, 90, 0, 0)
-KRAV_C = (85, 90, 3, 3650)
+#: EGEN MATCHTERSKEL I C: `m49_evidens` hasher handling, subjekt og
+#: detalj — ikke tenanten — og kravhendelsens detalj er versjon og
+#: matchterskel. Like krav i to tenanter ga derfor samme `input_hash`
+#: (radene skilles av tenantkolonnen, men produsenten teller på tvers).
+KRAV_C = (90, 90, 3, 3650)
 
 #: (merkelapp, forventet, tenantnøkkel, kontroll: None | "eu" | "ofac",
 #:  treff: None | "uavklart" | "bekreftet")
