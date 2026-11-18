@@ -5442,6 +5442,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m53_hms": {
+        "modul_fil": "hmssveip",
+        "funntabell": "hmsfunn",
+        # Funnraden bærer nøyaktig én av to nøkler (`hmsfunn_en_noekkel`).
+        "subjektkolonne": "coalesce(regel_id, avvik_id)",
+        "tenantkilde": ("hmsregelverk", "hmsavvik"),
+        "maalerolle": "disponit_hms_eier",
+        "sveipedor": "m53_sveip_hms(int)",
+        "dsn_variabel": "DISPONIT_HMSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m53-fasit-v1",
+        "feilinjisering_krav": "m53-feilinjisering-v1",
+        "ytelse_krav": "m53-ytelse-v1",
+        "rollback_krav": "m53-rollback-v1",
+        "riggmodul": "m53_fasit",
+        "releasefiler": ("platform/modules/m53_hms",
+                         "platform/drift/hmssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6271,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-53: provisoriske gulv — heves til litt under det målte. Seks nye
+# funn i første sveip (fem typer + den rene utløpte regelen).
+registrer_fasitgrense("m53_hms", min_subjekter=9, min_evidens=10,
+                      tenantprefiks="t-m53fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m53_hms", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=6)
+
+registrer_suitegrense("m53_hms", "m53",
+                      ("platform/core/tests/test_m53_hms.py",),
+                      min_tester=3000, min_andel_tester=32)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
