@@ -78,7 +78,25 @@ ANBEFALT: dict[int, tuple[str, dict[str, int]]] = {
         "reautorisasjon_dogn": 7}),
     42: ("/v1/kontovakt/terskler", {
         "reverifikasjon_dogn": 365, "uverifisert_dogn": 7}),
+    47: ("/v1/myndighet/krav", {
+        "varselfrist_dogn": 14, "eskaleringsfrist_dogn": 3,
+        "regelvarsel_dogn": 60}),
+    50: ("/v1/journal/krav", {
+        "slettevarsel_dogn": 30, "sletteplan_maks_dogn": 365,
+        "kildevarsel_dogn": 60}),
+    51: ("/v1/tilskudd/krav", {
+        "frist_varsel_dogn": 21, "kildepost_gyldig_dogn": 400,
+        "usikkerhet_prosent": 20}),
+    54: ("/v1/ehf/krav", {
+        "avviksfrist_dogn": 7, "utlopsvarsel_dogn": 30}),
 }
+
+# Moduler som ALDRI skal få et forslag. Toll (52) og merkevare (55)
+# holder kravfeltene tomme med vilje: et forhåndsutfylt tall ville vært
+# en fullmakt modulen ga seg selv (se `tollkode.js`/`merkevare.js`).
+# Sanksjonskontroll (49): matchterskelen avgjør hvem som flagges i en
+# lovpålagt kontroll — den skal kunden velge, ikke godta.
+ALDRI_ANBEFALT = frozenset({49, 52, 55})
 SKRIVESCOPE = "bestilling:opprett"
 
 

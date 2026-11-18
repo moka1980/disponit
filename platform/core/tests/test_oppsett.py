@@ -123,12 +123,14 @@ def test_en_modul_som_feiler_river_ikke_med_seg_de_andre(
     assert moduler[27]["tilgjengelig"] is True, json.dumps(moduler)
 
 
-def _default_i_migrasjonene(felt: str) -> int:
+def _default_i_migrasjonene(nr: int, felt: str) -> int:
+    """DEFAULT-verdien i modulens EGNE migrasjoner. Samme feltnavn finnes
+    i flere moduler med ulike tall (kontroll_gyldig_dogn: 90 og 365)."""
     import re
     from pathlib import Path
     mappe = Path(__file__).resolve().parents[1] / "db" / "migrations"
     treff = set()
-    for fil in mappe.glob("*.sql"):
+    for fil in mappe.glob(f"*_m{nr}_*.sql"):
         for m in re.finditer(
                 rf"^\s+{felt}\s+(?:INT|BIGINT)\s+NOT NULL\s+DEFAULT\s+(\d+)",
                 fil.read_text(encoding="utf-8"), re.M):
@@ -142,7 +144,13 @@ def test_anbefalt_er_skjemaets_default():
     from api import oppsett
     for nr, (_sti, kropp) in oppsett.ANBEFALT.items():
         for felt, verdi in kropp.items():
-            assert verdi == _default_i_migrasjonene(felt), (nr, felt)
+            assert verdi == _default_i_migrasjonene(nr, felt), (nr, felt)
+
+
+def test_moduler_som_holder_feltene_tomme_faar_aldri_forslag():
+    from api import oppsett
+    assert oppsett.ALDRI_ANBEFALT == {49, 52, 55}
+    assert not oppsett.ALDRI_ANBEFALT & set(oppsett.ANBEFALT)
 
 
 def test_anbefalt_gaar_til_modulens_egen_skrivevei():
@@ -177,7 +185,8 @@ def test_anbefalt_bare_naar_kravet_mangler_og_brukeren_kan_skrive(
 
 
 @pg
-@pytest.mark.parametrize("nr", [14, 24, 25, 26, 27, 39, 41, 42])
+@pytest.mark.parametrize("nr", [14, 24, 25, 26, 27, 39, 41, 42, 47, 50,
+                                51, 54])
 def test_anbefalt_godtas_av_modulen_og_gjor_den_klar(
         migrator, klient, monkeypatch, nr):
     from api import oppsett
@@ -197,6 +206,8 @@ def test_hvert_anbefalt_felt_har_etikett_i_dashbordet():
     from api import oppsett
     js = (Path(__file__).resolve().parents[1] / "ui" / "static" / "js"
           / "flater" / "oversikt.js").read_text(encoding="utf-8")
-    for _sti, kropp in oppsett.ANBEFALT.values():
+    for nr, (_sti, kropp) in oppsett.ANBEFALT.items():
+        blokk = js[js.index(f"  {nr}: {{"):]
+        blokk = blokk[:blokk.index("}")]
         for felt in kropp:
-            assert f"  {felt}: \"ui." in js, felt
+            assert f"{felt}: \"ui." in blokk, (nr, felt)

@@ -132,33 +132,44 @@ function funnTekst(n) {
 // Feltnavnene er modulenes EGNE skjemaetiketter, så kunden leser de
 // samme ordene her som inne i modulen.
 const FELTETIKETT = {
-  stille_dogn: "ui.lager.terskel.stille",
-  uten_punkt_dogn: "ui.lager.terskel.punkt",
-  telleintervall_dogn: "ui.lager.terskel.telle",
-  prisstigning_promille: "ui.leverandor.terskel.prisstigning",
-  sla_brudd_grense: "ui.leverandor.terskel.bruddgrense",
-  avtale_varsel_dogn: "ui.leverandor.terskel.varsel",
-  maling_stillhet_dogn: "ui.leverandor.terskel.stillhet",
-  mva_slingring_ore: "ui.faktura.terskel.slingring",
-  belopsgrense_ore: "ui.faktura.terskel.belopsgrense",
-  kontrollfrist_dogn: "ui.faktura.terskel.kontrollfrist",
-  dublettvindu_dogn: "ui.faktura.terskel.dublettvindu",
-  budsjettvarsel_promille: "ui.prosjekt.terskel.budsjett",
-  milepael_frist_dogn: "ui.prosjekt.terskel.milepaelfrist",
-  stillhet_dogn: "ui.prosjekt.terskel.stillhet",
-  rabattgrense_promille: "ui.prisbok.terskel.rabatt",
-  utlop_varsel_dogn: "ui.prisbok.terskel.varsel",
-  uten_pris_dogn: "ui.prisbok.terskel.utenpris",
-  reverifikasjon_dogn: "ui.kontovakt.terskel.reverifikasjon",
-  uverifisert_dogn: "ui.kontovakt.terskel.uverifisert",
-  uavklart_dogn: "ui.betaling.terskel.uavklart",
-  belopsavvik_ore: "ui.betaling.terskel.avvik",
-  reautorisasjon_dogn: "ui.betaling.terskel.reautorisasjon",
-  normaltid_minutter_dag: "ui.lonn.terskel.dag",
-  normaltid_minutter_uke: "ui.lonn.terskel.uke",
-  avvik_minutter: "ui.lonn.terskel.avvik",
-  uten_plan_dogn: "ui.lonn.terskel.uten_plan",
-  vurderingsvindu_dogn: "ui.lonn.terskel.vindu",
+  14: { mva_slingring_ore: "ui.faktura.terskel.slingring",
+        belopsgrense_ore: "ui.faktura.terskel.belopsgrense",
+        kontrollfrist_dogn: "ui.faktura.terskel.kontrollfrist",
+        dublettvindu_dogn: "ui.faktura.terskel.dublettvindu" },
+  24: { prisstigning_promille: "ui.leverandor.terskel.prisstigning",
+        sla_brudd_grense: "ui.leverandor.terskel.bruddgrense",
+        avtale_varsel_dogn: "ui.leverandor.terskel.varsel",
+        maling_stillhet_dogn: "ui.leverandor.terskel.stillhet" },
+  25: { budsjettvarsel_promille: "ui.prosjekt.terskel.budsjett",
+        milepael_frist_dogn: "ui.prosjekt.terskel.milepaelfrist",
+        stillhet_dogn: "ui.prosjekt.terskel.stillhet" },
+  26: { rabattgrense_promille: "ui.prisbok.terskel.rabatt",
+        utlop_varsel_dogn: "ui.prisbok.terskel.varsel",
+        uten_pris_dogn: "ui.prisbok.terskel.utenpris" },
+  27: { stille_dogn: "ui.lager.terskel.stille",
+        uten_punkt_dogn: "ui.lager.terskel.punkt",
+        telleintervall_dogn: "ui.lager.terskel.telle" },
+  39: { normaltid_minutter_dag: "ui.lonn.terskel.dag",
+        normaltid_minutter_uke: "ui.lonn.terskel.uke",
+        avvik_minutter: "ui.lonn.terskel.avvik",
+        uten_plan_dogn: "ui.lonn.terskel.uten_plan",
+        vurderingsvindu_dogn: "ui.lonn.terskel.vindu" },
+  41: { uavklart_dogn: "ui.betaling.terskel.uavklart",
+        belopsavvik_ore: "ui.betaling.terskel.avvik",
+        reautorisasjon_dogn: "ui.betaling.terskel.reautorisasjon" },
+  42: { reverifikasjon_dogn: "ui.kontovakt.terskel.reverifikasjon",
+        uverifisert_dogn: "ui.kontovakt.terskel.uverifisert" },
+  47: { varselfrist_dogn: "ui.myndighet.krav.varsel",
+        eskaleringsfrist_dogn: "ui.myndighet.krav.eskalering",
+        regelvarsel_dogn: "ui.myndighet.krav.regelvarsel" },
+  50: { slettevarsel_dogn: "ui.journal.krav.varsel",
+        sletteplan_maks_dogn: "ui.journal.krav.maks",
+        kildevarsel_dogn: "ui.journal.krav.kilde" },
+  51: { frist_varsel_dogn: "ui.tilskudd.krav.frist",
+        kildepost_gyldig_dogn: "ui.tilskudd.krav.kilde_gyldig",
+        usikkerhet_prosent: "ui.tilskudd.krav.usikkerhet" },
+  54: { avviksfrist_dogn: "ui.ehf.krav.avvik",
+        utlopsvarsel_dogn: "ui.ehf.krav.utlop" },
 };
 
 export function feltverdi(felt, n, sprak = "nb") {
@@ -166,6 +177,9 @@ export function feltverdi(felt, n, sprak = "nb") {
     { maximumFractionDigits: des }).format(x);
   if (felt.endsWith("_dogn")) {
     return t("ui.oppsett.enhet.dogn").replace("{n}", tall(n));
+  }
+  if (felt.endsWith("_prosent")) {
+    return t("ui.oppsett.enhet.prosent").replace("{n}", tall(n));
   }
   if (felt.endsWith("_promille")) {
     return t("ui.oppsett.enhet.prosent").replace("{n}", tall(n / 10, 1));
@@ -182,11 +196,11 @@ export function feltverdi(felt, n, sprak = "nb") {
   return tall(n);
 }
 
-function anbefaltListe(anbefalt, sprak) {
+function anbefaltListe(modul, anbefalt, sprak) {
   const dl = el("dl", { class: "oppsett-anbefalt" });
   for (const [felt, n] of Object.entries(anbefalt.kropp)) {
     dl.append(el("div", {},
-      el("dt", { text: t(FELTETIKETT[felt] || felt) }),
+      el("dt", { text: t((FELTETIKETT[modul] || {})[felt] || felt) }),
       el("dd", { text: feltverdi(felt, n, sprak) })));
   }
   return dl;
@@ -217,7 +231,7 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
       if (m.anbefalt) {
         kort.append(
           el("p", { class: "muted", text: t("ui.oppsett.anbefalt_tekst") }),
-          anbefaltListe(m.anbefalt, ctx.sprak));
+          anbefaltListe(m.modul, m.anbefalt, ctx.sprak));
         const bruk = el("button", { class: "knapp primar", type: "button",
           text: t("ui.oppsett.bruk_anbefalt"),
           "aria-label": `${t("ui.oppsett.bruk_anbefalt")}: ${navn(m)}` });
