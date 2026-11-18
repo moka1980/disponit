@@ -1,0 +1,103 @@
+{
+  "bestatt": true,
+  "krav_id": "m49-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "sanksjonskontroll_utfort": 5,
+      "sanksjonskrav_satt": 2,
+      "sanksjonsliste_lastet": 3,
+      "sanksjonssubjekt_registrert": 8,
+      "treff_avklart": 1
+    },
+    "evidens_totalt": 19,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "ukontrollert_subjekt"
+        ],
+        "merke": "ukontrollert",
+        "subjekt_id": "38ce0921-14ea-4409-986c-d0719eab76e3",
+        "ventet": "ukontrollert_subjekt"
+      },
+      {
+        "fikk": [
+          "uavklart_treff"
+        ],
+        "merke": "uavklart",
+        "subjekt_id": "0b2c92f0-7db7-45ef-8d32-fc10c89a120d",
+        "ventet": "uavklart_treff"
+      },
+      {
+        "fikk": [
+          "bekreftet_treff"
+        ],
+        "merke": "bekreftet",
+        "subjekt_id": "4789e643-a09e-46d4-b9a3-ce5193ff5c88",
+        "ventet": "bekreftet_treff"
+      },
+      {
+        "fikk": [
+          "kontroll_mot_gammel_liste"
+        ],
+        "merke": "gammel",
+        "subjekt_id": "eb7328f0-b9ca-4c87-98dc-9a4d9aad1a45",
+        "ventet": "kontroll_mot_gammel_liste"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "de692850-d01c-468b-9464-78911fb8f792",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "e537e072-dda0-4d44-9398-b79efa2a3246",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "uten_krav",
+        "subjekt_id": "f77605e3-625f-4f21-95e1-67c17384cfa0",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [
+          "ingen_liste"
+        ],
+        "merke": "uten_liste",
+        "subjekt_id": "60e81088-a3f6-4ea4-b3e2-7ee7871ba714",
+        "ventet": "ingen_liste"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 8,
+    "sveip1_nye": 7,
+    "sveip1_tenanter": 13,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 26
+  },
+  "oppsett": {
+    "bevisrot_sha256": "048fa8fb5b93e8c30e3c7429876621e606b036c23a7a38ee199337f4c545fbe8",
+    "evidenskilde": "m49_sanksjon",
+    "modul": "m49_sanksjon",
+    "riggmodul": "m49_fasit",
+    "runde": "0c81cc4d",
+    "sett_sha256": "8277801d76d2999b1a9187dcc628811fadb95110d7516dc8d32ec870acf7d838",
+    "tenanter": [
+      "t-m49fasit-a-0c81cc4d",
+      "t-m49fasit-b-0c81cc4d",
+      "t-m49fasit-c-0c81cc4d"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:25:07.086940+00:00"
+}

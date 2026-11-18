@@ -62,32 +62,125 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m49_fasit.py`:
+    #
+    # M-49s fasitsett: åtte subjekter i tre tenanter med KJENT dom.
+    #
+    # Sanksjonsregisteret har sju funntyper, alle på `subjekt_id`.
+    #
+    #   tenant A (krav: matchterskel 85, gyldig 90, uavklart 0, ukontrollert 0)
+    #     1. `ukontrollert_subjekt`      — aldri kontrollert
+    #     2. `uavklart_treff`            — kontrollert med et treff ingen har
+    #                                       avklart
+    #     3. `bekreftet_treff`           — treffet er avklart som samme part
+    #     4. `kontroll_mot_gammel_liste` — kontrollert mot OFAC-lista som så
+    #                                       ble avløst av en nyere
+    #     5. (ren)                       — aldri kontrollert; kontrolleres uten
+    #                                       treff MELLOM kjøringene
+    #     6. (ok)                        — kontrollert uten treff mot EU-lista
+    #   tenant B (ingen krav)
+    #     7. `ingen_krav`
+    #   tenant C (krav, men ingen lister)
+    #     8. `ingen_liste`
+    #
+    # TERSKLENE PÅ NULL ER POENGET, IKKE EN SNARVEI. `ukontrollert_dogn` og
+    # `uavklart_frist_dogn` har gulv 0, og da er «opprettet før nå» og
+    # «registrert før nå» nok — begge tidsfunnene kan måles på én dag. Tenant
+    # C har derfor `ukontrollert_dogn` 3650: subjektet der skal måle
+    # `ingen_liste` og ingenting annet.
+    #
+    # TO LISTEKILDER: de andre kontrollene går mot EU-lista, som aldri
+    # avløses. Bare subjektet som skal måle den gamle lista, kontrolleres mot
+    # OFAC — og den nye OFAC-lista registreres ETTER kontrollen.
+    status: ja
+    krav_id: m49-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m49-fasit-v1-20261118T222507Z.json
+    artefakt_sha256: 4469b8c0ff4d6a92f97ed8f5e530d35888afc6d6dc0f2012e8596455ee6e1d50
     notat: >-
-      KREVER: en listeversjon med KJENT fasit for hvilke navn som er
-      eksakte treff og hvilke som bare ligner, kjørt likt lokalt og på
-      staging. Skillet mellom de to ER modulen.
+      Runde 0c81cc4d: 8 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m49-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m49-fasit-v1-20261118T222507Z.json
+    artefakt_sha256: 4469b8c0ff4d6a92f97ed8f5e530d35888afc6d6dc0f2012e8596455ee6e1d50
     notat: >-
-      KREVER: at hver kontroll står i evidenskjeden med listeversjon og
-      matchgrunnlag. «Sto de på lista den dagen» må kunne besvares.
+      19 hendelser i kjeden (sanksjonskontroll_utfort: 5,
+      sanksjonskrav_satt: 2, sanksjonsliste_lastet: 3,
+      sanksjonssubjekt_registrert: 8, treff_avklart: 1), 0 uten aktør, 0 som
+      deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m49-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m49-feilinjisering-v1-20261118T222508Z.json
+    artefakt_sha256: 5028c17298716e119cb4cc08c4011c5c544cf35223526a12adee4ce3d9bfd5ce
     notat: >-
-      KREVER: sanksjonssveipen bygget, og at en feil i den ikke lar en
-      motpart med et uavklart treff se KONTROLLERT ut. Dette er
-      klyngens skarpeste feilretning: en modul som feiler mot «ingen
-      treff» er verre enn en som feiler mot «må sjekkes».
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 33 åpne og 2 lukkede over 16 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m49-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m49-ytelse-v1-20261118T222507Z.json
+    artefakt_sha256: c28ff4a61ed5d9aa3d519e551f7f9e36a7533354259f47ba240f08e40d37ad23
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
-      Matching mot en full listeversjon er klyngens dyreste operasjon.
+      Tre kjøringer (0,0344 / 0,0329 / 0,0349 s) over 13 tenanter; den
+      DÅRLIGSTE er dommen. 0,0349 s mot taket på 60 — 0,0027 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m49-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m49-rollback-v1-20261118T222509Z.json
+    artefakt_sha256: c0383d0ba11be26c9f90e816bbf10786ba3d5bc37b4078b5a95a7c426a6d20b8
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 2bd5fbfa ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
