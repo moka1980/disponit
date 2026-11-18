@@ -5442,6 +5442,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m15_likviditet": {
+        "modul_fil": "likviditetssveip",
+        "funntabell": "likviditetsfunn",
+        # Funnraden bærer nøyaktig én av to nøkler.
+        "subjektkolonne": "coalesce(prognose_id, modell_id)",
+        "tenantkilde": ("likviditetsmodell", "likviditetsprognose"),
+        "maalerolle": "disponit_likviditet_eier",
+        "sveipedor": "m15_sveip_likviditet(int)",
+        "dsn_variabel": "DISPONIT_LIKVIDITETSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m15-fasit-v1",
+        "feilinjisering_krav": "m15-feilinjisering-v1",
+        "ytelse_krav": "m15-ytelse-v1",
+        "rollback_krav": "m15-rollback-v1",
+        "riggmodul": "m15_fasit",
+        "releasefiler": ("platform/modules/m15_likviditet",
+                         "platform/drift/likviditetssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6271,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-15: provisoriske gulv — heves til litt under det målte. Seks nye
+# funn i første sveip (fem typer + den rene modellen).
+registrer_fasitgrense("m15_likviditet", min_subjekter=8, min_evidens=10,
+                      tenantprefiks="t-m15fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m15_likviditet", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=6)
+
+registrer_suitegrense("m15_likviditet", "m15",
+                      ("platform/core/tests/test_m15_likviditet.py",),
+                      min_tester=3000, min_andel_tester=32)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
