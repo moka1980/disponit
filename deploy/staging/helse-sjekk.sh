@@ -25,7 +25,11 @@ SOCKET=/run/disponit/api.sock
 MAKS_FEIL=3
 MAKS_HEARTBEAT_ALDER=90          # 3 × forventet syklustid (v3 §1)
 
-install -d -m 755 "$TILSTAND"
+# Exit 1 betyr «en sjekk feilet» og regnes som vellykket kjøring. Kan vi
+# ikke føre tilstand, er sjekken blind — det må bli exit 2, ellers ser
+# en blind sjekk ut som en frisk en.
+install -d -m 755 "$TILSTAND" || exit 2
+[ -w "$TILSTAND" ] || exit 2
 
 sjekk_api() {
   curl -fsS --max-time 5 --unix-socket "$SOCKET" \

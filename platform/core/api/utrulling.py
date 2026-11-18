@@ -61,13 +61,16 @@ _UTRULLING: tuple[dict, ...] = (
                "en": "M-37 once the exception routines are signed."}},
     # Plattformens egen tenant (eiers innlogging, målt 24/8: raden
     # manglet og venstremenyen sa «modultildelingen er ikke
-    # tilgjengelig»). Tildelingen speiler det som faktisk kjører: M-1/M-2
-    # i drift, M-37 under arbeid, M-56 i drift, M-57 bygges. Tabellen er
-    # fortsatt statisk pilotdata — DB-bakket tildeling har eget issue.
+    # tilgjengelig»). Tildelingen speiler det som faktisk kjører: de 20
+    # sertifiserte modulene (docs/KUNDEOPPLAERING.md, 18/9) pluss M-16.
+    # Uten dem viste «Kom i gang» bare seks moduler for eieren selv.
+    # Tabellen er fortsatt statisk pilotdata — DB-bakket tildeling har
+    # eget issue.
     {"id": "disponit", "navn": "Disponit (plattform)", "plan": "internt",
-     "moduler": (1, 2, 16, 37, 56, 57),
-     "neste": {"nb": "M-57 utførelsesarm; deretter M-57-aksept.",
-               "en": "M-57 execution arm; then the M-57 acceptance."}},
+     "moduler": (1, 2, 6, 13, 14, 16, 17, 18, 19, 23, 24, 25, 26, 27, 37,
+                 39, 41, 42, 44, 56, 57),
+     "neste": {"nb": "Sett grensene i modulene under «Kom i gang».",
+               "en": "Set the limits in the modules under «Get started»."}},
     {"id": "granmo", "navn": "Granmo Driftsselskap", "plan": "internt",
      "moduler": (1, 2, 16, 37, 38),
      "neste": {"nb": "Brukes som kunde null for utrulling og intern drift.",

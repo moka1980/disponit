@@ -35,6 +35,7 @@ import {
 import { meldLive } from "../komponenter.js";
 import { harScope } from "../sitekart.js";
 import { flateHode, medStatus } from "./felles.js";
+import { berikEierfelt } from "../eiervelger.js";
 
 const UTFALL = ["oppfylt", "avvik"];
 
@@ -207,6 +208,7 @@ function registrerSkjema(ctx, last) {
     name: "beskrivelse", type: "text", required: true, maxlength: 2000 });
   const eier = el("input", { id: "kontroll-eier", name: "eier_bruker_id",
     type: "text", required: true, maxlength: 128 });
+  berikEierfelt(eier);
   const dogn = el("input", { id: "kontroll-dogn",
     name: "etterproving_dogn", type: "number", required: true,
     min: "1", max: "3650", value: "365" });
