@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63/platform/drift/tollkodesveip.py",
+    "avbrutt_pid": 3926586,
+    "kandidat_fil": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63/platform/drift/tollkodesveip.py",
+    "kandidat_pid": 3926593,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/tollkodesveip.py",
+    "rullback_pid": 3926590
+  },
+  "krav_id": "m52-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 7,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 7,
+    "rullbakk_rader": 7
+  },
+  "oppsett": {
+    "arbeidernokkel": 638204915,
+    "avbrutt_backend_pid": 3926588,
+    "bevisrot_sha256": "78bbac0288b5b5ff1b6e3f97033479da91c5d0ecc8082322a5a7265823ee0337",
+    "drillet_digest": "762350a59264110cfb1188de90a76978cfec7d198c7e2a3b1195e6703f354ce6",
+    "drillet_katalog": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63",
+    "drillet_kjernedigest": "a9ba0a7913d0f922cca480dd7d34ace4f11d97e3ba1037a0f7248c1e4db4854b",
+    "drillet_release": "2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63",
+    "forgjenger_digest": "762350a59264110cfb1188de90a76978cfec7d198c7e2a3b1195e6703f354ce6",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "tollfunn",
+    "maalerolle": "disponit_tollkode_eier",
+    "miljo": "staging",
+    "modul": "m52_tollkode",
+    "runde": "75bfc3c3",
+    "tenanter": [
+      "t-m52fasit-a-75bfc3c3",
+      "t-m52fasit-b-75bfc3c3"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:19:56.113333+00:00"
+}

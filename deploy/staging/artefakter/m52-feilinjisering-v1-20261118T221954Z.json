@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m52-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 20,
+    "apne_for": 20,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "forslag_ikke_klart": [
+        3,
+        2
+      ],
+      "forslag_mot_utlopt_nomenklatur": [
+        2,
+        0
+      ],
+      "forslag_under_terskel": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "nomenklatur_utloper_snart": [
+        6,
+        0
+      ],
+      "nomenklatur_utlopt": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "forslag_ikke_klart": [
+        3,
+        2
+      ],
+      "forslag_mot_utlopt_nomenklatur": [
+        2,
+        0
+      ],
+      "forslag_under_terskel": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "nomenklatur_utloper_snart": [
+        6,
+        0
+      ],
+      "nomenklatur_utlopt": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "tollfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m52_sveip_tollkode(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_tollkode_eier",
+    "modul": "m52_tollkode",
+    "riggmodul": "m52_fasit",
+    "riggtenanter": [
+      "t-m52fasit-a-f1bf8877",
+      "t-m52fasit-b-f1bf8877"
+    ],
+    "runde": "f1bf8877",
+    "sveipedor": "m52_sveip_tollkode(int)",
+    "tenantkilde": [
+      "nomenklatur",
+      "tollvare"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:19:54.596030+00:00"
+}
