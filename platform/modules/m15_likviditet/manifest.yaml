@@ -64,33 +64,126 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m15_fasit.py`:
+    #
+    # M-15s fasitsett: fire modeller og fire prognoser med KJENT dom.
+    #
+    # Likviditetsregisteret har seks funntyper over to nøkler: modellen
+    # (`modell_id`) og prognosen (`prognose_id`). Subjektet leses som
+    # `coalesce(prognose_id, modell_id)` (`likviditetsfunn` bærer én).
+    #
+    #   tenant A (horisont 4 uker, grunnlag 30 døgn, varsel 30 døgn)
+    #     modell   1. `modell_utloper_snart`  — gyldig til om 5 døgn
+    #              2. (ren)                   — som 1; forlenges MELLOM
+    #                                           kjøringene
+    #              3. (m_hoved)               — uten sluttdato
+    #     prognose 4. `prognose_mot_utdatert_grunnlag` — laget da siste
+    #                                           bankpost var 60 døgn gammel
+    #              5. `ingen_gyldig_modell`   — modellen den bygger på er
+    #                                           avviklet etterpå
+    #              6. `bane_under_null`       — laget etter en stor ukentlig
+    #                                           utgift
+    #              7. (ok)                    — fersk bankpost, positiv bane
+    #   tenant B (ingen krav)
+    #     modell   8. `ingen_krav`
+    #
+    # EN PROGNOSE ER ET ØYEBLIKKSBILDE. Grunnlaget (`grunnlag_siste_bevegelse`)
+    # og banen fryses når den lages, så riggen bygger tenanten i rekkefølge:
+    # gammel bankpost → utdatert prognose → fersk bankpost → ok-prognose og
+    # prognosen mot modellen som så avvikles → stor utgift → prognosen under
+    # null. Én tenant med krav, fordi kravhendelsen bare bærer versjonen og
+    # ville gitt samme `input_hash` i to tenanter.
+    #
+    # Bankpostene skrives gjennom M-13s egne dører (`m13_registrer_konto`,
+    # `m13_registrer_post`) — det er grunnlaget M-15 leser.
+    status: ja
+    krav_id: m15-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m15-fasit-v1-20261118T224538Z.json
+    artefakt_sha256: 1f22173fadb6704b0cbb124f638d0c4163abce6443b2545547747e3a05582a90
     notat: >-
-      KREVER: en historikk med KJENT fasit — altså en periode der vi
-      vet hva som faktisk skjedde, slik at målingen mot utfall kan
-      etterprøves. Et datasett uten fasit tester bare at koden kjører.
+      Runde b47a5f88: 8 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m15-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m15-fasit-v1-20261118T224538Z.json
+    artefakt_sha256: 1f22173fadb6704b0cbb124f638d0c4163abce6443b2545547747e3a05582a90
     notat: >-
-      KREVER: at hver prognose kan spores til modellversjonen og
-      inngangsdataene den ble regnet på. En prognose uten det er
-      ikke etterprøvbar, uansett hvor riktig den var.
+      13 hendelser i kjeden (modell_avviklet: 2, modell_registrert: 5,
+      post_registrert: 1, prognose_laget: 4, sett_krav: 1), 0 uten aktør, 0
+      som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m15-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m15-feilinjisering-v1-20261118T224539Z.json
+    artefakt_sha256: bdb20f95dea8b32dd91fdd96a56c941258f47886ff03a4caa4a1cdee283d360d
     notat: >-
-      KREVER: målesveipen bygget, og at en feilet måling gir et FUNN
-      og ikke stillhet. En prognosemodul som slutter å måle seg selv
-      blir gradvis dårligere uten at noen oppdager det.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 12 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m15-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m15-ytelse-v1-20261118T224538Z.json
+    artefakt_sha256: 0f09db54381bd87874fe851c174c9945ea8068b00b386391567ca07d19c9d720
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0160 / 0,0177 / 0,0171 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0177 s mot taket på 60 — 0,0059 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m15-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m15-rollback-v1-20261118T224541Z.json
+    artefakt_sha256: b5134bc49dcae27a45771e8fb5e6ed3de33df6f67347c4277458cb06c563c72b
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen. OG: en
-      rullbakk må ikke gjenopprette en prognose som er MÅLT — den
-      målingen er historikk.
+      Drillet 4ce84f81 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 6 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

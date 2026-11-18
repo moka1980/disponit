@@ -6271,9 +6271,9 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
-# M-15: provisoriske gulv — heves til litt under det målte. Seks nye
-# funn i første sveip (fem typer + den rene modellen).
-registrer_fasitgrense("m15_likviditet", min_subjekter=8, min_evidens=10,
+# M-15: gulvene er litt under det målte 18/11 (8 subjekter, 13
+# evidenshendelser; fem typer + den rene modellen).
+registrer_fasitgrense("m15_likviditet", min_subjekter=8, min_evidens=11,
                       tenantprefiks="t-m15fasit-", min_sveip1_nye=6)
 registrer_sveipgrenser("m15_likviditet", maks_sekunder=60.0, min_tenanter=2,
                        min_rullbakk_funn=6)
