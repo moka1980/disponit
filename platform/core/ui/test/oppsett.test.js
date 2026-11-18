@@ -12,7 +12,19 @@ const OVERSIKT = { vindu_start: "2026-11-17T10:00:00+00:00",
   tillatt: 0, stoppet: 0, unntak: 0, totalt: 0 };
 
 let SVAR;
-globalThis.fetch = async (url) => {
+const POSTER = [];
+let POSTSVAR = 200;
+globalThis.fetch = async (url, opts = {}) => {
+  if (opts.method === "POST") {
+    POSTER.push({ url, kropp: JSON.parse(opts.body),
+      idem: opts.headers["Idempotency-Key"] });
+    if (POSTSVAR !== 200) {
+      return { ok: false, status: POSTSVAR, json: async () => ({ feil: "x" }) };
+    }
+    SVAR["/v1/oppsett"] = { moduler: [
+      { modul: 27, tilgjengelig: true, klar: true, apne_funn: 0 }] };
+    return { ok: true, status: 200, json: async () => ({ versjon: 1 }) };
+  }
   const oppf = SVAR[url.split("?")[0]];
   if (!oppf) return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
   if (typeof oppf === "number") {
@@ -111,4 +123,64 @@ test("Feil fra /v1/oppsett: blokken forblir skjult, dashbordet står", async () 
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
   assert.equal(h.querySelector(".dash-oppsett").hidden, true);
   assert.ok(h.textContent.includes(t("ui.oversikt.telling_note")));
+});
+
+const LAGER_ANBEFALT = { sti: "/v1/lager/terskler", kropp: {
+  stille_dogn: 180, uten_punkt_dogn: 30, telleintervall_dogn: 365 } };
+
+test("Anbefalte grenser: vist i klartekst, ett klikk lagrer og kortet går bort", async () => {
+  POSTER.length = 0; POSTSVAR = 200;
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 27, tilgjengelig: true, klar: false, apne_funn: 0,
+      anbefalt: LAGER_ANBEFALT }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => blokk.querySelector(".oppsett-anbefalt")));
+  const tekst = blokk.querySelector(".oppsett-anbefalt").textContent;
+  assert.ok(tekst.includes(t("ui.lager.terskel.stille")));
+  assert.ok(tekst.includes("180 døgn"));
+  assert.ok(tekst.includes("365 døgn"));
+  assert.equal(blokk.querySelector("a.oppsett-velg").getAttribute("href"),
+    "#/lager");
+  assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+
+  blokk.querySelector("button.knapp.primar").click();
+  assert.ok(await vent(() => blokk.querySelector(".oppsett-melding")
+    .textContent.length > 0), "ingen lagret-melding");
+  assert.deepEqual(POSTER.map((p) => [p.url, p.kropp]),
+    [["/v1/lager/terskler", LAGER_ANBEFALT.kropp]]);
+  assert.equal(blokk.querySelectorAll(".oppsett-kort").length, 0);
+  assert.ok(blokk.querySelector(".oppsett-melding").textContent
+    .includes(t("ui.nav.lager")));
+  assert.equal(blokk.querySelector(".oppsett-melding").getAttribute("role"),
+    "status");
+});
+
+test("Anbefalte grenser: feil gir melding, nytt klikk bruker SAMME nøkkel", async () => {
+  POSTER.length = 0; POSTSVAR = 500;
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 27, tilgjengelig: true, klar: false, apne_funn: 0,
+      anbefalt: LAGER_ANBEFALT }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => blokk.querySelector("button.knapp.primar")));
+  const knapp = blokk.querySelector("button.knapp.primar");
+  knapp.click();
+  assert.ok(await vent(() => blokk.querySelector(".oppsett-feil")
+    .textContent.length > 0));
+  assert.equal(knapp.disabled, false);
+  POSTSVAR = 200;
+  knapp.click();
+  assert.ok(await vent(() => POSTER.length === 2));
+  assert.equal(POSTER[0].idem, POSTER[1].idem);
+});
+
+test("Anbefalingssti utenfor formen avvises i klienten", async () => {
+  const { brukAnbefalteGrenser } = await import("../static/js/api.js");
+  POSTER.length = 0;
+  await assert.rejects(brukAnbefalteGrenser(
+    { sti: "/v1/firma/slett", kropp: {} }));
+  assert.equal(POSTER.length, 0);
 });

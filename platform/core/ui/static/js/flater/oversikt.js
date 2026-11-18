@@ -15,7 +15,8 @@
 // Tidssonen er UTC fra serveren; visning lokaliseres av Tidspunkt.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentJson, UautorisertFeil, IngenTilgangFeil } from "../api.js";
+import { hentJson, brukAnbefalteGrenser, nyIdempotensnokkel, UautorisertFeil,
+         IngenTilgangFeil } from "../api.js";
 import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
          BeslutningBadge, KategoriTag } from "../komponenter.js";
 import { flateHode } from "./felles.js";
@@ -128,7 +129,70 @@ function funnTekst(n) {
     .replace("{antall}", String(n));
 }
 
-function oppsettInnhold(d, ruter) {
+// Feltnavnene er modulenes EGNE skjemaetiketter, så kunden leser de
+// samme ordene her som inne i modulen.
+const FELTETIKETT = {
+  stille_dogn: "ui.lager.terskel.stille",
+  uten_punkt_dogn: "ui.lager.terskel.punkt",
+  telleintervall_dogn: "ui.lager.terskel.telle",
+  prisstigning_promille: "ui.leverandor.terskel.prisstigning",
+  sla_brudd_grense: "ui.leverandor.terskel.bruddgrense",
+  avtale_varsel_dogn: "ui.leverandor.terskel.varsel",
+  maling_stillhet_dogn: "ui.leverandor.terskel.stillhet",
+  mva_slingring_ore: "ui.faktura.terskel.slingring",
+  belopsgrense_ore: "ui.faktura.terskel.belopsgrense",
+  kontrollfrist_dogn: "ui.faktura.terskel.kontrollfrist",
+  dublettvindu_dogn: "ui.faktura.terskel.dublettvindu",
+  budsjettvarsel_promille: "ui.prosjekt.terskel.budsjett",
+  milepael_frist_dogn: "ui.prosjekt.terskel.milepaelfrist",
+  stillhet_dogn: "ui.prosjekt.terskel.stillhet",
+  rabattgrense_promille: "ui.prisbok.terskel.rabatt",
+  utlop_varsel_dogn: "ui.prisbok.terskel.varsel",
+  uten_pris_dogn: "ui.prisbok.terskel.utenpris",
+  reverifikasjon_dogn: "ui.kontovakt.terskel.reverifikasjon",
+  uverifisert_dogn: "ui.kontovakt.terskel.uverifisert",
+  uavklart_dogn: "ui.betaling.terskel.uavklart",
+  belopsavvik_ore: "ui.betaling.terskel.avvik",
+  reautorisasjon_dogn: "ui.betaling.terskel.reautorisasjon",
+  normaltid_minutter_dag: "ui.lonn.terskel.dag",
+  normaltid_minutter_uke: "ui.lonn.terskel.uke",
+  avvik_minutter: "ui.lonn.terskel.avvik",
+  uten_plan_dogn: "ui.lonn.terskel.uten_plan",
+  vurderingsvindu_dogn: "ui.lonn.terskel.vindu",
+};
+
+export function feltverdi(felt, n, sprak = "nb") {
+  const tall = (x, des = 0) => new Intl.NumberFormat(sprak,
+    { maximumFractionDigits: des }).format(x);
+  if (felt.endsWith("_dogn")) {
+    return t("ui.oppsett.enhet.dogn").replace("{n}", tall(n));
+  }
+  if (felt.endsWith("_promille")) {
+    return t("ui.oppsett.enhet.prosent").replace("{n}", tall(n / 10, 1));
+  }
+  if (felt.endsWith("_ore")) {
+    return t("ui.oppsett.enhet.kr").replace("{n}", tall(n / 100, 2));
+  }
+  if (felt.includes("minutter")) {
+    return t("ui.oppsett.enhet.timer").replace("{n}", tall(n / 60, 2));
+  }
+  if (felt === "sla_brudd_grense") {
+    return t("ui.leverandor.terskel.bruddgrense_verdi").replace("{n}", tall(n));
+  }
+  return tall(n);
+}
+
+function anbefaltListe(anbefalt, sprak) {
+  const dl = el("dl", { class: "oppsett-anbefalt" });
+  for (const [felt, n] of Object.entries(anbefalt.kropp)) {
+    dl.append(el("div", {},
+      el("dt", { text: t(FELTETIKETT[felt] || felt) }),
+      el("dd", { text: feltverdi(felt, n, sprak) })));
+  }
+  return dl;
+}
+
+function oppsettInnhold(d, ruter, ctx, paaLagret) {
   const moduler = (d.moduler || []).filter((m) => ruter.has(m.modul));
   if (!moduler.length) return null;
   const mangler = moduler.filter((m) => m.tilgjengelig && m.klar === false);
@@ -148,14 +212,43 @@ function oppsettInnhold(d, ruter) {
   if (mangler.length) {
     const ul = el("ul", { class: "oppsett-flis" });
     for (const m of mangler) {
-      const knapp = el("a", { class: "knapp primar", href: hash(m),
-        text: t("ui.oppsett.sett_opp") });
-      knapp.setAttribute("aria-label",
-        `${t("ui.oppsett.sett_opp")}: ${navn(m)}`);
-      ul.append(el("li", { class: "kort oppsett-kort" },
-        el("h3", { text: navn(m) }),
-        el("p", { class: "muted", text: t("ui.oppsett.mangler_krav") }),
-        knapp));
+      const kort = el("li", { class: "kort oppsett-kort" },
+        el("h3", { text: navn(m) }));
+      if (m.anbefalt) {
+        kort.append(
+          el("p", { class: "muted", text: t("ui.oppsett.anbefalt_tekst") }),
+          anbefaltListe(m.anbefalt, ctx.sprak));
+        const bruk = el("button", { class: "knapp primar", type: "button",
+          text: t("ui.oppsett.bruk_anbefalt"),
+          "aria-label": `${t("ui.oppsett.bruk_anbefalt")}: ${navn(m)}` });
+        const feil = el("p", { class: "oppsett-feil", role: "alert" });
+        // Stabil over nye klikk: et tapt svar skal spilles av, ikke skrives
+        // på nytt som en ny versjon.
+        const idem = nyIdempotensnokkel();
+        bruk.addEventListener("click", () => {
+          bruk.disabled = true;
+          feil.textContent = "";
+          brukAnbefalteGrenser(m.anbefalt, idem).then(() => {
+            paaLagret(t("ui.oppsett.lagret").replace("{modul}", navn(m)));
+          }).catch((e) => {
+            if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+            bruk.disabled = false;
+            feil.textContent = t("ui.oppsett.lagring_feilet");
+          });
+        });
+        kort.append(el("div", { class: "knapperad" }, bruk,
+          el("a", { class: "oppsett-velg", href: hash(m),
+            text: t("ui.oppsett.velg_selv"),
+            "aria-label": `${t("ui.oppsett.velg_selv")}: ${navn(m)}` })),
+          feil);
+      } else {
+        kort.append(
+          el("p", { class: "muted", text: t("ui.oppsett.mangler_krav") }),
+          el("a", { class: "knapp primar", href: hash(m),
+            text: t("ui.oppsett.sett_opp"),
+            "aria-label": `${t("ui.oppsett.sett_opp")}: ${navn(m)}` }));
+      }
+      ul.append(kort);
     }
     ut.push(ul);
   } else {
@@ -192,17 +285,31 @@ function oppsettBlokk(ctx) {
   const ruter = ruteForModul(ctx);
   const rot = el("section", { class: "kort dash-oppsett",
     "aria-labelledby": "oppsett-tittel" });
+  // Statuslinjen står UTENFOR innholdet som tegnes på nytt, ellers ville
+  // skjermleseren mistet meldingen i det øyeblikket den ble skrevet.
+  const melding = el("p", { class: "oppsett-melding", role: "status" });
+  const innholdsrot = el("div", { class: "oppsett-innhold" });
+  rot.append(innholdsrot, melding);
   rot.hidden = true;
-  hentJson("/v1/oppsett").then((d) => {
-    const innhold = oppsettInnhold(d, ruter);
-    if (!innhold) return;
-    sett(rot, el("h2", { id: "oppsett-tittel", text: innhold.tittel }),
-      ...innhold.noder);
-    rot.hidden = false;
-  }).catch((e) => {
-    if (e instanceof UautorisertFeil) ctx.paaUautorisert();
-    // Andre feil: blokken forblir skjult — dashbordet under står uansett.
-  });
+  const last = (tekst) => {
+    hentJson("/v1/oppsett").then((d) => {
+      const innhold = oppsettInnhold(d, ruter, ctx, last);
+      if (!innhold) { rot.hidden = true; return; }
+      sett(innholdsrot,
+        el("h2", { id: "oppsett-tittel", text: innhold.tittel,
+          tabindex: "-1" }),
+        ...innhold.noder);
+      rot.hidden = false;
+      if (tekst) {
+        melding.textContent = tekst;
+        innholdsrot.querySelector("h2").focus();
+      }
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+      // Andre feil: blokken forblir som den er — dashbordet står uansett.
+    });
+  };
+  last();
   return rot;
 }
 

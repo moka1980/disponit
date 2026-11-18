@@ -7096,5 +7096,14 @@
   "ui.oppsett.ett_funn": "1 open finding",
   "ui.oppsett.funn": "{antall} open findings",
   "ui.oppsett.funn_ukjent": "running",
-  "ui.oppsett.utilgjengelig": "not available right now"
+  "ui.oppsett.utilgjengelig": "not available right now",
+  "ui.oppsett.anbefalt_tekst": "Suggested limits. Use them as they are, or choose your own.",
+  "ui.oppsett.bruk_anbefalt": "Use suggested limits",
+  "ui.oppsett.velg_selv": "Choose myself",
+  "ui.oppsett.lagret": "The limits for {modul} are saved. The module starts measuring tonight.",
+  "ui.oppsett.lagring_feilet": "The limits were not saved. Try again, or choose them yourself.",
+  "ui.oppsett.enhet.dogn": "{n} days",
+  "ui.oppsett.enhet.prosent": "{n} %",
+  "ui.oppsett.enhet.kr": "NOK {n}",
+  "ui.oppsett.enhet.timer": "{n} h"
 }

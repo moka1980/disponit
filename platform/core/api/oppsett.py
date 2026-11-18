@@ -48,6 +48,40 @@ ADAPTERE: tuple[tuple[int, str, str, str | None], ...] = (
 )
 
 
+# Anbefalte grenser = skjemaets egne DEFAULT-verdier i modulens
+# migrasjon — tallene modulens forfatter valgte. De skrives aldri av seg
+# selv: kunden ser dem og trykker «Bruk», og skrivingen går gjennom
+# modulens EGEN skrivevei (samme scope, idempotens og revisjonslogg som
+# skjemaet). `test_anbefalt_er_skjemaets_default` holder dem like.
+ANBEFALT: dict[int, tuple[str, dict[str, int]]] = {
+    14: ("/v1/faktura/terskler", {
+        "mva_slingring_ore": 1, "belopsgrense_ore": 2500000,
+        "kontrollfrist_dogn": 7, "dublettvindu_dogn": 3}),
+    24: ("/v1/leverandor/terskler", {
+        "prisstigning_promille": 100, "sla_brudd_grense": 1,
+        "avtale_varsel_dogn": 30, "maling_stillhet_dogn": 90}),
+    25: ("/v1/prosjekt/terskler", {
+        "budsjettvarsel_promille": 0, "milepael_frist_dogn": 7,
+        "stillhet_dogn": 30}),
+    26: ("/v1/prisbok/terskler", {
+        "rabattgrense_promille": 100, "utlop_varsel_dogn": 30,
+        "uten_pris_dogn": 7}),
+    27: ("/v1/lager/terskler", {
+        "stille_dogn": 180, "uten_punkt_dogn": 30,
+        "telleintervall_dogn": 365}),
+    39: ("/v1/lonn/terskler", {
+        "normaltid_minutter_dag": 450, "normaltid_minutter_uke": 2250,
+        "avvik_minutter": 0, "uten_plan_dogn": 7,
+        "vurderingsvindu_dogn": 60}),
+    41: ("/v1/betaling/terskler", {
+        "uavklart_dogn": 3, "belopsavvik_ore": 0,
+        "reautorisasjon_dogn": 7}),
+    42: ("/v1/kontovakt/terskler", {
+        "reverifikasjon_dogn": 365, "uverifisert_dogn": 7}),
+}
+SKRIVESCOPE = "bestilling:opprett"
+
+
 def les_modul(conn, tenant: str, apimodul: str, klarflagg: str | None) -> dict:
     """Én moduls status, i eget savepoint. Kaster aldri psycopg-feil videre."""
     modul = importlib.import_module(f"{__package__}.{apimodul}")
@@ -73,8 +107,12 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
     for nr, apimodul, scope, klarflagg in ADAPTERE:
         if nr not in tildelt or scope not in scopes:
             continue
-        moduler.append({"modul": nr, **les_modul(conn, tenant, apimodul,
-                                                 klarflagg)})
+        rad = {"modul": nr, **les_modul(conn, tenant, apimodul, klarflagg)}
+        if (rad["klar"] is False and nr in ANBEFALT
+                and SKRIVESCOPE in scopes):
+            sti, kropp = ANBEFALT[nr]
+            rad["anbefalt"] = {"sti": sti, "kropp": dict(kropp)}
+        moduler.append(rad)
     return {"moduler": moduler}
 
 

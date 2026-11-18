@@ -7096,5 +7096,14 @@
   "ui.oppsett.ett_funn": "1 åpent funn",
   "ui.oppsett.funn": "{antall} åpne funn",
   "ui.oppsett.funn_ukjent": "i drift",
-  "ui.oppsett.utilgjengelig": "ikke tilgjengelig nå"
+  "ui.oppsett.utilgjengelig": "ikke tilgjengelig nå",
+  "ui.oppsett.anbefalt_tekst": "Forslag til grenser. Bruk dem som de er, eller velg dine egne.",
+  "ui.oppsett.bruk_anbefalt": "Bruk anbefalte grenser",
+  "ui.oppsett.velg_selv": "Velg selv",
+  "ui.oppsett.lagret": "Grensene for {modul} er lagret. Modulen måler fra neste natt.",
+  "ui.oppsett.lagring_feilet": "Grensene ble ikke lagret. Prøv igjen, eller velg dem selv.",
+  "ui.oppsett.enhet.dogn": "{n} døgn",
+  "ui.oppsett.enhet.prosent": "{n} %",
+  "ui.oppsett.enhet.kr": "{n} kr",
+  "ui.oppsett.enhet.timer": "{n} t"
 }

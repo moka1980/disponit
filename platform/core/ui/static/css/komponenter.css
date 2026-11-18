@@ -488,8 +488,21 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
 /* «Kom i gang»: fremdrift, ett kort per modul som mangler krav (knappen
    står nederst i kortet så den havner på samme linje i hele raden), og
    brikker for modulene i drift — sortert med flest åpne funn først. */
-.dash-oppsett { margin: var(--sp-2) 0 var(--sp-4); display: grid; gap: var(--sp-3); }
-.dash-oppsett > h2 { margin: 0; font-size: var(--fs-h2); }
+.dash-oppsett { margin: var(--sp-2) 0 var(--sp-4); }
+.oppsett-innhold { display: grid; gap: var(--sp-3); }
+.oppsett-innhold > h2 { margin: 0; font-size: var(--fs-h2); }
+.oppsett-innhold > h2:focus { outline: none; }
+.oppsett-melding { margin: 0; font-weight: 600; color: var(--auto); }
+.oppsett-melding:not(:empty) { margin-top: var(--sp-3); }
+.oppsett-anbefalt { margin: 0; display: grid; gap: var(--sp-1);
+  font-size: var(--fs-sm); }
+.oppsett-anbefalt > div { display: flex; justify-content: space-between;
+  gap: var(--sp-2); border-bottom: 1px solid var(--line);
+  padding-bottom: var(--sp-1); }
+.oppsett-anbefalt dt { color: var(--muted); }
+.oppsett-anbefalt dd { margin: 0; font-weight: 600; white-space: nowrap; }
+.oppsett-feil { margin: 0; color: var(--danger); font-size: var(--fs-sm); }
+.oppsett-feil:empty { display: none; }
 .oppsett-status { margin: 0; font-weight: 600; }
 .oppsett-fremdrift { width: 100%; height: .5rem; accent-color: var(--info); }
 .oppsett-flis { list-style: none; margin: 0; padding: 0; display: grid;
@@ -497,8 +510,12 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
 .oppsett-kort { display: flex; flex-direction: column; gap: var(--sp-2);
   padding: var(--sp-4); }
 .oppsett-kort h3 { margin: 0; font-size: var(--fs-lg); }
-.oppsett-kort p { margin: 0; flex: 1; font-size: var(--fs-sm); }
-.oppsett-kort .knapp { align-self: flex-start; min-height: var(--touch-min); }
+.oppsett-kort p { margin: 0; font-size: var(--fs-sm); }
+.oppsett-kort > .knapperad, .oppsett-kort > .knapp { margin-top: auto; }
+.oppsett-velg { font-size: var(--fs-sm); font-weight: 600; color: var(--info);
+  min-height: var(--touch-min); display: inline-flex; align-items: center; }
+.oppsett-kort .knapp { min-height: var(--touch-min); }
+.oppsett-kort > .knapp { align-self: flex-start; }
 .oppsett-under { margin: var(--sp-2) 0 0; font-size: var(--fs-sm);
   color: var(--muted); font-weight: 600; }
 .oppsett-brikker a.brikke { color: var(--ink); text-decoration: none; }
