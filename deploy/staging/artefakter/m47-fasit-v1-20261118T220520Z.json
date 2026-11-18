@@ -1,0 +1,109 @@
+{
+  "bestatt": true,
+  "krav_id": "m47-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "bevis_registrert": 2,
+      "krav_satt": 1,
+      "plikt_registrert": 5,
+      "plikttype_registrert": 1,
+      "regelverk_avvikles": 1,
+      "regelverk_registrert": 4
+    },
+    "evidens_totalt": 14,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [],
+        "merke": "rv_gyldig",
+        "subjekt_id": "a480e7bf-1b80-4c5d-b536-33b0357cae18",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "regelverk_utloper_snart"
+        ],
+        "merke": "rv_utloper",
+        "subjekt_id": "cbd508d5-eeca-48c3-83a1-e8f443d6ac3f",
+        "ventet": "regelverk_utloper_snart"
+      },
+      {
+        "fikk": [
+          "regelverk_utlopt"
+        ],
+        "merke": "rv_utlopt",
+        "subjekt_id": "811ce982-3765-4885-a35a-e5f779d39bca",
+        "ventet": "regelverk_utlopt"
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "rv_uten_krav",
+        "subjekt_id": "08858476-cda2-4fa9-a060-85410248324a",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [
+          "frist_passert_uten_bevis"
+        ],
+        "merke": "passert",
+        "subjekt_id": "3740e8ab-5cac-4f63-934b-08b8204f788b",
+        "ventet": "frist_passert_uten_bevis"
+      },
+      {
+        "fikk": [
+          "frist_naermer_seg"
+        ],
+        "merke": "naermer",
+        "subjekt_id": "745e59a3-cdcf-489a-9719-7e968ea44e5e",
+        "ventet": "frist_naermer_seg"
+      },
+      {
+        "fikk": [
+          "plikt_mot_utlopt_regelverk"
+        ],
+        "merke": "mot_utlopt",
+        "subjekt_id": "6fa3f287-c8f2-4a2d-8709-b684443aa1c7",
+        "ventet": "plikt_mot_utlopt_regelverk"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "767cb79c-8cff-4e26-9424-3902b28546f6",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "levert",
+        "subjekt_id": "db131a1f-b64d-45a0-9581-51ff383d802c",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 9,
+    "sveip1_nye": 13,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 16
+  },
+  "oppsett": {
+    "bevisrot_sha256": "6dd98ffbd9f5a6f4993105d129bb0df69967f65430ef3a141f541de4c6237456",
+    "evidenskilde": "m47_myndighetsrapport",
+    "modul": "m47_myndighetsrapport",
+    "riggmodul": "m47_fasit",
+    "runde": "ebad11a6",
+    "sett_sha256": "3c10fa2bae1762728dcfdba5cbf5ae5aa33540829f98ea83b2e8beadd5816ca9",
+    "tenanter": [
+      "t-m47fasit-a-ebad11a6",
+      "t-m47fasit-b-ebad11a6"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:05:20.384306+00:00"
+}

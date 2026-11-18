@@ -5459,6 +5459,25 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m34_fasit",
         "releasefiler": ("platform/modules/m34_compliance",
                          "platform/drift/compliancesveip.py"),
+    "m47_myndighetsrapport": {
+        "modul_fil": "myndighetssveip",
+        "funntabell": "myndighetsfunn",
+        # TO SUBJEKTSLAG: funnraden bærer nøyaktig én av nøklene
+        # (`myndighetsfunn_en_noekkel`), så subjektet er den som finnes.
+        "subjektkolonne": "coalesce(regelverk_id, rapportplikt_id)",
+        "tenantkilde": ("regelverk", "rapportplikt"),
+        "maalerolle": "disponit_myndighet_eier",
+        "sveipedor": "m47_sveip_myndighetsplikt(int)",
+        "dsn_variabel": "DISPONIT_MYNDIGHETSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m47-fasit-v1",
+        "feilinjisering_krav": "m47-feilinjisering-v1",
+        "ytelse_krav": "m47-ytelse-v1",
+        "rollback_krav": "m47-rollback-v1",
+        "riggmodul": "m47_fasit",
+        "releasefiler": ("platform/modules/m47_myndighetsrapport",
+                         "platform/drift/myndighetssveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6281,6 +6300,17 @@ registrer_sveipgrenser("m34_compliance", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m34_compliance", "m34",
                       ("platform/core/tests/test_m34_compliance.py",),
                       min_tester=3000, min_andel_tester=25)
+# M-47: gulvene er litt under det målte 18/11 (9 subjekter, 14
+# evidenshendelser; seks typer + den rene som fødes passert).
+registrer_fasitgrense("m47_myndighetsrapport", min_subjekter=9,
+                      min_evidens=12, tenantprefiks="t-m47fasit-",
+                      min_sveip1_nye=7)
+registrer_sveipgrenser("m47_myndighetsrapport", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=7)
+
+registrer_suitegrense("m47_myndighetsrapport", "m47",
+                      ("platform/core/tests/test_m47_myndighetsrapport.py",),
+                      min_tester=3000, min_andel_tester=22)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
