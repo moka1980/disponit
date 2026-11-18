@@ -7,7 +7,9 @@ NØYAKTIG én nøkkel (`ehffunn_en_noekkel`), så subjektet leses som
 
   regelsett  1. `regelsett_utloper_snart` — gyldig til om 5 døgn (varsel 30)
              2. `regelsett_utlopt`        — avviklet etter at et dokument
-                                            ble validert mot det
+                                            ble validert mot det; egen
+                                            standard, så ingenting avløser
+                                            det
              3. `ingen_krav`              — tenant B har ingen krav
              4. (rs_gyldig)               — uten sluttdato
   validering 5. `avvik_uten_retting`      — et formfeil-avvik uten retting
@@ -53,6 +55,11 @@ NEGATIV_KONTROLL = "ok"
 
 #: Kravene i tenant A: utløpsvarsel 30 døgn, avviksfrist 7.
 KRAV = (30, 7)
+
+#: ET UTLØPT SETT ER BARE ET FUNN NÅR INGENTING HAR AVLØST DET: sveipen
+#: hopper over det hvis et annet sett av SAMME standard gjelder. Det
+#: avviklede settet har derfor en annen standard enn `rs_gyldig`.
+STANDARD = {"rs_utlopt": "peppol_bis"}
 
 #: (merkelapp, forventet, tenantnøkkel, gyldig_til om N døgn eller None,
 #:  avvikles N døgn tilbake etter valideringene eller None)
@@ -135,10 +142,11 @@ def forbered(rt, runde: str) -> dict:
         sid = str(uuid.uuid4())
         _sk(rt, tenant)
         rt.execute(
-            "SELECT m54_registrer_regelsett(%s,%s,'ehf',%s,"
+            "SELECT m54_registrer_regelsett(%s,%s,%s,%s,"
             " current_date - 400, CASE WHEN %s::int IS NULL THEN NULL"
             " ELSE current_date + %s::int END, %s, NULL, %s)",
-            (tenant, sid, f"3.{nr}-{runde}", til, til,
+            (tenant, sid, STANDARD.get(merke, "ehf"), f"3.{nr}-{runde}",
+             til, til,
              _sha(runde, merke), AKTOR))
         rt.commit()
         # Én regel i hvert sett: valideringen nekter et tomt regelsett.
