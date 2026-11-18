@@ -1,0 +1,90 @@
+{
+  "bestatt": true,
+  "krav_id": "m54-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 43,
+    "apne_for": 43,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "avvik_uten_retting": [
+        14,
+        2
+      ],
+      "ingen_krav": [
+        8,
+        0
+      ],
+      "regelsett_utloper_snart": [
+        9,
+        0
+      ],
+      "regelsett_utlopt": [
+        2,
+        0
+      ],
+      "retting_ikke_klar": [
+        5,
+        0
+      ],
+      "validering_mot_utlopt_regelsett": [
+        5,
+        0
+      ]
+    },
+    "per_type_for": {
+      "avvik_uten_retting": [
+        14,
+        2
+      ],
+      "ingen_krav": [
+        8,
+        0
+      ],
+      "regelsett_utloper_snart": [
+        9,
+        0
+      ],
+      "regelsett_utlopt": [
+        2,
+        0
+      ],
+      "retting_ikke_klar": [
+        5,
+        0
+      ],
+      "validering_mot_utlopt_regelsett": [
+        5,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 17
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "ehffunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m54_sveip_ehf(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_ehf_eier",
+    "modul": "m54_ehf",
+    "riggmodul": "m54_fasit",
+    "riggtenanter": [
+      "t-m54fasit-a-65df63ce",
+      "t-m54fasit-b-65df63ce"
+    ],
+    "runde": "65df63ce",
+    "sveipedor": "m54_sveip_ehf(int)",
+    "tenantkilde": [
+      "ehfregelsett"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:16:50.902786+00:00"
+}
