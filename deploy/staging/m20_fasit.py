@@ -55,6 +55,9 @@ RENSES = "ren"
 NEGATIV_KONTROLL = "ok"
 
 KRAV = (365, 60, 30)
+#: B har et annet varsel: evidenshashen tar ikke med tenanten, og like
+#: krav i to tenanter ville gitt samme `input_hash` (som i M-49).
+KRAV_B = (365, 60, 31)
 
 #: (merkelapp, forventet, tenantnøkkel, kilde, vises?, publiseres?)
 UTKAST: tuple[tuple[str, str | None, str, str, bool, bool], ...] = (
@@ -106,10 +109,10 @@ def forbered(rt, runde: str) -> dict:
     kommer mellom kjøringene."""
     rigg = {"a": tenantnavn(runde, "a"), "b": tenantnavn(runde, "b"),
             "subjekter": {}, "kilder": {}}
-    for t in ("a", "b"):
+    for t, krav in (("a", KRAV), ("b", KRAV_B)):
         _sk(rt, rigg[t])
         rt.execute("SELECT m20_sett_krav(%s,%s,%s,%s,%s)",
-                   (rigg[t], *KRAV, AKTOR))
+                   (rigg[t], *krav, AKTOR))
         rt.commit()
     for merke, _v, tkey, dogn in KILDER:
         tenant = rigg[tkey]
