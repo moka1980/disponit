@@ -1,0 +1,110 @@
+{
+  "bestatt": true,
+  "krav_id": "m52-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "nomenklatur_gyldig_til_satt": 1,
+      "nomenklatur_registrert": 4,
+      "tollforslag_avgitt": 5,
+      "tollforslag_klart": 3,
+      "tollkrav_satt": 2,
+      "vare_registrert": 5,
+      "varenummer_registrert": 2
+    },
+    "evidens_totalt": 22,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [],
+        "merke": "n_gyldig",
+        "subjekt_id": "17f18985-c302-461f-833c-0b18f55a5951",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "nomenklatur_utloper_snart"
+        ],
+        "merke": "n_utloper",
+        "subjekt_id": "d4715719-dc61-4f3e-b0f6-6461bd387113",
+        "ventet": "nomenklatur_utloper_snart"
+      },
+      {
+        "fikk": [
+          "nomenklatur_utlopt"
+        ],
+        "merke": "n_utlopt",
+        "subjekt_id": "19101344-9d7f-4b4c-8e1b-4178d21f4cb7",
+        "ventet": "nomenklatur_utlopt"
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "n_uten_krav",
+        "subjekt_id": "c423fef5-df8a-47e6-92ff-7afe0d02ff13",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [
+          "forslag_under_terskel"
+        ],
+        "merke": "under",
+        "subjekt_id": "b10ac702-c416-4ae0-8379-9f3d82a4dfc0",
+        "ventet": "forslag_under_terskel"
+      },
+      {
+        "fikk": [
+          "forslag_ikke_klart"
+        ],
+        "merke": "ikke_klart",
+        "subjekt_id": "9407d31d-efdc-4d7f-869a-653b0abb6c70",
+        "ventet": "forslag_ikke_klart"
+      },
+      {
+        "fikk": [
+          "forslag_mot_utlopt_nomenklatur"
+        ],
+        "merke": "mot_utlopt",
+        "subjekt_id": "7de3c952-45f2-4618-8ee2-f9c932774dc3",
+        "ventet": "forslag_mot_utlopt_nomenklatur"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "ad64389f-8292-4940-8be9-0ca40e48d4b7",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "3344c8b0-a062-40ae-99a1-e2fc880aa499",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 9,
+    "sveip1_nye": 11,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 13
+  },
+  "oppsett": {
+    "bevisrot_sha256": "b599c0ce29c3f7bf88a114660dabeb884c423bd659022a33a7021dfe91f43300",
+    "evidenskilde": "m52_tollkode",
+    "modul": "m52_tollkode",
+    "riggmodul": "m52_fasit",
+    "runde": "4943fe63",
+    "sett_sha256": "6aac35f474c4092c1522636054ae88d3e09a5af0b9b6c9ce665c4a338ffe44f1",
+    "tenanter": [
+      "t-m52fasit-a-4943fe63",
+      "t-m52fasit-b-4943fe63"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:19:53.679798+00:00"
+}

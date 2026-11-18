@@ -5460,6 +5460,102 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m34_compliance",
                          "platform/drift/compliancesveip.py"),
     },
+    "m47_myndighetsrapport": {
+        "modul_fil": "myndighetssveip",
+        "funntabell": "myndighetsfunn",
+        # TO SUBJEKTSLAG: funnraden bærer nøyaktig én av nøklene
+        # (`myndighetsfunn_en_noekkel`), så subjektet er den som finnes.
+        "subjektkolonne": "coalesce(regelverk_id, rapportplikt_id)",
+        "tenantkilde": ("regelverk", "rapportplikt"),
+        "maalerolle": "disponit_myndighet_eier",
+        "sveipedor": "m47_sveip_myndighetsplikt(int)",
+        "dsn_variabel": "DISPONIT_MYNDIGHETSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m47-fasit-v1",
+        "feilinjisering_krav": "m47-feilinjisering-v1",
+        "ytelse_krav": "m47-ytelse-v1",
+        "rollback_krav": "m47-rollback-v1",
+        "riggmodul": "m47_fasit",
+        "releasefiler": ("platform/modules/m47_myndighetsrapport",
+                         "platform/drift/myndighetssveip.py"),
+    },
+    "m50_postjournal": {
+        "modul_fil": "postjournalsveip",
+        "funntabell": "journalfunn",
+        # TRE SUBJEKTSLAG: funnraden bærer nøyaktig én av nøklene
+        # (`journalfunn_en_noekkel`).
+        "subjektkolonne": "coalesce(kilde_id, post_id, person_id)",
+        "tenantkilde": ("journalkilde", "journalpost"),
+        "maalerolle": "disponit_postjournal_eier",
+        "sveipedor": "m50_sveip_postjournal(int)",
+        "dsn_variabel": "DISPONIT_POSTJOURNALSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m50-fasit-v1",
+        "feilinjisering_krav": "m50-feilinjisering-v1",
+        "ytelse_krav": "m50-ytelse-v1",
+        "rollback_krav": "m50-rollback-v1",
+        "riggmodul": "m50_fasit",
+        "releasefiler": ("platform/modules/m50_postjournal",
+                         "platform/drift/postjournalsveip.py"),
+    },
+    "m51_tilskudd": {
+        "modul_fil": "tilskuddssveip",
+        "funntabell": "tilskuddsfunn",
+        "subjektkolonne": "ordning_id",
+        "tenantkilde": "stotteordning",
+        "maalerolle": "disponit_tilskudd_eier",
+        "sveipedor": "m51_sveip_tilskudd(int)",
+        "dsn_variabel": "DISPONIT_TILSKUDDSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m51-fasit-v1",
+        "feilinjisering_krav": "m51-feilinjisering-v1",
+        "ytelse_krav": "m51-ytelse-v1",
+        "rollback_krav": "m51-rollback-v1",
+        "riggmodul": "m51_fasit",
+        "releasefiler": ("platform/modules/m51_tilskudd",
+                         "platform/drift/tilskuddssveip.py"),
+    },
+    "m52_tollkode": {
+        "modul_fil": "tollkodesveip",
+        "funntabell": "tollfunn",
+        # Funnraden bærer nøyaktig én av tre nøkler.
+        "subjektkolonne": "coalesce(nomenklatur_id, vare_id, forslag_id)",
+        "tenantkilde": ("nomenklatur", "tollvare"),
+        "maalerolle": "disponit_tollkode_eier",
+        "sveipedor": "m52_sveip_tollkode(int)",
+        "dsn_variabel": "DISPONIT_TOLLKODESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m52-fasit-v1",
+        "feilinjisering_krav": "m52-feilinjisering-v1",
+        "ytelse_krav": "m52-ytelse-v1",
+        "rollback_krav": "m52-rollback-v1",
+        "riggmodul": "m52_fasit",
+        "releasefiler": ("platform/modules/m52_tollkode",
+                         "platform/drift/tollkodesveip.py"),
+    },
+    "m54_ehf": {
+        "modul_fil": "ehfsveip",
+        "funntabell": "ehffunn",
+        # Funnraden bærer nøyaktig én av tre nøkler (`ehffunn_en_noekkel`).
+        "subjektkolonne": "coalesce(regelsett_id, dokument_id, validering_id)",
+        "tenantkilde": "ehfregelsett",
+        "maalerolle": "disponit_ehf_eier",
+        "sveipedor": "m54_sveip_ehf(int)",
+        "dsn_variabel": "DISPONIT_EHFSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m54-fasit-v1",
+        "feilinjisering_krav": "m54-feilinjisering-v1",
+        "ytelse_krav": "m54-ytelse-v1",
+        "rollback_krav": "m54-rollback-v1",
+        "riggmodul": "m54_fasit",
+        "releasefiler": ("platform/modules/m54_ehf",
+                         "platform/drift/ehfsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6281,6 +6377,68 @@ registrer_sveipgrenser("m34_compliance", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m34_compliance", "m34",
                       ("platform/core/tests/test_m34_compliance.py",),
                       min_tester=3000, min_andel_tester=25)
+
+# M-47: gulvene er litt under det målte 18/11 (9 subjekter, 14
+# evidenshendelser; seks typer + den rene som fødes passert).
+registrer_fasitgrense("m47_myndighetsrapport", min_subjekter=9,
+                      min_evidens=12, tenantprefiks="t-m47fasit-",
+                      min_sveip1_nye=7)
+registrer_sveipgrenser("m47_myndighetsrapport", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=7)
+
+registrer_suitegrense("m47_myndighetsrapport", "m47",
+                      ("platform/core/tests/test_m47_myndighetsrapport.py",),
+                      min_tester=3000, min_andel_tester=22)
+
+
+# M-50: gulvene er litt under det målte 18/11 (11 subjekter, 10
+# evidenshendelser; seks typer + den rene som fødes passert).
+registrer_fasitgrense("m50_postjournal", min_subjekter=11,
+                      min_evidens=9, tenantprefiks="t-m50fasit-",
+                      min_sveip1_nye=7)
+registrer_sveipgrenser("m50_postjournal", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=7)
+
+registrer_suitegrense("m50_postjournal", "m50",
+                      ("platform/core/tests/test_m50_postjournal.py",),
+                      min_tester=3000, min_andel_tester=22)
+
+
+# M-51: gulvene er litt under det målte 18/11 (8 subjekter, 25
+# evidenshendelser; seks typer + den rene som fødes uten estimat).
+registrer_fasitgrense("m51_tilskudd", min_subjekter=8, min_evidens=22,
+                      tenantprefiks="t-m51fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m51_tilskudd", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m51_tilskudd", "m51",
+                      ("platform/core/tests/test_m51_tilskudd.py",),
+                      min_tester=3000, min_andel_tester=30)
+
+
+# M-52: gulvene er litt under det målte 18/11 (9 subjekter, 22
+# evidenshendelser; seks typer + det rene uklare forslaget).
+registrer_fasitgrense("m52_tollkode", min_subjekter=9, min_evidens=20,
+                      tenantprefiks="t-m52fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m52_tollkode", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m52_tollkode", "m52",
+                      ("platform/core/tests/test_m52_tollkode.py",),
+                      min_tester=3000, min_andel_tester=30)
+
+
+# M-54: gulvene er litt under det målte 18/11 (9 subjekter, 28
+# evidenshendelser; seks typer + den rene med urettet avvik).
+registrer_fasitgrense("m54_ehf", min_subjekter=9, min_evidens=25,
+                      tenantprefiks="t-m54fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m54_ehf", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m54_ehf", "m54",
+                      ("platform/core/tests/test_m54_ehf.py",),
+                      min_tester=3000, min_andel_tester=35)
+
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),

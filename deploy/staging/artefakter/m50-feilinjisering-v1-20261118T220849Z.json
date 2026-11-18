@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m50-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 13,
+    "apne_for": 13,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "kilde_utloper_snart": [
+        2,
+        0
+      ],
+      "kilde_utlopt": [
+        2,
+        0
+      ],
+      "post_mot_utlopt_kilde": [
+        2,
+        0
+      ],
+      "slettefrist_naermer_seg": [
+        2,
+        1
+      ],
+      "slettefrist_passert": [
+        3,
+        1
+      ]
+    },
+    "per_type_for": {
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "kilde_utloper_snart": [
+        2,
+        0
+      ],
+      "kilde_utlopt": [
+        2,
+        0
+      ],
+      "post_mot_utlopt_kilde": [
+        2,
+        0
+      ],
+      "slettefrist_naermer_seg": [
+        2,
+        1
+      ],
+      "slettefrist_passert": [
+        3,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "journalfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m50_sveip_postjournal(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_postjournal_eier",
+    "modul": "m50_postjournal",
+    "riggmodul": "m50_fasit",
+    "riggtenanter": [
+      "t-m50fasit-a-91b2c1b3",
+      "t-m50fasit-b-91b2c1b3"
+    ],
+    "runde": "91b2c1b3",
+    "sveipedor": "m50_sveip_postjournal(int)",
+    "tenantkilde": [
+      "journalkilde",
+      "journalpost"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:08:49.563768+00:00"
+}

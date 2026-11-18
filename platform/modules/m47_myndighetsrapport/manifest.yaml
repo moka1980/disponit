@@ -36,8 +36,8 @@
 id: m47_myndighetsrapport
 navn: Myndighetsrapporteringsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m47-v1` bærer invarianten
 # `frist_uten_varsel` — en frist ingen har sett er hele skaden.
 avhengigheter:
@@ -49,31 +49,141 @@ i18n_prefiks: myndighetsrapport
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m47-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m47-suite-v1-20261118T222042Z.json
+    artefakt_sha256: 903e23b0b3bc3219917805bfd5a9594afc20d11ec4a0173d51ded663d4361f00
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5522 tester, 0 feilet, 0 hoppet; modulens andel 26 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m47_fasit.py`:
+    #
+    # M-47s fasitsett: fire regelverk og fem rapportplikter med KJENT dom.
+    #
+    # Myndighetsregisteret har seks funntyper over TO subjektslag: tre gjelder
+    # regelverket (`regelverk_id`), tre gjelder plikten (`rapportplikt_id`).
+    # `ingen_krav` kan stå på begge, men settet gir den bare til et regelverk.
+    # Funnraden bærer NØYAKTIG én av nøklene (`myndighetsfunn_en_noekkel`), så
+    # subjektet leses som `coalesce(regelverk_id, rapportplikt_id)`.
+    #
+    #   regelverk  1. `regelverk_utloper_snart` — gyldig til om 5 døgn
+    #              2. `regelverk_utlopt`        — satt utløpt etter at en plikt
+    #                                              ble registrert mot det
+    #              3. `ingen_krav`              — tenant B har ingen krav
+    #              4. (rv_gyldig)               — uten sluttdato; pliktenes hjem
+    #   plikt      5. `frist_passert_uten_bevis` — frist for 5 døgn siden
+    #              6. `frist_naermer_seg`        — frist om 5 døgn (varsel 14)
+    #              7. `plikt_mot_utlopt_regelverk` — frist om 200 døgn
+    #              8. (ren)                     — passert, får bevis MELLOM
+    #                                              kjøringene
+    #              9. (levert)                  — passert, men med bevis fra før
+    #
+    # REKKEFØLGEN ER EN AVHENGIGHET. `m47_registrer_plikt` nekter uten krav
+    # og mot et regelverk som ikke gjelder. Plikten mot det utløpte regelverket
+    # registreres derfor MENS det gjelder, og `m47_sett_gyldig_til` gjør det
+    # utløpt etterpå — som en myndighet som kunngjør at et skjema avvikles.
+    #
+    # Alle datoer bygges i SQL (`current_date ± n`), aldri i Python.
+    status: ja
+    krav_id: m47-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m47-fasit-v1-20261118T220520Z.json
+    artefakt_sha256: 74d242fed21ab2b886e88c6327b21964075061067a460d62e068fe267069f128
     notat: >-
-      KREVER: plikter med KJENTE frister, kjørt likt lokalt og på
-      staging. En fristberegning som varierer mellom miljøene er ikke
-      en frist.
+      Runde ebad11a6: 9 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m47-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m47-fasit-v1-20261118T220520Z.json
+    artefakt_sha256: 74d242fed21ab2b886e88c6327b21964075061067a460d62e068fe267069f128
     notat: >-
-      KREVER: at hver plikt har hjemmel og versjon i evidenskjeden, og
-      at hvert fristvarsel er en rad noen kan peke på etterpå.
+      14 hendelser i kjeden (bevis_registrert: 2, krav_satt: 1,
+      plikt_registrert: 5, plikttype_registrert: 1, regelverk_avvikles: 1,
+      regelverk_registrert: 4), 0 uten aktør, 0 som deler input_hash med en
+      annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m47-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m47-feilinjisering-v1-20261118T220521Z.json
+    artefakt_sha256: 31c653c8cfd5c35544be9e526bb1865a3a5abd5445124b97893c15e4749b84a7
     notat: >-
-      KREVER: myndighetssveipen bygget, og at en feil i den gjør
-      STØY, ikke stillhet. En sveip som feiler stille lar fristen gå.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 23 åpne og 2 lukkede over 11 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m47-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m47-ytelse-v1-20261118T220520Z.json
+    artefakt_sha256: 2ff3b6137dd8e1dc5c8586e8be6ca0e15592548c2e7e25318ca8d593fa224dfa
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0283 / 0,0259 / 0,0244 s) over 9 tenanter; den
+      DÅRLIGSTE er dommen. 0,0283 s mot taket på 60 — 0,0031 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m47-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m47-rollback-v1-20261118T220522Z.json
+    artefakt_sha256: 6396e7d5df240c273d35fe76dc2c09763122e27862af15e52ad57c80c1b3a31f
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 5ec3c23a ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

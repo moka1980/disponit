@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m50-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 26,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5522
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m50_postjournal.py"
+    ],
+    "bevisrot_sha256": "25d557fc065ab5866cf4437cc36829f7d9b3b6a0dbeda3c5be2cee9961d6c2f5",
+    "commit": "977a2c7c27cf44a90b0b8667e3aa7861af75d096",
+    "modul": "m50_postjournal",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:34:50.513224+00:00"
+}

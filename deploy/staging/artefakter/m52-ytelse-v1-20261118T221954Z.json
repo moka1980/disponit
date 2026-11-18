@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m52-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0325,
+      0.0389,
+      0.0525
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      }
+    ],
+    "sekunder": 0.0525,
+    "sekunder_per_tenant": 0.0058,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m52_tollkode",
+    "sveip": "tollkodesveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:19:54.149237+00:00"
+}

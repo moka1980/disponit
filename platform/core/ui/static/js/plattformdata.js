@@ -143,9 +143,9 @@ export const MODULSTATUS = {
   // dens oppbevaringsplikt kolliderer med M-30s sletteplikt.
   //
   // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
-  54: "bygges",     // m54_ehf: under_utvikling, ikke_i_drift
-  52: "bygges",     // m52_tollkode: under_utvikling, ikke_i_drift
-  47: "bygges",     // m47_myndighetsrapport: under_utvikling
+  54: "i_drift",    // m54_ehf: aktiv, produksjon
+  52: "i_drift",    // m52_tollkode: aktiv, produksjon
+  47: "i_drift",    // m47_myndighetsrapport: aktiv, produksjon
   50: "bygges",     // m50_postjournal: under_utvikling, ikke_i_drift
   53: "bygges",     // m53_hms: under_utvikling, ikke_i_drift
   // KLYNGE 8 — PROGNOSENE. Registrert med grensene, før koden.
