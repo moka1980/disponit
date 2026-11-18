@@ -33,8 +33,8 @@
 id: m34_compliance
 navn: Compliance- og sertifiseringsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELL, MÅLT avhengighet: hver etterprøving bokføres i evidenskjeden —
 # en kontroll som ikke kan gjenfinnes er ikke etterprøvd, den er påstått.
 avhengigheter:
@@ -44,9 +44,25 @@ i18n_prefiks: compliance
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 18/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m34-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m34-suite-v1-20261118T214442Z.json
+    artefakt_sha256: dd8bcbdb6da539fca855dbb8185841a4007dd36018fb7bf520c6438287b7861a
     notat: >-
-      SUITEN KJØRER.
+      5523 tester, 0 feilet, 0 hoppet; modulens andel 29 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet i `m34_fasit.py` gir hver av kontrollregisterets to nåbare

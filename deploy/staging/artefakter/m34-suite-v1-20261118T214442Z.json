@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m34-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 29,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5523
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m34_compliance.py"
+    ],
+    "bevisrot_sha256": "1801e43dabff7a31676d4a0264f9ed6c8a99819cddfc2d76b2ab4fdb2eb2f126",
+    "commit": "ef524936c005c0902d030f14ad3773ac5a07f280",
+    "modul": "m34_compliance",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T21:44:42.563258+00:00"
+}

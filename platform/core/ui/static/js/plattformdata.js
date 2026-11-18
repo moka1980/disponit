@@ -60,7 +60,7 @@ export const MODULSTATUS = {
   21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
   22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
   30: "bygges",     // m30_personvern: under_utvikling, ikke_i_drift
-  34: "bygges",     // m34_compliance: under_utvikling, ikke_i_drift
+  34: "i_drift",    // m34_compliance: aktiv, produksjon
   // KLYNGE 3 «kundens livsløp og pengene» (101-105) — registrert 2/9
   // sammen med grensene m13-v1…m24-v1. Samme register-først-form som
   // klynge 1 og 2, men med en HARDERE grunn: tre av de fem rører
