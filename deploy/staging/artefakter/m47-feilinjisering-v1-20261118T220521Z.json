@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m47-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 23,
+    "apne_for": 23,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "frist_naermer_seg": [
+        2,
+        1
+      ],
+      "frist_passert_uten_bevis": [
+        7,
+        1
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "plikt_mot_utlopt_regelverk": [
+        2,
+        0
+      ],
+      "regelverk_utloper_snart": [
+        5,
+        0
+      ],
+      "regelverk_utlopt": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "frist_naermer_seg": [
+        2,
+        1
+      ],
+      "frist_passert_uten_bevis": [
+        7,
+        1
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "plikt_mot_utlopt_regelverk": [
+        2,
+        0
+      ],
+      "regelverk_utloper_snart": [
+        5,
+        0
+      ],
+      "regelverk_utlopt": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "myndighetsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m47_sveip_myndighetsplikt(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_myndighet_eier",
+    "modul": "m47_myndighetsrapport",
+    "riggmodul": "m47_fasit",
+    "riggtenanter": [
+      "t-m47fasit-a-4b906927",
+      "t-m47fasit-b-4b906927"
+    ],
+    "runde": "4b906927",
+    "sveipedor": "m47_sveip_myndighetsplikt(int)",
+    "tenantkilde": [
+      "regelverk",
+      "rapportplikt"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:05:21.129076+00:00"
+}
