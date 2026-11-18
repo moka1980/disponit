@@ -128,7 +128,7 @@ def forbered(rt, runde: str) -> dict:
         uid = str(uuid.uuid4())
         _sk(rt, tenant)
         rt.execute("SELECT m20_registrer_utkast(%s,%s,%s,%s,NULL,NULL,%s)",
-                   (tenant, uid, f"/fasit/{runde}/{merke}",
+                   (tenant, uid, f"fasit/{runde}/{merke}",
                     json.dumps({"h1": f"Fasit {merke}"}), AKTOR))
         rt.execute("SELECT m20_registrer_paastand(%s,%s,%s,1,%s,%s,%s)",
                    (tenant, str(uuid.uuid4()), uid, f"Påstand {merke}",
