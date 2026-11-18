@@ -5442,6 +5442,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m20_innhold": {
+        "modul_fil": "innholdssveip",
+        "funntabell": "innholdsfunn",
+        # Én generisk nøkkel: utkast, kilde eller publisering etter typen.
+        "subjektkolonne": "referanse",
+        "tenantkilde": "innholdskrav",
+        "maalerolle": "disponit_innhold_eier",
+        "sveipedor": "m20_sveip_innhold(int)",
+        "dsn_variabel": "DISPONIT_INNHOLDSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m20-fasit-v1",
+        "feilinjisering_krav": "m20-feilinjisering-v1",
+        "ytelse_krav": "m20-ytelse-v1",
+        "rollback_krav": "m20-rollback-v1",
+        "riggmodul": "m20_fasit",
+        "releasefiler": ("platform/modules/m20_innhold",
+                         "platform/drift/innholdssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6271,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-20: provisoriske gulv — heves til litt under det målte. Fire nye
+# funn i første sveip (to typer, tre utkast og én kilde).
+registrer_fasitgrense("m20_innhold", min_subjekter=7, min_evidens=10,
+                      tenantprefiks="t-m20fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m20_innhold", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=4)
+
+registrer_suitegrense("m20_innhold", "m20",
+                      ("platform/core/tests/test_m20_innhold.py",),
+                      min_tester=3000, min_andel_tester=38)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
