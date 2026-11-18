@@ -1,0 +1,62 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63/platform/drift/motpartssveip.py",
+    "avbrutt_pid": 3938468,
+    "kandidat_fil": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63/platform/drift/motpartssveip.py",
+    "kandidat_pid": 3938477,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/motpartssveip.py",
+    "rullback_pid": 3938475
+  },
+  "krav_id": "m48-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 7,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 7,
+    "rullbakk_rader": 7
+  },
+  "oppsett": {
+    "arbeidernokkel": 648113902,
+    "avbrutt_backend_pid": 3938471,
+    "bevisrot_sha256": "0332b7d18fa3540b40c1f9838cbeaca337b30f3ed357d07c44e4f2ce05fa8f03",
+    "drillet_digest": "ac6d2ae1d39091088db9b7c81fb9eb9ad46517d0bfa30233a473ec714fa28ed6",
+    "drillet_katalog": "/opt/disponit/releases/2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63",
+    "drillet_kjernedigest": "a9ba0a7913d0f922cca480dd7d34ace4f11d97e3ba1037a0f7248c1e4db4854b",
+    "drillet_release": "2bd5fbfad6143bde5ab3b34523b13e1ebbd32d63",
+    "forgjenger_digest": "ac6d2ae1d39091088db9b7c81fb9eb9ad46517d0bfa30233a473ec714fa28ed6",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "motpartsfunn",
+    "maalerolle": "disponit_motpart_eier",
+    "miljo": "staging",
+    "modul": "m48_motpart",
+    "runde": "c10a859e",
+    "tenanter": [
+      "t-m48fasit-a-c10a859e",
+      "t-m48fasit-b-c10a859e",
+      "t-m48fasit-c-c10a859e"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:28:10.063122+00:00"
+}
