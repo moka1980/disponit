@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m39-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 35,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5522
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m39_lonn.py"
+    ],
+    "bevisrot_sha256": "a32e6677e9d243cf5ad8419d113c30bafa37b2a073167f0730855f851b3d8f85",
+    "commit": "79589e09770ce59932df3d9740038e23b09b25a7",
+    "modul": "m39_lonnsgrunnlag",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T21:24:47.984446+00:00"
+}
