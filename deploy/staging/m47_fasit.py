@@ -124,13 +124,17 @@ def forbered(rt, runde: str) -> dict:
                "'MVA-melding','to_maanedlig',NULL,%s)", (a, tid, AKTOR))
     rt.commit()
 
-    for merke, _v, rv, frist, bevis in PLIKTER:
+    # HVER PLIKT SIN EGEN PERIODE: `rapportplikt_unik` er (type, periode),
+    # og alle pliktene deler én type. Periodene ligger 40 døgn fra
+    # hverandre og slutter alltid før fristen (`frist >= periode_til`).
+    for nr, (merke, _v, rv, frist, bevis) in enumerate(PLIKTER):
         pid = str(uuid.uuid4())
         _sk(rt, a)
         rt.execute(
             "SELECT * FROM m47_registrer_plikt(%s,%s,%s,%s,"
-            " current_date - 60, current_date - 31, current_date + %s, %s)",
-            (a, pid, tid, rigg["regelverk"][rv], frist, AKTOR))
+            " current_date - (60 + 40 * %s), current_date - (31 + 40 * %s),"
+            " current_date + %s, %s)",
+            (a, pid, tid, rigg["regelverk"][rv], nr, nr, frist, AKTOR))
         rt.commit()
         if bevis is not None:
             _bevis(rt, a, pid, bevis, merke)
