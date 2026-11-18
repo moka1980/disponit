@@ -54,6 +54,11 @@ NEGATIV_KONTROLL = "ok"
 #: forslagsfrist 14 døgn.
 KRAV = (70, 30, 14)
 
+#: ET FORSLAG UNDER TERSKELEN KAN IKKE AVGIS — døra nekter. Funnet
+#: oppstår når kunden HEVER terskelen etterpå, og forslaget som var godt
+#: nok i går ikke er det i dag. Riggen gjør nøyaktig det.
+KRAV_ETTER = (85, 30, 14)
+
 #: (merkelapp, forventet, tenantnøkkel, system, gyldig_til om N døgn eller
 #:  None, avvikles N døgn tilbake etter forslagene eller None)
 NOMENKLATURER: tuple[tuple[str, str | None, str, str, int | None,
@@ -66,7 +71,7 @@ NOMENKLATURER: tuple[tuple[str, str | None, str, str, int | None,
 
 #: (merkelapp, forventet, nomenklatur, sikkerhet, merkes klart i riggen)
 FORSLAG: tuple[tuple[str, str | None, str, int, bool], ...] = (
-    ("under", "forslag_under_terskel", "n_gyldig", 50, False),
+    ("under", "forslag_under_terskel", "n_gyldig", 80, False),
     ("ikke_klart", "forslag_ikke_klart", "n_gyldig", 90, False),
     ("mot_utlopt", "forslag_mot_utlopt_nomenklatur", "n_utlopt", 90, True),
     # Den RENE fødes uklar: funnet den får i første sveip er nettopp det
@@ -147,6 +152,11 @@ def forbered(rt, runde: str) -> dict:
         if klart:
             _klart(rt, a, fid)
         rigg["subjekter"][merke] = {"merke": merke, "subjekt_id": fid}
+
+    _sk(rt, a)
+    rt.execute("SELECT m52_sett_krav(%s,%s,%s,%s,%s,%s)",
+               (a, *KRAV_ETTER, AKTOR, f"m52fasit-krav2-{runde}"))
+    rt.commit()
 
     # Avviklingen kommer ETTER forslagene og klarmerkingen: begge dørene
     # nekter mot en nomenklatur som ikke gjelder.
