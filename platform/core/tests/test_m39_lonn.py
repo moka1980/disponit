@@ -889,17 +889,23 @@ def test_de_tre_uopprettelige_funnene_kan_lukkes(migrator):
         # vinduet.
         _terskler(c, tenant, dag=450, uke=2250, avvik=0, uten_plan=7,
                   vindu=30)
+        # Datoene er RELATIVE til basens klokke: sveipen måler mot
+        # current_date, og faste datoer falt ut av vinduet etter 30 døgn.
+        gammel_dag, fersk_dag = c.execute(
+            "SELECT (current_date - 240)::text,"
+            " (current_date - 9)::text").fetchone()
+        c.rollback()
         gammel = _taker(c, tenant, ref="GAMMEL")
         _plan(c, tenant, gammel, minutter=450, kode="P-1")
         # En dag med overtid, avvik OG feil kode — men for lenge siden.
-        _timer(c, tenant, gammel, "2026-01-05", 600, kode="P-9")
+        _timer(c, tenant, gammel, gammel_dag, 600, kode="P-9")
         fersk = _taker(c, tenant, ref="FERSK")
         _plan(c, tenant, fersk, minutter=450, kode="P-1")
-        _timer(c, tenant, fersk, "2026-08-25", 600, kode="P-9")
+        _timer(c, tenant, fersk, fersk_dag, 600, kode="P-9")
         # …og en umålt time som er ELDRE ENN VINDUET: den skal STÅ,
         # fordi den KAN rettes.
         umaalt = _taker(c, tenant, ref="UMAALT")
-        _timer(c, tenant, umaalt, "2026-01-05", 450)
+        _timer(c, tenant, umaalt, gammel_dag, 450)
     finally:
         c.close()
     _sett_kontekst(migrator, tenant)
@@ -907,7 +913,7 @@ def test_de_tre_uopprettelige_funnene_kan_lukkes(migrator):
     funn = {}
     for ref, ft in migrator.execute(
             "SELECT s.ekstern_ref, k.funntype FROM"
-            " m39_funnkandidater(%s,'2026-09-03'::date) k JOIN"
+            " m39_funnkandidater(%s,current_date) k JOIN"
             " lonnstaker s ON s.tenant=%s AND s.taker_id=k.taker_id"
             " ORDER BY 1,2", (tenant, tenant)).fetchall():
         funn.setdefault(ref, []).append(ft)
