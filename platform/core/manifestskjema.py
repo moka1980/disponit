@@ -5442,6 +5442,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m51_tilskudd": {
+        "modul_fil": "tilskuddssveip",
+        "funntabell": "tilskuddsfunn",
+        "subjektkolonne": "ordning_id",
+        "tenantkilde": "stotteordning",
+        "maalerolle": "disponit_tilskudd_eier",
+        "sveipedor": "m51_sveip_tilskudd(int)",
+        "dsn_variabel": "DISPONIT_TILSKUDDSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m51-fasit-v1",
+        "feilinjisering_krav": "m51-feilinjisering-v1",
+        "ytelse_krav": "m51-ytelse-v1",
+        "rollback_krav": "m51-rollback-v1",
+        "riggmodul": "m51_fasit",
+        "releasefiler": ("platform/modules/m51_tilskudd",
+                         "platform/drift/tilskuddssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6270,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-51: provisoriske gulv — heves til litt under det målte. Sju nye
+# funn i første sveip (seks typer + den rene som fødes uten estimat).
+registrer_fasitgrense("m51_tilskudd", min_subjekter=8, min_evidens=10,
+                      tenantprefiks="t-m51fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m51_tilskudd", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m51_tilskudd", "m51",
+                      ("platform/core/tests/test_m51_tilskudd.py",),
+                      min_tester=3000, min_andel_tester=30)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
