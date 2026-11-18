@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m20-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0241,
+      0.0231,
+      0.0225
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 23
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 23
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 23
+      }
+    ],
+    "sekunder": 0.0241,
+    "sekunder_per_tenant": 0.001,
+    "tenanter": 23
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m20_innhold",
+    "sveip": "innholdssveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:38:51.435237+00:00"
+}
