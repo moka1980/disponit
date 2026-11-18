@@ -1099,6 +1099,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import medlemmer as medlemsmodul
         return medlemsmodul.medlemmer(tjeneste, request)
 
+    def oppsett(request: Request) -> Response:
+        from . import oppsett as oppsettmodul
+        return oppsettmodul.oppsett(tjeneste, request)
+
     def modellstyring(request: Request) -> Response:
         return lesing.modellstyring(tjeneste, request)
 
@@ -3684,6 +3688,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
         Route("/v1/firma/medlemmer", firma_medlemmer, methods=["GET"]),
+        Route("/v1/oppsett", oppsett, methods=["GET"]),
         Route("/v1/modellstyring", modellstyring, methods=["GET"]),
         Route("/v1/kontinuitet", kontinuitet, methods=["GET"]),
         Route("/v1/kontinuitet/hendelser", kontinuitet_hendelser,
@@ -5158,6 +5163,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # Eiervelgeren: id og visningsnavn på tenantens aktive medlemmer,
     # aldri e-post (medlemmer.py).
     ("GET",  "/v1/firma/medlemmer"):         "decisions:read",
+    # «Kom i gang»: hver modul i svaret er i tillegg gatet på sitt EGET
+    # lesescope inne i endepunktet (oppsett.svar_for).
+    ("GET",  "/v1/oppsett"):                 "decisions:read",
     # M-31 (086): model card — plattformregisterets globale m31-rader bak
     # admin-lesescopet. Ingen tenantdata i svaret (registeret er
     # tenant-løst); mutasjonene finnes ikke som HTTP — de er

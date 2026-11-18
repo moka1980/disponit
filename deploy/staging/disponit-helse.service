@@ -15,7 +15,14 @@ Group=disponit-helse
 # og det er en bevisst, dokumentert utvidelse av gruppen (DEPLOY.md).
 SupplementaryGroups=disponit-proxy
 ExecStart=/usr/local/lib/disponit-helse-sjekk
+# /run er tmpfs: uten dette forsvant tilstandskatalogen 10/9, og
+# brukeren kan ikke lage den selv. Preserve: telleren må overleve mellom
+# oneshot-kjøringene.
+RuntimeDirectory=disponit-health
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 # Én kjøring kan melde feil uten at unit-en skal regnes som havarert.
+# Exit 2 (ødelagt sjekk) er bevisst IKKE med — den skal synes som failed.
 SuccessExitStatus=0 1
 
 [Install]
