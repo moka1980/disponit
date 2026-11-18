@@ -46,31 +46,110 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet i `m34_fasit.py` gir hver av kontrollregisterets to nåbare
+    # funntyper nøyaktig én kontroll, og tre som skal være rene.
+    #
+    # FORBIGÅTT KREVER EN TILBAKEDATERT ETTERPRØVING: `kontroll.opprettet`
+    # er ingen dørparameter, men `m34_registrer_etterproving` tar datoen
+    # og avviser bare fremtiden.
+    #
+    # `oppfylt_uten_evidens` er urepresenterbar gjennom dørene med vilje
+    # og står i UNAABARE. Den bortvalgte kontrollen er forbigått OG
+    # `ikke_relevant` — den negative kontrollen for unntaket.
+    #
+    # DET EIERLØSE SUBJEKTET HAR SIN EGEN EIER, deaktivert med direkte
+    # DML: det finnes ingen dør for medlemskap.
+    status: ja
+    krav_id: m34-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m34-fasit-v1-20261118T212824Z.json
+    artefakt_sha256: 5e9f32fcd334518cf5e253c59ec2f33f838cfa6c66b12dab205aa65f76194349
     notat: >-
-      KREVER: et kontrollsett med KJENT fasit for hvilke som skal bli
-      funn ved forbigått etterprøvingsfrist, kjørt likt lokalt og på
-      staging med begge datasett-identitetene bundet.
+      Runde b0a006ec: 5 kontroller i 2 tenanter, 0 funnavvik. Første
+      sveip ga 3 nye funn — også den rene kontrollen, som fødes
+      forbigått. En fersk etterprøving mellom kjøringene flyttet fristen,
+      og andre sveip ga 0 nye og lukket 1.
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m34-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m34-fasit-v1-20261118T212824Z.json
+    artefakt_sha256: 5e9f32fcd334518cf5e253c59ec2f33f838cfa6c66b12dab205aa65f76194349
     notat: >-
-      KREVER: at hver etterprøving faktisk står i evidenskjeden, målt
-      som hendelser med identitet. Oppført som avhengighet fordi det
-      SKAL finnes; punktet står nei til målingen er gjort.
+      11 hendelser i kjeden (kontroll.registrert: 5,
+      kontroll.etterprovd: 5, kontroll.ikke_relevant: 1), 0 uten aktør,
+      0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m34-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m34-feilinjisering-v1-20261118T212825Z.json
+    artefakt_sha256: 1ce8aa949fed9c176d4a2d25e25d0012583575aa01f74ddfda154b3136fbc0f3
     notat: >-
-      KREVER: etterprøvingssveipen bygget, og at en feil i den ikke
-      stanser den ordinære varselsendingen (M-21s forpassform).
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 5 åpne og 1 lukket over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m34-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m34-ytelse-v1-20261118T212824Z.json
+    artefakt_sha256: 9974e59c7b80b0280e4299239876fa39276dd753b559e723949e0824f429b974
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
-      den. Ingen grense pinnet.
+      Tre kjøringer (0,0144 / 0,0115 / 0,0119 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0144 s mot taket på 60 — 0,0048 s per
+      tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m34-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m34-rollback-v1-20261118T212903Z.json
+    artefakt_sha256: 2e55e39a51a582161537507e9711658ad9f65972233c1ae348fc09f921a9d25f
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 5ec3c23a ← forgjenger 5f57464a (ulike kjernedigester;
+      25131ad1 hadde SAMME kjerne og ble avvist av drillen). Riggen hadde
+      0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 3 funnene uten dubletter, og de
+      drillede bytene fant 0 nye.
