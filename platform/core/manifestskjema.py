@@ -5442,6 +5442,26 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m50_postjournal": {
+        "modul_fil": "postjournalsveip",
+        "funntabell": "journalfunn",
+        # TRE SUBJEKTSLAG: funnraden bærer nøyaktig én av nøklene
+        # (`journalfunn_en_noekkel`).
+        "subjektkolonne": "coalesce(kilde_id, post_id, person_id)",
+        "tenantkilde": ("journalkilde", "journalpost"),
+        "maalerolle": "disponit_postjournal_eier",
+        "sveipedor": "m50_sveip_postjournal(int)",
+        "dsn_variabel": "DISPONIT_POSTJOURNALSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m50-fasit-v1",
+        "feilinjisering_krav": "m50-feilinjisering-v1",
+        "ytelse_krav": "m50-ytelse-v1",
+        "rollback_krav": "m50-rollback-v1",
+        "riggmodul": "m50_fasit",
+        "releasefiler": ("platform/modules/m50_postjournal",
+                         "platform/drift/postjournalsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6272,18 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-50: provisoriske gulv — heves til litt under det målte. Sju nye
+# funn i første sveip (seks typer + den rene som fødes passert).
+registrer_fasitgrense("m50_postjournal", min_subjekter=11,
+                      min_evidens=10, tenantprefiks="t-m50fasit-",
+                      min_sveip1_nye=7)
+registrer_sveipgrenser("m50_postjournal", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=7)
+
+registrer_suitegrense("m50_postjournal", "m50",
+                      ("platform/core/tests/test_m50_postjournal.py",),
+                      min_tester=3000, min_andel_tester=22)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
