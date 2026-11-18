@@ -5442,6 +5442,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m42_kontovakt",
                          "platform/drift/kontovaktsveip.py"),
     },
+    "m52_tollkode": {
+        "modul_fil": "tollkodesveip",
+        "funntabell": "tollfunn",
+        # Funnraden bærer nøyaktig én av tre nøkler.
+        "subjektkolonne": "coalesce(nomenklatur_id, vare_id, forslag_id)",
+        "tenantkilde": ("nomenklatur", "tollvare"),
+        "maalerolle": "disponit_tollkode_eier",
+        "sveipedor": "m52_sveip_tollkode(int)",
+        "dsn_variabel": "DISPONIT_TOLLKODESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m52-fasit-v1",
+        "feilinjisering_krav": "m52-feilinjisering-v1",
+        "ytelse_krav": "m52-ytelse-v1",
+        "rollback_krav": "m52-rollback-v1",
+        "riggmodul": "m52_fasit",
+        "releasefiler": ("platform/modules/m52_tollkode",
+                         "platform/drift/tollkodesveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6252,6 +6271,17 @@ registrer_suitegrense("m39_lonnsgrunnlag", "m39",
                       min_tester=3000, min_andel_tester=30)
 
 #: M-42s andel. Gulvet er MÅLT: 26 tester i modulens egen fil (18/9).
+# M-52: provisoriske gulv — heves til litt under det målte. Sju nye
+# funn i første sveip (seks typer + det rene uklare forslaget).
+registrer_fasitgrense("m52_tollkode", min_subjekter=9, min_evidens=10,
+                      tenantprefiks="t-m52fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m52_tollkode", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m52_tollkode", "m52",
+                      ("platform/core/tests/test_m52_tollkode.py",),
+                      min_tester=3000, min_andel_tester=30)
+
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
                       min_tester=3000, min_andel_tester=22)
