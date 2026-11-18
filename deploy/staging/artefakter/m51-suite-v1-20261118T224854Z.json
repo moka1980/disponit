@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m51-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 38,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5522
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m51_tilskudd.py"
+    ],
+    "bevisrot_sha256": "9f47167bc0515a0b8e727dbd306d4145d15a458b8870ff49d1c637302ce7a6e0",
+    "commit": "e3bb434b3b76db53c5eef268d497035c58de891a",
+    "modul": "m51_tilskudd",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:48:54.929309+00:00"
+}
