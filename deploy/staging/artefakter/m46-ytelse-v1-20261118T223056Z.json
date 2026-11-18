@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m46-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0248,
+      0.0236,
+      0.0257
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 8,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 8,
+        "tenanter": 3
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 8,
+        "tenanter": 3
+      }
+    ],
+    "sekunder": 0.0257,
+    "sekunder_per_tenant": 0.0086,
+    "tenanter": 3
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m46_anbud",
+    "sveip": "anbudssveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:30:56.280184+00:00"
+}

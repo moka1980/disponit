@@ -1,0 +1,111 @@
+{
+  "bestatt": true,
+  "krav_id": "m46-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "anbud_registrert": 9,
+      "anbudsprofil_satt": 1,
+      "anbudsutkast_opprettet": 7,
+      "kildedokument_registrert": 1,
+      "kvalifikasjonskrav_registrert": 7,
+      "utkastpunkt_registrert": 5
+    },
+    "evidens_totalt": 30,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "frist_naermer_seg"
+        ],
+        "merke": "naermer",
+        "subjekt_id": "73c02b8d-f150-4e97-9d03-477c604d3626",
+        "ventet": "frist_naermer_seg"
+      },
+      {
+        "fikk": [
+          "frist_passert"
+        ],
+        "merke": "passert",
+        "subjekt_id": "dd30e449-b8d8-4eca-af11-59f89430102d",
+        "ventet": "frist_passert"
+      },
+      {
+        "fikk": [
+          "udekket_absolutt_krav"
+        ],
+        "merke": "udekket_abs",
+        "subjekt_id": "501ee724-2093-414e-9186-1f4039934f5b",
+        "ventet": "udekket_absolutt_krav"
+      },
+      {
+        "fikk": [
+          "udekket_krav"
+        ],
+        "merke": "udekket",
+        "subjekt_id": "50912811-676e-450b-a4b7-449fb009bbf1",
+        "ventet": "udekket_krav"
+      },
+      {
+        "fikk": [
+          "ingen_krav_registrert"
+        ],
+        "merke": "uten_krav",
+        "subjekt_id": "83c78831-f83a-40e4-b73a-eafc006bd1cd",
+        "ventet": "ingen_krav_registrert"
+      },
+      {
+        "fikk": [
+          "utenfor_profil"
+        ],
+        "merke": "utenfor",
+        "subjekt_id": "5a717c80-e555-4646-bc2b-b366691f4f41",
+        "ventet": "utenfor_profil"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "f439841c-edcf-4d1e-93c5-a22286254b3a",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "ebbdd761-7a28-42d8-aaef-878a2b403d0b",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_profil"
+        ],
+        "merke": "uten_profil",
+        "subjekt_id": "b97be6ac-f887-4476-a37c-cff8416526c9",
+        "ventet": "ingen_profil"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 9,
+    "sveip1_nye": 8,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 8
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7a7ba0d6a2431cd1b91eb311fd14e892ebbfe332cdc9dd44dfa193b241433874",
+    "evidenskilde": "m46_anbud",
+    "modul": "m46_anbud",
+    "riggmodul": "m46_fasit",
+    "runde": "a1cb87b7",
+    "sett_sha256": "25e7253d20d951fc92de200d02f3fe979f720ba0b301ce99a6f6ecfb0c625fad",
+    "tenanter": [
+      "t-m46fasit-a-a1cb87b7",
+      "t-m46fasit-b-a1cb87b7"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:30:55.886792+00:00"
+}
