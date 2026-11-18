@@ -94,7 +94,7 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-19 fra 2026-09-17 (natt): første modul på de GENERISKE
     // sveipprodusentene for feilinjisering, ytelse og rollback.
     [2, 6, 13, 14, 17, 18, 19, 23, 24, 25, 26, 27, 34, 37, 39, 41, 42, 44, 47,
-     52, 56, 57],
+     52, 54, 56, 57],
     "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 

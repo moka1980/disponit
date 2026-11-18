@@ -5532,6 +5532,24 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m52_fasit",
         "releasefiler": ("platform/modules/m52_tollkode",
                          "platform/drift/tollkodesveip.py"),
+    "m54_ehf": {
+        "modul_fil": "ehfsveip",
+        "funntabell": "ehffunn",
+        # Funnraden bærer nøyaktig én av tre nøkler (`ehffunn_en_noekkel`).
+        "subjektkolonne": "coalesce(regelsett_id, dokument_id, validering_id)",
+        "tenantkilde": "ehfregelsett",
+        "maalerolle": "disponit_ehf_eier",
+        "sveipedor": "m54_sveip_ehf(int)",
+        "dsn_variabel": "DISPONIT_EHFSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m54-fasit-v1",
+        "feilinjisering_krav": "m54-feilinjisering-v1",
+        "ytelse_krav": "m54-ytelse-v1",
+        "rollback_krav": "m54-rollback-v1",
+        "riggmodul": "m54_fasit",
+        "releasefiler": ("platform/modules/m54_ehf",
+                         "platform/drift/ehfsveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6394,6 +6412,16 @@ registrer_sveipgrenser("m52_tollkode", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m52_tollkode", "m52",
                       ("platform/core/tests/test_m52_tollkode.py",),
                       min_tester=3000, min_andel_tester=30)
+# M-54: gulvene er litt under det målte 18/11 (9 subjekter, 28
+# evidenshendelser; seks typer + den rene med urettet avvik).
+registrer_fasitgrense("m54_ehf", min_subjekter=9, min_evidens=25,
+                      tenantprefiks="t-m54fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m54_ehf", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m54_ehf", "m54",
+                      ("platform/core/tests/test_m54_ehf.py",),
+                      min_tester=3000, min_andel_tester=35)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
