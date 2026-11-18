@@ -463,3 +463,21 @@ def test_m18s_eierlose_lop_har_sin_EGEN_eier():
     # …og det løpet er ferskt, så verken stillhet eller frist slår inn.
     r = next(x for x in f.SETT if x[1] == "lop_uten_aktiv_eier")
     assert r[4] == 0 and r[3] == "lang"
+
+
+def test_m34_den_rene_kontrollen_fodes_forbigatt_og_ikke_relevant_er_det_ogsaa():
+    """M-34 har ingen terskel: fristen er `sist_etterprovd + intervall`.
+    Den rene kontrollen må være forbigått FØR rensingen (ellers er
+    lukkeaksen umålt), og den bortvalgte må OGSÅ være forbigått — ellers
+    måler den ikke at `ikke_relevant` unntar, bare at den var fersk."""
+    sys.path.insert(0, str(ROT / "deploy/staging"))
+    import m34_fasit as f
+    rader = {r[0]: r for r in f.SETT}
+    for merke in (f.RENSES, f.NEGATIV_KONTROLL):
+        _m, ventet, _t, dogn, siden, _e, _i = rader[merke]
+        assert ventet is None
+        assert siden is not None and siden > dogn, merke
+    # Uten eier skal IKKE samtidig være forbigått.
+    _m, ventet, _t, dogn, siden, egen, _i = rader["uten_eier"]
+    assert ventet == "kontroll_uten_eier" and egen
+    assert siden is None and dogn > 0

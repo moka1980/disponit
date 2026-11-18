@@ -1,0 +1,58 @@
+{
+  "bestatt": true,
+  "krav_id": "m34-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 5,
+    "apne_for": 5,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "etterproving_forbigatt": [
+        3,
+        1
+      ],
+      "kontroll_uten_eier": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "etterproving_forbigatt": [
+        3,
+        1
+      ],
+      "kontroll_uten_eier": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "kontrollfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m34_sveip_etterprovinger(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_compliance_eier",
+    "modul": "m34_compliance",
+    "riggmodul": "m34_fasit",
+    "riggtenanter": [
+      "t-m34fasit-a-0a09348b",
+      "t-m34fasit-b-0a09348b"
+    ],
+    "runde": "0a09348b",
+    "sveipedor": "m34_sveip_etterprovinger(int)",
+    "tenantkilde": [
+      "kontroll"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T21:28:25.365727+00:00"
+}

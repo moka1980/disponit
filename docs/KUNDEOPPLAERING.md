@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026. Dekker de **20 modulene som er sertifisert og i
+Skrevet 18.9.2026, M-34 lagt til 18.11.2026. Dekker de **21 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Kontrollregister / compliance (M-34)** | Kontroller som ikke er etterprøvd innen fristen, og kontroller der eieren ikke lenger er med i firmaet | Etterprøver ikke selv og attesterer ingenting. «Oppfylt» krever en etterprøving med dato og evidenshenvisning. |
 | **WCAG-kontroll (M-56)** | Automatisk tilgjengelighetskontroll av nettsteder kunden har bekreftet at de kontrollerer | Retter ikke nettstedet. |
 
 ---
@@ -189,6 +190,7 @@ i enhver opplæringsøkt.
 | Kontovakt | «Lagre grenser» | Hvor lenge en konto kan stå uverifisert, og hvor lenge en verifikasjon gjelder |
 | Kampanje | «Lagre grense» → «Lagre avsender» | Frekvenstak og avsender |
 | Rekruttering | Fanen «Profiler» → «Ny profil» | En stillingsprofil med vektede krav |
+| Kontrollregister | «Registrer kontroll» | Kravreferanse, eier og hvor ofte den skal etterprøves |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
@@ -234,7 +236,7 @@ fullmakt noen har gitt bevisst. Det er en beslutning, ikke en oppgave.
 
 ## 9. Hva som ennå ikke er der
 
-37 av 57 moduler er ikke sertifisert ennå. **En modul som ikke står i
+36 av 57 moduler er ikke sertifisert ennå. **En modul som ikke står i
 tabellen over, er ikke i drift** — uansett hva katalogen på nettsiden
 lover om den.
 
