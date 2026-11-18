@@ -1,4 +1,4 @@
-"""M-20s fasitsett: fire utkast og to kilder i ÉN tenant med KJENT dom.
+"""M-20s fasitsett: tre utkast og tre kilder i to tenanter med KJENT dom.
 
 Innholdsregisteret har seks funntyper på én generisk nøkkel,
 `referanse` — et utkast, en kilde eller en publisering etter typen.
@@ -15,12 +15,15 @@ beviset»).
     4. (k_lang)                             — kilden gjelder 365 døgn
     5. (ok)                                 — klart og vist, ikke publisert
 
-ÉN TENANT, MED VILJE. Kravhendelsen i `m20_sett_krav` bærer bare
+  tenant B (INGEN krav)
+    6. (k_b)                                — en kilde sveipen aldri skal
+                                               røre: den går bare over
+                                               tenanter med krav
+
+BARE A HAR KRAV, MED VILJE. Kravhendelsen i `m20_sett_krav` bærer bare
 versjonsnummeret (ingen tenant, ingen verdier), så første krav i to
 tenanter gir alltid samme `input_hash` — evidenskjeden ville målt en
-kollisjon riggen selv laget. Sveipen besøker likevel flere tenanter:
-den går over alle med krav, og tidligere runders tenanter står (alt er
-append-only).
+kollisjon riggen selv laget.
 
 Hvert utkast er sin egen side: et utkast på en side som alt har et
 utkast i arbeid, ville bygget på det.
@@ -78,6 +81,7 @@ UTKAST: tuple[tuple[str, str | None, str, str, bool, bool], ...] = (
 KILDER: tuple[tuple[str, str | None, str, int], ...] = (
     ("k_lang", None, "a", 365),
     ("k_snart", "kilde_utloper_snart_uavklart", "a", 5),
+    ("k_b", None, "b", 365),
 )
 
 
@@ -104,9 +108,10 @@ def _vis(rt, tenant: str, uid: str) -> str:
 
 
 def forbered(rt, runde: str) -> dict:
-    """Tenanten — men UTEN visningen av det rene utkastet: den
+    """Begge tenantene — men UTEN visningen av det rene utkastet: den
     kommer mellom kjøringene."""
-    rigg = {"a": tenantnavn(runde, "a"), "subjekter": {}, "kilder": {}}
+    rigg = {"a": tenantnavn(runde, "a"), "b": tenantnavn(runde, "b"),
+            "subjekter": {}, "kilder": {}}
     _sk(rt, rigg["a"])
     rt.execute("SELECT m20_sett_krav(%s,%s,%s,%s,%s)",
                (rigg["a"], *KRAV, AKTOR))
@@ -151,7 +156,7 @@ def forbered(rt, runde: str) -> dict:
 
 
 def riggtenanter(rigg: dict) -> list[str]:
-    return [rigg["a"]]
+    return [rigg["a"], rigg["b"]]
 
 
 def kontroller_ren(rt, rigg: dict) -> None:
