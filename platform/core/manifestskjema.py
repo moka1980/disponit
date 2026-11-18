@@ -5459,6 +5459,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m34_fasit",
         "releasefiler": ("platform/modules/m34_compliance",
                          "platform/drift/compliancesveip.py"),
+    },
     "m47_myndighetsrapport": {
         "modul_fil": "myndighetssveip",
         "funntabell": "myndighetsfunn",
@@ -5478,6 +5479,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m47_fasit",
         "releasefiler": ("platform/modules/m47_myndighetsrapport",
                          "platform/drift/myndighetssveip.py"),
+    },
     "m50_postjournal": {
         "modul_fil": "postjournalsveip",
         "funntabell": "journalfunn",
@@ -5497,6 +5499,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m50_fasit",
         "releasefiler": ("platform/modules/m50_postjournal",
                          "platform/drift/postjournalsveip.py"),
+    },
     "m51_tilskudd": {
         "modul_fil": "tilskuddssveip",
         "funntabell": "tilskuddsfunn",
@@ -5514,6 +5517,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m51_fasit",
         "releasefiler": ("platform/modules/m51_tilskudd",
                          "platform/drift/tilskuddssveip.py"),
+    },
     "m52_tollkode": {
         "modul_fil": "tollkodesveip",
         "funntabell": "tollfunn",
@@ -5532,6 +5536,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m52_fasit",
         "releasefiler": ("platform/modules/m52_tollkode",
                          "platform/drift/tollkodesveip.py"),
+    },
     "m54_ehf": {
         "modul_fil": "ehfsveip",
         "funntabell": "ehffunn",
@@ -6372,6 +6377,7 @@ registrer_sveipgrenser("m34_compliance", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m34_compliance", "m34",
                       ("platform/core/tests/test_m34_compliance.py",),
                       min_tester=3000, min_andel_tester=25)
+
 # M-47: gulvene er litt under det målte 18/11 (9 subjekter, 14
 # evidenshendelser; seks typer + den rene som fødes passert).
 registrer_fasitgrense("m47_myndighetsrapport", min_subjekter=9,
@@ -6382,6 +6388,9 @@ registrer_sveipgrenser("m47_myndighetsrapport", maks_sekunder=60.0,
 
 registrer_suitegrense("m47_myndighetsrapport", "m47",
                       ("platform/core/tests/test_m47_myndighetsrapport.py",),
+                      min_tester=3000, min_andel_tester=22)
+
+
 # M-50: gulvene er litt under det målte 18/11 (11 subjekter, 10
 # evidenshendelser; seks typer + den rene som fødes passert).
 registrer_fasitgrense("m50_postjournal", min_subjekter=11,
@@ -6393,6 +6402,8 @@ registrer_sveipgrenser("m50_postjournal", maks_sekunder=60.0,
 registrer_suitegrense("m50_postjournal", "m50",
                       ("platform/core/tests/test_m50_postjournal.py",),
                       min_tester=3000, min_andel_tester=22)
+
+
 # M-51: gulvene er litt under det målte 18/11 (8 subjekter, 25
 # evidenshendelser; seks typer + den rene som fødes uten estimat).
 registrer_fasitgrense("m51_tilskudd", min_subjekter=8, min_evidens=22,
@@ -6402,6 +6413,9 @@ registrer_sveipgrenser("m51_tilskudd", maks_sekunder=60.0, min_tenanter=2,
 
 registrer_suitegrense("m51_tilskudd", "m51",
                       ("platform/core/tests/test_m51_tilskudd.py",),
+                      min_tester=3000, min_andel_tester=30)
+
+
 # M-52: gulvene er litt under det målte 18/11 (9 subjekter, 22
 # evidenshendelser; seks typer + det rene uklare forslaget).
 registrer_fasitgrense("m52_tollkode", min_subjekter=9, min_evidens=20,
@@ -6412,6 +6426,8 @@ registrer_sveipgrenser("m52_tollkode", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m52_tollkode", "m52",
                       ("platform/core/tests/test_m52_tollkode.py",),
                       min_tester=3000, min_andel_tester=30)
+
+
 # M-54: gulvene er litt under det målte 18/11 (9 subjekter, 28
 # evidenshendelser; seks typer + den rene med urettet avvik).
 registrer_fasitgrense("m54_ehf", min_subjekter=9, min_evidens=25,
@@ -6422,6 +6438,7 @@ registrer_sveipgrenser("m54_ehf", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m54_ehf", "m54",
                       ("platform/core/tests/test_m54_ehf.py",),
                       min_tester=3000, min_andel_tester=35)
+
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
