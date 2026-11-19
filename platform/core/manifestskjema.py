@@ -10737,9 +10737,11 @@ def _grenser_m08_fasit(grense: dict, art: dict) -> list[str]:
     if m.get("utfall_lik_fasit") is not True:
         feil.append("valgdørens utfall var ikke fasitens (valgt, slot_fullt,"
                     " valgt / valgt)")
-    if m.get("gjenspill_utfall") != "valg_alt_registrert":
+    # Døras stille ja er å bekrefte det samme valget på nytt — uten en
+    # eneste skrevet rad (`gjenspill_urort` over).
+    if m.get("gjenspill_utfall") != "valgt":
         feil.append(f"gjenspillet ga {m.get('gjenspill_utfall')!r}, ikke"
-                    " det stille ja-et valg_alt_registrert")
+                    " samme bekreftelse (valgt)")
     return feil
 
 

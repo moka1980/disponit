@@ -260,7 +260,8 @@ def fasit() -> Path:
     utfall_ok = (rigg["utfall"]["a"] == ["valgt", "slot_fullt", "valgt"]
                  and rigg["utfall"]["b"] == ["valgt"])
 
-    # GJENSPILL: samme token, samme slot — et stille ja.
+    # GJENSPILL: samme token, samme slot — et stille ja. Døra bekrefter
+    # valget på nytt (`valgt`, samme tid) uten å skrive en eneste rad.
     t8, _tu, _ts = _hjelpere()
     for_ = _digest(sup)
     ta = rigg["tenanter"]["a"]
@@ -340,12 +341,12 @@ def feilinjisering() -> Path:
                    "utfall": None, "urort": for_ == _digest(sup)})
         _log(f"{navn}: {ut[-1]}")
     # Feil MAC: den offentlige døra kaster ikke — den gir det UNIFORME
-    # avslaget, så en gjetter ikke lærer noe av feilformen.
+    # avslaget, NULL rader, så en gjetter ikke lærer noe av feilformen.
     for_ = _digest(sup)
     tid, _secret = rigg["tokener"]["a"][1]
     svar = t8._velg(rt, tid, "feil-hemmelighet", rigg["slots"]["a"][1])
     rt.commit()
-    utfall = svar[0] if svar else None
+    utfall = svar[0] if svar else "uniformt_avslag"
     ut.append({"brudd": "valg_med_feil_mac", "avvist": utfall != "valgt",
                "sqlstate": None, "utfall": utfall,
                "urort": for_ == _digest(sup)})
