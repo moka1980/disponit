@@ -3808,6 +3808,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M08_GRENSER[krav_id](grense, art)
     if krav_id in _M16_GRENSER:
         return feil + _M16_GRENSER[krav_id](grense, art)
+    if krav_id in _M35_GRENSER:
+        return feil + _M35_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -10980,4 +10982,98 @@ _M08_GRENSER = {
 registrer_suitegrense(
     "m08_kalender", "m08",
     ("platform/core/tests/test_m8_tidsvalg.py",),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-35 — KLASSE C I ADR-002 (tenantregister uten sveip), M-05-formen.
+#
+# Sju dører, evidensen skrevet av triggerne i 219. Grensene er M-05s, med
+# modulens egne filer og bevisrot.
+# ===========================================================================
+
+M35_MODULFILER: tuple[str, ...] = (
+    "platform/core/api/kontinuitet.py",
+    "platform/core/db/migrations/089_m35_kontinuitet.sql",
+    "platform/core/db/migrations/219_m35_evidens.sql",
+)
+M35_BEVISROT: tuple[str, ...] = ("deploy/staging/m35-lest.py",)
+
+
+def m35_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M35_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m35_som_m05(art: dict) -> tuple[list[str], dict]:
+    """Egen modul- og bevisrotsjekk; resten av formen er M-05s."""
+    feil: list[str] = []
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if o.get("modul") != "m35_kontinuitet":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m35_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/m35-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    lik = {**art, "oppsett": {**o, "modul": "m05_dokumentmal",
+                              "bevisrot_sha256": m05_bevisrot_sha256()}}
+    return feil, lik
+
+
+def _m35_delegert(fn):
+    def _g(grense: dict, art: dict) -> list[str]:
+        feil, lik = _m35_som_m05(art)
+        return feil + fn(grense, lik)
+    return _g
+
+
+KRAVGRENSER["m35-fasit-v1"] = {
+    "min_dorkall": 14, "min_evidens": 14,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.tilstandsavvik", "maalt.dorkall",
+            "maalt.utfylling_lik_fasit", "maalt.gjenspill_urort"),
+        "revisjonslogg_korrekt": (
+            "maalt.evidens_avvik", "maalt.evidens_totalt",
+            "maalt.evidens_uten_aktor", "maalt.evidens_delte_input_hash"),
+    },
+}
+KRAVGRENSER["m35-feilinjisering-v1"] = {
+    "min_brudd": 6,
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m35-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like",
+                            "maalt.kandidat_baerer_riggen"),
+    },
+}
+KRAVGRENSER["m35-ytelse-v1"] = {
+    "min_kall": 200, "maks_p95_ms": 100.0,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede", "maalt.riktige"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m35-{_krav}-v1"] = f"artefakt-m35-{_krav}-skjema.json"
+
+_M35_GRENSER = {
+    "m35-fasit-v1": _m35_delegert(_grenser_m05_fasit),
+    "m35-feilinjisering-v1": _m35_delegert(_grenser_m05_feilinjisering),
+    "m35-rollback-v1": _m35_delegert(_grenser_m05_rollback),
+    "m35-ytelse-v1": _m35_delegert(_grenser_m05_ytelse),
+}
+
+registrer_suitegrense(
+    "m35_kontinuitet", "m35",
+    ("platform/core/tests/test_m35_kontinuitet.py",),
     min_tester=3000, min_andel_tester=20)

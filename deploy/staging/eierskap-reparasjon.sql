@@ -57,6 +57,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm8_slot_evidens()',                                'disponit_m37_claimer'),
     ('FUNCTION', 'm8_token_evidens()',                               'disponit_m37_claimer'),
     ('FUNCTION', 'm8_valg_evidens()',                                'disponit_m37_claimer'),
+    -- 219 (M-35 evidens): triggerne skriver revisjonsloggen som claimeren.
+    ('FUNCTION', 'm35_evidens_skriv(text,text,text,uuid,jsonb)',     'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_tjeneste_evidens()',                           'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_kontakt_evidens()',                            'disponit_m37_claimer'),
+    ('FUNCTION', 'm35_post_evidens()',                               'disponit_m37_claimer'),
     -- 210: slettet i postboksen speiles — samme visking som 176, egen hendelse.
     ('FUNCTION', 'm6_melding_fjernet_i_kilden(text,uuid,text,text)',  'disponit_m37_claimer'),
     ('FUNCTION', 'm6_marker_sjekket(text,uuid,text[])',               'disponit_m37_claimer'),

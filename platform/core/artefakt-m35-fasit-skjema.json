@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m35-fasit-v1.json",
+  "title": "m35-fasit-v1 — kjent dørsekvens med kjent sluttilstand og evidens per handling (ADR-002 klasse C)",
+  "comment": "Produsert av deploy/staging/m35-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m35_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m35-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "tenanter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenanter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dorkall",
+        "evidens_avvik",
+        "evidens_delte_input_hash",
+        "evidens_per_tenant",
+        "evidens_totalt",
+        "evidens_uten_aktor",
+        "evidens_ventet",
+        "gjenspill_feilet",
+        "gjenspill_urort",
+        "per_tenant",
+        "tenanter",
+        "tilstandsavvik",
+        "utfylling_lik_fasit"
+      ],
+      "properties": {
+        "per_tenant": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "tilstandsavvik": {
+          "type": "integer"
+        },
+        "tenanter": {
+          "type": "integer"
+        },
+        "dorkall": {
+          "type": "integer"
+        },
+        "utfylling_lik_fasit": {
+          "type": "boolean"
+        },
+        "gjenspill_urort": {
+          "type": "boolean"
+        },
+        "gjenspill_feilet": {
+          "type": "integer"
+        },
+        "evidens_per_tenant": {
+          "type": "object"
+        },
+        "evidens_ventet": {
+          "type": "object"
+        },
+        "evidens_avvik": {
+          "type": "integer"
+        },
+        "evidens_totalt": {
+          "type": "integer"
+        },
+        "evidens_uten_aktor": {
+          "type": "integer"
+        },
+        "evidens_delte_input_hash": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}
