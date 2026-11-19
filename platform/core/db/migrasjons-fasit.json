@@ -210,5 +210,6 @@
   "209_utforelse_feilet.sql": "cddd5ee2be12eda876a4e7f54e4b5a4b658925e06828fb9527e06b50f428a418",
   "210_m6_fjernet_i_kilden.sql": "f55b7de5c219ddc3bbc69824c14f5dccadb3843c8c1bdc7d01a1b80c6cf475d4",
   "211_m57_signatur_frigivelse_evidens.sql": "ad994d1536e17bc7d40798015e8410ab7c36e3e117bd5497ef5cfeea2a48248b",
-  "212_m9_evidens.sql": "1df55af8613a8655fb600313cbcf04eb13a0c70d78759cb770e7bf5aaa70a4c4"
+  "212_m9_evidens.sql": "1df55af8613a8655fb600313cbcf04eb13a0c70d78759cb770e7bf5aaa70a4c4",
+  "213_m5_evidens.sql": "e60c887bd779b945bc7ace36b02e0a270b2ae63d4ba10fb8fe572926117c9655"
 }
