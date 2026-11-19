@@ -933,10 +933,10 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "m30_personvern", "m34_compliance", "m37_unntak",
                          "m39_lonnsgrunnlag", "m40_medarbeider",
                          "m41_betaling", "m42_kontovakt", "m44_kampanje",
-                         "m46_anbud", "m47_myndighetsrapport", "m48_motpart",
-                         "m49_sanksjon", "m50_postjournal", "m51_tilskudd",
-                         "m52_tollkode", "m53_hms", "m54_ehf", "m57_ats",
-                         "wcag_audit"], st
+                         "m45_esg", "m46_anbud", "m47_myndighetsrapport",
+                         "m48_motpart", "m49_sanksjon", "m50_postjournal",
+                         "m51_tilskudd", "m52_tollkode", "m53_hms", "m54_ehf",
+                         "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
                           "m03_datakvalitet", "m04_dataforvalter",
                           "m05_dokumentmal", "m06_epost", "m07_moteoperasjon",
@@ -949,10 +949,10 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                           "m30_personvern", "m34_compliance", "m37_unntak",
                           "m39_lonnsgrunnlag", "m40_medarbeider",
                           "m41_betaling", "m42_kontovakt", "m44_kampanje",
-                          "m46_anbud", "m47_myndighetsrapport", "m48_motpart",
-                          "m49_sanksjon", "m50_postjournal", "m51_tilskudd",
-                          "m52_tollkode", "m53_hms", "m54_ehf", "m57_ats",
-                          "wcag_audit"], (
+                          "m45_esg", "m46_anbud", "m47_myndighetsrapport",
+                          "m48_motpart", "m49_sanksjon", "m50_postjournal",
+                          "m51_tilskudd", "m52_tollkode", "m53_hms",
+                          "m54_ehf", "m57_ats", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

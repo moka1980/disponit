@@ -43,8 +43,8 @@
 id: m45_esg
 navn: Bærekrafts- og ESG-agent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. IKKE «kildesystemer for energi og
 # transport» — de finnes ikke, og en avhengighet til noe som ikke
 # finnes er en løgn manifestet ikke skal bære.
@@ -57,9 +57,25 @@ i18n_prefiks: esg
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m45-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m45-suite-v1-20261119T154839Z.json
+    artefakt_sha256: 3dc4c9fdfff0814a8da06d9e61bf3c11704765a341860286baac8b10030fff01
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 37 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m45_fasit.py`:
