@@ -30,8 +30,8 @@
 id: m04_dataforvalter
 navn: Data- og filforvalter
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter (m16-formen): modulen bestiller ingenting gjennom
 # policyporten og skriver ingen beslutning til evidenskjeden. Den LESER
 # katalogen og sine egne aggregater. En oppført avhengighet ville vært
@@ -42,9 +42,25 @@ i18n_prefiks: retensjon
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m04-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m04-suite-v1-20261119T090047Z.json
+    artefakt_sha256: dfffbfd67cdb5c5e28d819866fc58296f9db1a768e20ef0ae9197891cbab1053
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m04-lest.py` (ADR-002
     # klasse B), i den ISOLERTE basen på 55432 bygget fra commiten som måles.

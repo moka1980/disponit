@@ -35,7 +35,7 @@ export const MODULSTATUS = {
   // `bygges` fordi manifestet finnes; ingen av de fem har kode ennå,
   // og ingen av dem flippes av en byggemilepæl — bare av en aksept.
   3: "bygges",      // m03_datakvalitet: under_utvikling, ikke_i_drift
-  4: "bygges",      // m04_dataforvalter: under_utvikling, ikke_i_drift
+  4: "i_drift",    // m04_dataforvalter: aktiv, produksjon
   5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
   6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
                     // (rollback i kjerne-form; fasit og suite målt på nytt etter 210)

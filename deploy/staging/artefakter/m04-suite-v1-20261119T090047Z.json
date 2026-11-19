@@ -1,0 +1,25 @@
+{
+  "bestatt": true,
+  "krav_id": "m04-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 35,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m4_retensjon.py",
+      "platform/core/tests/test_m4_registeret_dekker_modulene_port.py"
+    ],
+    "bevisrot_sha256": "3bc7a07ac46cac68755172f59b0d6931ada8571a4476eeeaff7ba36faedd8a9f",
+    "commit": "e308e0660549c7265d4568e024a86d813d8892fb",
+    "modul": "m04_dataforvalter",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T09:00:47.077586+00:00"
+}
