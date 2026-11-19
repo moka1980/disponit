@@ -16,15 +16,15 @@
 # BLOKKERER ingen bestilling. Blokkering er en policy-endring som hører
 # hjemme i en v2 med attestasjon, ikke i en måler.
 #
-# TO AKSER, ÆRLIG LEST (m16/m38-formen): `status: under_utvikling` er
-# GODKJENT-aksen — ingen aksepthendelse finnes. `driftstilstand:
-# ikke_i_drift` er bokstavelig: ingen kode, ingen release, ingen
-# arbeider.
+# KODEN FINNES (092, `platform/drift/kvalitetsprofilering.py`, timeren
+# `disponit-kvalitetsprofil`). ADR-002 plasserer M-3 i klasse B
+# (plattformregister + måler): lesten er `deploy/staging/m03-lest.py`, og
+# revisjonslogg-punktet er MÅLT FRAVÆR med positiv kontroll.
 id: m03_datakvalitet
 navn: Datakvalitetsagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i registerets forstand (m16/m38-begrunnelsen):
 # v1 MÅLER og RAPPORTERER. Den bestiller ikke gjennom policyporten og
 # skriver ingen beslutning til evidenskjeden — en oppført m01/m02 ville
@@ -34,42 +34,109 @@ avhengigheter: []
 kjerne: platform/modules/m03_datakvalitet
 i18n_prefiks: datakvalitet
 
-# Sjekklisteformen er LUKKET (manifest-skjema.json). Alle punkter står
-# `nei` fordi INGEN av dem er målt: modulen har ingen kode ennå.
-# «Et manifest skal aldri lese sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m03-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m03-suite-v1-20261119T114132Z.json
+    artefakt_sha256: ba7ba579f884ac411739a990982887e357604920f7d0bf81284e90ab97cb6421
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet (m02-suite-formen). Ingen
-      kode finnes; ingen måling finnes.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 36 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m03-lest.py` (ADR-002
+    # klasse B) i den ISOLERTE basen på 55432. Seks riggregler og -tabeller
+    # dekker alle fire funntypene; en REN rettes mellom kjøringene og en
+    # negativ kontroll har bare utfylte verdier. Lukking er 092s egen dom:
+    # åpent = sett i siste fullførte kjøring.
+    status: ja
+    krav_id: m03-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.funnavvik_forste
+      - maalt.subjekter
+      - maalt.kjoring2_nye
+      - maalt.kjoring2_lukkede
+    artefakt: deploy/staging/artefakter/m03-fasit-v1-20261119T112515Z.json
+    artefakt_sha256: d1b3f303d20ffda8d20bb95b4657bc5ed00461aec5001d94df2a3439c6df045c
     notat: >-
-      KREVER: et syntetisk datasett med KJENT antall tomme felt,
-      formatavvik og duplikater, profilert lokalt og på staging med
-      begge datasett-identitetene bundet — profilen er verdiløs som
-      bevis uten en fasit å måles mot. Ingen slik måling finnes.
+      Runde 977d335d: 7 subjekter, 0 avvik etter første
+      kjøring og 0 etter andre. Første reiste 6 funn; andre reiste 0 nye
+      og lukket 1 (den rene).
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1, KLASSE B: M-3 har ingen tenantdør; regelregisteret endres i
+    # migrasjon. MÅLT FRAVÆR — gyldig fordi samme kjøring reiste fasitens funn.
+    status: ja
+    krav_id: m03-fasit-v1
+    bevismaalinger:
+      - maalt.nye_revisjonsrader
+      - maalt.endrede_fremmede_tabeller
+      - maalt.registerskrivere
+      - maalt.maaler_execute_grants
+    artefakt: deploy/staging/artefakter/m03-fasit-v1-20261119T112515Z.json
+    artefakt_sha256: d1b3f303d20ffda8d20bb95b4657bc5ed00461aec5001d94df2a3439c6df045c
     notat: >-
-      KREVER: avklaring av hva punktet betyr for en modul som per v1
-      IKKE skriver til evidenskjeden (den måler; den beslutter ikke).
-      Står nei i stedet for å låne en tolkning.
+      To kjøringer ga 0 nye rader i revisjonsloggen og 0 endrede
+      tabeller blant 372 utenfor M-3s egne fire (innholdsdigest per tabell).
+      Ingen innloggingsrolle utenom migratoren har skriverett på
+      regelregisteret; målerens eneste EXECUTE-grant er m3_profiler.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-002 D2, KLASSE B: to ekte driftsfeil. En regel som ikke kan måles er
+    # et funn, aldri 0 avvik; en runde som dør skal alarmere.
+    status: ja
+    krav_id: m03-feilinjisering-v1
+    bevismaalinger:
+      - maalt.rundegrense_alarm
+      - maalt.rundegrense_urort
+      - maalt.uten_execute_alarm
+      - maalt.uten_execute_urort
+    artefakt: deploy/staging/artefakter/m03-feilinjisering-v1-20261119T112516Z.json
+    artefakt_sha256: a309bffea5727c2260d1893cfd124d5efc4a2615822175149308634be856b902
     notat: >-
-      KREVER: at målejobben finnes å injisere feil i. Formen er gitt
-      (artefaktryddingens advisory-lås, hoppet_over skilt fra feil,
-      alarm etter to sammenhengende feil), men ingen kode kjører.
+      Rundegrense 1 ms: feilet begge gangene, alarm på den andre, M-3s fire
+      tabeller urørt (ingen kjøring som ser fullført ut). Uten EXECUTE på
+      m3_profiler gjennom den ekte inngangen: samme. En frisk kjøring etterpå
+      gikk rent. Regelbudsjettets umaalbar-vei er målt i fasiten.
   ytelse_bestatt:
-    status: nei
+    # ADR-002 D4: den EKTE jobben (`drift.kjor_kvalitetsprofilering`) mot
+    # driftsbasen med målerens egen credential, tre kjøringer.
+    status: ja
+    krav_id: m03-ytelse-v1
+    bevismaalinger:
+      - maalt.maks_sekunder
+      - maalt.regler_maalt
+      - maalt.feilede
+    artefakt: deploy/staging/artefakter/m03-ytelse-v1-20261119T111104Z.json
+    artefakt_sha256: d581b52731159aba66145123fa128d264cbf3f4efabd5ac80889c88cc5cf310c
     notat: >-
-      KREVER: pinnet grense for profileringskostnaden per tabell under
-      last, og en målt kjøring mot den. Ingen grense er pinnet; ingen
-      måling finnes.
+      24 regler målt over tre runder, tregeste 0.257 s (taket er 60 s;
+      jobbens rundegrense er 120 s). 0 umålbare, 0 feilede.
   rollback_testet:
-    status: nei
+    # ADR-002 D3: kjernen rullet til forgjengeren og fram igjen, med M-3s egen
+    # oppførsel målt.
+    status: ja
+    krav_id: m03-rollback-v1
+    bevismaalinger:
+      - maalt.apne_like
+      - maalt.drept_runde_etterlot_kjoring
+      - maalt.arbeidernokkel_fri
+    artefakt: deploy/staging/artefakter/m03-rollback-v1-20261119T112519Z.json
+    artefakt_sha256: 596f9b9ad8f65f0518d389373ec741bb870741fcdb7447791515eda197b47798
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Kjerne 38cfa13bd518 ← forgjenger a108dd30aa42. Drillen drepte en runde
+      mens den sto inne i en låst riggtabell: runden er én setning og etterlot
+      INGEN kjøringsrad, og arbeidernøkkelen var fri. Forgjengerens og
+      kandidatens kode målte hver sin hele runde med like åpne funn
+      (6 subjekter med funn).

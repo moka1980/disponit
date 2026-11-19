@@ -3800,6 +3800,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # kjenne hvert felt for å kunne si noe om hva det BETYR.
     if krav_id in _M04_GRENSER:
         return feil + _M04_GRENSER[krav_id](grense, art)
+    if krav_id in _M03_GRENSER:
+        return feil + _M03_GRENSER[krav_id](grense, art)
     if krav_id in _M05_GRENSER:
         return feil + _M05_GRENSER[krav_id](grense, art)
     if krav_id in _M16_GRENSER:
@@ -10470,4 +10472,201 @@ registrer_suitegrense(
     ("platform/core/tests/test_m5_malregister.py",
      "platform/core/tests/test_m5_forkast_port.py",
      "platform/core/tests/test_m5_editor_port.py"),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-03 — KLASSE B I ADR-002 (plattformregister + måler), M-04-formen.
+#
+# Lukking er implisitt og modulens egen dom (092, `m3_funn_vakt`): et funn
+# er ÅPENT når det ble sett i siste fullførte kjøring. Fasit, feilinjisering
+# og rollback rigges i den isolerte basen; ytelsen måles på den ekte jobben.
+# ===========================================================================
+
+M03_MODULFILER: tuple[str, ...] = (
+    "platform/drift/kvalitetsprofilering.py",
+    "platform/drift/kjor_kvalitetsprofilering.py",
+    "platform/core/db/migrations/092_m3_datakvalitet.sql",
+)
+M03_BEVISROT: tuple[str, ...] = ("deploy/staging/m03-lest.py",)
+M03_FUNNTYPER: tuple[str, ...] = ("regel_uten_kolonne", "terskel_overskredet",
+                                  "ukjent_tabell", "umaalbar")
+
+
+def m03_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M03_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m03_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m03_datakvalitet":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    try:
+        if o.get("bevisrot_sha256") != m03_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/m03-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m03_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m03_felles(art)
+    if not m:
+        return feil
+    if o.get("base") != "disponit_test@55432":
+        feil.append("riggen skriver plattformdommer og hører bare hjemme i"
+                    " disponit_test@55432")
+    feil += _m04_minst(m, "subjekter", grense["min_subjekter"])
+    if sorted(m.get("funntyper_dekket") or []) != sorted(M03_FUNNTYPER):
+        feil.append("settet dekker ikke alle registerets funntyper")
+    for felt, nokkel in (("per_subjekt_forste", "funnavvik_forste"),
+                         ("per_subjekt", "funnavvik")):
+        regnet, kart = _m04_rekne_avvik(m.get(felt))
+        if regnet is None:
+            feil.append(f"maalt.{felt} mangler — da er `{nokkel}` en påstand")
+            continue
+        if regnet != m.get(nokkel) or regnet:
+            feil.append(f"{nokkel}={m.get(nokkel)!r}, regnet {regnet},"
+                        " taket er 0")
+        if felt == "per_subjekt":
+            for merke in ("ren", "ok"):
+                if kart.get(merke, (1, [1]))[1] != []:
+                    feil.append(f"{merke} sto med funn etter andre kjøring")
+        elif not kart.get("ren", (None, []))[1]:
+            feil.append("den rene fikk ikke funn i første kjøring — da er"
+                        " lukkeveien aldri målt")
+    for felt in ("kjoring1_fullfort", "kjoring2_fullfort"):
+        feil += _m04_er(m, felt, True)
+    feil += _m04_minst(m, "kjoring1_nye", grense["min_kjoring1_nye"])
+    feil += _m04_er(m, "kjoring2_nye", 0)
+    feil += _m04_minst(m, "kjoring2_lukkede", 1)
+    feil += _m04_er(m, "nye_revisjonsrader", 0)
+    feil += _m04_er(m, "endrede_fremmede_tabeller", [])
+    feil += _m04_minst(m, "fremmede_tabeller_sett", 50)
+    feil += _m04_er(m, "registerskrivere", [])
+    feil += _m04_er(m, "maaler_execute_grants", ["m3_profiler"])
+    return feil
+
+
+def _grenser_m03_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m03_felles(art)
+    if not m:
+        return feil
+    feil += _m04_er(m, "rundegrense_feilet", [True, True])
+    feil += _m04_er(m, "rundegrense_alarm", [False, True])
+    feil += _m04_er(m, "rundegrense_urort", True)
+    feil += _m04_er(m, "injeksjonsrolle_har_execute", False)
+    feil += _m04_er(m, "uten_execute_feilet", [True, True])
+    feil += _m04_er(m, "uten_execute_alarm", [False, True])
+    rk = m.get("uten_execute_returkoder")
+    if not (isinstance(rk, list) and len(rk) == 2 and all(
+            isinstance(x, int) and x != 0 for x in rk)):
+        feil.append("en feilet kjøring skal avslutte med returkode ≠ 0")
+    feil += _m04_er(m, "uten_execute_urort", True)
+    feil += _m04_er(m, "frisk_etterpa", True)
+    return feil
+
+
+def _grenser_m03_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m03_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    for felt in ("drill_ventet_i_regelen", "drill_backends_avsluttet",
+                 "arbeidernokkel_fri", "rullbakk_fullfort",
+                 "kandidat_fullfort", "apne_like"):
+        feil += _m04_er(m, felt, True)
+    feil += _m04_er(m, "drept_runde_etterlot_kjoring", False)
+    feil += _m04_minst(m, "apne_etter_kandidat", 1)
+    return feil
+
+
+def _grenser_m03_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m03_felles(art)
+    if not m:
+        return feil
+    kj = m.get("kjoringer")
+    if not isinstance(kj, list) or len(kj) < grense["min_kjoringer"]:
+        return feil + [f"krever minst {grense['min_kjoringer']} kjøringer"]
+    try:
+        maks = max(float(k["sekunder"]) for k in kj)
+        if any(k["returkode"] != 0 or k["feilet"] or k["hoppet_over"]
+               or k["avbrutt"] for k in kj):
+            feil.append("en kjøring feilet, ble avbrutt eller hoppet over")
+        regler = sum(int(k["regler"]) for k in kj)
+    except (KeyError, TypeError, ValueError):
+        return feil + ["maalt.kjoringer er misformet"]
+    if abs(maks - float(m.get("maks_sekunder", -1))) > 1e-6:
+        feil.append("maks_sekunder stemmer ikke med kjøringene")
+    if maks > grense["maks_sekunder"]:
+        feil.append(f"maks_sekunder={maks}, taket er"
+                    f" {grense['maks_sekunder']}")
+    if regler != m.get("regler_maalt") or regler < grense["min_regler"]:
+        feil.append(f"regler_maalt={m.get('regler_maalt')!r}, regnet"
+                    f" {regler}, krever >= {grense['min_regler']}")
+    feil += _m04_er(m, "feilede", 0)
+    feil += _m04_er(m, "umaalbare", 0)
+    return feil
+
+
+KRAVGRENSER["m03-fasit-v1"] = {
+    "min_subjekter": 7, "min_kjoring1_nye": 6,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.funnavvik", "maalt.funnavvik_forste", "maalt.subjekter",
+            "maalt.kjoring2_nye", "maalt.kjoring2_lukkede"),
+        "revisjonslogg_korrekt": (
+            "maalt.nye_revisjonsrader", "maalt.endrede_fremmede_tabeller",
+            "maalt.registerskrivere", "maalt.maaler_execute_grants"),
+    },
+}
+KRAVGRENSER["m03-feilinjisering-v1"] = {
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.rundegrense_alarm", "maalt.rundegrense_urort",
+            "maalt.uten_execute_alarm", "maalt.uten_execute_urort"),
+    },
+}
+KRAVGRENSER["m03-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.apne_like",
+                            "maalt.drept_runde_etterlot_kjoring",
+                            "maalt.arbeidernokkel_fri"),
+    },
+}
+KRAVGRENSER["m03-ytelse-v1"] = {
+    # RUNDEGRENSE_MS i jobben er 120 s; en runde skal bruke en brøkdel.
+    "maks_sekunder": 60.0, "min_kjoringer": 3, "min_regler": 15,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.maks_sekunder", "maalt.regler_maalt",
+                           "maalt.feilede"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m03-{_krav}-v1"] = f"artefakt-m03-{_krav}-skjema.json"
+
+_M03_GRENSER = {
+    "m03-fasit-v1": _grenser_m03_fasit,
+    "m03-feilinjisering-v1": _grenser_m03_feilinjisering,
+    "m03-rollback-v1": _grenser_m03_rollback,
+    "m03-ytelse-v1": _grenser_m03_ytelse,
+}
+
+registrer_suitegrense(
+    "m03_datakvalitet", "m03",
+    ("platform/core/tests/test_m3_datakvalitet.py",),
     min_tester=3000, min_andel_tester=20)

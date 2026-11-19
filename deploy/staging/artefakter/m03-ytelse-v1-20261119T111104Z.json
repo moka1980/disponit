@@ -1,0 +1,48 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m03-ytelse-v1",
+  "maalt": {
+    "feilede": 0,
+    "kjoringer": [
+      {
+        "avbrutt": false,
+        "feilet": false,
+        "hoppet_over": false,
+        "regler": 8,
+        "returkode": 0,
+        "sekunder": 0.257,
+        "umaalbare": 0
+      },
+      {
+        "avbrutt": false,
+        "feilet": false,
+        "hoppet_over": false,
+        "regler": 8,
+        "returkode": 0,
+        "sekunder": 0.255,
+        "umaalbare": 0
+      },
+      {
+        "avbrutt": false,
+        "feilet": false,
+        "hoppet_over": false,
+        "regler": 8,
+        "returkode": 0,
+        "sekunder": 0.242,
+        "umaalbare": 0
+      }
+    ],
+    "maks_sekunder": 0.257,
+    "regler_maalt": 24,
+    "umaalbare": 0
+  },
+  "oppsett": {
+    "base": "disponit",
+    "bevisrot_sha256": "18b8eb92efbea025af3df193f0149892f5ead2b074509a51ddf4ae35b1ed2e86",
+    "modul": "m03_datakvalitet",
+    "runder": 3,
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:11:04.689157+00:00"
+}

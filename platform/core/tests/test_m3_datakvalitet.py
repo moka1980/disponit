@@ -1253,8 +1253,10 @@ def test_profilerens_krysstenantpolicy_er_kun_lesing(migrator):
 # ---------------------------------------------------------------------------
 
 def test_manifestet_er_gyldig_og_aerlig():
-    """Manifestet validerer, sier `under_utvikling`/`ikke_i_drift`, og
-    ingen sjekklistepunkter er flippet uten måling."""
+    """Manifestet validerer, og ingen sjekklistepunkter er flippet uten
+    måling: hvert `ja` bærer et artefakt (krav_id + artefakt), og
+    `aktiv`/`produksjon` står HVIS OG BARE HVIS alle seks er `ja` —
+    flippet er avlesningen av aksepten (ADR-002, 19.11.2026)."""
     import yaml
     import sys
     sys.path.insert(0, str(ROT / "platform" / "core"))
@@ -1262,15 +1264,24 @@ def test_manifestet_er_gyldig_og_aerlig():
     manifest = yaml.safe_load(
         (MODULROT / "manifest.yaml").read_text(encoding="utf-8"))
     assert valider_manifest(manifest) == []
-    assert manifest["status"] == "under_utvikling"
-    assert manifest["driftstilstand"] == "ikke_i_drift"
     # v1 bestiller ikke gjennom policyporten og skriver ingen beslutning
     # til evidenskjeden — en oppført m01/m02 ville vært LÅNT, ikke målt.
     assert manifest["avhengigheter"] == []
     for punkt, verdi in manifest["staging_sjekkliste"].items():
-        assert verdi["status"] == "nei", (
-            f"{punkt} er flippet uten en måling som bærer den —"
-            " et manifest skal aldri lese sterkere enn porten måler")
+        if verdi["status"] == "ja":
+            assert verdi.get("krav_id") and verdi.get("artefakt"), (
+                f"{punkt} er flippet uten en måling som bærer den —"
+                " et manifest skal aldri lese sterkere enn porten måler")
+        else:
+            assert verdi["status"] == "nei", punkt
+    alle_ja = all(v["status"] == "ja"
+                  for v in manifest["staging_sjekkliste"].values())
+    if alle_ja:
+        assert manifest["status"] == "aktiv"
+        assert manifest["driftstilstand"] == "produksjon"
+    else:
+        assert manifest["status"] == "under_utvikling"
+        assert manifest["driftstilstand"] == "ikke_i_drift"
 
 
 def test_ruten_og_scopet_er_deklarert_sammen():

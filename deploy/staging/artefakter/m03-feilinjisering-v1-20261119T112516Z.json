@@ -1,0 +1,43 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m03-feilinjisering-v1",
+  "maalt": {
+    "frisk_etterpa": true,
+    "injeksjonsrolle_har_execute": false,
+    "rundegrense_alarm": [
+      false,
+      true
+    ],
+    "rundegrense_feilet": [
+      true,
+      true
+    ],
+    "rundegrense_urort": true,
+    "uten_execute_alarm": [
+      false,
+      true
+    ],
+    "uten_execute_feilet": [
+      true,
+      true
+    ],
+    "uten_execute_returkoder": [
+      1,
+      1
+    ],
+    "uten_execute_urort": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "18b8eb92efbea025af3df193f0149892f5ead2b074509a51ddf4ae35b1ed2e86",
+    "injeksjoner": [
+      "statement_timeout 1 ms rundt hele runden",
+      "tilkobling som disponit — uten EXECUTE på m3_profiler(integer)"
+    ],
+    "modul": "m03_datakvalitet",
+    "runde": "ae1eca51",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:25:16.174783+00:00"
+}

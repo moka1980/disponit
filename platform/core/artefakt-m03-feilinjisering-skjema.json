@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m03-feilinjisering-v1.json",
+  "title": "m03-feilinjisering-v1 — to ekte driftsfeil gjennom den ekte inngangen (ADR-002 D2)",
+  "comment": "Produsert av deploy/staging/m03-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m03_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m03-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "injeksjoner",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "injeksjoner": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frisk_etterpa",
+        "injeksjonsrolle_har_execute",
+        "rundegrense_alarm",
+        "rundegrense_feilet",
+        "rundegrense_urort",
+        "uten_execute_alarm",
+        "uten_execute_feilet",
+        "uten_execute_returkoder",
+        "uten_execute_urort"
+      ],
+      "properties": {
+        "rundegrense_feilet": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "rundegrense_alarm": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "rundegrense_urort": {
+          "type": "boolean"
+        },
+        "injeksjonsrolle_har_execute": {
+          "type": "boolean"
+        },
+        "uten_execute_feilet": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "uten_execute_alarm": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "uten_execute_returkoder": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "uten_execute_urort": {
+          "type": "boolean"
+        },
+        "frisk_etterpa": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m03-rollback-v1",
+  "maalt": {
+    "apne_etter_kandidat": 6,
+    "apne_etter_rullbakk": 6,
+    "apne_like": true,
+    "arbeidernokkel_fri": true,
+    "drept_runde_etterlot_kjoring": false,
+    "drill_backends_avsluttet": true,
+    "drill_ventet_i_regelen": true,
+    "kandidat_fullfort": true,
+    "rullbakk_fullfort": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "18b8eb92efbea025af3df193f0149892f5ead2b074509a51ddf4ae35b1ed2e86",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "38cfa13bd518e45e80213287cc7b92ba2a9043ebff4bda8fe7f275897ba16357",
+    "modul": "m03_datakvalitet",
+    "modul_forgjenger": "24eb6c65ea45a14367e2021495efad4135fef8631a5c1da0abe92f75f72cd1e9",
+    "modul_kandidat": "24eb6c65ea45a14367e2021495efad4135fef8631a5c1da0abe92f75f72cd1e9",
+    "runde": "e1883d77",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:25:18.954942+00:00"
+}

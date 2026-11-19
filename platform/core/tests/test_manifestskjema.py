@@ -922,8 +922,9 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # 18/9 (natt): m24 og m42 — riggene deler nå også maskineriet, og
     # begge gikk hele lesten uten en eneste modulspesifikk produsent.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
-                         "m04_dataforvalter", "m05_dokumentmal", "m06_epost",
-                         "m09_kunnskap", "m12_tilgang", "m13_avstemming",
+                         "m03_datakvalitet", "m04_dataforvalter",
+                         "m05_dokumentmal", "m06_epost", "m09_kunnskap",
+                         "m12_tilgang", "m13_avstemming",
                          "m14_fakturakontroll", "m15_likviditet",
                          "m16_nokkeltall", "m17_kundeservice",
                          "m18_onboarding", "m19_adresse", "m20_innhold",
@@ -936,8 +937,9 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "m52_tollkode", "m53_hms", "m54_ehf", "m57_ats",
                          "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
-                          "m04_dataforvalter", "m05_dokumentmal", "m06_epost",
-                          "m09_kunnskap", "m12_tilgang", "m13_avstemming",
+                          "m03_datakvalitet", "m04_dataforvalter",
+                          "m05_dokumentmal", "m06_epost", "m09_kunnskap",
+                          "m12_tilgang", "m13_avstemming",
                           "m14_fakturakontroll", "m15_likviditet",
                           "m16_nokkeltall", "m17_kundeservice",
                           "m18_onboarding", "m19_adresse", "m20_innhold",
