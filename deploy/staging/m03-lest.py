@@ -131,6 +131,9 @@ def _tabell(mg, navn: str, rader: list[tuple[str, str | None]]) -> None:
 
 
 def _regel(mg, regel_id: str, tabell: str) -> None:
+    # Regelregisteret eies av modulens eier; migratoren er medlem UTEN
+    # arv og må ta rollen for én innsetting (testsuitens form).
+    mg.execute(f"SET LOCAL ROLE {EIER}")
     mg.execute(
         "INSERT INTO kvalitetsregel (regel_id, relasjon, kolonne, regeltype,"
         " uttrykk, alvorlighet, terskel_andel, begrunnelse) VALUES"
