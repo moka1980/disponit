@@ -18,9 +18,11 @@ dag (se `UNAABARE`). De to andre rigges, begge på `periode_id`:
   tenant B (estimatterskel 1001 bp)
     5. `estimatandel_over_terskel_uavklart` — samme regel
 
-HVER PERIODE HAR SIN EGEN STANDARD. «Foreldet» gjelder alle åpne
-perioder på samme standard, så en delt standard ville gitt subjektene
-flere funn enn fasiten sier.
+HVER PERIODE HAR SIN EGEN STANDARD — OG SIN EGEN KATEGORI. «Foreldet»
+gjelder alle åpne perioder på samme standard, så en delt standard ville
+gitt subjektene flere funn enn fasiten sier; og faktorens unikhet er
+(tenant, kategori, standardversjon, gyldig_fra) uten standarden, så to
+standarder med samme kategori og dato ville kollidert.
 """
 from __future__ import annotations
 
@@ -98,13 +100,18 @@ def _kilde(rt, tenant: str) -> str:
     return kid
 
 
+def _kategori(standard: str) -> str:
+    return f"drivstoff_{standard.lower()}"
+
+
 def _faktor(rt, tenant: str, kilde: str, standard: str, versjon: str,
             fra_sql: str) -> str:
     fid = str(uuid.uuid4())
     _sk(rt, tenant)
-    rt.execute(f"SELECT m45_registrer_faktor(%s,%s,'drivstoff','liter',"
+    rt.execute(f"SELECT m45_registrer_faktor(%s,%s,%s,'liter',"
                f" 2.5, %s, %s, %s, {fra_sql}, %s)",
-               (tenant, fid, standard, versjon, kilde, AKTOR))
+               (tenant, fid, _kategori(standard), standard, versjon, kilde,
+                AKTOR))
     rt.commit()
     return fid
 
@@ -121,11 +128,12 @@ def _periode(rt, tenant: str, standard: str, merke: str) -> str:
 
 
 def _maaling(rt, tenant: str, periode: str, faktor: str, kilde: str,
-             estimat: bool) -> None:
+             estimat: bool, standard: str) -> None:
     _sk(rt, tenant)
-    rt.execute("SELECT * FROM m45_registrer_maaling(%s,%s,%s,'drivstoff',"
+    rt.execute("SELECT * FROM m45_registrer_maaling(%s,%s,%s,%s,"
                " 100, 'liter', %s, %s, %s, NULL, %s, %s)",
-               (tenant, str(uuid.uuid4()), periode, faktor, estimat,
+               (tenant, str(uuid.uuid4()), periode, _kategori(standard),
+                faktor, estimat,
                 "Fasit: anslag fra innkjøp" if estimat else None, kilde,
                 AKTOR))
     rt.commit()
@@ -150,16 +158,16 @@ def forbered(rt, runde: str) -> dict:
         _faktor(rt, a, k, std, "v2", "current_date")
     f2 = _faktor(rt, a, k, "S2", "v1", "current_date - 30")
     s["estimat"] = _periode(rt, a, "S2", "estimat")
-    _maaling(rt, a, s["estimat"], f2, k, estimat=True)
+    _maaling(rt, a, s["estimat"], f2, k, estimat=True, standard="S2")
     f4 = _faktor(rt, a, k, "S4", "v1", "current_date - 30")
     s["ok"] = _periode(rt, a, "S4", "ok")
-    _maaling(rt, a, s["ok"], f4, k, estimat=False)
+    _maaling(rt, a, s["ok"], f4, k, estimat=False, standard="S4")
 
     b = rigg["b"]
     kb = _kilde(rt, b)
     fb = _faktor(rt, b, kb, "S2", "v1", "current_date - 30")
     s["estimat_b"] = _periode(rt, b, "S2", "estimat_b")
-    _maaling(rt, b, s["estimat_b"], fb, kb, estimat=True)
+    _maaling(rt, b, s["estimat_b"], fb, kb, estimat=True, standard="S2")
     rigg["subjekter"] = {m: {"merke": m, "subjekt_id": v}
                          for m, v in s.items()}
     return rigg
