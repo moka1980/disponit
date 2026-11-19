@@ -28,8 +28,8 @@
 id: m20_innhold
 navn: Nettside- og innholdsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 avhengigheter:
   - m01_policy
   - m02_revisjonslogg
@@ -38,33 +38,143 @@ i18n_prefiks: innhold
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m20-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m20-suite-v1-20261119T002818Z.json
+    artefakt_sha256: eadd461cff5781f141f490759a9bcbb14ead4d69e7f531be2df762741b7d59da
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 44 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m20_fasit.py`:
+    #
+    # M-20s fasitsett: tre utkast og tre kilder i to tenanter med KJENT dom.
+    #
+    # Innholdsregisteret har seks funntyper på én generisk nøkkel,
+    # `referanse` — et utkast, en kilde eller en publisering etter typen.
+    # Sveipen skriver tre av dem; de tre andre er umulige med vilje
+    # (migrasjonens egen kommentar: «at de står i settet OG er umulige er hele
+    # beviset»).
+    #
+    #   tenant A (kilder gyldige 365 døgn, visning 60 min, varsel 30 døgn)
+    #     1. `klart_utkast_uten_forhaandsvisning` — merket klart, aldri sett
+    #     2. `kilde_utloper_snart_uavklart`       — kilden gjelder 5 døgn til og
+    #                                                bærer en publisert påstand
+    #     3. (ren)                                — som 1; vises MELLOM
+    #                                                kjøringene
+    #     4. (k_lang)                             — kilden gjelder 365 døgn
+    #     5. (ok)                                 — klart og vist, ikke publisert
+    #
+    #   tenant B (INGEN krav)
+    #     6. (k_b)                                — en kilde sveipen aldri skal
+    #                                                røre: den går bare over
+    #                                                tenanter med krav
+    #
+    # BARE A HAR KRAV, MED VILJE. Kravhendelsen i `m20_sett_krav` bærer bare
+    # versjonsnummeret (ingen tenant, ingen verdier), så første krav i to
+    # tenanter gir alltid samme `input_hash` — evidenskjeden ville målt en
+    # kollisjon riggen selv laget.
+    #
+    # Hvert utkast er sin egen side: et utkast på en side som alt har et
+    # utkast i arbeid, ville bygget på det.
+    status: ja
+    krav_id: m20-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m20-fasit-v1-20261118T223851Z.json
+    artefakt_sha256: 8128146cc31a5aabfebb369b7a8385c53de3950fbe101266e242a028eaec7743
     notat: >-
-      KREVER: et utkast med en produktpåstand UTEN kilde, slik at
-      porten kan måle at det ikke blir klart til publisering.
+      Runde bfaed9e2: 6 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m20-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m20-fasit-v1-20261118T223851Z.json
+    artefakt_sha256: 8128146cc31a5aabfebb369b7a8385c53de3950fbe101266e242a028eaec7743
     notat: >-
-      KREVER: at hver aktivering kan spores til utkastversjonen og
-      hashen den hvilte på — ellers kan «hva sto der da?» ikke
-      besvares etter en rollback.
+      20 hendelser i kjeden (merk_klar: 4, publiser: 1, registrer_kilde: 3,
+      registrer_paastand: 4, registrer_utkast: 4, registrer_visning: 3,
+      sett_krav: 1), 0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m20-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m20-feilinjisering-v1-20261118T223851Z.json
+    artefakt_sha256: ff0542449f767671acdff3a10fa593be2e8b71189288f3fe906a0b288fea898d
     notat: >-
-      KREVER: at en rollback FAKTISK ruller tilbake, målt ved at den
-      forrige versjonen står etterpå. En rollback som bare setter et
-      flagg er pynt.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 35 åpne og 4 lukkede over 24 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m20-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m20-ytelse-v1-20261118T223851Z.json
+    artefakt_sha256: d390068b35f17f428a6e8cea5b1f937b9c1c007b4964069c7edd0c305341a9a2
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0241 / 0,0231 / 0,0225 s) over 23 tenanter; den
+      DÅRLIGSTE er dommen. 0,0241 s mot taket på 60 — 0,0010 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m20-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m20-rollback-v1-20261118T223853Z.json
+    artefakt_sha256: adc4b8029498267afd6d6ec85a9d892558c1cc8d224d86275d3787b60587f23a
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen — og merk
-      at dette er noe ANNET enn innholdsrollbacken over.
+      Drillet 4ce84f81 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 3 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

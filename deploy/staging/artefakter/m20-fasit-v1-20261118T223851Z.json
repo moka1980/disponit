@@ -1,0 +1,84 @@
+{
+  "bestatt": true,
+  "krav_id": "m20-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "merk_klar": 4,
+      "publiser": 1,
+      "registrer_kilde": 3,
+      "registrer_paastand": 4,
+      "registrer_utkast": 4,
+      "registrer_visning": 3,
+      "sett_krav": 1
+    },
+    "evidens_totalt": 20,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [],
+        "merke": "k_lang",
+        "subjekt_id": "d8dc00b1-2147-4577-aaad-8b27c30e2e6f",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "kilde_utloper_snart_uavklart"
+        ],
+        "merke": "k_snart",
+        "subjekt_id": "e2a7d8d4-3ebf-42bb-b60a-bbbf29d23cf2",
+        "ventet": "kilde_utloper_snart_uavklart"
+      },
+      {
+        "fikk": [],
+        "merke": "k_b",
+        "subjekt_id": "37a572fa-9a87-445f-a768-8878adc7ce6f",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "klart_utkast_uten_forhaandsvisning"
+        ],
+        "merke": "klar_uten",
+        "subjekt_id": "a4b4779a-c6f1-4e1d-ad29-3186d62b15c3",
+        "ventet": "klart_utkast_uten_forhaandsvisning"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "55ec9622-0d98-40b8-91cc-37a179fba244",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "9deaafb0-5222-4789-ae96-bb093f6f0abe",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 3,
+    "sveip1_tenanter": 23,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 32
+  },
+  "oppsett": {
+    "bevisrot_sha256": "b3e643ee84d652788e257e5939b4e724a9fdf91f4dda939bae94a3ae0dd80e83",
+    "evidenskilde": "m20_innhold",
+    "modul": "m20_innhold",
+    "riggmodul": "m20_fasit",
+    "runde": "bfaed9e2",
+    "sett_sha256": "e9aa1f3f7a7e8f9786f2790c2e2d60c263262272698681f8da1f8d4d89c2ae03",
+    "tenanter": [
+      "t-m20fasit-a-bfaed9e2",
+      "t-m20fasit-b-bfaed9e2"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:38:51.056110+00:00"
+}

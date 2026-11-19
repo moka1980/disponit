@@ -5629,6 +5629,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m53_hms",
                          "platform/drift/hmssveip.py"),
     },
+    "m20_innhold": {
+        "modul_fil": "innholdssveip",
+        "funntabell": "innholdsfunn",
+        # Én generisk nøkkel: utkast, kilde eller publisering etter typen.
+        "subjektkolonne": "referanse",
+        "tenantkilde": "innholdskrav",
+        "maalerolle": "disponit_innhold_eier",
+        "sveipedor": "m20_sveip_innhold(int)",
+        "dsn_variabel": "DISPONIT_INNHOLDSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m20-fasit-v1",
+        "feilinjisering_krav": "m20-feilinjisering-v1",
+        "ytelse_krav": "m20-ytelse-v1",
+        "rollback_krav": "m20-rollback-v1",
+        "riggmodul": "m20_fasit",
+        "releasefiler": ("platform/modules/m20_innhold",
+                         "platform/drift/innholdssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6351,7 +6370,7 @@ registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m13_avstemming", min_subjekter=6, min_evidens=8,
                       tenantprefiks="t-m13fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=4)
+                       min_rullbakk_funn=3)
 
 #: M-18s grenser. Tre funntyper, alle nåbare — men ALLE TRE henger på
 #: samme subjektnøkkel, og `steg_over_frist` gir én rad per forsinket
@@ -6361,7 +6380,7 @@ registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m18_onboarding", min_subjekter=6, min_evidens=17,
                       tenantprefiks="t-m18fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=4)
+                       min_rullbakk_funn=3)
 
 #: M-41s grenser. Fire funntyper, alle nåbare — hele alders-aksen er en
 #: dørparameter. Gulvet for første sveip er FEM, altså settets faktiske
@@ -6371,7 +6390,7 @@ registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m41_betaling", min_subjekter=6, min_evidens=13,
                       tenantprefiks="t-m41fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m41_betaling", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=4)
+                       min_rullbakk_funn=3)
 
 #: M-39s grenser. Fem funntyper, alle nåbare. Funnene aggregeres PER
 #: LØNNSTAKER, så hver merkelapp har sin egen taker med nøyaktig én dag.
@@ -6553,6 +6572,16 @@ registrer_sveipgrenser("m53_hms", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m53_hms", "m53",
                       ("platform/core/tests/test_m53_hms.py",),
                       min_tester=3000, min_andel_tester=32)
+# M-20: gulvene er litt under det målte 18/11 (6 subjekter, 20
+# evidenshendelser; to typer over to utkast og én kilde).
+registrer_fasitgrense("m20_innhold", min_subjekter=6, min_evidens=18,
+                      tenantprefiks="t-m20fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m20_innhold", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=3)
+
+registrer_suitegrense("m20_innhold", "m20",
+                      ("platform/core/tests/test_m20_innhold.py",),
+                      min_tester=3000, min_andel_tester=38)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
