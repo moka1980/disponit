@@ -24,7 +24,7 @@ PUNKTENE (ADR-002 D1–D4):
                   målt; og MÅLT FRAVÆR: null nye rader i revisjonsloggen,
                   null endrede rader utenfor M-04s fem egne tabeller,
                   ingen innloggingsrolle utenom migratoren med skriverett
-                  på registeret, og nøyaktig én definer-funksjon målerens
+                  på registeret, og nøyaktig ett eksplisitt EXECUTE-grant til
                   rolle kan kalle.
   feilinjisering  to ekte driftsfeil: `statement_timeout` på 1 ms (hvert
                   lager skal bli målt ELLER et `umaalbar`-funn, aldri en
@@ -286,7 +286,7 @@ def _radbilde(sup) -> dict[str, str]:
 
 def _katalogbevis(sup) -> dict:
     """D1 (b): ingen rolle utenom migratoren kan skrive registeret, og
-    målerens rolle kan kalle nøyaktig én definer-funksjon."""
+    målerens rolle har nøyaktig ett eksplisitt EXECUTE-grant."""
     skrivere = [r[0] for r in sup.execute(
         "SELECT r.rolname FROM pg_roles r WHERE r.rolcanlogin"
         " AND NOT r.rolsuper AND r.rolname <> 'disponit_migrator'"
@@ -299,14 +299,19 @@ def _katalogbevis(sup) -> dict:
         " AND c.relkind IN ('r','p') AND has_table_privilege(%s, c.oid,"
         " 'INSERT,UPDATE,DELETE,TRUNCATE') ORDER BY 1",
         (MAALER,)).fetchall()]
-    definer = [r[0] for r in sup.execute(
-        "SELECT p.proname FROM pg_proc p JOIN pg_namespace n"
-        " ON n.oid = p.pronamespace WHERE n.nspname = 'public'"
-        " AND p.prosecdef AND has_function_privilege(%s, p.oid, 'EXECUTE')"
-        " ORDER BY 1", (MAALER,)).fetchall()]
+    # ACL-en leses EKSPLISITT (suitens form): `has_function_privilege`
+    # er sann også for det PUBLIC har, og da ville porten sagt at måleren
+    # har rettigheter den bare arver av å være en rolle.
+    grants = sorted({r[0] for r in sup.execute(
+        "SELECT p.proname FROM pg_proc p"
+        "  JOIN pg_namespace n ON n.oid = p.pronamespace,"
+        "  LATERAL aclexplode(p.proacl) a"
+        " WHERE n.nspname = 'public' AND a.privilege_type = 'EXECUTE'"
+        "   AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = %s)",
+        (MAALER,)).fetchall()})
     sup.rollback()
     return {"registerskrivere": skrivere, "maaler_skriverett": maaler_skriv,
-            "maaler_definerfunksjoner": definer}
+            "maaler_execute_grants": grants}
 
 
 def _revisjonsrader(sup) -> int:
@@ -569,6 +574,7 @@ def _kjor_kode(rot: Path, dsn: str) -> dict:
 def rollback(forgjenger: Path) -> Path:
     sup = psycopg.connect(_env("M04_SUPER_DSN"))
     _er_isolert(sup)
+    sup.rollback()
     sup.autocommit = True
     mg = psycopg.connect(_env("DISPONIT_TEST_MIGRATOR_DSN"))
     maaler = _env("DISPONIT_TEST_LAGERMAALER_DSN")

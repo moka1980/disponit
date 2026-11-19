@@ -9850,7 +9850,7 @@ def _grenser_m04_fasit(grense: dict, art: dict) -> list[str]:
                        grense["min_fremmede_tabeller"])
     feil += _m04_er(m, "registerskrivere", [])
     feil += _m04_er(m, "maaler_skriverett", [])
-    feil += _m04_er(m, "maaler_definerfunksjoner", ["m4_mal_lagre"])
+    feil += _m04_er(m, "maaler_execute_grants", ["m4_mal_lagre"])
     return feil
 
 
@@ -9950,7 +9950,7 @@ KRAVGRENSER["m04-fasit-v1"] = {
             "maalt.maaling2_nye", "maalt.maaling2_lukkede"),
         "revisjonslogg_korrekt": (
             "maalt.nye_revisjonsrader", "maalt.endrede_fremmede_tabeller",
-            "maalt.registerskrivere", "maalt.maaler_definerfunksjoner"),
+            "maalt.registerskrivere", "maalt.maaler_execute_grants"),
     },
 }
 KRAVGRENSER["m04-feilinjisering-v1"] = {

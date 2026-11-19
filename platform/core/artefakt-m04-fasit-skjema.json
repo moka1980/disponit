@@ -78,7 +78,7 @@
         "funnavvik",
         "funnavvik_forste",
         "funntyper_dekket",
-        "maaler_definerfunksjoner",
+        "maaler_execute_grants",
         "maaler_skriverett",
         "maaling1_ferdig",
         "maaling1_nye",
@@ -224,7 +224,7 @@
             "type": "string"
           }
         },
-        "maaler_definerfunksjoner": {
+        "maaler_execute_grants": {
           "type": "array",
           "items": {
             "type": "string"
