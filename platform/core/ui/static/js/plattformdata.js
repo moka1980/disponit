@@ -170,7 +170,7 @@ export const MODULSTATUS = {
   // Flippes av en modulaksept, aldri av en byggemilepæl.
   7: "i_drift",    // m07_moteoperasjon: aktiv, produksjon
   20: "i_drift",    // m20_innhold: aktiv, produksjon
-  43: "bygges",     // m43_telefoni: under_utvikling, ikke_i_drift
+  43: "i_drift",    // m43_telefoni: aktiv, produksjon
   45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
   // KLYNGE 10 — HANDLINGENE. Registrert med grensene, før koden.
   //

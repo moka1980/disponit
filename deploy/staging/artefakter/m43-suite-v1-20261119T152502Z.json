@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m43-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 36,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m43_telefoni.py"
+    ],
+    "bevisrot_sha256": "8121bc624915bc50e5ec13901e644969d4fa88ccda9e0909d03623e2c3684b97",
+    "commit": "3b1df8478bb840c486f56fdcc54406d4e4313c5b",
+    "modul": "m43_telefoni",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:25:02.327518+00:00"
+}
