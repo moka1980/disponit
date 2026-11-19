@@ -190,7 +190,7 @@ export const MODULSTATUS = {
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
-  31: "bygges",
+  31: "i_drift",    // m31_modellstyring: aktiv, produksjon
   // m35_kontinuitet: under_utvikling, ikke_i_drift — registrert 31/8
   // sammen med kontinuitetsregisteret (089), øvelseslogikken og
   // m35-v1-grensen. Flippes av en M-35-aksept, aldri av en
