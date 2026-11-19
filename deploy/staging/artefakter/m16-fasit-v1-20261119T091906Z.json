@@ -1,0 +1,186 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m16-fasit-v1",
+  "maalt": {
+    "ekskluderte_kolonner": {
+      "api_tokener": [
+        "last_used_at"
+      ]
+    },
+    "endrede_tabeller": [],
+    "fremmede_tabeller_sett": 376,
+    "funnavvik": 0,
+    "m16_definere": 9,
+    "nye_revisjonsrader": 0,
+    "per_svar": [
+      {
+        "fikk": {
+          "apne_naa": 3,
+          "beslutninger": {
+            "deler": {
+              "STOPP": 2,
+              "TILLAT": 5,
+              "UNNTAK": 5
+            },
+            "total": 12
+          },
+          "unntak_lukkede_totalt": 2,
+          "unntak_lukketid": {
+            "antall": 2,
+            "gjennomsnitt_s": 3600,
+            "sum_s": 7200
+          }
+        },
+        "status": 200,
+        "tenant": "a",
+        "ventet": {
+          "apne_naa": 3,
+          "beslutninger": {
+            "deler": {
+              "STOPP": 2,
+              "TILLAT": 5,
+              "UNNTAK": 5
+            },
+            "total": 12
+          },
+          "unntak_lukkede_totalt": 2,
+          "unntak_lukketid": {
+            "antall": 2,
+            "gjennomsnitt_s": 3600,
+            "sum_s": 7200
+          }
+        },
+        "vindu": "24t"
+      },
+      {
+        "fikk": {
+          "apne_naa": 3,
+          "beslutninger": {
+            "deler": {
+              "STOPP": 2,
+              "TILLAT": 6,
+              "UNNTAK": 5
+            },
+            "total": 13
+          },
+          "unntak_lukkede_totalt": 2,
+          "unntak_lukketid": {
+            "antall": 2,
+            "gjennomsnitt_s": 3600,
+            "sum_s": 7200
+          }
+        },
+        "status": 200,
+        "tenant": "a",
+        "ventet": {
+          "apne_naa": 3,
+          "beslutninger": {
+            "deler": {
+              "STOPP": 2,
+              "TILLAT": 6,
+              "UNNTAK": 5
+            },
+            "total": 13
+          },
+          "unntak_lukkede_totalt": 2,
+          "unntak_lukketid": {
+            "antall": 2,
+            "gjennomsnitt_s": 3600,
+            "sum_s": 7200
+          }
+        },
+        "vindu": "7d"
+      },
+      {
+        "fikk": {
+          "apne_naa": 1,
+          "beslutninger": {
+            "deler": {
+              "TILLAT": 4,
+              "UNNTAK": 1
+            },
+            "total": 5
+          },
+          "unntak_lukkede_totalt": 0,
+          "unntak_lukketid": {
+            "antall": 0,
+            "gjennomsnitt_s": null,
+            "sum_s": 0
+          }
+        },
+        "status": 200,
+        "tenant": "b",
+        "ventet": {
+          "apne_naa": 1,
+          "beslutninger": {
+            "deler": {
+              "TILLAT": 4,
+              "UNNTAK": 1
+            },
+            "total": 5
+          },
+          "unntak_lukkede_totalt": 0,
+          "unntak_lukketid": {
+            "antall": 0,
+            "gjennomsnitt_s": null,
+            "sum_s": 0
+          }
+        },
+        "vindu": "24t"
+      },
+      {
+        "fikk": {
+          "apne_naa": 1,
+          "beslutninger": {
+            "deler": {
+              "TILLAT": 4,
+              "UNNTAK": 1
+            },
+            "total": 5
+          },
+          "unntak_lukkede_totalt": 0,
+          "unntak_lukketid": {
+            "antall": 0,
+            "gjennomsnitt_s": null,
+            "sum_s": 0
+          }
+        },
+        "status": 200,
+        "tenant": "b",
+        "ventet": {
+          "apne_naa": 1,
+          "beslutninger": {
+            "deler": {
+              "TILLAT": 4,
+              "UNNTAK": 1
+            },
+            "total": 5
+          },
+          "unntak_lukkede_totalt": 0,
+          "unntak_lukketid": {
+            "antall": 0,
+            "gjennomsnitt_s": null,
+            "sum_s": 0
+          }
+        },
+        "vindu": "7d"
+      }
+    ],
+    "svar": 4,
+    "tenanter": 2,
+    "volatile_definere": []
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "cdaf65407fa805bb3b9bf9fc5d06a699e80af5fd0cea8242e9e660bf8b095022",
+    "modul": "m16_nokkeltall",
+    "runde": "fe118c32",
+    "tenanter": {
+      "a": "t-m16fasit-a-fe118c32",
+      "b": "t-m16fasit-b-fe118c32"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T09:19:06.309299+00:00"
+}

@@ -56,7 +56,7 @@ export const MODULSTATUS = {
   // Manifestet sier under_utvikling/ikke_i_drift om registerobjektet;
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
-  16: "bygges",
+  16: "i_drift",    // m16_nokkeltall: aktiv, produksjon
   21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
   22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
   30: "i_drift",    // m30_personvern: aktiv, produksjon
@@ -126,7 +126,7 @@ export const MODULSTATUS = {
   48: "i_drift",    // m48_motpart: aktiv, produksjon
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
   46: "i_drift",    // m46_anbud: aktiv, produksjon
-  51: "bygges",     // m51_tilskudd: under_utvikling, ikke_i_drift
+  51: "i_drift",    // m51_tilskudd: aktiv, produksjon
   55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
   // Registrert ved fødselen sammen med grensene m47/m50/m52/m53/

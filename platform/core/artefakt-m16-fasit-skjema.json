@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m16-fasit-v1.json",
+  "title": "m16-fasit-v1 — kjent datasett gjennom det ekte endepunktet, og MÅLT FRAVÆR (ADR-002 D1, klasse D)",
+  "comment": "Produsert av deploy/staging/m16-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m16_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m16-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "tenanter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenanter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ekskluderte_kolonner",
+        "endrede_tabeller",
+        "fremmede_tabeller_sett",
+        "funnavvik",
+        "m16_definere",
+        "nye_revisjonsrader",
+        "per_svar",
+        "svar",
+        "tenanter",
+        "volatile_definere"
+      ],
+      "properties": {
+        "svar": {
+          "type": "integer"
+        },
+        "per_svar": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tenant",
+              "vindu",
+              "status",
+              "ventet",
+              "fikk"
+            ],
+            "properties": {
+              "tenant": {
+                "type": "string",
+                "minLength": 1
+              },
+              "vindu": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "integer"
+              },
+              "ventet": {
+                "type": "object"
+              },
+              "fikk": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "funnavvik": {
+          "type": "integer"
+        },
+        "tenanter": {
+          "type": "integer"
+        },
+        "nye_revisjonsrader": {
+          "type": "integer"
+        },
+        "fremmede_tabeller_sett": {
+          "type": "integer"
+        },
+        "endrede_tabeller": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "m16_definere": {
+          "type": "integer"
+        },
+        "volatile_definere": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ekskluderte_kolonner": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
