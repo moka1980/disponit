@@ -10,6 +10,10 @@
 # den claimer-eide utstederdøren, målt i testene, aldri en
 # katalogpåstand.
 #
+# ADR-002 (19.11.2026): M-8 er klasse C. Fra 214 skriver hver skrivende
+# vei sin hendelse i evidenskjeden, og lesten er
+# `deploy/staging/m08-lest.py` (M-57-kjeden gjennom testsuitens hjelpere).
+#
 # Status er UNDER_UTVIKLING til en M-8-aksept er kjørt og skrevet i
 # basen — flippen er katalogens AVLESNING av en aksepthendelse, aldri en
 # påstand i forkant (m56/m02-formen, som M-57s eget manifest).
