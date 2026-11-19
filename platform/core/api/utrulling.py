@@ -52,7 +52,7 @@ RESERVESPRAK = "nb"
 #:     oversettelsene følger raden ut gjennom den AUTENTISERTE veien i stedet.
 _UTRULLING: tuple[dict, ...] = (
     {"id": "nordvik", "navn": "Nordvik Regnskap AS", "plan": "pilot",
-     "moduler": (1, 2, 16, 37),
+     "moduler": (1, 2, 16, 37, 40),
      "neste": {"nb": "M-38 når kapasitet og købevis er grønt.",
                "en": "M-38 once capacity and queue evidence are green."}},
     {"id": "bjorkli", "navn": "Bjørkli Elektro", "plan": "pilot",
