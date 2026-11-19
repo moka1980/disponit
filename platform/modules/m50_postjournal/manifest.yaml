@@ -36,8 +36,8 @@
 id: m50_postjournal
 navn: Postjournal- og innsynsvakt
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m50-v1` bærer invarianten
 # `treff_uten_formaal` — en sammenstilling av offentlige data uten et
 # skrevet formål er en behandling ingen kan gjøre rede for.

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m04-rollback-v1.json",
+  "title": "m04-rollback-v1 — kjernen rullet til forgjengeren og fram igjen, med M-04s egen oppførsel målt (ADR-002 D3)",
+  "comment": "Produsert av deploy/staging/m04-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m04_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m04-rollback-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "forgjenger",
+        "kjerne_forgjenger",
+        "kjerne_kandidat",
+        "modul",
+        "modul_forgjenger",
+        "modul_kandidat",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forgjenger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kjerne_forgjenger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kjerne_kandidat": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modul_forgjenger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modul_kandidat": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "apne_etter_kandidat",
+        "apne_etter_rullbakk",
+        "apne_like",
+        "arbeidernokkel_fri",
+        "drept_maaling",
+        "drept_maaling_avbrutt",
+        "drept_maaling_fullfort",
+        "drill_backends_avsluttet",
+        "drill_ventet_i_lageret",
+        "dubletter",
+        "kandidat_feilet",
+        "kandidat_ferdig",
+        "rullbakk_feilet",
+        "rullbakk_ferdig"
+      ],
+      "properties": {
+        "drill_ventet_i_lageret": {
+          "type": "boolean"
+        },
+        "drill_backends_avsluttet": {
+          "type": "boolean"
+        },
+        "drept_maaling_avbrutt": {
+          "type": "boolean"
+        },
+        "drept_maaling_fullfort": {
+          "type": "boolean"
+        },
+        "drept_maaling": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "arbeidernokkel_fri": {
+          "type": "boolean"
+        },
+        "rullbakk_ferdig": {
+          "type": "boolean"
+        },
+        "rullbakk_feilet": {
+          "type": "boolean"
+        },
+        "kandidat_ferdig": {
+          "type": "boolean"
+        },
+        "kandidat_feilet": {
+          "type": "boolean"
+        },
+        "apne_etter_rullbakk": {
+          "type": "integer"
+        },
+        "apne_etter_kandidat": {
+          "type": "integer"
+        },
+        "apne_like": {
+          "type": "boolean"
+        },
+        "dubletter": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}
