@@ -1,0 +1,99 @@
+{
+  "bestatt": true,
+  "krav_id": "m48-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 18,
+    "apne_for": 18,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 3,
+    "lukkede_for": 3,
+    "per_type_etter": {
+      "forslag_over_tak": [
+        2,
+        0
+      ],
+      "gjentatte_oppslagsfeil": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "motpart_avviklet": [
+        2,
+        0
+      ],
+      "oppslag_uten_svar": [
+        0,
+        2
+      ],
+      "profil_uten_vurdering": [
+        2,
+        0
+      ],
+      "uvurdert_motpart": [
+        8,
+        1
+      ]
+    },
+    "per_type_for": {
+      "forslag_over_tak": [
+        2,
+        0
+      ],
+      "gjentatte_oppslagsfeil": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "motpart_avviklet": [
+        2,
+        0
+      ],
+      "oppslag_uten_svar": [
+        0,
+        2
+      ],
+      "profil_uten_vurdering": [
+        2,
+        0
+      ],
+      "uvurdert_motpart": [
+        8,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "motpartsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m48_sveip_motparter(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_motpart_eier",
+    "modul": "m48_motpart",
+    "riggmodul": "m48_fasit",
+    "riggtenanter": [
+      "t-m48fasit-a-f19214fe",
+      "t-m48fasit-b-f19214fe",
+      "t-m48fasit-c-f19214fe"
+    ],
+    "runde": "f19214fe",
+    "sveipedor": "m48_sveip_motparter(int)",
+    "tenantkilde": [
+      "motpartssubjekt"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:28:08.663628+00:00"
+}

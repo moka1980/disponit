@@ -5574,6 +5574,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m46_anbud",
                          "platform/drift/anbudssveip.py"),
     },
+    "m48_motpart": {
+        "modul_fil": "motpartssveip",
+        "funntabell": "motpartsfunn",
+        "subjektkolonne": "motpart_id",
+        "tenantkilde": "motpartssubjekt",
+        "maalerolle": "disponit_motpart_eier",
+        "sveipedor": "m48_sveip_motparter(int)",
+        "dsn_variabel": "DISPONIT_MOTPARTSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m48-fasit-v1",
+        "feilinjisering_krav": "m48-feilinjisering-v1",
+        "ytelse_krav": "m48-ytelse-v1",
+        "rollback_krav": "m48-rollback-v1",
+        "riggmodul": "m48_fasit",
+        "releasefiler": ("platform/modules/m48_motpart",
+                         "platform/drift/motpartssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6467,6 +6485,16 @@ registrer_sveipgrenser("m46_anbud", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m46_anbud", "m46",
                       ("platform/core/tests/test_m46_anbud.py",),
                       min_tester=3000, min_andel_tester=28)
+# M-48: gulvene er litt under det målte 18/11 (8 subjekter, 39
+# evidenshendelser; seks typer + den rene uvurderte motparten).
+registrer_fasitgrense("m48_motpart", min_subjekter=8, min_evidens=35,
+                      tenantprefiks="t-m48fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m48_motpart", maks_sekunder=60.0, min_tenanter=3,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m48_motpart", "m48",
+                      ("platform/core/tests/test_m48_motpart.py",),
+                      min_tester=3000, min_andel_tester=40)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
