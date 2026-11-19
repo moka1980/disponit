@@ -30,14 +30,19 @@
 #     skjema-/registerutvidelse for lesemoduler i kjernen. Det er en
 #     arkitektbeslutning, ikke en manifestlinje.
 #
+# ADR-002 (19.11.2026) AVGJORDE DOMMEN OVER: M-16 er klasse D
+# (lesemodul i kjernen), og punktene måles av `deploy/staging/m16-lest.py`
+# gjennom det ekte endepunktet. Flippet kommer som avlesning av de seks
+# målingene, ikke som en påstand.
+#
 # LESEMODUL: M-16 har ingen arbeider, ingen kontrakt, ingen
 # oppdragstype og ingen skrivevei — den leser det økten alt har
 # tilgang til (`decisions:read`) og skriver ingenting.
 id: m16_nokkeltall
 navn: Rapporterings- og KPI-agent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i registerets forstand: flaten bestiller
 # ingenting gjennom policyporten (m01) og skriver ingenting til
 # evidenskjeden (m02) — den LESER kjernens beslutningsdata over samme
@@ -51,59 +56,101 @@ avhengigheter: []
 kjerne: platform/core/api/lesing.py
 i18n_prefiks: nokkeltall
 
-# Sjekklisteformen er LUKKET (manifest-skjema.json) og formet av
-# moduler med eget kjøre-livsløp (release, arbeider, kø). Punktene står
-# `nei` fordi ingen av dem er MÅLT for M-16: det finnes ingen
-# m16-grense i manifestskjema.KRAVGRENSER, og §0-regelen (m57) sier at
-# grensen registreres FØR bygging. Flere av punktene forutsetter
-# dessuten mekanismer en lesemodul i kjernen ikke har — notatene sier
-# hvilke, og hva som krever arkitektdom. «Et manifest skal aldri lese
-# sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m16-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m16-suite-v1-20261119T093434Z.json
+    artefakt_sha256: 8202e6634ced746422bca9a7a75cc7be38c8dd026d648001704127f749e74f2e
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet (m02-suite-formen). Flatens enhetstester
-      (nokkeltall.test.js) og API-tester kjører i CI, men det er ikke
-      denne portens måling, og ingen m16-grense finnes i KRAVGRENSER.
-      Ikke flippbart på evidens ennå.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 24 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m16-lest.py` (ADR-002
+    # klasse D), gjennom DET EKTE ENDEPUNKTET (`lag_app`, token preget i
+    # basen) i den isolerte basen på 55432. To riggtenanter med kjent
+    # datasett: beslutninger i og utenfor 24t-vinduet, åpne saker og lukkede
+    # saker med kjent varighet.
+    status: ja
+    krav_id: m16-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.svar
+      - maalt.tenanter
+    artefakt: deploy/staging/artefakter/m16-fasit-v1-20261119T091906Z.json
+    artefakt_sha256: b9d975f977c46ee0cec939d9dd440a9f69f85616f89fa6f2408b86a699f8788d
     notat: >-
-      KREVER: syntetisk beslutningsdatasett med fasit-nøkkeltall målt
-      både lokalt og på staging, med begge datasett-identitetene
-      bundet (wcag-kontroll-v2-formen). Ingen slik måling og ingen
-      grense finnes for M-16.
+      4 svar (to tenanter, vinduene 24t og 7d), 0 avvik. Tenant A:
+      12 beslutninger (5 TILLAT, 2 STOPP, 5 UNNTAK), 3 åpne, 2 lukkede med
+      7200 s samlet lukketid; 7d-vinduet tar med den ene utenfor 24t. Tenant
+      B ser bare sine egne. Andelene er regnet om fra tellingene og stemmer.
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1, KLASSE D: M-16 skriver ingenting. Punktet er MÅLT FRAVÆR —
+    # gyldig fordi samme kjøring ga fasitens tall (positiv kontroll).
+    status: ja
+    krav_id: m16-fasit-v1
+    bevismaalinger:
+      - maalt.nye_revisjonsrader
+      - maalt.endrede_tabeller
+      - maalt.volatile_definere
+    artefakt: deploy/staging/artefakter/m16-fasit-v1-20261119T091906Z.json
+    artefakt_sha256: b9d975f977c46ee0cec939d9dd440a9f69f85616f89fa6f2408b86a699f8788d
     notat: >-
-      M-16 SKRIVER ingenting — punktet slik det er formet (én
-      skrivevei til evidenskjeden) har ingen mekanisme å måle i en ren
-      lesemodul. Hva punktet skal BETY for en lesemodul (for eksempel
-      at lesingen beviselig aldri muterer) er en skjema-/
-      arkitektavklaring; til den finnes står punktet nei i stedet for
-      å låne en tolkning.
+      Lesekallene ga 0 nye rader i revisjonsloggen og 0 endrede
+      tabeller av 376 (innholdsdigest per tabell; bare autentiseringens
+      last_used_at er holdt utenfor, pinnet i grensen). Alle 9 m16-definere er
+      STABLE eller IMMUTABLE — basen nekter dem å skrive.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-002 D2, KLASSE D: en lesemodul har ingen kø. Feilen skal bli et
+    # TYPET feilsvar, aldri 200 med delvise tall.
+    status: ja
+    krav_id: m16-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injeksjoner
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m16-feilinjisering-v1-20261119T091908Z.json
+    artefakt_sha256: c8497d56121179fa8b10827d5535fbe70264523350f594ca713ca4e795d024ed
     notat: >-
-      M-16 har ingen oppdrag, ingen kø og ingen arbeider å injisere
-      feil i — punktet forutsetter et kjøre-livsløp lesemodulen ikke
-      har. Hva feilveien skal bety for et rent leseendepunkt (feilsvar
-      uten løfter, aldri delvise tall) krever samme avklaring som
-      punktet over; står nei i stedet for å dikte en mekanisme.
+      EXECUTE trukket fra runtime på den første (m16_beslutninger) og den siste
+      (m16_tick_alltid) defineren endepunktet kaller: begge ga 503
+      db_utilgjengelig uten et eneste tall i svaret. ACL-en ble gjenopprettet
+      og målt lik, og endepunktet svarte fasiten igjen.
   ytelse_bestatt:
-    status: nei
+    # ADR-002 D4: endepunktet under volum i den isolerte basen, 30d-vinduet.
+    status: ja
+    krav_id: m16-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.feilede
+      - maalt.totaler
+    artefakt: deploy/staging/artefakter/m16-ytelse-v1-20261119T091914Z.json
+    artefakt_sha256: f183913c85221a79078a6f3b800f3d4866b4d330035a00e2a63ee29d45c46bf1
     notat: >-
-      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring
-      mot den (perf-m01-v1-formen er nærmest for et leseendepunkt
-      under last). Ingen m16-grense er registrert; ingen måling
-      finnes.
+      30 kall mot 50000 beslutninger og 500 saker: p50 40.29 ms,
+      p95 47.58 ms (taket er 1500 ms), 0 feilede. Hvert svar talte hele
+      volumet (50500).
   rollback_testet:
-    status: nei
+    # ADR-002 D3: M-16 bor i kjernen. Forgjengerens kjerne og kandidatens
+    # svarte på samme datasett — modulens egen oppførsel målt, ikke lånt.
+    status: ja
+    krav_id: m16-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.kandidat_lik_fasit
+    artefakt: deploy/staging/artefakter/m16-rollback-v1-20261119T091910Z.json
+    artefakt_sha256: 7a42b3f059f52169efbaef74c5994c5ecb0612025551b5299852fd69e6cdc7ac
     notat: >-
-      M-16 har ingen egen release å rulle tilbake — koden skipper med
-      kjernen og følger kjernens deploy og rollback. Om kjernens
-      rollback-evidens kan bæres hit uten å bli en lånt konklusjon
-      (m37-lærdommen på nettopp dette punktet) er en arkitektdom; til
-      den er tatt står punktet nei.
+      Kjerne e75d4092a073 ← forgjenger a108dd30aa42: begge svarte 200 med
+      like tall for begge tenantene, og kandidatens svar er fasiten.

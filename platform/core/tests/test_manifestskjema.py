@@ -921,28 +921,33 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # altså fem av seks punkter på delte produsenter.
     # 18/9 (natt): m24 og m42 — riggene deler nå også maskineriet, og
     # begge gikk hele lesten uten en eneste modulspesifikk produsent.
-    assert st.aktive == ["m01_policy", "m02_revisjonslogg", "m06_epost",
+    assert st.aktive == ["m01_policy", "m02_revisjonslogg",
+                         "m04_dataforvalter", "m06_epost", "m12_tilgang",
                          "m13_avstemming", "m14_fakturakontroll",
-                         "m15_likviditet", "m17_kundeservice",
-                         "m18_onboarding", "m19_adresse", "m20_innhold",
-                         "m23_fordring", "m24_leverandor", "m25_prosjekt",
-                         "m26_prisbok", "m27_lager", "m34_compliance",
-                         "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling",
-                         "m42_kontovakt", "m44_kampanje", "m46_anbud",
-                         "m47_myndighetsrapport", "m48_motpart",
-                         "m49_sanksjon", "m52_tollkode", "m54_ehf", "m57_ats",
-                         "wcag_audit"], st
-    assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
+                         "m15_likviditet", "m16_nokkeltall",
+                         "m17_kundeservice", "m18_onboarding", "m19_adresse",
+                         "m20_innhold", "m23_fordring", "m24_leverandor",
+                         "m25_prosjekt", "m26_prisbok", "m27_lager",
+                         "m30_personvern", "m34_compliance", "m37_unntak",
+                         "m39_lonnsgrunnlag", "m41_betaling", "m42_kontovakt",
+                         "m44_kampanje", "m46_anbud", "m47_myndighetsrapport",
+                         "m48_motpart", "m49_sanksjon", "m50_postjournal",
+                         "m51_tilskudd", "m52_tollkode", "m53_hms", "m54_ehf",
+                         "m57_ats", "wcag_audit"], st
+    assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
+                          "m04_dataforvalter", "m06_epost", "m12_tilgang",
                           "m13_avstemming", "m14_fakturakontroll",
-                          "m15_likviditet", "m17_kundeservice",
-                          "m18_onboarding", "m19_adresse", "m20_innhold",
-                          "m23_fordring", "m24_leverandor", "m25_prosjekt",
-                          "m26_prisbok", "m27_lager", "m34_compliance",
-                          "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling",
+                          "m15_likviditet", "m16_nokkeltall",
+                          "m17_kundeservice", "m18_onboarding", "m19_adresse",
+                          "m20_innhold", "m23_fordring", "m24_leverandor",
+                          "m25_prosjekt", "m26_prisbok", "m27_lager",
+                          "m30_personvern", "m34_compliance", "m37_unntak",
+                          "m39_lonnsgrunnlag", "m41_betaling",
                           "m42_kontovakt", "m44_kampanje", "m46_anbud",
                           "m47_myndighetsrapport", "m48_motpart",
-                          "m49_sanksjon", "m52_tollkode", "m54_ehf",
-                          "m57_ats", "wcag_audit"], (
+                          "m49_sanksjon", "m50_postjournal", "m51_tilskudd",
+                          "m52_tollkode", "m53_hms", "m54_ehf", "m57_ats",
+                          "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

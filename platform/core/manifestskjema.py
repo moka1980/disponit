@@ -3798,6 +3798,10 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # (krav_id stemmer, bestatt er true) gjelder alle; alt under er
     # kravspesifikt, og en felles «les tallene»-rutine ville uansett måttet
     # kjenne hvert felt for å kunne si noe om hva det BETYR.
+    if krav_id in _M04_GRENSER:
+        return feil + _M04_GRENSER[krav_id](grense, art)
+    if krav_id in _M16_GRENSER:
+        return feil + _M16_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -5704,6 +5708,24 @@ SVEIPMODULER: dict[str, dict] = {
                          "platform/drift/begrepssveip.py",
                          "platform/core/db/migrations/212_m9_evidens.sql"),
     },
+    "m12_tilgang": {
+        "modul_fil": "tilgangssveip",
+        "funntabell": "tilgangsfunn",
+        "subjektkolonne": "tilgang_id",
+        "tenantkilde": "tilgang",
+        "maalerolle": "disponit_tilgang_eier",
+        "sveipedor": "m12_sveip_gjennomganger(int)",
+        "dsn_variabel": "DISPONIT_TILGANGSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m12-fasit-v1",
+        "feilinjisering_krav": "m12-feilinjisering-v1",
+        "ytelse_krav": "m12-ytelse-v1",
+        "rollback_krav": "m12-rollback-v1",
+        "riggmodul": "m12_fasit",
+        "releasefiler": ("platform/modules/m12_tilgang",
+                         "platform/drift/tilgangssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6681,6 +6703,19 @@ registrer_sveipgrenser("m09_kunnskap", maks_sekunder=60.0, min_tenanter=2,
 
 registrer_suitegrense("m09_kunnskap", "m09",
                       ("platform/core/tests/test_m9_kunnskap.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+# M-12 (ADR-002, klasse A): fem tilganger i to tenanter; sveipen kan
+# bare reise `gjennomgang_utlopt`, de tre andre typene er utelukket av
+# skjemaet. Gulvene er settets egen konstruksjon (fem dørhendelser:
+# to objekter, to tilganger, én gjennomgang).
+registrer_fasitgrense("m12_tilgang", min_subjekter=5, min_evidens=5,
+                      tenantprefiks="t-m12fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m12_tilgang", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=3)
+
+registrer_suitegrense("m12_tilgang", "m12",
+                      ("platform/core/tests/test_m12_tilgang.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
@@ -9743,3 +9778,497 @@ KRAVGRENSER["m40-v1"] = {
     "krav_ja": ("ddl_begge_kjoringer_gronne",),
     "punktbinding": {},
 }
+
+
+# ===========================================================================
+# M-04 — KLASSE B I ADR-002 (plattformregister + måler).
+#
+# M-04 passer ikke den generiske sveiplesten: registeret er globalt og
+# seedet i migrasjon, og funnene gjelder plattformens egne tabeller. Én
+# produsent (`deploy/staging/m04-lest.py`) leverer fire artefakter;
+# fasit, feilinjisering og rollback rigges i den ISOLERTE basen på 55432,
+# ytelsen måles på den ekte jobben mot driftsbasen.
+#
+# REVISJONSLOGG ER MÅLT FRAVÆR (ADR-002 D1), aldri et fritak: null nye
+# rader i revisjonsloggen OG null endrede rader utenfor M-04s fem egne
+# tabeller OG ingen innloggingsrolle med skriverett på registeret — og
+# alt det bare gyldig når fasiten viser at kjøringen faktisk nådde
+# modulkoden (positiv kontroll: settets funn ble reist).
+# ===========================================================================
+
+#: Bytene som ER M-04 i en release. Rollbacken binder dem på begge sider.
+M04_MODULFILER: tuple[str, ...] = (
+    "platform/drift/retensjonsmaaling.py",
+    "platform/drift/kjor_retensjonsmaaling.py",
+    "platform/core/db/migrations/093_m4_retensjonsregister.sql",
+    "platform/core/db/migrations/143_m4_registeret_dekker_modulene.sql",
+)
+#: Bevisroten er PRODUSENTEN — settet bor i samme fil.
+M04_BEVISROT: tuple[str, ...] = ("deploy/staging/m04-lest.py",)
+#: Funntypene registeret kan bære (093s CHECK). Fasiten skal dekke alle.
+M04_FUNNTYPER: tuple[str, ...] = ("reaper_henger", "reaper_mangler",
+                                  "uregistrert", "umaalbar", "uten_dom")
+
+
+def m04_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M04_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m04_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m04_dataforvalter":
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    " 'm04_dataforvalter'")
+    sha = o.get("bevisrot_sha256")
+    try:
+        if sha != m04_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/m04-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _m04_er(m: dict, felt: str, verdi) -> list[str]:
+    if m.get(felt) != verdi:
+        return [f"maalt.{felt}={m.get(felt)!r}, krever {verdi!r}"]
+    return []
+
+
+def _m04_minst(m: dict, felt: str, minst) -> list[str]:
+    v = m.get(felt)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v < minst:
+        return [f"maalt.{felt}={v!r}, krever >= {minst}"]
+    return []
+
+
+def _m04_rekne_avvik(per) -> tuple[int | None, dict]:
+    if not isinstance(per, list) or not per:
+        return None, {}
+    avvik, kart = 0, {}
+    for rad in per:
+        if not isinstance(rad, dict) or not isinstance(rad.get("fikk"), list):
+            return None, {}
+        ventet, fikk = rad.get("ventet"), sorted(rad["fikk"])
+        avvik += 0 if fikk == ([ventet] if ventet else []) else 1
+        kart[rad.get("merke")] = (ventet, fikk)
+    return avvik, kart
+
+
+def _grenser_m04_fasit(grense: dict, art: dict) -> list[str]:
+    """`m04-fasit-v1` — to punkter, re-regnet av radene."""
+    feil, m, o = _m04_felles(art)
+    if not m:
+        return feil
+    if o.get("base") != grense["base"]:
+        feil.append(f"oppsett.base={o.get('base')!r}: riggen skriver"
+                    " plattformdommer og hører bare hjemme i "
+                    f"{grense['base']}")
+    feil += _m04_minst(m, "subjekter", grense["min_subjekter"])
+    if sorted(m.get("funntyper_dekket") or []) != sorted(M04_FUNNTYPER):
+        feil.append("settet dekker ikke alle registerets funntyper"
+                    f" {sorted(M04_FUNNTYPER)}")
+    for felt, nokkel in (("per_subjekt_forste", "funnavvik_forste"),
+                         ("per_subjekt", "funnavvik")):
+        regnet, kart = _m04_rekne_avvik(m.get(felt))
+        if regnet is None:
+            feil.append(f"maalt.{felt} mangler eller er misformet —"
+                        f" da er `{nokkel}` bare en påstand")
+            continue
+        if regnet != m.get(nokkel):
+            feil.append(f"{nokkel}={m.get(nokkel)} stemmer ikke med {felt},"
+                        f" som gir {regnet}")
+        if regnet > 0:
+            feil.append(f"{nokkel}={regnet}, taket er 0")
+        if felt == "per_subjekt":
+            if kart.get("ren", (1, [1]))[1] != []:
+                feil.append("den rene skulle stått uten funn etter andre"
+                            " måling")
+            if kart.get("ok", (1, [1]))[1] != []:
+                feil.append("den negative kontrollen fikk funn")
+        else:
+            if not kart.get("ren", (None, []))[1]:
+                feil.append("den rene fikk ikke funn i første måling — da"
+                            " er lukkeveien aldri målt")
+    for felt in ("maaling1_ferdig", "maaling2_ferdig"):
+        feil += _m04_er(m, felt, True)
+    feil += _m04_minst(m, "maaling1_nye", grense["min_maaling1_nye"])
+    feil += _m04_er(m, "maaling2_nye", 0)
+    feil += _m04_minst(m, "maaling2_lukkede", 1)
+    # D1 — MÅLT FRAVÆR.
+    feil += _m04_er(m, "nye_revisjonsrader", 0)
+    if isinstance(m.get("revisjonsrader_for"), int) \
+            and isinstance(m.get("revisjonsrader_etter"), int) \
+            and m["revisjonsrader_etter"] - m["revisjonsrader_for"] \
+            != m.get("nye_revisjonsrader"):
+        feil.append("nye_revisjonsrader stemmer ikke med for/etter")
+    feil += _m04_er(m, "endrede_fremmede_tabeller", [])
+    feil += _m04_minst(m, "fremmede_tabeller_sett",
+                       grense["min_fremmede_tabeller"])
+    feil += _m04_er(m, "registerskrivere", [])
+    feil += _m04_er(m, "maaler_skriverett", [])
+    feil += _m04_er(m, "maaler_execute_grants", ["m4_mal_lagre"])
+    return feil
+
+
+def _grenser_m04_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m04_felles(art)
+    if not m:
+        return feil
+    feil += _m04_er(m, "injeksjonsrolle_har_execute", False)
+    feil += _m04_minst(m, "antall_lagre", grense["min_lagre"])
+    feil += _m04_minst(m, "tidsgrense_umaalbare", 1)
+    try:
+        regnet = (m["antall_lagre"] - m["tidsgrense_maalt"]
+                  - m["tidsgrense_umaalbare"])
+    except (KeyError, TypeError):
+        regnet = None
+    if regnet != m.get("tidsgrense_verken_eller"):
+        feil.append("tidsgrense_verken_eller stemmer ikke med tallene")
+    feil += _m04_er(m, "tidsgrense_verken_eller", 0)
+    feil += _m04_er(m, "tidsgrense_beholdning_uten_maaling", 0)
+    feil += _m04_er(m, "tidsgrense_maaling_avbrutt", True)
+    feil += _m04_er(m, "gjenoppretting_ferdig", True)
+    if m.get("umaalbare_etter_gjenoppretting") \
+            != m.get("umaalbare_for_injeksjon"):
+        feil.append("umaalbar-funnene ble ikke lukket etter injeksjonen")
+    feil += _m04_er(m, "uten_execute_feilet", [True, True])
+    feil += _m04_er(m, "uten_execute_alarm", [False, True])
+    rk = m.get("uten_execute_returkoder")
+    if not (isinstance(rk, list) and len(rk) == 2 and all(
+            isinstance(x, int) and x != 0 for x in rk)):
+        feil.append("en feilet kjøring skal avslutte med returkode ≠ 0")
+    if m.get("funn_for_uten_execute") != m.get("funn_etter_uten_execute"):
+        feil.append("kjøringen uten EXECUTE endret funnregisteret")
+    feil += _m04_er(m, "registeret_urort", True)
+    return feil
+
+
+def _grenser_m04_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m04_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    for felt in ("drill_ventet_i_lageret", "drill_backends_avsluttet",
+                 "drept_maaling_avbrutt", "arbeidernokkel_fri",
+                 "rullbakk_ferdig", "kandidat_ferdig", "apne_like"):
+        feil += _m04_er(m, felt, True)
+    for felt in ("drept_maaling_fullfort", "rullbakk_feilet",
+                 "kandidat_feilet"):
+        feil += _m04_er(m, felt, False)
+    feil += _m04_er(m, "dubletter", 0)
+    feil += _m04_minst(m, "apne_etter_kandidat", 1)
+    return feil
+
+
+def _grenser_m04_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m04_felles(art)
+    if not m:
+        return feil
+    kj = m.get("kjoringer")
+    if not isinstance(kj, list) or len(kj) < grense["min_kjoringer"]:
+        return feil + [f"krever minst {grense['min_kjoringer']} kjøringer"]
+    try:
+        maks = max(float(k["sekunder"]) for k in kj)
+        malt = sum(int(k["malt"]) for k in kj)
+        if any(k["returkode"] != 0 or k["feilet"] or k["hoppet_over"]
+               for k in kj):
+            feil.append("en kjøring feilet eller hoppet over")
+    except (KeyError, TypeError, ValueError):
+        return feil + ["maalt.kjoringer er misformet"]
+    if abs(maks - float(m.get("maks_sekunder", -1))) > 1e-6:
+        feil.append("maks_sekunder stemmer ikke med kjøringene")
+    if malt != m.get("lagre_maalt"):
+        feil.append("lagre_maalt stemmer ikke med kjøringene")
+    if maks > grense["maks_sekunder"]:
+        feil.append(f"maks_sekunder={maks}, taket er"
+                    f" {grense['maks_sekunder']}")
+    feil += _m04_minst(m, "lagre_maalt", grense["min_lagre_maalt"])
+    feil += _m04_er(m, "feilede", 0)
+    feil += _m04_er(m, "umaalbare", 0)
+    return feil
+
+
+KRAVGRENSER["m04-fasit-v1"] = {
+    "base": "disponit_test@55432",
+    "min_subjekter": 7,
+    "min_maaling1_nye": 6,
+    # Bildet må faktisk ha dekket basen: 093/143 alene registrerer flere
+    # titalls tabeller, og et tomt bilde ville lest som «ingenting endret».
+    "min_fremmede_tabeller": 50,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.funnavvik", "maalt.funnavvik_forste", "maalt.subjekter",
+            "maalt.maaling2_nye", "maalt.maaling2_lukkede"),
+        "revisjonslogg_korrekt": (
+            "maalt.nye_revisjonsrader", "maalt.endrede_fremmede_tabeller",
+            "maalt.registerskrivere", "maalt.maaler_execute_grants"),
+    },
+}
+KRAVGRENSER["m04-feilinjisering-v1"] = {
+    "min_lagre": 50,
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": (
+            "maalt.tidsgrense_verken_eller", "maalt.tidsgrense_umaalbare",
+            "maalt.uten_execute_alarm", "maalt.registeret_urort"),
+    },
+}
+KRAVGRENSER["m04-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": (
+            "maalt.apne_like", "maalt.dubletter",
+            "maalt.drept_maaling_avbrutt", "maalt.arbeidernokkel_fri"),
+    },
+}
+KRAVGRENSER["m04-ytelse-v1"] = {
+    # Unit-filen gir jobben 10 minutter; én kjøring skal bruke en brøkdel.
+    "maks_sekunder": 120.0,
+    "min_kjoringer": 3,
+    "min_lagre_maalt": 100,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.maks_sekunder", "maalt.lagre_maalt",
+                           "maalt.feilede"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m04-{_krav}-v1"] = f"artefakt-m04-{_krav}-skjema.json"
+
+_M04_GRENSER = {
+    "m04-fasit-v1": _grenser_m04_fasit,
+    "m04-feilinjisering-v1": _grenser_m04_feilinjisering,
+    "m04-rollback-v1": _grenser_m04_rollback,
+    "m04-ytelse-v1": _grenser_m04_ytelse,
+}
+
+registrer_suitegrense(
+    "m04_dataforvalter", "m04",
+    ("platform/core/tests/test_m4_retensjon.py",
+     "platform/core/tests/test_m4_registeret_dekker_modulene_port.py"),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-16 — KLASSE D I ADR-002 (lesemodul i kjernen).
+#
+# Én produsent (`deploy/staging/m16-lest.py`), fire artefakter, alle målt
+# gjennom DET EKTE ENDEPUNKTET i den isolerte basen på 55432. Revisjonslogg
+# er MÅLT FRAVÆR: null nye revisjonsrader og ingen endrede tabeller utover
+# autentiseringens egen bokføring, og hver m16-definer ikke-VOLATILE —
+# gyldig bare fordi samme kjøring ga fasitens tall (positiv kontroll).
+# ===========================================================================
+
+M16_MODULFILER: tuple[str, ...] = (
+    "platform/core/api/lesing.py",
+    "platform/core/db/migrations/051_m16_nokkeltall.sql",
+    "platform/core/db/migrations/084_m16_fase2.sql",
+    "platform/core/db/migrations/086_m16_indekser.sql",
+    "platform/core/ui/static/js/flater/nokkeltall.js",
+)
+M16_BEVISROT: tuple[str, ...] = ("deploy/staging/m16-lest.py",)
+#: Tabellene et lesekall LOVLIG kan endre: autentiseringens bokføring
+#: (kjernen, ikke M-16). Alt annet som endrer seg er et brudd.
+M16_TILLATT_ENDRET: tuple[str, ...] = ()
+
+
+def m16_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M16_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m16_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m16_nokkeltall":
+        feil.append(f"oppsett.modul={o.get('modul')!r} er ikke"
+                    " 'm16_nokkeltall'")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("riggen skriver beslutninger direkte og hører bare"
+                    " hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m16_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/m16-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m16_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m16_felles(art)
+    if not m:
+        return feil
+    per = m.get("per_svar")
+    if not isinstance(per, list) or len(per) < grense["min_svar"]:
+        return feil + [f"krever minst {grense['min_svar']} svar i per_svar"]
+    regnet = sum(0 if (r.get("status") == 200
+                       and r.get("fikk") == r.get("ventet")) else 1
+                 for r in per if isinstance(r, dict))
+    if regnet != m.get("funnavvik"):
+        feil.append(f"funnavvik={m.get('funnavvik')} stemmer ikke med"
+                    f" per_svar, som gir {regnet}")
+    if regnet:
+        feil.append(f"funnavvik={regnet}, taket er 0")
+    if not isinstance(m.get("tenanter"), int) or m["tenanter"] < 2:
+        feil.append("tenantgjerdet kan ikke måles i én tenant")
+    if m.get("nye_revisjonsrader") != 0:
+        feil.append(f"nye_revisjonsrader={m.get('nye_revisjonsrader')!r},"
+                    " krever 0")
+    endret = m.get("endrede_tabeller")
+    if not isinstance(endret, list) or set(endret) - set(
+            grense["tillatt_endret"]):
+        feil.append(f"lesekallet endret tabeller: {endret!r}")
+    if m.get("ekskluderte_kolonner") != grense["ekskluderte_kolonner"]:
+        feil.append("radbildet så bort fra andre kolonner enn de pinnede:"
+                    f" {m.get('ekskluderte_kolonner')!r}")
+    if not isinstance(m.get("fremmede_tabeller_sett"), int) \
+            or m["fremmede_tabeller_sett"] < grense["min_tabeller"]:
+        feil.append("radbildet dekket ikke basen")
+    if not isinstance(m.get("m16_definere"), int) \
+            or m["m16_definere"] < grense["min_definere"]:
+        feil.append("færre m16-definere enn ventet — målte noe annet")
+    if m.get("volatile_definere") != []:
+        feil.append(f"VOLATILE m16-definere: {m.get('volatile_definere')!r}")
+    return feil
+
+
+def _grenser_m16_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m16_felles(art)
+    if not m:
+        return feil
+    inj = m.get("injeksjoner")
+    if not isinstance(inj, list) or len(inj) < 2 \
+            or m.get("injiserte") != len(inj):
+        return feil + ["krever to injeksjoner (første og siste definer)"]
+    for i in inj:
+        navn = i.get("definer") if isinstance(i, dict) else None
+        if not isinstance(i, dict):
+            feil.append("en injeksjon er ikke et objekt")
+            continue
+        if i.get("runtime_har_execute") is not False:
+            feil.append(f"{navn}: injeksjonen var ikke ekte")
+        if i.get("status") == 200 or not isinstance(i.get("status"), int):
+            feil.append(f"{navn}: svarte {i.get('status')!r} med feilen i")
+        if i.get("delvise_tall") is not False:
+            feil.append(f"{navn}: feilsvaret bar tall — delvise tall er"
+                        " nøyaktig det punktet forbyr")
+        if not i.get("feilkode"):
+            feil.append(f"{navn}: feilsvaret var ikke typet")
+        if i.get("acl_gjenopprettet") is not True:
+            feil.append(f"{navn}: ACL-en ble ikke gjenopprettet")
+        if i.get("frisk_status") != 200 or i.get("frisk_lik_fasit") \
+                is not True:
+            feil.append(f"{navn}: endepunktet kom ikke tilbake til fasiten")
+    return feil
+
+
+def _grenser_m16_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m16_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    for felt in ("rullbakk_status", "kandidat_status"):
+        if m.get(felt) != [200]:
+            feil.append(f"maalt.{felt}={m.get(felt)!r}, krever [200]")
+    for felt in ("svar_like", "kandidat_lik_fasit"):
+        if m.get(felt) is not True:
+            feil.append(f"maalt.{felt} er ikke true")
+    return feil
+
+
+def _grenser_m16_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m16_felles(art)
+    if not m:
+        return feil
+    ms = m.get("ms")
+    if not isinstance(ms, list) or len(ms) < grense["min_kall"] \
+            or m.get("kall") != len(ms):
+        return feil + [f"krever minst {grense['min_kall']} målte kall"]
+    s = sorted(float(x) for x in ms)
+    p95 = s[max(0, int(round(0.95 * len(s))) - 1)]
+    if abs(p95 - float(m.get("p95_ms", -1))) > 0.01:
+        feil.append("p95_ms stemmer ikke med målingene")
+    if p95 > grense["maks_p95_ms"]:
+        feil.append(f"p95={p95} ms, taket er {grense['maks_p95_ms']}")
+    if m.get("feilede") != 0:
+        feil.append(f"feilede={m.get('feilede')!r}, krever 0")
+    try:
+        ventet = int(o["beslutninger"]) + int(o["saker"])
+    except (KeyError, TypeError, ValueError):
+        return feil + ["oppsett mangler volumet"]
+    if ventet < grense["min_volum"]:
+        feil.append(f"volum {ventet} er under {grense['min_volum']}")
+    if m.get("totaler") != [ventet]:
+        feil.append(f"totaler={m.get('totaler')!r}: svarene talte ikke"
+                    f" volumet ({ventet}) — da er tidene målt over noe annet")
+    return feil
+
+
+KRAVGRENSER["m16-fasit-v1"] = {
+    "min_svar": 4, "min_tabeller": 50, "min_definere": 8,
+    "tillatt_endret": M16_TILLATT_ENDRET,
+    # Autentiseringens sist-brukt-stempel settes av KJERNEN på hvert
+    # autentiserte kall; radbildet ser bort fra akkurat den kolonnen.
+    "ekskluderte_kolonner": {"api_tokener": ["last_used_at"]},
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.funnavvik", "maalt.svar", "maalt.tenanter"),
+        "revisjonslogg_korrekt": (
+            "maalt.nye_revisjonsrader", "maalt.endrede_tabeller",
+            "maalt.volatile_definere"),
+    },
+}
+KRAVGRENSER["m16-feilinjisering-v1"] = {
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.injeksjoner",
+                                         "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m16-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like", "maalt.kandidat_lik_fasit"),
+    },
+}
+KRAVGRENSER["m16-ytelse-v1"] = {
+    "min_kall": 30, "maks_p95_ms": 1500.0, "min_volum": 50_000,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede", "maalt.totaler"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m16-{_krav}-v1"] = f"artefakt-m16-{_krav}-skjema.json"
+
+_M16_GRENSER = {
+    "m16-fasit-v1": _grenser_m16_fasit,
+    "m16-feilinjisering-v1": _grenser_m16_feilinjisering,
+    "m16-rollback-v1": _grenser_m16_rollback,
+    "m16-ytelse-v1": _grenser_m16_ytelse,
+}
+
+registrer_suitegrense(
+    "m16_nokkeltall", "m16",
+    ("platform/core/tests/test_m16_nokkeltall.py",),
+    min_tester=3000, min_andel_tester=20)

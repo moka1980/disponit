@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m04-ytelse-v1.json",
+  "title": "m04-ytelse-v1 — den ekte jobben mot driftsbasen, tre kjøringer (ADR-002 D4)",
+  "comment": "Produsert av deploy/staging/m04-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m04_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m04-ytelse-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runder",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runder": {
+          "type": "integer"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "feilede",
+        "kjoringer",
+        "lagre_maalt",
+        "maks_sekunder",
+        "sekunder_per_lager",
+        "umaalbare"
+      ],
+      "properties": {
+        "kjoringer": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sekunder",
+              "malt",
+              "umaalbare",
+              "ferdig",
+              "feilet",
+              "hoppet_over",
+              "returkode"
+            ],
+            "properties": {
+              "sekunder": {
+                "type": "number"
+              },
+              "malt": {
+                "type": "integer"
+              },
+              "umaalbare": {
+                "type": "integer"
+              },
+              "ferdig": {
+                "type": "boolean"
+              },
+              "feilet": {
+                "type": "boolean"
+              },
+              "hoppet_over": {
+                "type": "boolean"
+              },
+              "returkode": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "maks_sekunder": {
+          "type": "number"
+        },
+        "lagre_maalt": {
+          "type": "integer"
+        },
+        "umaalbare": {
+          "type": "integer"
+        },
+        "feilede": {
+          "type": "integer"
+        },
+        "sekunder_per_lager": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

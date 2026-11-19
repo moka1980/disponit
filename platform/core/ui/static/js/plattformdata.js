@@ -35,7 +35,7 @@ export const MODULSTATUS = {
   // `bygges` fordi manifestet finnes; ingen av de fem har kode ennå,
   // og ingen av dem flippes av en byggemilepæl — bare av en aksept.
   3: "bygges",      // m03_datakvalitet: under_utvikling, ikke_i_drift
-  4: "bygges",      // m04_dataforvalter: under_utvikling, ikke_i_drift
+  4: "i_drift",    // m04_dataforvalter: aktiv, produksjon
   5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
   6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
                     // (rollback i kjerne-form; fasit og suite målt på nytt etter 210)
@@ -48,7 +48,7 @@ export const MODULSTATUS = {
   // klynge 1: alle fire er REGISTRE og MÅLERE, ingen av dem er en ny
   // endringsvei mot kundens data. Ordet er `bygges` fordi manifestet
   // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
-  12: "bygges",     // m12_tilgang: under_utvikling, ikke_i_drift
+  12: "i_drift",    // m12_tilgang: aktiv, produksjon
   // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
   // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
   // ingen aksepthendelse, og registerets regel (drift krever aktiv,
@@ -56,10 +56,10 @@ export const MODULSTATUS = {
   // Manifestet sier under_utvikling/ikke_i_drift om registerobjektet;
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
-  16: "bygges",
+  16: "i_drift",    // m16_nokkeltall: aktiv, produksjon
   21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
   22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
-  30: "bygges",     // m30_personvern: under_utvikling, ikke_i_drift
+  30: "i_drift",    // m30_personvern: aktiv, produksjon
   34: "i_drift",    // m34_compliance: aktiv, produksjon
   // KLYNGE 3 «kundens livsløp og pengene» (101-105) — registrert 2/9
   // sammen med grensene m13-v1…m24-v1. Samme register-først-form som
@@ -126,7 +126,7 @@ export const MODULSTATUS = {
   48: "i_drift",    // m48_motpart: aktiv, produksjon
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
   46: "i_drift",    // m46_anbud: aktiv, produksjon
-  51: "bygges",     // m51_tilskudd: under_utvikling, ikke_i_drift
+  51: "i_drift",    // m51_tilskudd: aktiv, produksjon
   55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
   // Registrert ved fødselen sammen med grensene m47/m50/m52/m53/
@@ -146,8 +146,8 @@ export const MODULSTATUS = {
   54: "i_drift",    // m54_ehf: aktiv, produksjon
   52: "i_drift",    // m52_tollkode: aktiv, produksjon
   47: "i_drift",    // m47_myndighetsrapport: aktiv, produksjon
-  50: "bygges",     // m50_postjournal: under_utvikling, ikke_i_drift
-  53: "bygges",     // m53_hms: under_utvikling, ikke_i_drift
+  50: "i_drift",    // m50_postjournal: aktiv, produksjon
+  53: "i_drift",    // m53_hms: aktiv, produksjon
   // KLYNGE 8 — PROGNOSENE. Registrert med grensene, før koden.
   //
   // EN GAL PROGNOSE SER NØYAKTIG UT SOM EN RIKTIG PROGNOSE, helt til

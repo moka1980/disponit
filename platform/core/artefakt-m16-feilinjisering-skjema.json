@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m16-feilinjisering-v1.json",
+  "title": "m16-feilinjisering-v1 — EXECUTE trukket på første og siste definer: typet feilsvar, aldri delvise tall (ADR-002 D2)",
+  "comment": "Produsert av deploy/staging/m16-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m16_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m16-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "injeksjon",
+        "injeksjonsrolle",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "injeksjonsrolle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "injeksjon": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "injeksjoner",
+        "injiserte"
+      ],
+      "properties": {
+        "injeksjoner": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "definer",
+              "runtime_har_execute",
+              "status",
+              "feilkode",
+              "delvise_tall",
+              "acl_gjenopprettet",
+              "frisk_status",
+              "frisk_lik_fasit"
+            ],
+            "properties": {
+              "definer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "runtime_har_execute": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "integer"
+              },
+              "feilkode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "delvise_tall": {
+                "type": "boolean"
+              },
+              "acl_gjenopprettet": {
+                "type": "boolean"
+              },
+              "frisk_status": {
+                "type": "integer"
+              },
+              "frisk_lik_fasit": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "injiserte": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

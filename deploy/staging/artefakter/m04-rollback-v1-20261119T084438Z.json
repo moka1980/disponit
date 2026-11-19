@@ -1,0 +1,34 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m04-rollback-v1",
+  "maalt": {
+    "apne_etter_kandidat": 359,
+    "apne_etter_rullbakk": 359,
+    "apne_like": true,
+    "arbeidernokkel_fri": true,
+    "drept_maaling": "e828ef32-3fd3-40c3-a705-349ccb24812e",
+    "drept_maaling_avbrutt": true,
+    "drept_maaling_fullfort": false,
+    "drill_backends_avsluttet": true,
+    "drill_ventet_i_lageret": true,
+    "dubletter": 0,
+    "kandidat_feilet": false,
+    "kandidat_ferdig": true,
+    "rullbakk_feilet": false,
+    "rullbakk_ferdig": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "9a347cead4a60ea4bae9e983837d5e24cc301b77da8bf987dab8c258acaf4178",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "1f051b840e7c48a459cf49818d5c02e9bd56d5430086c02e3547761ac01b96a0",
+    "modul": "m04_dataforvalter",
+    "modul_forgjenger": "d80b1732b02fbe8da4ccd42c1da1047414933cd71d961db99c315b054caf7cb4",
+    "modul_kandidat": "d80b1732b02fbe8da4ccd42c1da1047414933cd71d961db99c315b054caf7cb4",
+    "runde": "c50c259e",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T08:44:38.795405+00:00"
+}

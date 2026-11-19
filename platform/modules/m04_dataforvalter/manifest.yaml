@@ -23,12 +23,15 @@
 # fordi grantet manglet, er ikke en grønn måling — den er en måling som
 # ikke kjørte.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# KODEN FINNES (093 + 143, `platform/drift/retensjonsmaaling.py`,
+# timeren `disponit-lagermaaling`). ADR-002 plasserer M-04 i klasse B
+# (plattformregister + måler): lesten er `deploy/staging/m04-lest.py`,
+# og revisjonslogg-punktet er MÅLT FRAVÆR med positiv kontroll.
 id: m04_dataforvalter
 navn: Data- og filforvalter
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter (m16-formen): modulen bestiller ingenting gjennom
 # policyporten og skriver ingen beslutning til evidenskjeden. Den LESER
 # katalogen og sine egne aggregater. En oppført avhengighet ville vært
@@ -39,39 +42,116 @@ i18n_prefiks: retensjon
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m04-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m04-suite-v1-20261119T090047Z.json
+    artefakt_sha256: dfffbfd67cdb5c5e28d819866fc58296f9db1a768e20ef0ae9197891cbab1053
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m04-lest.py` (ADR-002
+    # klasse B), i den ISOLERTE basen på 55432 bygget fra commiten som måles.
+    # Settet bor i produsenten: sju lagre som dekker alle fem funntypene
+    # (uregistrert, umaalbar, uten_dom, reaper_mangler, reaper_henger), en REN
+    # som fødes uregistrert og hvis tabell forsvinner mellom målingene, og en
+    # negativ kontroll. Riggen skriver plattformdommer, og NEKTER derfor å
+    # kjøre i noe annet enn disponit_test på 55432.
+    status: ja
+    krav_id: m04-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.funnavvik_forste
+      - maalt.subjekter
+      - maalt.maaling2_nye
+      - maalt.maaling2_lukkede
+    artefakt: deploy/staging/artefakter/m04-fasit-v1-20261119T084418Z.json
+    artefakt_sha256: e6db1086487fcb660171e368988cec4abd45ea7f5284a404d901589be0dab40f
     notat: >-
-      KREVER: en seedet base med KJENT antall ureapede rader per lager,
-      målt likt lokalt og på staging med begge datasett-identitetene
-      bundet. Uten en fasit er et beholdningstall ikke et bevis.
+      Runde 3fb5dd0b: 7 lagre, 0 avvik etter
+      første måling og 0 etter andre. Første måling reiste 6
+      funn; andre reiste 0 nye og lukket 1 (den rene).
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1, KLASSE B: M-04 har ingen tenantdør. Plattformdommene felles i
+    # migrasjon og er sporet i git. Punktet er MÅLT FRAVÆR — og gyldig bare
+    # fordi samme kjøring beviselig nådde modulkoden (fasitens funn ble reist).
+    status: ja
+    krav_id: m04-fasit-v1
+    bevismaalinger:
+      - maalt.nye_revisjonsrader
+      - maalt.endrede_fremmede_tabeller
+      - maalt.registerskrivere
+      - maalt.maaler_execute_grants
+    artefakt: deploy/staging/artefakter/m04-fasit-v1-20261119T084418Z.json
+    artefakt_sha256: e6db1086487fcb660171e368988cec4abd45ea7f5284a404d901589be0dab40f
     notat: >-
-      KREVER: avklaring av hva punktet betyr for en modul som per v1
-      ikke beslutter noe og derfor ikke skriver til evidenskjeden.
-      Registerets dommer felles i MIGRASJON, ikke gjennom en dør — de
-      er sporet i git, ikke i revisjonsloggen. Om det tilfredsstiller
-      punktet er en arkitektdom; står nei framfor å låne en tolkning.
+      To fulle målinger ga 0 nye rader i revisjonsloggen og
+      0 endrede tabeller blant 371 utenfor M-04s egne fem
+      (innholdsdigest per tabell). Ingen innloggingsrolle utenom migratoren
+      har skriverett på registeret, og målerens rolle har nøyaktig ett
+      eksplisitt EXECUTE-grant: m4_mal_lagre.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-002 D2, KLASSE B: to ekte driftsfeil. Et lager som ikke kunne måles
+    # skal bli et FUNN, aldri en null; en jobb som dør skal alarmere.
+    status: ja
+    krav_id: m04-feilinjisering-v1
+    bevismaalinger:
+      - maalt.tidsgrense_verken_eller
+      - maalt.tidsgrense_umaalbare
+      - maalt.uten_execute_alarm
+      - maalt.registeret_urort
+    artefakt: deploy/staging/artefakter/m04-feilinjisering-v1-20261119T084426Z.json
+    artefakt_sha256: 9ae8ea60a594e6e82988c3f103cb1010eaf6d3f316602c401de7c19662593212
     notat: >-
-      KREVER: målejobben bygget. Formen er gitt (advisory-lås,
-      hoppet_over skilt fra feil, alarm etter to sammenhengende feil,
-      statement_timeout per lager → funn `umaalbar`), men ingen kode
-      kjører, og det er nettopp umaalbar-veien porten må injisere.
+      statement_timeout 1 ms: 249 lagre ga 0 målt og
+      249 umaalbar-funn, 0 uten noen av delene, og målingen sto
+      som avbrutt; to fulle målinger etterpå lukket funnene igjen. Uten
+      EXECUTE på måledøra: feilet begge gangene, alarm på den andre, ingen
+      nye funn, registeret urørt.
   ytelse_bestatt:
-    status: nei
+    # ADR-002 D4: den EKTE jobben (`drift.kjor_retensjonsmaaling`) mot
+    # driftsbasen med lagermålerens egen credential, tre kjøringer fra
+    # commiten som måles. Skriver bare til M-04s egne måletabeller, som
+    # timeren gjør hver natt.
+    status: ja
+    krav_id: m04-ytelse-v1
+    bevismaalinger:
+      - maalt.maks_sekunder
+      - maalt.lagre_maalt
+      - maalt.feilede
+    artefakt: deploy/staging/artefakter/m04-ytelse-v1-20261119T084459Z.json
+    artefakt_sha256: 03767126e024ae3bcc7d2b40e707c6323e1b0548dffe16cdac3e30f494bb7c77
     notat: >-
-      KREVER: pinnet grense for målekostnaden. v1 unngår seq scan over
-      store lagre ved å telle eksakt KUN der en reapetkolonne er
-      erklært, og bruke katalogtall ellers — men designvalget er ikke
-      en måling. Ingen grense pinnet, ingen kjøring målt.
+      144 lagre målt over tre kjøringer, tregeste 1.119 s
+      (taket er 120 s; unit-filen gir 10 minutter). 0 umålbare og
+      0 feilede.
   rollback_testet:
-    status: nei
+    # ADR-002 D3: kjernen rullet til forgjengeren og fram igjen, med M-04s
+    # egen oppførsel målt — ikke lånt fra kjernedrillen.
+    status: ja
+    krav_id: m04-rollback-v1
+    bevismaalinger:
+      - maalt.apne_like
+      - maalt.dubletter
+      - maalt.drept_maaling_avbrutt
+      - maalt.arbeidernokkel_fri
+    artefakt: deploy/staging/artefakter/m04-rollback-v1-20261119T084438Z.json
+    artefakt_sha256: e51d595a724f29e2095af1fb52ed4a582af7b0a25334ed77631fe83d04238eca
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Kjerne 1f051b840e7c ← forgjenger a108dd30aa42. Drillen drepte en
+      kjøring mens den sto inne i et låst lager; målingen sto som avbrutt,
+      backenden ble avsluttet og arbeidernøkkelen var fri. Forgjengerens og
+      kandidatens kode målte hver sin hele runde: 359 åpne funn etter
+      begge, like sett, 0 dubletter.
