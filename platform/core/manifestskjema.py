@@ -3810,6 +3810,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M16_GRENSER[krav_id](grense, art)
     if krav_id in _FORPASS_GRENSER:
         return feil + _FORPASS_GRENSER[krav_id](grense, art)
+    if krav_id in _PLATTFORMVAKT_GRENSER:
+        return feil + _PLATTFORMVAKT_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -11214,4 +11216,283 @@ registrer_suitegrense(
 registrer_suitegrense(
     "m22_lisens", "m22",
     ("platform/core/tests/test_m22_lisens.py",),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# KLASSE F I ADR-004 — PLATTFORMVAKT (M-10 backupinnsyn, M-11 selvtest).
+#
+# Plattformskopet: én skrivedør gitt til én jobbrolle, én lesedør, og ett
+# forpass i varselsenderen som varsler plattformtenantens administratorer
+# når jobben har vært taus for lenge. Ingen revisjonslogg — punktet er
+# MÅLT FRAVÆR med positiv kontroll (klasse B-formen). Fasit, feilinjisering
+# og rollback i den isolerte basen; ytelsen på den ekte jobben.
+# ===========================================================================
+
+PLATTFORMVAKTER: dict[str, dict] = {
+    "m10_backup": {
+        "kort": "m10", "eier": "disponit_m37_claimer",
+        "tabeller": ("backupverifisering",),
+        "skrivedor": "registrer_backupverifisering",
+        "jobbrolle": "disponit_driftstatus",
+        "forpass": "varsle_backupverifisering_uteblitt",
+        "signaturer": {
+            "skrivedor": "registrer_backupverifisering(timestamptz,"
+                         " timestamptz, numeric, integer, bigint)",
+            "forpass": "varsle_backupverifisering_uteblitt(text)"},
+        "modulfiler": ("platform/drift/backupstatus.py",
+                       "platform/drift/kjor_backupstatus.py",
+                       "platform/core/db/migrations/090_m10_backupinnsyn.sql"),
+        "maks_sekunder": 10.0,
+    },
+    "m11_selvtest": {
+        "kort": "m11", "eier": "disponit_m37_claimer",
+        "tabeller": ("selvtest_kjoring", "selvtest_probe"),
+        "skrivedor": "registrer_selvtest",
+        "jobbrolle": "disponit_selvtest",
+        "forpass": "varsle_selvtest_uteblitt",
+        "signaturer": {
+            "skrivedor": "registrer_selvtest(uuid, jsonb, text)",
+            "forpass": "varsle_selvtest_uteblitt(text)"},
+        "modulfiler": ("platform/drift/selvtest.py",
+                       "platform/drift/kjor_selvtest.py",
+                       "platform/core/db/migrations/091_m11_selvtest.sql"),
+        # TIDSGRENSE_S er 5 s per probe og uniten har 3 min; en runde med
+        # fjorten prober skal bruke en brøkdel av det.
+        "maks_sekunder": 30.0,
+    },
+}
+PLATTFORMVAKT_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/plattformvakt-lest.py",)
+
+
+def plattformvakt_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in PLATTFORMVAKT_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _pv_felles(art: dict, *, isolert: bool = True
+               ) -> tuple[list[str], dict, dict, str | None]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    kort = str(art.get("krav_id", "")).split("-")[0]
+    modul = next((k for k, v in PLATTFORMVAKTER.items()
+                  if v["kort"] == kort), None)
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o, modul
+    if o.get("modul") != modul:
+        feil.append(f"oppsett.modul={o.get('modul')!r}, kravet gjelder"
+                    f" {modul!r}")
+    if isolert and o.get("base") != "disponit_test@55432":
+        feil.append("riggen skriver plattformtabeller og hører bare hjemme"
+                    " i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != plattformvakt_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/plattformvakt-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o, modul
+
+
+def _pv_fordeling(m: dict, felt: str, ventet_ab: int) -> list[str]:
+    f = m.get(felt)
+    if not isinstance(f, dict):
+        return [f"maalt.{felt} mangler"]
+    feil = []
+    if f.get("a") != ventet_ab or f.get("b") != ventet_ab:
+        feil.append(f"{felt}: administratorene fikk {f.get('a')!r}/"
+                    f"{f.get('b')!r}, ventet {ventet_ab} hver")
+    if f.get("c") != 0:
+        feil.append(f"{felt}: et medlem uten admin fikk plattformvarsel")
+    if f.get("status_avvik") != 0:
+        feil.append(f"{felt}: kanalvalget ble ikke fulgt")
+    return feil
+
+
+def _grenser_pv_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o, modul = _pv_felles(art)
+    if not m or modul is None:
+        return feil
+    k = PLATTFORMVAKTER[modul]
+    # TAUSHET VARSLES — én gang per døgn, bare til administratorer — og
+    # en fersk jobb varsler ikke (negativ kontroll i en tenant MED admin).
+    feil += _m04_er(m, "uteblitt_forste", 2)
+    feil += _m04_er(m, "uteblitt_samme_dogn", 0)
+    feil += _pv_fordeling(m, "uteblitt_fordeling", 1)
+    feil += _m04_er(m, "uteblitt_etter_fersk", 0)
+    feil += _pv_fordeling(m, "uteblitt_fersk_fordeling", 0)
+    # MÅLT FRAVÆR med positiv kontroll.
+    feil += _m04_er(m, "nye_revisjonsrader", 0)
+    feil += _m04_er(m, "skrivedor_execute", [k["jobbrolle"]])
+    feil += _m04_er(m, "tabellskrivere", [f"{k['eier']}:INSERT"])
+    if modul == "m10_backup":
+        jobb = m.get("jobb")
+        try:
+            koder = [j["returkode"] for j in jobb]
+            skrevet = [j["linje"].get("skrevet") for j in jobb]
+            mangler = jobb[2]["linje"].get("mangler")
+        except (TypeError, KeyError, IndexError, AttributeError):
+            return feil + ["maalt.jobb er misformet"]
+        if koder != [0, 0, 0] or skrevet != [1, 0, 0] or mangler is not True:
+            feil.append(f"jobben: koder {koder}, skrevet {skrevet},"
+                        f" mangler {mangler!r} — ventet [0,0,0], [1,0,0],"
+                        " True")
+        feil += _m04_er(m, "rader", 1)
+        feil += _m04_er(m, "lesedor_egne_tall", True)
+    else:
+        per = m.get("runder")
+        if not isinstance(per, list) or len(per) < grense["min_runder"]:
+            return feil + [f"krever minst {grense['min_runder']} runder"]
+        regnet = sum(1 for r in per if not isinstance(r, dict)
+                     or r.get("ventet") != r.get("fikk") or r.get("ny") != 1)
+        if regnet != m.get("rundeavvik") or regnet:
+            feil.append(f"rundeavvik={m.get('rundeavvik')!r}, regnet"
+                        f" {regnet}, taket er 0")
+        samlede = {r["ventet"][0] for r in per if isinstance(r, dict)}
+        if samlede != {"gronn", "rod", "ikke_konfigurert"}:
+            feil.append("settet dekker ikke alle tre samletdommene")
+        feil += _pv_fordeling(m, "rodvarsel_fordeling", 2)
+        feil += _m04_er(m, "gjenspill_ny", 0)
+        feil += _m04_er(m, "gjenspill_urort", True)
+    return feil
+
+
+def _grenser_pv_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o, modul = _pv_felles(art)
+    if not m or modul is None:
+        return feil
+    br = m.get("brudd")
+    if not isinstance(br, list) or len(br) < grense["min_brudd"]:
+        return feil + [f"krever minst {grense['min_brudd']} brudd"]
+    for b in br:
+        n = b.get("brudd") if isinstance(b, dict) else "?"
+        if not isinstance(b, dict):
+            feil.append(f"{n}: misformet")
+            continue
+        if n == "prober_feiler":
+            # EN FEILET PROBE STOPPER IKKE RUNDEN.
+            if b.get("nye_rader") != 1 or b.get("samlet") != "rod" \
+                    or b.get("prober_i_runden") != b.get("prober_maalt") \
+                    or not b.get("prober_maalt"):
+                feil.append(f"{n}: runden ble ikke registrert med hver"
+                            " probe")
+            continue
+        if b.get("nye_rader") != 0:
+            feil.append(f"{n}: skrev rader på et ugyldig grunnlag")
+        rk = b.get("returkode")
+        if not isinstance(rk, int) or isinstance(rk, bool) or rk == 0:
+            feil.append(f"{n}: jobben avsluttet med {rk!r} — en feil skal"
+                        " gi støy, ikke stillhet")
+    fr = m.get("frisk_etterpa")
+    if not isinstance(fr, dict) or fr.get("returkode") != 0 \
+            or fr.get("nye_rader") != 1:
+        feil.append("jobben gikk ikke rent etter reparasjonen")
+    fp = m.get("forpass")
+    if not isinstance(fp, dict):
+        return feil + ["maalt.forpass mangler"]
+    if fp.get("forpass_feil") != 1 or fp.get("ordinaer_sendt") is not True:
+        feil.append("forpassbruddet: feilen ble ikke talt for seg, eller"
+                    " den ordinære sendingen stanset")
+    rk = fp.get("returkode")
+    if not isinstance(rk, int) or isinstance(rk, bool) or rk == 0:
+        feil.append("forpassbruddet: senderen avsluttet med 0")
+    if fp.get("forpass_feil_etter") != 0 or fp.get("returkode_etter") != 0:
+        feil.append("forpasset gikk ikke rent etter reparasjonen")
+    return feil
+
+
+def _grenser_pv_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o, _modul = _pv_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    feil += _m04_er(m, "svar_like", True)
+    feil += _m04_er(m, "gjenspill_over_rulling", 0)
+    feil += _m04_er(m, "lesedor_baerer_begge", True)
+    return feil
+
+
+def _grenser_pv_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, o, modul = _pv_felles(art, isolert=False)
+    if not m or modul is None:
+        return feil
+    if o.get("base") != "disponit":
+        feil.append("ytelsen måles på den ekte jobben mot driftsbasen")
+    kj = m.get("kjoringer")
+    if not isinstance(kj, list) or len(kj) < grense["min_kjoringer"]:
+        return feil + [f"krever minst {grense['min_kjoringer']} kjøringer"]
+    try:
+        maks = max(float(k["sekunder"]) for k in kj)
+        feilede = sum(1 for k in kj if k["returkode"] != 0)
+    except (KeyError, TypeError, ValueError):
+        return feil + ["maalt.kjoringer er misformet"]
+    if abs(maks - float(m.get("maks_sekunder", -1))) > 1e-6:
+        feil.append("maks_sekunder stemmer ikke med kjøringene")
+    if maks > PLATTFORMVAKTER[modul]["maks_sekunder"]:
+        feil.append(f"maks_sekunder={maks}, taket er"
+                    f" {PLATTFORMVAKTER[modul]['maks_sekunder']}")
+    if feilede != m.get("feilede") or feilede:
+        feil.append(f"feilede={m.get('feilede')!r}, regnet {feilede},"
+                    " krever 0")
+    return feil
+
+
+_PLATTFORMVAKT_GRENSER: dict = {}
+for _modul, _k in PLATTFORMVAKTER.items():
+    _p = _k["kort"]
+    KRAVGRENSER[f"{_p}-fasit-v1"] = {
+        "min_runder": 6,
+        "punktbinding": {
+            "syntetisk_datasett_likt_lokalt": (
+                "maalt.uteblitt_forste", "maalt.uteblitt_samme_dogn",
+                "maalt.uteblitt_etter_fersk", "maalt.uteblitt_fordeling"),
+            "revisjonslogg_korrekt": (
+                "maalt.nye_revisjonsrader", "maalt.skrivedor_execute",
+                "maalt.tabellskrivere"),
+        },
+    }
+    KRAVGRENSER[f"{_p}-feilinjisering-v1"] = {
+        "min_brudd": 4 if _p == "m10" else 2,
+        "punktbinding": {
+            "feilinjisering_til_unntakskø": (
+                "maalt.brudd", "maalt.frisk_etterpa", "maalt.forpass"),
+        },
+    }
+    KRAVGRENSER[f"{_p}-rollback-v1"] = {
+        "punktbinding": {
+            "rollback_testet": ("maalt.svar_like",
+                                "maalt.gjenspill_over_rulling"),
+        },
+    }
+    KRAVGRENSER[f"{_p}-ytelse-v1"] = {
+        "min_kjoringer": 3,
+        "punktbinding": {
+            "ytelse_bestatt": ("maalt.maks_sekunder", "maalt.feilede"),
+        },
+    }
+    for _krav, _fn in (("fasit", _grenser_pv_fasit),
+                       ("feilinjisering", _grenser_pv_feilinjisering),
+                       ("rollback", _grenser_pv_rollback),
+                       ("ytelse", _grenser_pv_ytelse)):
+        ARTEFAKTSKJEMAER[f"{_p}-{_krav}-v1"] = \
+            f"artefakt-{_p}-{_krav}-skjema.json"
+        _PLATTFORMVAKT_GRENSER[f"{_p}-{_krav}-v1"] = _fn
+
+registrer_suitegrense(
+    "m10_backup", "m10",
+    ("platform/core/tests/test_m10_backupinnsyn.py",),
+    min_tester=3000, min_andel_tester=20)
+registrer_suitegrense(
+    "m11_selvtest", "m11",
+    ("platform/core/tests/test_m11_selvtest.py",),
     min_tester=3000, min_andel_tester=20)
