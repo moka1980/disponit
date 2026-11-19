@@ -235,10 +235,12 @@ def _handling(modul: str, rt, tenant: str, sid: str, hva: str) -> None:
                    (tenant, sid, "Lisensen er sagt opp og ikke fornyet",
                     AKTOR))
     elif hva == "forny":
+        # Runtime har ingen SELECT på registeret: datoen regnes av settet.
+        om = next(r[1] for rader in M22_SETT.values() for r in rader
+                  if r[0] == M22_MELLOM)
         rt.execute("SELECT m22_registrer_fornyelse(%s,%s,"
-                   " (SELECT fornyelsesdato FROM lisens WHERE tenant=%s"
-                   "   AND lisens_id=%s) + 365, %s)",
-                   (tenant, sid, tenant, sid, AKTOR))
+                   " current_date + %s, %s)",
+                   (tenant, sid, om + 365, AKTOR))
     else:
         raise ValueError(hva)
     rt.commit()

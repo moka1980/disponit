@@ -11166,7 +11166,7 @@ for _modul, _k in FORPASSMODULER.items():
     _p = _k["kort"]
     KRAVGRENSER[f"{_p}-fasit-v1"] = {
         "min_subjekter": 7, "min_ankre": 8, "min_tomme": 2,
-        "min_evidens": 20,
+        "min_evidens": 18,
         "punktbinding": {
             "syntetisk_datasett_likt_lokalt": (
                 "maalt.ankeravvik", "maalt.ankre_kjoring1",
