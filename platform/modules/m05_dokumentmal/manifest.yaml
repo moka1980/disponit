@@ -30,8 +30,8 @@
 id: m05_dokumentmal
 navn: Dokument- og malagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i v1: malregisteret er et lager med dører, det
 # bestiller ingenting gjennom policyporten. Utfyllingen returnerer
 # tekst; den sender ingenting og beslutter ingenting. Blir utsending en
@@ -42,9 +42,25 @@ i18n_prefiks: dokumentmal
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m05-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m05-suite-v1-20261119T112452Z.json
+    artefakt_sha256: e30510c33c16c0908b0c44dfac394c894e1571d9f9a8ce85d9d5a86c71125dba
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 39 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m05-lest.py` (ADR-002
     # klasse C) i den isolerte basen på 55432, bygget fra commiten som måles.
