@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m38-rollback-v1.json",
+  "title": "m38-rollback-v1 — forgjengerens og kandidatens kjerne leser samme policy og drenerer like køer (ADR-005)",
+  "comment": "Produsert av deploy/staging/m38-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m38_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m38-rollback-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "forgjenger",
+        "kjerne_forgjenger",
+        "kjerne_kandidat",
+        "modul",
+        "modul_forgjenger",
+        "modul_kandidat",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "forgjenger": {
+          "type": "string"
+        },
+        "kjerne_forgjenger": {
+          "type": "string"
+        },
+        "kjerne_kandidat": {
+          "type": "string"
+        },
+        "modul_forgjenger": {
+          "type": "string"
+        },
+        "modul_kandidat": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forgjenger",
+        "kandidat",
+        "kandidat_lik_fasit",
+        "svar_like"
+      ],
+      "properties": {
+        "forgjenger": {
+          "type": "object"
+        },
+        "kandidat": {
+          "type": "object"
+        },
+        "svar_like": {
+          "type": "boolean"
+        },
+        "kandidat_lik_fasit": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

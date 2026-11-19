@@ -3814,6 +3814,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _FORPASS_GRENSER[krav_id](grense, art)
     if krav_id in _PLATTFORMVAKT_GRENSER:
         return feil + _PLATTFORMVAKT_GRENSER[krav_id](grense, art)
+    if krav_id in _M38_GRENSER:
+        return feil + _M38_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -11053,6 +11055,30 @@ FORPASS_BEVISROT: tuple[str, ...] = ("deploy/staging/forpass-lest.py",)
 def forpass_bevisrot_sha256() -> str:
     h = hashlib.sha256()
     for rel in FORPASS_BEVISROT:
+# M-38 — KLASSE G I ADR-005 (kjernekrok: rekkefølge og memoisering).
+#
+# M-38 skriver ingenting eget. Fasiten er en KJENT KØ drenert gjennom den
+# ekte claim-funksjonen, og memoiseringen målt som antall skjemavandringer.
+# Revisjonsloggen er MÅLT FRAVÆR: en claim endrer bare køtabellen og sin
+# egen historikk, og ingen revisjonsrad skrives av krokene.
+# ===========================================================================
+
+M38_MODULFILER: tuple[str, ...] = (
+    "platform/core/m38",
+    "platform/core/api/policyregister.py",
+    "platform/core/db/migrations/085_m38_fairness.sql",
+)
+M38_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/m38-lest.py",
+    "platform/core/tests/test_m37.py",
+    "platform/core/tests/test_bootstrap_ankerrad.py",
+)
+M38_SAK_VENTET = ["a1", "b1", "c1", "a2", "c2", "a3", "a4", "a5", "a6"]
+
+
+def m38_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M38_BEVISROT:
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
@@ -11127,6 +11153,7 @@ registrer_suitegrense(
     "m35_kontinuitet", "m35",
     ("platform/core/tests/test_m35_kontinuitet.py",),
 def _forpass_felles(art: dict) -> tuple[list[str], dict, dict]:
+def _m38_felles(art: dict) -> tuple[list[str], dict, dict]:
     feil: list[str] = []
     m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
     o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
@@ -11144,6 +11171,14 @@ def _forpass_felles(art: dict) -> tuple[list[str], dict, dict]:
         if o.get("bevisrot_sha256") != forpass_bevisrot_sha256():
             feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
                         " deploy/staging/forpass-lest.py")
+    if o.get("modul") != "m38_ruter":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m38_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " produsenten og riggens testhjelpere")
     except OSError as e:
         feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
     return feil, m, o
@@ -11526,6 +11561,65 @@ def _grenser_pv_feilinjisering(grense: dict, art: dict) -> list[str]:
 
 def _grenser_pv_rollback(grense: dict, art: dict) -> list[str]:
     feil, m, o, _modul = _pv_felles(art)
+def _grenser_m38_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m38_felles(art)
+    if not m:
+        return feil
+    feil += _m04_er(m, "sak_ventet", M38_SAK_VENTET)
+    feil += _m04_er(m, "sak_rekkefolge", M38_SAK_VENTET)
+    rekke = m.get("oppdrag_rekkefolge")
+    if not isinstance(rekke, list) or rekke[:2] != ["d1", "e1"]:
+        feil.append(f"oppdragskøen: de to første claimene var {rekke!r},"
+                    " fasiten sier ['d1', 'e1']")
+    feil += _m04_er(m, "oppdrag_alle", True)
+    feil += _m04_er(m, "prioritet_forst", True)
+    feil += _m04_minst(m, "cache_lesinger", grense["min_lesinger"])
+    feil += _m04_er(m, "cache_valideringer", 1)
+    feil += _m04_er(m, "cache_ulike_svar", 1)
+    feil += _m04_er(m, "cache_ny_versjon_valideringer", 1)
+    # MÅLT FRAVÆR: en claim endrer køtabellen og ingenting annet, og ingen
+    # av krokene skriver en revisjonsrad.
+    # `unntak_historikk` er claimens EGEN revisjon (003/005, lenge før
+    # M-38): hver statusovergang på en sak fører en historikkrad. Målt
+    # 19.11.2026 — kroken legger ingen tabell til de to.
+    feil += _m04_er(m, "claim_endrede_tabeller_sak",
+                    ["unntak", "unntak_historikk"])
+    feil += _m04_er(m, "claim_endrede_tabeller_oppdrag", ["oppdrag"])
+    feil += _m04_er(m, "nye_revisjonsrader_claim", 0)
+    feil += _m04_er(m, "nye_revisjonsrader_cache", 0)
+    return feil
+
+
+def _grenser_m38_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m38_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    navn = sorted(b.get("brudd") for b in br if isinstance(b, dict)) \
+        if isinstance(br, list) else []
+    if navn != sorted(["ugyldig_claim_id", "statement_timeout",
+                       "execute_trukket", "korrupt_innhold_etter_treff"]) \
+            or m.get("injiserte") != len(br):
+        return feil + ["krever de fire injeksjonene"]
+    for b in br:
+        n = b["brudd"]
+        if b.get("avvist") is not True:
+            feil.append(f"{n}: ble ikke avvist")
+            continue
+        typet = (isinstance(b.get("sqlstate"), str) and len(b["sqlstate"]) == 5) \
+            or str(b.get("feiltype") or "").startswith("PolicyKorrupt")
+        if not typet:
+            feil.append(f"{n}: avvisningen var ikke typet")
+        if b.get("urort") is not True:
+            feil.append(f"{n}: en avvist claim etterlot en endret kø")
+        if n == "korrupt_innhold_etter_treff" and b.get("treff_for") is not True:
+            feil.append(f"{n}: cachen var ikke varm før korrupsjonen — da"
+                        " er porten aldri målt bak et treff")
+    return feil
+
+
+def _grenser_m38_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m38_felles(art)
     if not m:
         return feil
     kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
@@ -11614,3 +11708,75 @@ registrer_suitegrense(
     "m11_selvtest", "m11",
     ("platform/core/tests/test_m11_selvtest.py",),
     min_tester=3000, min_andel_tester=20)
+    feil += _m04_er(m, "kandidat_lik_fasit", True)
+    return feil
+
+
+def _grenser_m38_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m38_felles(art)
+    if not m:
+        return feil
+    ms = m.get("ms")
+    if not isinstance(ms, list) or len(ms) < grense["min_kall"] \
+            or m.get("kall") != len(ms):
+        return feil + [f"krever minst {grense['min_kall']} målte claims"]
+    s = sorted(float(x) for x in ms)
+    p95 = s[max(0, int(round(0.95 * len(s))) - 1)]
+    if abs(p95 - float(m.get("p95_ms", -1))) > 0.01:
+        feil.append("p95_ms stemmer ikke med målingene")
+    if p95 > grense["maks_p95_ms"]:
+        feil.append(f"p95={p95} ms, taket er {grense['maks_p95_ms']}")
+    feil += _m04_er(m, "feilede", 0)
+    feil += _m04_er(m, "claimet", m.get("kall"))
+    feil += _m04_minst(m, "koelengde", grense["min_koelengde"])
+    feil += _m04_minst(m, "treffrate", grense["min_treffrate"])
+    return feil
+
+
+KRAVGRENSER["m38-fasit-v1"] = {
+    "min_lesinger": 50,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.sak_rekkefolge", "maalt.oppdrag_rekkefolge",
+            "maalt.prioritet_forst", "maalt.cache_valideringer"),
+        "revisjonslogg_korrekt": (
+            "maalt.claim_endrede_tabeller_sak",
+            "maalt.claim_endrede_tabeller_oppdrag",
+            "maalt.nye_revisjonsrader_claim",
+            "maalt.nye_revisjonsrader_cache"),
+    },
+}
+KRAVGRENSER["m38-feilinjisering-v1"] = {
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m38-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like", "maalt.kandidat_lik_fasit"),
+    },
+}
+KRAVGRENSER["m38-ytelse-v1"] = {
+    "min_kall": 200, "maks_p95_ms": 100.0, "min_koelengde": 500,
+    "min_treffrate": 0.99,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede",
+                           "maalt.treffrate"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m38-{_krav}-v1"] = f"artefakt-m38-{_krav}-skjema.json"
+
+_M38_GRENSER = {
+    "m38-fasit-v1": _grenser_m38_fasit,
+    "m38-feilinjisering-v1": _grenser_m38_feilinjisering,
+    "m38-rollback-v1": _grenser_m38_rollback,
+    "m38-ytelse-v1": _grenser_m38_ytelse,
+}
+
+registrer_suitegrense(
+    "m38_ruter", "m38",
+    ("platform/core/tests/test_m37.py",
+     "platform/core/tests/test_pr013_policyadmin_flyt.py",
+     "platform/core/tests/test_slett_policy.py"),
+    min_tester=3000, min_andel_tester=100)

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m38-fasit-v1.json",
+  "title": "m38-fasit-v1 — kjent kø drenert gjennom den ekte claim-funksjonen, memoiseringen målt, målt fravær i revisjonsloggen (ADR-005 klasse G)",
+  "comment": "Produsert av deploy/staging/m38-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m38_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m38-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "tenanter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenanter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cache_lesinger",
+        "cache_ny_versjon_valideringer",
+        "cache_ulike_svar",
+        "cache_valideringer",
+        "claim_endrede_tabeller_oppdrag",
+        "claim_endrede_tabeller_sak",
+        "nye_revisjonsrader_cache",
+        "nye_revisjonsrader_claim",
+        "oppdrag_alle",
+        "oppdrag_rekkefolge",
+        "oppdrag_ventet_to",
+        "prioritet_forst",
+        "revisjonsrader_totalt_endret",
+        "sak_rekkefolge",
+        "sak_ventet"
+      ],
+      "properties": {
+        "sak_rekkefolge": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sak_ventet": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "oppdrag_rekkefolge": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "oppdrag_ventet_to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "oppdrag_alle": {
+          "type": "boolean"
+        },
+        "prioritet_forst": {
+          "type": "boolean"
+        },
+        "cache_lesinger": {
+          "type": "integer"
+        },
+        "cache_valideringer": {
+          "type": "integer"
+        },
+        "cache_ulike_svar": {
+          "type": "integer"
+        },
+        "cache_ny_versjon_valideringer": {
+          "type": "integer"
+        },
+        "claim_endrede_tabeller_sak": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "claim_endrede_tabeller_oppdrag": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nye_revisjonsrader_claim": {
+          "type": "integer"
+        },
+        "nye_revisjonsrader_cache": {
+          "type": "integer"
+        },
+        "revisjonsrader_totalt_endret": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}
