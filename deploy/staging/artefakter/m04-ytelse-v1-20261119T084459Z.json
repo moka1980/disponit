@@ -1,0 +1,49 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m04-ytelse-v1",
+  "maalt": {
+    "feilede": 0,
+    "kjoringer": [
+      {
+        "feilet": false,
+        "ferdig": false,
+        "hoppet_over": false,
+        "malt": 50,
+        "returkode": 0,
+        "sekunder": 0.572,
+        "umaalbare": 0
+      },
+      {
+        "feilet": false,
+        "ferdig": true,
+        "hoppet_over": false,
+        "malt": 44,
+        "returkode": 0,
+        "sekunder": 0.382,
+        "umaalbare": 0
+      },
+      {
+        "feilet": false,
+        "ferdig": false,
+        "hoppet_over": false,
+        "malt": 50,
+        "returkode": 0,
+        "sekunder": 1.119,
+        "umaalbare": 0
+      }
+    ],
+    "lagre_maalt": 144,
+    "maks_sekunder": 1.119,
+    "sekunder_per_lager": 0.0144,
+    "umaalbare": 0
+  },
+  "oppsett": {
+    "base": "disponit",
+    "bevisrot_sha256": "9a347cead4a60ea4bae9e983837d5e24cc301b77da8bf987dab8c258acaf4178",
+    "modul": "m04_dataforvalter",
+    "runder": 3,
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T08:44:59.488496+00:00"
+}

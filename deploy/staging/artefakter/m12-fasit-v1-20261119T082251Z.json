@@ -1,0 +1,74 @@
+{
+  "bestatt": true,
+  "krav_id": "m12-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "tilgang.gjennomgatt": 1,
+      "tilgang.registrert": 2,
+      "tilgangsobjekt.registrert": 2
+    },
+    "evidens_totalt": 5,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "gjennomgang_utlopt"
+        ],
+        "merke": "utlopt",
+        "subjekt_id": "7c57e1d6-db0b-449a-905c-34efc293cc61",
+        "ventet": "gjennomgang_utlopt"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "2cf6700d-b4b2-4732-839b-7c8cfeab0ca3",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "da5386d8-1a8f-43bf-88d0-1b228ba77a37",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "gjennomgang_utlopt"
+        ],
+        "merke": "utlopt_b",
+        "subjekt_id": "82c4e04f-2539-4f2e-a5d5-48157b7efc48",
+        "ventet": "gjennomgang_utlopt"
+      },
+      {
+        "fikk": [],
+        "merke": "ok_b",
+        "subjekt_id": "ec65cc14-82ea-4f56-ab3e-c7b1478b93da",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 3,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 2
+  },
+  "oppsett": {
+    "bevisrot_sha256": "77deb663291b6a1f91daa06a3e37f5d251885e5e27d3bdb695192fcff71de5b9",
+    "evidenskilde": "m12_tilgang",
+    "modul": "m12_tilgang",
+    "riggmodul": "m12_fasit",
+    "runde": "7e85b30e",
+    "sett_sha256": "909162c940b9aa02299412884f3b856bfcfdf54ac8178c6a043797649659bb7d",
+    "tenanter": [
+      "t-m12fasit-a-7e85b30e",
+      "t-m12fasit-b-7e85b30e"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T08:22:51.106918+00:00"
+}

@@ -1,0 +1,44 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m04-feilinjisering-v1",
+  "maalt": {
+    "antall_lagre": 249,
+    "funn_etter_uten_execute": 833,
+    "funn_for_uten_execute": 833,
+    "gjenoppretting_ferdig": true,
+    "injeksjonsrolle_har_execute": false,
+    "registeret_urort": true,
+    "tidsgrense_beholdning_uten_maaling": 0,
+    "tidsgrense_maaling_avbrutt": true,
+    "tidsgrense_maalt": 0,
+    "tidsgrense_umaalbare": 249,
+    "tidsgrense_verken_eller": 0,
+    "umaalbare_etter_gjenoppretting": 1,
+    "umaalbare_for_injeksjon": 1,
+    "uten_execute_alarm": [
+      false,
+      true
+    ],
+    "uten_execute_feilet": [
+      true,
+      true
+    ],
+    "uten_execute_returkoder": [
+      1,
+      1
+    ]
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "9a347cead4a60ea4bae9e983837d5e24cc301b77da8bf987dab8c258acaf4178",
+    "injeksjoner": [
+      "statement_timeout = 1 ms per lager",
+      "tilkobling som disponit — uten EXECUTE på m4_mal_lagre(integer,boolean)"
+    ],
+    "modul": "m04_dataforvalter",
+    "runde": "6bebbe3a",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T08:44:26.644554+00:00"
+}
