@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **45 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **47 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,8 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Avtaler og frister (M-21)** | Plikter som nærmer seg fristen, varslet til eieren 30, 7 og 1 døgn før | Lukker aldri en frist av seg selv. En plikt lukkes av en kvittering, eller faller bort med en skreven begrunnelse. |
+| **Lisenser og SaaS (M-22)** | Lisenser som nærmer seg beslutningsdatoen (fornyelsen minus oppsigelsesfristen), varslet til eieren 60, 30 og 7 døgn før | Sier ikke opp og fornyer ingenting. Den varsler mens valget fortsatt er deres. |
 | **Optimalisator (M-36)** | Rangeringer der det øverste forslaget hviler bare på korrelasjon, rangeringer ingen har målt effekten av, og en porteføljestopp som blir stående | Iverksetter ingenting. Anslaget på hvert tiltak er et menneskes, og hvert forslag sier om det hviler på korrelasjon, eksperiment eller regel. |
 | **Bærekraft / ESG (M-45)** | Åpne rapportperioder der standarden har fått en nyere versjon, og perioder der for mye av utslippet hviler på estimater | Sender ingen rapport og skriver ingen påstand uten kilde. Hvert tall sier om det er målt eller anslått. |
 | **Telefoni (M-43)** | Samtaler som aldri ble avsluttet, eskaleringer ingen tok, og transkriberte linjer med lav sikkerhet som ingen har rettet | Tar ikke opp uten hjemmel og forutgående varsling, og agenten sier alltid at den er automatisert før den snakker. Eskalerer bare etter kundens egne regler. |
@@ -231,7 +233,9 @@ i enhver opplæringsøkt.
 | Dokumentmaler | «Opprett malfamilie» → «Publiser versjonen» | En familie, en versjon med tekst og felt, og publisering før den kan fylles ut |
 | Møter | «Lagre krav» → «Registrer møte» | Referatfrist, aksjonsfrist og sikkerhetsterskel |
 | Telefoni | «Lagre krav» → «Registrer regel» | Sikkerhetsterskel, identifikasjonsfrist, eskaleringsfrist og samtaletak, så eskaleringsreglene |
-| Optimalisator | Ingen oppsettsknapp i flaten ennå | Grenser, modell og tiltak registreres foreløpig gjennom API-et. Flaten viser rangeringen og lar dere vurdere tiltak, måle effekt og lukke funn. Modulen rulles ut til kunder når oppsettsskjemaene er på plass. |
+| Avtaler og frister | «Registrer plikt» | Hva plikten er, hvem som eier den, hvor den kommer fra (avtale, paragraf) og fristen |
+| Lisenser og SaaS | «Registrer lisens» | Leverandør, produkt, eier, fornyelsesdato og oppsigelsesfrist |
+| Optimalisator | «Lagre grensene» → «Ny modellversjon» → «Nytt tiltaksforslag» → «Ny rangering» | Horisont, målefrist og hvor mange tiltak en rangering tar med; så modellen, tiltakene (med et menneskes anslag) og selve rangeringen |
 | Bærekraft / ESG | «Lagre krav» → «Registrer kilde» → «Åpne periode» | Estimatterskel og -frist, kildedokumentene og standarden perioden rapporterer etter |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
