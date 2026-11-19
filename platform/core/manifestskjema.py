@@ -5752,6 +5752,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m07_moteoperasjon",
                          "platform/drift/motesveip.py"),
     },
+    "m45_esg": {
+        "modul_fil": "esgsveip",
+        "funntabell": "esgfunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "esgkrav",
+        "maalerolle": "disponit_esg_eier",
+        "sveipedor": "m45_sveip_esg(int)",
+        "dsn_variabel": "DISPONIT_ESGSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m45-fasit-v1",
+        "feilinjisering_krav": "m45-feilinjisering-v1",
+        "ytelse_krav": "m45-ytelse-v1",
+        "rollback_krav": "m45-rollback-v1",
+        "riggmodul": "m45_fasit",
+        "releasefiler": ("platform/modules/m45_esg",
+                         "platform/drift/esgsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6755,6 +6773,19 @@ registrer_sveipgrenser("m07_moteoperasjon", maks_sekunder=60.0,
 
 registrer_suitegrense("m07_moteoperasjon", "m07",
                       ("platform/core/tests/test_m7_moteoperasjon.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-45 (ADR-002, klasse A): fem subjekter i to tenanter; to nåbare
+# funntyper, fem utelukket av datamodellen, én ikke nåbar samme dag.
+# Gulvene foreløpige.
+registrer_fasitgrense("m45_esg", min_subjekter=5, min_evidens=10,
+                      tenantprefiks="t-m45fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m45_esg", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m45_esg", "m45",
+                      ("platform/core/tests/test_m45_esg.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
