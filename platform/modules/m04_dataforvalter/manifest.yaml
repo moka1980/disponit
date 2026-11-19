@@ -23,7 +23,10 @@
 # fordi grantet manglet, er ikke en grønn måling — den er en måling som
 # ikke kjørte.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# KODEN FINNES (093 + 143, `platform/drift/retensjonsmaaling.py`,
+# timeren `disponit-lagermaaling`). ADR-002 plasserer M-04 i klasse B
+# (plattformregister + måler): lesten er `deploy/staging/m04-lest.py`,
+# og revisjonslogg-punktet er MÅLT FRAVÆR med positiv kontroll.
 id: m04_dataforvalter
 navn: Data- og filforvalter
 versjon: 0.1.0
