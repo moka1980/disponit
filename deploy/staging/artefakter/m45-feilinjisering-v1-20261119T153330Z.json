@@ -1,0 +1,58 @@
+{
+  "bestatt": true,
+  "krav_id": "m45-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 10,
+    "apne_for": 10,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "estimatandel_over_terskel_uavklart": [
+        4,
+        0
+      ],
+      "standardversjon_foreldet_i_apen_periode": [
+        6,
+        1
+      ]
+    },
+    "per_type_for": {
+      "estimatandel_over_terskel_uavklart": [
+        4,
+        0
+      ],
+      "standardversjon_foreldet_i_apen_periode": [
+        6,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "esgfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m45_sveip_esg(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_esg_eier",
+    "modul": "m45_esg",
+    "riggmodul": "m45_fasit",
+    "riggtenanter": [
+      "t-m45fasit-a-2e30ab01",
+      "t-m45fasit-b-2e30ab01"
+    ],
+    "runde": "2e30ab01",
+    "sveipedor": "m45_sveip_esg(int)",
+    "tenantkilde": [
+      "esgkrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:33:30.641508+00:00"
+}
