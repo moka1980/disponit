@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/1642a9c77329acfe68596c7f0dd5abd9723739d1/platform/drift/personvernsveip.py",
+    "avbrutt_pid": 4137230,
+    "kandidat_fil": "/opt/disponit/releases/1642a9c77329acfe68596c7f0dd5abd9723739d1/platform/drift/personvernsveip.py",
+    "kandidat_pid": 4137234,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/personvernsveip.py",
+    "rullback_pid": 4137232
+  },
+  "krav_id": "m30-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 5,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 5,
+    "rullbakk_rader": 5
+  },
+  "oppsett": {
+    "arbeidernokkel": 915774230,
+    "avbrutt_backend_pid": 4137231,
+    "bevisrot_sha256": "ad169fa59c9d1d217399bf1e9113a0318ad80c1c2303f897cf06a62d1c21e979",
+    "drillet_digest": "bb926c3f21307078ff4ac22a66708f79525be222085ccae8e4d2b2fbdd5f3b2e",
+    "drillet_katalog": "/opt/disponit/releases/1642a9c77329acfe68596c7f0dd5abd9723739d1",
+    "drillet_kjernedigest": "6bce4ca7bfda2a5f9a14b94fd6a63b95a57d45642f91a72d3797f2f0eee3bca0",
+    "drillet_release": "1642a9c77329acfe68596c7f0dd5abd9723739d1",
+    "forgjenger_digest": "bb926c3f21307078ff4ac22a66708f79525be222085ccae8e4d2b2fbdd5f3b2e",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "personvernfunn",
+    "maalerolle": "disponit_personvern_eier",
+    "miljo": "staging",
+    "modul": "m30_personvern",
+    "runde": "a75b4a3e",
+    "tenanter": [
+      "t-m30fasit-a-a75b4a3e",
+      "t-m30fasit-b-a75b4a3e"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T01:07:08.786083+00:00"
+}

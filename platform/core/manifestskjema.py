@@ -6641,8 +6641,8 @@ registrer_suitegrense("m15_likviditet", "m15",
                       min_tester=3000, min_andel_tester=32)
 
 
-# M-30: provisoriske gulv — heves til litt under det målte. Fem nye
-# funn i første sveip (tre typer + den rene saken).
+# M-30: gulvene er litt under det målte 19/11 (6 subjekter, 7
+# evidenshendelser; tre typer + den rene saken).
 registrer_fasitgrense("m30_personvern", min_subjekter=6, min_evidens=6,
                       tenantprefiks="t-m30fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m30_personvern", maks_sekunder=60.0, min_tenanter=2,

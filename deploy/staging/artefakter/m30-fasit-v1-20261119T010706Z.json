@@ -1,0 +1,83 @@
+{
+  "bestatt": true,
+  "krav_id": "m30-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "personvernsak.frist_forlenget": 1,
+      "personvernsak.registrert": 6
+    },
+    "evidens_totalt": 7,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "frist_oversittet"
+        ],
+        "merke": "oversittet",
+        "subjekt_id": "53f48490-8bbe-4c52-b2fb-ba74beeacb87",
+        "ventet": "frist_oversittet"
+      },
+      {
+        "fikk": [
+          "frist_naermer_seg"
+        ],
+        "merke": "naermer",
+        "subjekt_id": "80e80140-5033-47b4-ae41-84b59bc4f89f",
+        "ventet": "frist_naermer_seg"
+      },
+      {
+        "fikk": [
+          "sak_uten_lagre"
+        ],
+        "merke": "uten_lagre",
+        "subjekt_id": "d98c81e1-b317-4012-99c5-f60f96f7eb08",
+        "ventet": "sak_uten_lagre"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "604248b8-e613-4bdf-acb4-da1d7387b5b1",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "50fc3890-3263-41ed-946e-d466c60f78a8",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "sak_uten_lagre"
+        ],
+        "merke": "uten_lagre_b",
+        "subjekt_id": "c8db1cb2-460e-464a-9542-c32635bdc997",
+        "ventet": "sak_uten_lagre"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 5,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 20
+  },
+  "oppsett": {
+    "bevisrot_sha256": "9d3307c688829971a404de9100a0169a25c7010e1ba85894466a2d622bc04a22",
+    "evidenskilde": "m30_personvern",
+    "modul": "m30_personvern",
+    "riggmodul": "m30_fasit",
+    "runde": "c34be73f",
+    "sett_sha256": "86d330e9861f5c5658258128b69d532bcb111868eff404e4832bba92c30e786c",
+    "tenanter": [
+      "t-m30fasit-a-c34be73f",
+      "t-m30fasit-b-c34be73f"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T01:07:06.768250+00:00"
+}
