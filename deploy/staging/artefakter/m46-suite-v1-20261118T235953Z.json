@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m46-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 33,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5524
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m46_anbud.py"
+    ],
+    "bevisrot_sha256": "6a27f7f8f390c166632d4d6553458af3d3527358e76da727134dead4e3b7c889",
+    "commit": "d0ea400f9073d5695f181c111474d6816100a883",
+    "modul": "m46_anbud",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T23:59:53.095037+00:00"
+}

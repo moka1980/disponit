@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m48-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.024,
+      0.0246,
+      0.0255
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 4
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 4
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 11,
+        "tenanter": 4
+      }
+    ],
+    "sekunder": 0.0255,
+    "sekunder_per_tenant": 0.0064,
+    "tenanter": 4
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m48_motpart",
+    "sveip": "motpartssveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:28:08.229220+00:00"
+}

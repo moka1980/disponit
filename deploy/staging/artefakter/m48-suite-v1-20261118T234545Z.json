@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m48-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 49,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5524
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m48_motpart.py"
+    ],
+    "bevisrot_sha256": "04ef1b363bcde59a494d00eb080371861c6f737cabc26857d26a17a57685dfd4",
+    "commit": "b61dd73893d51afbdbde654a6a12ec864d33bee7",
+    "modul": "m48_motpart",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T23:45:45.441599+00:00"
+}

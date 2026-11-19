@@ -1,0 +1,58 @@
+{
+  "bestatt": true,
+  "krav_id": "m20-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 35,
+    "apne_for": 35,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
+    "per_type_etter": {
+      "kilde_utloper_snart_uavklart": [
+        11,
+        0
+      ],
+      "klart_utkast_uten_forhaandsvisning": [
+        24,
+        4
+      ]
+    },
+    "per_type_for": {
+      "kilde_utloper_snart_uavklart": [
+        11,
+        0
+      ],
+      "klart_utkast_uten_forhaandsvisning": [
+        24,
+        4
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 24
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "innholdsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m20_sveip_innhold(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_innhold_eier",
+    "modul": "m20_innhold",
+    "riggmodul": "m20_fasit",
+    "riggtenanter": [
+      "t-m20fasit-a-c16ac7b4",
+      "t-m20fasit-b-c16ac7b4"
+    ],
+    "runde": "c16ac7b4",
+    "sveipedor": "m20_sveip_innhold(int)",
+    "tenantkilde": [
+      "innholdskrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:38:51.913858+00:00"
+}

@@ -1,0 +1,98 @@
+{
+  "bestatt": true,
+  "krav_id": "m46-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 15,
+    "apne_for": 15,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 3,
+    "lukkede_for": 3,
+    "per_type_etter": {
+      "frist_naermer_seg": [
+        2,
+        0
+      ],
+      "frist_passert": [
+        2,
+        0
+      ],
+      "ingen_krav_registrert": [
+        2,
+        1
+      ],
+      "ingen_profil": [
+        2,
+        0
+      ],
+      "udekket_absolutt_krav": [
+        3,
+        1
+      ],
+      "udekket_krav": [
+        2,
+        1
+      ],
+      "utenfor_profil": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "frist_naermer_seg": [
+        2,
+        0
+      ],
+      "frist_passert": [
+        2,
+        0
+      ],
+      "ingen_krav_registrert": [
+        2,
+        1
+      ],
+      "ingen_profil": [
+        2,
+        0
+      ],
+      "udekket_absolutt_krav": [
+        3,
+        1
+      ],
+      "udekket_krav": [
+        2,
+        1
+      ],
+      "utenfor_profil": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "anbudsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m46_sveip_anbud(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_anbud_eier",
+    "modul": "m46_anbud",
+    "riggmodul": "m46_fasit",
+    "riggtenanter": [
+      "t-m46fasit-a-61117f9d",
+      "t-m46fasit-b-61117f9d"
+    ],
+    "runde": "61117f9d",
+    "sveipedor": "m46_sveip_anbud(int)",
+    "tenantkilde": [
+      "anbud"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:30:56.742166+00:00"
+}

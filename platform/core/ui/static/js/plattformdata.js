@@ -123,9 +123,9 @@ export const MODULSTATUS = {
   // navnelikhet aldri kan avfeies maskinelt. v1 blokkerer ikke.
   //
   // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
-  48: "bygges",     // m48_motpart: under_utvikling, ikke_i_drift
-  49: "bygges",     // m49_sanksjon: under_utvikling, ikke_i_drift
-  46: "bygges",     // m46_anbud: under_utvikling, ikke_i_drift
+  48: "i_drift",    // m48_motpart: aktiv, produksjon
+  49: "i_drift",    // m49_sanksjon: aktiv, produksjon
+  46: "i_drift",    // m46_anbud: aktiv, produksjon
   51: "bygges",     // m51_tilskudd: under_utvikling, ikke_i_drift
   55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
@@ -156,7 +156,7 @@ export const MODULSTATUS = {
   // for at de blir MÅLT.
   //
   // Flippes av en modulaksept, aldri av en byggemilepæl.
-  15: "bygges",     // m15_likviditet: under_utvikling, ikke_i_drift
+  15: "i_drift",    // m15_likviditet: aktiv, produksjon
   33: "bygges",     // m33_prognose: under_utvikling, ikke_i_drift
   36: "bygges",     // m36_optimalisator: under_utvikling
   // KLYNGE 9 — YTRINGENE. Registrert med grensene, før koden.
@@ -169,7 +169,7 @@ export const MODULSTATUS = {
   //
   // Flippes av en modulaksept, aldri av en byggemilepæl.
   7: "bygges",      // m7_moteoperasjon: under_utvikling, ikke_i_drift
-  20: "bygges",     // m20_innhold: under_utvikling, ikke_i_drift
+  20: "i_drift",    // m20_innhold: aktiv, produksjon
   43: "bygges",     // m43_telefoni: under_utvikling, ikke_i_drift
   45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
   // KLYNGE 10 — HANDLINGENE. Registrert med grensene, før koden.

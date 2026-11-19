@@ -1,0 +1,104 @@
+{
+  "bestatt": true,
+  "krav_id": "m48-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "foretaksoppslag_fullfort": 10,
+      "foretaksoppslag_reservert": 10,
+      "motpart_registrert": 8,
+      "motpartskrav_satt": 2,
+      "motpartsversjon_registrert": 5,
+      "motpartsvurdering_registrert": 4
+    },
+    "evidens_totalt": 39,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "uvurdert_motpart"
+        ],
+        "merke": "uvurdert",
+        "subjekt_id": "3adb2465-4b2b-4b3b-afa4-3d2c61ab7edd",
+        "ventet": "uvurdert_motpart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "97b4e889-8692-44b6-9b83-3e652f70f21c",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "uten_krav",
+        "subjekt_id": "fe069628-db43-4ffa-a90f-2c7c1448b41a",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [
+          "profil_uten_vurdering"
+        ],
+        "merke": "profil_uten",
+        "subjekt_id": "5553cd43-e084-4e1f-9fc7-b987c1e71ab2",
+        "ventet": "profil_uten_vurdering"
+      },
+      {
+        "fikk": [
+          "motpart_avviklet"
+        ],
+        "merke": "avviklet",
+        "subjekt_id": "48840c7f-f74b-4355-8efb-864ecff4353e",
+        "ventet": "motpart_avviklet"
+      },
+      {
+        "fikk": [
+          "forslag_over_tak"
+        ],
+        "merke": "over_tak",
+        "subjekt_id": "72767783-ce4c-466e-8036-d95b7db0fc3f",
+        "ventet": "forslag_over_tak"
+      },
+      {
+        "fikk": [
+          "gjentatte_oppslagsfeil"
+        ],
+        "merke": "feil",
+        "subjekt_id": "9cb5f268-8c05-4720-8be1-7ab8cf38a633",
+        "ventet": "gjentatte_oppslagsfeil"
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "3f4d42d3-19fc-4c02-9519-f555831b761f",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 8,
+    "sveip1_nye": 7,
+    "sveip1_tenanter": 4,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "bc5347086237e1c9d05b742fdcb92c72f8ac588f5eb7ec48362f4092044d588b",
+    "evidenskilde": "m48_motpart",
+    "modul": "m48_motpart",
+    "riggmodul": "m48_fasit",
+    "runde": "fc44a915",
+    "sett_sha256": "5d0f1214db01a60f8d6d57a2efbab7f15f885d418a976ef2a4c2f7842effd519",
+    "tenanter": [
+      "t-m48fasit-a-fc44a915",
+      "t-m48fasit-b-fc44a915",
+      "t-m48fasit-c-fc44a915"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:28:07.866767+00:00"
+}

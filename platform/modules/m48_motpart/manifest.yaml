@@ -62,8 +62,8 @@
 id: m48_motpart
 navn: Foretaks- og kredittvakt
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m48-v1` bærer invarianten
 # `kredittpolicy_hardkodet` — hva som gir hvilken grense er tenantens
 # policy, ikke en konstant i koden.
@@ -75,33 +75,140 @@ i18n_prefiks: motpart
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m48-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m48-suite-v1-20261118T234545Z.json
+    artefakt_sha256: 0cd5428963a078189492457b0aa182cef168184baae3c552017267225d526709
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 49 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m48_fasit.py`:
+    #
+    # M-48s fasitsett: åtte motparter i tre tenanter med KJENT dom.
+    #
+    # Motpartsregisteret har åtte funntyper, alle på `motpart_id`.
+    #
+    #   tenant A (uvurdert etter 0 døgn)
+    #     1. `uvurdert_motpart`       — registrert, aldri vurdert
+    #     2. (ren)                    — som 1; får oppslag, profil og vurdering
+    #                                   MELLOM kjøringene
+    #   tenant B (ingen krav)
+    #     3. `ingen_krav`
+    #   tenant C (uvurdert etter 3650 døgn, tak 10 000 kr)
+    #     4. `profil_uten_vurdering`  — profil fra registeret, ingen vurdering
+    #     5. `motpart_avviklet`       — profilen sier «avviklet»; vurdert
+    #     6. `forslag_over_tak`       — vurdert med 20 000 kr mot tak 10 000
+    #     7. `gjentatte_oppslagsfeil` — fem feilede oppslag siste døgn
+    #     8. (ok)                     — aktiv profil, vurdert under taket
+    #
+    # TO TENANTER MED KRAV, FORDI TO TERSKLER STRIDER. Med `uvurdert_dogn` 0
+    # er hver motpart uten vurdering også uvurdert — også den som skal måle
+    # `profil_uten_vurdering`. A måler uvurdert, C alt det andre.
+    #
+    # OPPSLAGENE GÅR GJENNOM DØRENE, ikke mot Brønnøysund: riggen reserverer
+    # og fullfører selv, med svarstatusen den trenger. `oppslag_ferskhet_timer`
+    # er 0, så samme motpart kan slås opp fem ganger på rad.
+    status: ja
+    krav_id: m48-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m48-fasit-v1-20261118T222807Z.json
+    artefakt_sha256: 6315c2dc7c0aff060acb75b5ca87905f4ca10d8d2895634be6ab8153e8ced00f
     notat: >-
-      KREVER: en motpartsportefølje med KJENT fasit for hvilken
-      kredittgrense policyen tilsier, kjørt likt lokalt og på staging.
+      Runde fc44a915: 8 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m48-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m48-fasit-v1-20261118T222807Z.json
+    artefakt_sha256: 6315c2dc7c0aff060acb75b5ca87905f4ca10d8d2895634be6ab8153e8ced00f
     notat: >-
-      KREVER: at hvert oppslag står i evidenskjeden med formål, hjemmel
-      og tidsstempel. Det er dette et tilsyn spør etter — oppslaget er
-      en behandling av persondata.
+      39 hendelser i kjeden (foretaksoppslag_fullfort: 10,
+      foretaksoppslag_reservert: 10, motpart_registrert: 8,
+      motpartskrav_satt: 2, motpartsversjon_registrert: 5,
+      motpartsvurdering_registrert: 4), 0 uten aktør, 0 som deler input_hash
+      med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m48-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m48-feilinjisering-v1-20261118T222808Z.json
+    artefakt_sha256: be023d20ff5bcbf039c0322bc99fbf508f80aaae46b49502ce9e759004811157
     notat: >-
-      KREVER: motpartssveipen bygget, og at en feil i den ikke lar en
-      motpart uten gyldig vurdering se kredittverdig ut. Feilretningen
-      er hele poenget: en modul som feiler mot «har kreditt» er
-      farligere enn en som feiler mot «vet ikke».
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 18 åpne og 3 lukkede over 7 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m48-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m48-ytelse-v1-20261118T222808Z.json
+    artefakt_sha256: 649b82535cd9cdf2ca8f647b65403be501299e008b968347443f504d555970d2
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0240 / 0,0246 / 0,0255 s) over 4 tenanter; den
+      DÅRLIGSTE er dommen. 0,0255 s mot taket på 60 — 0,0064 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m48-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m48-rollback-v1-20261118T222810Z.json
+    artefakt_sha256: a77115396cc371d25458e7a404378c67aa7ad3d398f78041e96bdfdb7f2157e7
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 2bd5fbfa ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

@@ -33,8 +33,8 @@
 id: m46_anbud
 navn: Anbuds- og konkurransevakt
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m46-v1` bærer invarianten
 # `sokeprofil_hardkodet` — NACE, geografi og verdigrense er tenantens
 # profil, ikke en konstant.
@@ -47,32 +47,134 @@ i18n_prefiks: anbud
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m46-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m46-suite-v1-20261118T235953Z.json
+    artefakt_sha256: 8ef2a03260ad503bf4b0dc89da78564bfe20d7e3cdb0dad80fb9517dce6ea9cf
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 33 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m46_fasit.py`:
+    #
+    # M-46s fasitsett: ni anbud i to tenanter med KJENT dom.
+    #
+    # Anbudsregisteret har åtte funntyper, alle på `anbud_id`. Hvert anbud
+    # som skal måle noe ANNET enn dekningen, har ett absolutt krav som er
+    # dekket av et punkt — ellers ville det også fått `ingen_krav_registrert`
+    # eller `udekket_absolutt_krav`. Frister som ikke skal måles ligger om
+    # 200 døgn, langt utenfor varselet på 14.
+    #
+    #   tenant A (profil: NACE 62.010, varsel 14 døgn)
+    #     1. `frist_naermer_seg`      — frist om 5 døgn, utkast ikke klart
+    #     2. `frist_passert`          — frist for 5 døgn siden
+    #     3. `udekket_absolutt_krav`  — et absolutt krav uten punkt
+    #     4. `udekket_krav`           — et vektet krav uten punkt
+    #     5. `ingen_krav_registrert`  — anbud uten krav
+    #     6. `utenfor_profil`         — NACE 41.200, utenfor profilen
+    #     7. (ren)                    — som 3; kravet dekkes MELLOM kjøringene
+    #     8. (ok)                     — dekket krav, frist om 200 døgn
+    #   tenant B (ingen profil)
+    #     9. `ingen_profil`
+    status: ja
+    krav_id: m46-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m46-fasit-v1-20261118T223055Z.json
+    artefakt_sha256: 4c7160709e3171afde338a2e65c00d83561d3053784237daf72c348ee20f1c9c
     notat: >-
-      KREVER: kunngjøringer med KJENT fasit for hvilke krav som er
-      dekket av bedriftens kvalifikasjoner og hvilke som ikke er det,
-      kjørt likt lokalt og på staging.
+      Runde a1cb87b7: 9 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m46-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m46-fasit-v1-20261118T223055Z.json
+    artefakt_sha256: 4c7160709e3171afde338a2e65c00d83561d3053784237daf72c348ee20f1c9c
     notat: >-
-      KREVER: at hvert faktapunkt i et utkast peker på kildedokumentet
-      sitt, og at hvert udekket krav står som funn.
+      30 hendelser i kjeden (anbud_registrert: 9, anbudsprofil_satt: 1,
+      anbudsutkast_opprettet: 7, kildedokument_registrert: 1,
+      kvalifikasjonskrav_registrert: 7, utkastpunkt_registrert: 5), 0 uten
+      aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m46-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m46-feilinjisering-v1-20261118T223056Z.json
+    artefakt_sha256: 40a87b1791744a5a2efbb2fdcedfb1195846dcd7fcc32f8842d1b2fe643ba08b
     notat: >-
-      KREVER: anbudssveipen bygget, og at en feil i den ikke lar et
-      udekket kvalifikasjonskrav se dekket ut. Et krav som feilaktig
-      ser dekket ut er nøyaktig den gjetningen dommen forbyr.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 15 åpne og 3 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m46-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m46-ytelse-v1-20261118T223056Z.json
+    artefakt_sha256: fa7d65d2c909c8134be0ccc4e197caa197cdefbef50c51a402a2619683686825
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0248 / 0,0236 / 0,0257 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0257 s mot taket på 60 — 0,0086 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m46-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m46-rollback-v1-20261118T223058Z.json
+    artefakt_sha256: 432cc863c45378ca3cc8278f4e51139775a65d9b600cb1cdf2a4e454b88cac99
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 4ce84f81 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 8 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

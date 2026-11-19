@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/4ce84f81f8a2de943c18dd4dee65fdf40f2ad8bc/platform/drift/likviditetssveip.py",
+    "avbrutt_pid": 3967186,
+    "kandidat_fil": "/opt/disponit/releases/4ce84f81f8a2de943c18dd4dee65fdf40f2ad8bc/platform/drift/likviditetssveip.py",
+    "kandidat_pid": 3967194,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/likviditetssveip.py",
+    "rullback_pid": 3967192
+  },
+  "krav_id": "m15-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 6,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 6,
+    "rullbakk_rader": 6
+  },
+  "oppsett": {
+    "arbeidernokkel": 714552306,
+    "avbrutt_backend_pid": 3967191,
+    "bevisrot_sha256": "e5cfa619e7494402a2bacd52e5122aba277a15b95ff1f6210d29ca927aea3b2e",
+    "drillet_digest": "0a796df3b0706d93ddb966871165f113183b9287e0a82a3aa07c7230b1a49647",
+    "drillet_katalog": "/opt/disponit/releases/4ce84f81f8a2de943c18dd4dee65fdf40f2ad8bc",
+    "drillet_kjernedigest": "d4842d67b61f27362ceb74da8713a7182bc62697c6521475e1f8502f06b1f9a7",
+    "drillet_release": "4ce84f81f8a2de943c18dd4dee65fdf40f2ad8bc",
+    "forgjenger_digest": "0a796df3b0706d93ddb966871165f113183b9287e0a82a3aa07c7230b1a49647",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "likviditetsfunn",
+    "maalerolle": "disponit_likviditet_eier",
+    "miljo": "staging",
+    "modul": "m15_likviditet",
+    "runde": "098adfe9",
+    "tenanter": [
+      "t-m15fasit-a-098adfe9",
+      "t-m15fasit-b-098adfe9"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:45:41.160094+00:00"
+}
