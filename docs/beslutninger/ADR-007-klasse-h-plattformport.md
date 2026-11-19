@@ -64,3 +64,11 @@ H1 og H3.
 p95 per eksempel ≤ 60 s og ingen modellfeil. Driftsbasens tre tidligere
 kjøringer målte 17–76 s. Kjøringen registreres i den isolerte basen, slik
 at målingen ikke legger en rad i driftsregisteret.
+
+**Tillegg etter første måling (19.11.2026).** Den første evalueringen traff
+en kald modell. Lastingen tok over to minutter, og det første eksemplet ble
+en modellfeil. De 23 andre besto. Punktet måler evalueringens ytelse, ikke
+modellasting. Produsenten laster derfor modellen med ett eksplisitt kall
+først, og fører tiden i artefaktet (`oppvarming_ms`). Funnet står: **en
+evaluering mot en kald modell kan felle første eksempel.** Runbooken for
+modellbytte bør varme modellen før `kjor-m31-evaluering.py`.
