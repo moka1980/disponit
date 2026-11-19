@@ -5610,6 +5610,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m49_sanksjon",
                          "platform/drift/sanksjonssveip.py"),
     },
+    "m53_hms": {
+        "modul_fil": "hmssveip",
+        "funntabell": "hmsfunn",
+        # Funnraden bærer nøyaktig én av to nøkler (`hmsfunn_en_noekkel`).
+        "subjektkolonne": "coalesce(regel_id, avvik_id)",
+        "tenantkilde": ("hmsregelverk", "hmsavvik"),
+        "maalerolle": "disponit_hms_eier",
+        "sveipedor": "m53_sveip_hms(int)",
+        "dsn_variabel": "DISPONIT_HMSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m53-fasit-v1",
+        "feilinjisering_krav": "m53-feilinjisering-v1",
+        "ytelse_krav": "m53-ytelse-v1",
+        "rollback_krav": "m53-rollback-v1",
+        "riggmodul": "m53_fasit",
+        "releasefiler": ("platform/modules/m53_hms",
+                         "platform/drift/hmssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6524,6 +6543,16 @@ registrer_sveipgrenser("m49_sanksjon", maks_sekunder=60.0, min_tenanter=3,
 registrer_suitegrense("m49_sanksjon", "m49",
                       ("platform/core/tests/test_m49_sanksjon.py",),
                       min_tester=3000, min_andel_tester=25)
+# M-53: gulvene er litt under det målte 18/11 (9 subjekter, 12
+# evidenshendelser; fem typer + den rene utløpte regelen).
+registrer_fasitgrense("m53_hms", min_subjekter=9, min_evidens=10,
+                      tenantprefiks="t-m53fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m53_hms", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=6)
+
+registrer_suitegrense("m53_hms", "m53",
+                      ("platform/core/tests/test_m53_hms.py",),
+                      min_tester=3000, min_andel_tester=32)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),

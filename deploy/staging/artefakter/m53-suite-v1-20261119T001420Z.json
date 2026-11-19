@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m53-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 37,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5524
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m53_hms.py"
+    ],
+    "bevisrot_sha256": "3f5f1db8ae448bb15512fdba03d0529f7689f3c60a203dad24dc1ee6301083b8",
+    "commit": "19a9ac7e48e568b3731e866bde617dda73e24b92",
+    "modul": "m53_hms",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T00:14:20.618344+00:00"
+}
