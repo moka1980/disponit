@@ -5824,6 +5824,27 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m36_optimalisator",
                          "platform/drift/optimalisatorsveip.py"),
     },
+    "m55_merkevare": {
+        "modul_fil": "merkevaresveip",
+        "funntabell": "merkevarevarsel",
+        # 220: `subjekt` og `funntype` er genererte kolonner avledet av
+        # nivåregelen og `varseltype`; CHECK-en står på `varseltype`.
+        "subjektkolonne": "subjekt",
+        "typekolonne_ddl": "varseltype",
+        "tenantkilde": "merkevare",
+        "maalerolle": "disponit_merkevare_eier",
+        "sveipedor": "m55_sveip_merkevare(int)",
+        "dsn_variabel": "DISPONIT_MERKEVARESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m55-fasit-v1",
+        "feilinjisering_krav": "m55-feilinjisering-v1",
+        "ytelse_krav": "m55-ytelse-v1",
+        "rollback_krav": "m55-rollback-v1",
+        "riggmodul": "m55_fasit",
+        "releasefiler": ("platform/modules/m55_merkevare",
+                         "platform/drift/merkevaresveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6876,6 +6897,18 @@ registrer_sveipgrenser("m36_optimalisator", maks_sekunder=60.0,
 
 registrer_suitegrense("m36_optimalisator", "m36",
                       ("platform/core/tests/test_m36_optimalisator.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-55 (ADR-002, klasse A, etter 220): sju subjekter i tre tenanter; fem
+# nåbare varseltyper, én ikke nåbar samme dag. Gulvene foreløpige.
+registrer_fasitgrense("m55_merkevare", min_subjekter=7, min_evidens=20,
+                      tenantprefiks="t-m55fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m55_merkevare", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=6)
+
+registrer_suitegrense("m55_merkevare", "m55",
+                      ("platform/core/tests/test_m55_merkevare.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
