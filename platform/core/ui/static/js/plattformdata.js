@@ -58,7 +58,7 @@ export const MODULSTATUS = {
   // hode for hva en ærligere avlesning krever.
   16: "i_drift",    // m16_nokkeltall: aktiv, produksjon
   21: "i_drift",    // m21_avtalefrist: aktiv, produksjon
-  22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
+  22: "i_drift",    // m22_lisens: aktiv, produksjon
   30: "i_drift",    // m30_personvern: aktiv, produksjon
   34: "i_drift",    // m34_compliance: aktiv, produksjon
   // KLYNGE 3 «kundens livsløp og pengene» (101-105) — registrert 2/9

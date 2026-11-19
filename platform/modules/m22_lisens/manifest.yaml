@@ -27,8 +27,8 @@
 id: m22_lisens
 navn: SaaS- og lisensagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELL, MÅLT avhengighet (m21-formen): M-22 KØER VARSEL før utløp, og
 # et fristvarsel skal kunne gjenfinnes i evidenskjeden — ikke bare i en
 # varseltabell. Katalogen oppgir også modul 12 og 14 som avhengigheter;
@@ -41,9 +41,25 @@ i18n_prefiks: lisens
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m22-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m22-suite-v1-20261119T222002Z.json
+    artefakt_sha256: 993a2dffe2989a3784b63a53bb24cfdb66e52161d5c623f6a3facb2895e2bb6d
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 32 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med `deploy/staging/forpass-lest.py --modul
     # m22_lisens` (ADR-003 klasse E) i den isolerte basen på 55432. Forpasset
