@@ -923,7 +923,7 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # begge gikk hele lesten uten en eneste modulspesifikk produsent.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
                          "m04_dataforvalter", "m05_dokumentmal", "m06_epost",
-                         "m12_tilgang", "m13_avstemming",
+                         "m09_kunnskap", "m12_tilgang", "m13_avstemming",
                          "m14_fakturakontroll", "m15_likviditet",
                          "m16_nokkeltall", "m17_kundeservice",
                          "m18_onboarding", "m19_adresse", "m20_innhold",
@@ -937,7 +937,7 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
                           "m04_dataforvalter", "m05_dokumentmal", "m06_epost",
-                          "m12_tilgang", "m13_avstemming",
+                          "m09_kunnskap", "m12_tilgang", "m13_avstemming",
                           "m14_fakturakontroll", "m15_likviditet",
                           "m16_nokkeltall", "m17_kundeservice",
                           "m18_onboarding", "m19_adresse", "m20_innhold",

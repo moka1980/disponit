@@ -1311,22 +1311,33 @@ def test_locale_paritet_for_ui_kunnskap():
 # ---------------------------------------------------------------------------
 
 def test_manifestet_er_gyldig_og_aerlig():
-    """Manifestet validerer, sier under_utvikling/ikke_i_drift, og INGEN
-    sjekklistepunkter er flippet uten måling. v1 er ordlisten — ingen
-    RAG, ingen vektorbase, ingen eksterne kilder — og manifestet skal
-    fortsatt si det etter at koden finnes."""
+    """Manifestet validerer, og INGEN sjekklistepunkter er flippet uten
+    måling. v1 er ordlisten — ingen RAG, ingen vektorbase, ingen eksterne
+    kilder — og manifestet skal fortsatt si det etter at koden finnes.
+
+    FLIPPET ER AVLESNINGEN AV AKSEPTEN (ADR-002, 19.11.2026): hvert `ja`
+    bærer et artefakt (krav_id + artefakt), og `aktiv`/`produksjon` står
+    HVIS OG BARE HVIS alle seks punktene er `ja`."""
     import yaml
     from manifestskjema import valider_manifest
     tekst = (MODULROT / "manifest.yaml").read_text(encoding="utf-8")
     m = yaml.safe_load(tekst)
     assert not valider_manifest(m), valider_manifest(m)
-    assert m["status"] == "under_utvikling"
-    assert m["driftstilstand"] == "ikke_i_drift"
     assert m["avhengigheter"] == []
     for punkt, verdi in m["staging_sjekkliste"].items():
-        assert verdi["status"] == "nei", (
-            f"{punkt} er flippet til {verdi['status']} — et ja krever et"
-            " artefakt, og v1 har ingen aksepthendelse")
+        if verdi["status"] == "ja":
+            assert verdi.get("krav_id") and verdi.get("artefakt"), (
+                f"{punkt} er ja uten artefakt — et ja krever en måling")
+        else:
+            assert verdi["status"] == "nei", punkt
+    alle_ja = all(v["status"] == "ja"
+                  for v in m["staging_sjekkliste"].values())
+    if alle_ja:
+        assert m["status"] == "aktiv"
+        assert m["driftstilstand"] == "produksjon"
+    else:
+        assert m["status"] == "under_utvikling"
+        assert m["driftstilstand"] == "ikke_i_drift"
 
 
 def test_grensen_dekker_de_seks_invariantene_og_de_to_ja_punktene():

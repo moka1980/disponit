@@ -42,7 +42,7 @@ export const MODULSTATUS = {
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
-  9: "bygges",      // m09_kunnskap: under_utvikling, ikke_i_drift
+  9: "i_drift",    // m09_kunnskap: aktiv, produksjon
   // KLYNGE 2 «tilgang, lisens og etterlevelse» (097-100) — registrert
   // 1/9 sammen med grensene m12-v1…m34-v1. Samme trygge form som
   // klynge 1: alle fire er REGISTRE og MÅLERE, ingen av dem er en ny
