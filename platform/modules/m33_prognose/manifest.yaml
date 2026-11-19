@@ -38,8 +38,8 @@
 id: m33_prognose
 navn: Prediksjons- og scenarioagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: datakvaliteten prognosen må bære
 # flagget fra, og policymotoren som eier enhver handling.
 avhengigheter:
@@ -58,9 +58,25 @@ i18n_prefiks: prognose
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m33-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m33-suite-v1-20261119T233507Z.json
+    artefakt_sha256: 0a16d2177f8d6641a0cdf4c77cea758fa4662308b7a607b9290a774de3734e0b
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 58 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m33_fasit.py`:

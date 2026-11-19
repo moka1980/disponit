@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m33-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 58,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m33_prognose.py"
+    ],
+    "bevisrot_sha256": "da66d1e666e9b42e3c0775592ebdb41e0675b77370a047913baa067626f85049",
+    "commit": "8ca42876002e9b9b9f56b163bd1364b1245301c3",
+    "modul": "m33_prognose",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T23:35:07.538653+00:00"
+}
