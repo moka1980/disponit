@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m10-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 21,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m10_backupinnsyn.py"
+    ],
+    "bevisrot_sha256": "170db1a16e73ae48634b2e807472f8fcc1a7b2104034b64156b095319279f3bc",
+    "commit": "b82cf837abf17e3f04fef824337ec18cdaea2735",
+    "modul": "m10_backup",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:51:56.649130+00:00"
+}

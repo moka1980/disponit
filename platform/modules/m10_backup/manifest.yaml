@@ -29,8 +29,8 @@
 id: m10_backup
 navn: Backup- og gjenopprettingsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: dørene eies av `disponit_m37_claimer`
 # (051-formen), og den uteblitte verifiseringen varsles gjennom
 # varselveien fra 035.
@@ -43,9 +43,25 @@ i18n_prefiks: backup
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m10-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m10-suite-v1-20261119T225156Z.json
+    artefakt_sha256: 2397381ff65317638ce4ad08f8d2abd445353f868fcb1241cf364292348c4fb6
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 21 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
     status: ja
