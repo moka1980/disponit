@@ -89,6 +89,9 @@ def forbered(rt, runde: str, mg=None) -> dict:
     rigg = {"a": tenantnavn(runde, "a"), "b": tenantnavn(runde, "b"),
             "subjekter": {}}
     try:
+        # Registeret er M-4s og eies av lagerrollen; migratoren er medlem
+        # UTEN arv, så rollen tas lokalt for ett oppslag.
+        mg.execute("SET LOCAL ROLE disponit_lager_eier")
         lager = mg.execute("SELECT lager_id FROM retensjonslager"
                            " WHERE klasse = 'persondata'"
                            " ORDER BY lager_id LIMIT 1").fetchone()[0]
