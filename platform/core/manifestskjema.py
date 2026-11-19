@@ -5810,6 +5810,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m45_esg",
                          "platform/drift/esgsveip.py"),
     },
+    "m36_optimalisator": {
+        "modul_fil": "optimalisatorsveip",
+        "funntabell": "optimaliseringsfunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "optimaliseringskrav",
+        "maalerolle": "disponit_optimalisator_eier",
+        "sveipedor": "m36_sveip_optimalisering(int)",
+        "dsn_variabel": "DISPONIT_OPTIMALISATORSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m36-fasit-v1",
+        "feilinjisering_krav": "m36-feilinjisering-v1",
+        "ytelse_krav": "m36-ytelse-v1",
+        "rollback_krav": "m36-rollback-v1",
+        "riggmodul": "m36_fasit",
+        "releasefiler": ("platform/modules/m36_optimalisator",
+                         "platform/drift/optimalisatorsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6849,6 +6867,19 @@ registrer_sveipgrenser("m45_esg", maks_sekunder=60.0,
 
 registrer_suitegrense("m45_esg", "m45",
                       ("platform/core/tests/test_m45_esg.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-36 (ADR-002, klasse A): fire subjekter i fire tenanter; én nåbar
+# funntype, én utelukket av datamodellen, to ikke nåbare samme dag.
+# Gulvene foreløpige.
+registrer_fasitgrense("m36_optimalisator", min_subjekter=4, min_evidens=12,
+                      tenantprefiks="t-m36fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m36_optimalisator", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=3)
+
+registrer_suitegrense("m36_optimalisator", "m36",
+                      ("platform/core/tests/test_m36_optimalisator.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
