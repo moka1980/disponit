@@ -637,6 +637,54 @@ def test_sveipen_bruker_den_gjeldende_fristen_ikke_den_lengste():
 
 
 @pg
+def test_sveipen_finner_kolliet_ingen_har_planlagt_og_lukker_naar_det_faar_en_plan():
+    """`kolli_uten_forslag` HADDE INGEN PORT (målt 19.11.2026).
+
+    Et kolli er målt og veid, og så skjedde ingenting. Sveipen skal se
+    det når det har ligget lenger enn fristen — og lukke funnet selv den
+    natten kolliet har fått en plan.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `NOT EXISTS (… transportforslag
+    …)` i sveipens andre blokk; da står funnet etter at planen er laget.
+    """
+    t = _tenantnavn("kolli")
+    with _to() as (rt, mg):
+        kv = _krav(rt, t, frist=1)
+        vid = _adresse(mg, t)
+        kid = _kolli(rt, t, kv)
+        ferskt = _kolli(rt, t, kv)       # NEGATIV KONTROLL: ikke eldet
+        # KOLLIET ELDES HER, som planen eldes over: `registrert` har
+        # DEFAULT now() og settes aldri av kalleren; migrator flytter den.
+        _sett_kontekst(mg, t)
+        mg.execute("UPDATE kolli SET registrert = now() - INTERVAL"
+                   " '10 days' WHERE tenant = %s AND kolli_id = %s",
+                   (t, kid))
+        mg.commit()
+
+    def _sveip_og_les():
+        sv = _sv()
+        try:
+            sv.execute("SELECT * FROM m28_sveip_transport(%s)", (10_000,))
+            sv.commit()
+        finally:
+            sv.close()
+        with _to() as (rt, _mg):
+            _sett_kontekst(rt, t)
+            return {f[2] for f in rt.execute(
+                "SELECT * FROM m28_transportfunn(%s,%s)",
+                (t, 100)).fetchall()
+                if f[1] == "kolli_uten_forslag"}
+
+    apne = _sveip_og_les()
+    assert str(kid) in apne, "det eldede kolliet uten plan ble ikke sett"
+    assert str(ferskt) not in apne, "et ferskt kolli er ikke over fristen"
+    with _to() as (rt, _mg):
+        _foresla(rt, t, kv, kid, vid)
+    assert str(kid) not in _sveip_og_les(), \
+        "funnet sto etter at kolliet fikk en plan"
+
+
+@pg
 def test_sveiperollen_naar_en_funksjon_og_bare_den():
     """SP-7, MÅLT PÅ SVEIPEROLLEN."""
     with _to() as (_rt, mg):

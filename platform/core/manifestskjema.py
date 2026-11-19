@@ -5824,6 +5824,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m36_optimalisator",
                          "platform/drift/optimalisatorsveip.py"),
     },
+    "m28_transport": {
+        "modul_fil": "transportsveip",
+        "funntabell": "transportfunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "transportkrav",
+        "maalerolle": "disponit_transport_eier",
+        "sveipedor": "m28_sveip_transport(int)",
+        "dsn_variabel": "DISPONIT_TRANSPORTSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m28-fasit-v1",
+        "feilinjisering_krav": "m28-feilinjisering-v1",
+        "ytelse_krav": "m28-ytelse-v1",
+        "rollback_krav": "m28-rollback-v1",
+        "riggmodul": "m28_fasit",
+        "releasefiler": ("platform/modules/m28_transport",
+                         "platform/drift/transportsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6876,6 +6894,19 @@ registrer_sveipgrenser("m36_optimalisator", maks_sekunder=60.0,
 
 registrer_suitegrense("m36_optimalisator", "m36",
                       ("platform/core/tests/test_m36_optimalisator.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-28 (ADR-002, klasse A): fem subjekter i to tenanter; to nåbare
+# funntyper (alderen satt som migrator, suitens vei), sju i UNAABARE.
+# Gulvene foreløpige.
+registrer_fasitgrense("m28_transport", min_subjekter=5, min_evidens=8,
+                      tenantprefiks="t-m28fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m28_transport", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m28_transport", "m28",
+                      ("platform/core/tests/test_m28_transport.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
