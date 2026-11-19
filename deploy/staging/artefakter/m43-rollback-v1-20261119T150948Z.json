@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/5fbc9d96fba06c1b560690d669a969b380d0992d/platform/drift/telefonisveip.py",
+    "avbrutt_pid": 321178,
+    "kandidat_fil": "/opt/disponit/releases/5fbc9d96fba06c1b560690d669a969b380d0992d/platform/drift/telefonisveip.py",
+    "kandidat_pid": 321182,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/telefonisveip.py",
+    "rullback_pid": 321180
+  },
+  "krav_id": "m43-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 4,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 4,
+    "rullbakk_rader": 4
+  },
+  "oppsett": {
+    "arbeidernokkel": 651884302,
+    "avbrutt_backend_pid": 321179,
+    "bevisrot_sha256": "bb1e98edbb2dfeea72329f614a275f4c1bea33a7c960e63808df227f7022fbf7",
+    "drillet_digest": "910cdd7e7bb41fe86a0d97cc7d45b19cb602db90fcb6ccdf4f8b93d3f6d1cda1",
+    "drillet_katalog": "/opt/disponit/releases/5fbc9d96fba06c1b560690d669a969b380d0992d",
+    "drillet_kjernedigest": "d442acea94f3bba1314063fc7887fceb876dc6b6303cf470619ce1341681b93a",
+    "drillet_release": "5fbc9d96fba06c1b560690d669a969b380d0992d",
+    "forgjenger_digest": "910cdd7e7bb41fe86a0d97cc7d45b19cb602db90fcb6ccdf4f8b93d3f6d1cda1",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "telefonifunn",
+    "maalerolle": "disponit_telefoni_eier",
+    "miljo": "staging",
+    "modul": "m43_telefoni",
+    "runde": "83480b28",
+    "tenanter": [
+      "t-m43fasit-a-83480b28",
+      "t-m43fasit-b-83480b28"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:09:48.237337+00:00"
+}

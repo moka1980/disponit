@@ -1,0 +1,79 @@
+{
+  "bestatt": true,
+  "krav_id": "m43-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "avslutt_samtale": 3,
+      "eskaler": 1,
+      "registrer_linje": 1,
+      "registrer_regel": 1,
+      "sett_krav": 2,
+      "start_samtale": 5
+    },
+    "evidens_totalt": 13,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "samtale_uten_avslutning"
+        ],
+        "merke": "samtale",
+        "subjekt_id": "669f1644-a223-4aab-bb54-0efa43c6f602",
+        "ventet": "samtale_uten_avslutning"
+      },
+      {
+        "fikk": [
+          "ubekreftet_linje_uavklart"
+        ],
+        "merke": "linje",
+        "subjekt_id": "982a3037-54cd-4508-bac5-4913a93e44fa",
+        "ventet": "ubekreftet_linje_uavklart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "bafa9f3a-6250-4115-86d4-311dcca03d3c",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "2c8e6877-4341-4dfd-a9ef-26a7a42678c4",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "samtale_uten_avslutning"
+        ],
+        "merke": "samtale_b",
+        "subjekt_id": "85f5a10f-f2d1-409a-898c-841e74c19769",
+        "ventet": "samtale_uten_avslutning"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 4,
+    "sveip1_tenanter": 27,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 32
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f9d8d1cfaf4209951c827ede25f83509730a6ffa5d6844a26620ee4074536d1b",
+    "evidenskilde": "m43_telefoni",
+    "modul": "m43_telefoni",
+    "riggmodul": "m43_fasit",
+    "runde": "0631221a",
+    "sett_sha256": "1f1a10a16a0841bcb576771dd25b0124cc81715293fda2f65a2814ef56ffe089",
+    "tenanter": [
+      "t-m43fasit-a-0631221a",
+      "t-m43fasit-b-0631221a"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T15:09:45.487898+00:00"
+}

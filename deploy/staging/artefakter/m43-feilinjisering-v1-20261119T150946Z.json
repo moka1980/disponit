@@ -1,0 +1,58 @@
+{
+  "bestatt": true,
+  "krav_id": "m43-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 36,
+    "apne_for": 36,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
+    "per_type_etter": {
+      "samtale_uten_avslutning": [
+        28,
+        3
+      ],
+      "ubekreftet_linje_uavklart": [
+        8,
+        1
+      ]
+    },
+    "per_type_for": {
+      "samtale_uten_avslutning": [
+        28,
+        3
+      ],
+      "ubekreftet_linje_uavklart": [
+        8,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 29
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "telefonifunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m43_sveip_telefoni(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_telefoni_eier",
+    "modul": "m43_telefoni",
+    "riggmodul": "m43_fasit",
+    "riggtenanter": [
+      "t-m43fasit-a-360bfb6d",
+      "t-m43fasit-b-360bfb6d"
+    ],
+    "runde": "360bfb6d",
+    "sveipedor": "m43_sveip_telefoni(int)",
+    "tenantkilde": [
+      "telefonikrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:09:46.729034+00:00"
+}

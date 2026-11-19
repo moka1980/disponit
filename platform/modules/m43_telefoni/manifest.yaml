@@ -44,30 +44,116 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m43_fasit.py`:
+    #
+    # M-43s fasitsett: fem subjekter i to tenanter med KJENT dom.
+    #
+    # Telefoniregisteret har syv funntyper på `referanse` (samtale-,
+    # eskalerings- eller linje-id). Fire er utelukket av datamodellen, og
+    # `eskalering_over_frist` kan ikke nås samme dag (se `UNAABARE`); de to
+    # andre rigges:
+    #
+    #   tenant A (samtaletak 1 t, eskaleringsfrist 1 døgn, terskel 7000 bp)
+    #     1. `samtale_uten_avslutning`   — startet for 5 timer siden, aldri avsluttet
+    #     2. `ubekreftet_linje_uavklart` — transkribert linje med 1000 bp
+    #     3. (ren)                       — som 1; AVSLUTTES mellom kjøringene
+    #     4. (ok)                        — startet for 5 timer siden, avsluttet
+    #   tenant B (samtaletak 2 t, eskaleringsfrist 2 døgn)
+    #     5. `samtale_uten_avslutning`   — samme regel i en annen tenant
+    #
+    # SAMTALENS START ER EN DØRPARAMETER (`p_startet_ts`), så samtalealderen
+    # trenger ingen bakdatering. ESKALERINGEN kan derimot bare bli gammel ved
+    # at tiden går: testsuiten slår av vakten for å bakdatere den, og det gjør
+    # ikke riggen i driftsbasen (M-48s `utdatert_vurdering` er presedensen).
+    # Eskaleringen rigges likevel, så dens evidens er med.
+    status: ja
+    krav_id: m43-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m43-fasit-v1-20261119T150945Z.json
+    artefakt_sha256: cfcb2d0b1d9da85f0ad0e9512f435252a1921c409dca3d44a7da6ce55e4814e1
     notat: >-
-      KREVER: en samtale der transkripsjonen er KJENT usikker, og en
-      der motparten ikke er varslet — slik at porten kan måle at den
-      andre aldri blir til et opptak.
+      Runde 0631221a: 5 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m43-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m43-fasit-v1-20261119T150945Z.json
+    artefakt_sha256: cfcb2d0b1d9da85f0ad0e9512f435252a1921c409dca3d44a7da6ce55e4814e1
     notat: >-
-      KREVER: at hver samtale kan spores til hjemmelen, varslingen og
-      identifiseringen. At agenten sa fra at den er automatisert, må
-      være noe man kan SLÅ OPP — ikke noe man antar.
+      13 hendelser i kjeden (avslutt_samtale: 3, eskaler: 1,
+      registrer_linje: 1, registrer_regel: 1, sett_krav: 2, start_samtale:
+      5), 0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m43-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m43-feilinjisering-v1-20261119T150946Z.json
+    artefakt_sha256: 840ed47b0c63097a3e5f740f0f7d53c56a27b8504f45618a1d81bcf2e3fa25f8
     notat: >-
-      KREVER: at et forsøk på å inngå en avtale eller gi et
-      økonomisk løfte gir et funn og ingen avtale.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 36 åpne og 4 lukkede over 29 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m43-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m43-ytelse-v1-20261119T150946Z.json
+    artefakt_sha256: 22e99dfe20ea5cebaaae06403ca792be3b6d4ecb96f64832da26eddfc9802d12
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0330 / 0,0305 / 0,0475 s) over 27 tenanter; den
+      DÅRLIGSTE er dommen. 0,0475 s mot taket på 60 — 0,0018 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m43-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m43-rollback-v1-20261119T150948Z.json
+    artefakt_sha256: 6e8e3a0590eb025095ca9d47287c4d8e03da7656d55ad2950fcc68c0248dbeee
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 5fbc9d96 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 4 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
