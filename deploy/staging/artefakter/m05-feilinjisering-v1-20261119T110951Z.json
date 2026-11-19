@@ -1,0 +1,48 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m05-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "avvist": true,
+        "brudd": "publiser_publisert",
+        "sqlstate": "23000",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "trekk_tilbake_utkast",
+        "sqlstate": "23000",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "materiell_idempotenskonflikt",
+        "sqlstate": "23505",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "dor_uten_tenantkontekst",
+        "sqlstate": "42501",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "endre_publisert_innhold",
+        "sqlstate": "42501",
+        "urort": true
+      }
+    ],
+    "injiserte": 5
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "ae242cce156b57ede46a191de886106e0a8e5e8b59a59b608400a1afaec47c98",
+    "modul": "m05_dokumentmal",
+    "runde": "f3490131",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:09:51.868321+00:00"
+}
