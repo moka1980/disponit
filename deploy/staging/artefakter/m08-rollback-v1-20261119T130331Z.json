@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m08-rollback-v1",
+  "maalt": {
+    "kandidat_baerer_riggen": true,
+    "kandidat_status": 200,
+    "rullbakk_status": 200,
+    "svar_like": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "4dc0c865b2d0de95658416479afb40ae03ba61a17fce893f04d957929a750fbf",
+    "forgjenger": "/opt/disponit/releases/346916cf033fcb807feebab83961284a4368a166",
+    "kjerne_forgjenger": "75db0db114b947ee090b77fa0a6d47f437a71dd7268498146c595d6a0f602f2e",
+    "kjerne_kandidat": "2f54043c3093805c0aa19e4265cb80b1e4b129841e401932eb1d4e2a9b3963e3",
+    "modul": "m08_kalender",
+    "modul_forgjenger": "342fa9f6c128457106210efc774ae7b286bc415f99e1e903417d86750fcad4fa",
+    "modul_kandidat": "342fa9f6c128457106210efc774ae7b286bc415f99e1e903417d86750fcad4fa",
+    "runde": "aa149e96",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T13:03:31.008714+00:00"
+}

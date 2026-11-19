@@ -27,43 +27,81 @@ avhengigheter:
 kjerne: platform/modules/m08_kalender
 i18n_prefiks: m08kalender
 
-# Ingen punkter kan flippes på evidens ennå: v1 har ingen egen
-# evidensgrense registrert (samme ærlighet som M-57s manifest — et
-# manifest skal aldri lese sterkere enn porten måler).
 staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet.
-      Tidsvalg-benens egne porter ligger i test_m8_tidsvalg.py og
-      UI-testene (tidsvalg.test.js); stagingmålingen finnes ikke ennå.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m08-lest.py` (ADR-002
+    # klasse C) i den isolerte basen på 55432. Riggen går M-57-kjedens lovlige
+    # vei (prosess, kandidater, signert liste, token) gjennom testsuitens egne
+    # hjelpere, med tenanten byttet per kjøring.
+    status: ja
+    krav_id: m08-fasit-v1
+    bevismaalinger:
+      - maalt.tilstandsavvik
+      - maalt.utfall_lik_fasit
+      - maalt.gjenspill_urort
+    artefakt: deploy/staging/artefakter/m08-fasit-v1-20261119T130327Z.json
+    artefakt_sha256: 915cbb1700b323603f8f278c2e7e8ed726b11938b204f5d899e21ac1e7640e88
     notat: >-
-      KREVER: syntetisk slot-/valgsett drevet lokalt og på staging med
-      byte-likhet mellom datasett-identitetene. Målingen finnes ikke.
+      To tenanter, 0 tilstandsavvik. Valgdørens utfall var fasitens (valgt,
+      slot_fullt, valgt / valgt), og et gjentatt valg bekreftet samme tid uten
+      å skrive en eneste rad.
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1: triggerne i 214 skriver én hendelse per slot-opprettelse,
+    # deaktivering, tokenutstedelse og kandidatvalg. Token-id-en (en
+    # kapabilitet) skrives aldri.
+    status: ja
+    krav_id: m08-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_avvik
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m08-fasit-v1-20261119T130327Z.json
+    artefakt_sha256: 915cbb1700b323603f8f278c2e7e8ed726b11938b204f5d899e21ac1e7640e88
     notat: >-
-      KREVER: at slot-opprettelse/-deaktivering og kandidatvalg står som
-      hendelser med identitet i revisjonskjeden. I dag logges de som
-      driftshendelser i API-loggen; evidensmålingen finnes ikke.
+      11 hendelser, nøyaktig per handling og tenant (0 avvik);
+      0 uten aktør og 0 delte input_hash.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-002 D2, KLASSE C: et vaktbrudd avvises typet, uten spor; den
+    # offentlige døra gir det uniforme avslaget på feil MAC.
+    status: ja
+    krav_id: m08-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m08-feilinjisering-v1-20261119T130328Z.json
+    artefakt_sha256: 16d7f1f6b72ce13ce32dda414f6ee244731bef52ac9c8c751768f1e5df5b0c09
     notat: >-
-      KREVER: at en feilet tokenutstedelse/valgtransaksjon leverer en
-      post i unntakskøen bundet til den injiserte feilen. Utsenderen
-      kvitterer i dag `feilet` på raden (m57-kjeden); egen køpost for
-      M-8 finnes ikke.
+      Fem brudd: deaktiver_slot_med_valg (23000), materiell_idempotenskonflikt (23505), dor_uten_tenantkontekst (42501), flytt_slottid (42501), valg_med_feil_mac (uniformt_avslag).
+      Alle avvist, og digesten over modulens tre tabeller og revisjonsloggen
+      var uendret etter hvert.
   ytelse_bestatt:
-    status: nei
+    # ADR-002 D4: kandidatens oppslag — den offentlige veien — under last.
+    status: ja
+    krav_id: m08-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.feilede
+      - maalt.riktige
+    artefakt: deploy/staging/artefakter/m08-ytelse-v1-20261119T130332Z.json
+    artefakt_sha256: 3d4a7030f2289595274b6e9eeed922cb7a4dc8c07a361a85e17da2b14c73a978
     notat: >-
-      KREVER: en pinnet grense for valg under samtidighet (radlåsen i
-      m8_velg_slot serialiserer kapasiteten). Grensen er ikke definert.
+      200 oppslag: p50 0.737 ms, p95 2.538 ms (taket er 100 ms); 0 feilede.
   rollback_testet:
-    status: nei
+    # ADR-002 D3. Forgjengeren MÅ kjenne 214 (oppstartsvakten nekter ukjente
+    # migrasjoner); den er releasen som innførte 214.
+    status: ja
+    krav_id: m08-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.kandidat_baerer_riggen
+    artefakt: deploy/staging/artefakter/m08-rollback-v1-20261119T130331Z.json
+    artefakt_sha256: 3d482e037791723776155689d89d9edade73731872d253c344df985d5c93a569
     notat: >-
-      KREVER: flippedrill for modulens release. M-8 har ingen release
-      ennå; rollback-kontrakten i API-et (DISPONIT_INAKTIVE_MODULER →
-      503 modul_inaktiv på tidsvalg-rutene) er målt i test-suiten, men
-      det er en API-kontrakt, ikke en releasedrill.
+      Kjerne 2f54043c3093 ← forgjenger 75db0db114b9: begge svarte
+      200 på GET /v1/rekruttering/tidsvalg med like svar, og svaret bærer
+      riggens slots.
