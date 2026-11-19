@@ -35,8 +35,8 @@
 id: m51_tilskudd
 navn: Tilskudds- og støtteagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m51-v1` bærer invarianten
 # `ordningskrav_hardkodet` — hvilke ordninger som følges og med hvilke
 # krav er tenantens føring, ikke en konstant.

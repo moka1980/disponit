@@ -1,0 +1,40 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m16-feilinjisering-v1",
+  "maalt": {
+    "injeksjoner": [
+      {
+        "acl_gjenopprettet": true,
+        "definer": "m16_beslutninger(text,timestamp with time zone,timestamp with time zone)",
+        "delvise_tall": false,
+        "feilkode": "db_utilgjengelig",
+        "frisk_lik_fasit": true,
+        "frisk_status": 200,
+        "runtime_har_execute": false,
+        "status": 503
+      },
+      {
+        "acl_gjenopprettet": true,
+        "definer": "m16_tick_alltid(text)",
+        "delvise_tall": false,
+        "feilkode": "db_utilgjengelig",
+        "frisk_lik_fasit": true,
+        "frisk_status": 200,
+        "runtime_har_execute": false,
+        "status": 503
+      }
+    ],
+    "injiserte": 2
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "cdaf65407fa805bb3b9bf9fc5d06a699e80af5fd0cea8242e9e660bf8b095022",
+    "injeksjon": "EXECUTE trukket fra runtime (og PUBLIC) på første og siste definer",
+    "injeksjonsrolle": "disponit",
+    "modul": "m16_nokkeltall",
+    "runde": "2ef58996",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T09:19:08.763177+00:00"
+}

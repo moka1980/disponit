@@ -69,7 +69,7 @@ _UTRULLING: tuple[dict, ...] = (
     {"id": "disponit", "navn": "Disponit (plattform)", "plan": "internt",
      "moduler": (1, 2, 4, 6, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 24,
                  25, 26, 27, 30, 34, 37, 39, 41, 42, 44, 46, 47, 48, 49,
-                 50, 52, 53, 54, 56, 57),
+                 50, 51, 52, 53, 54, 56, 57),
      "neste": {"nb": "Sett grensene i modulene under «Kom i gang».",
                "en": "Set the limits in the modules under «Get started»."}},
     {"id": "granmo", "navn": "Granmo Driftsselskap", "plan": "internt",

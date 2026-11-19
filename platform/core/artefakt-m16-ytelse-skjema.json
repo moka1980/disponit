@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m16-ytelse-v1.json",
+  "title": "m16-ytelse-v1 — endepunktet under volum, p95 mot en pinnet grense (ADR-002 D4)",
+  "comment": "Produsert av deploy/staging/m16-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m16_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m16-ytelse-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "beslutninger",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "saker",
+        "tenant",
+        "vert",
+        "vindu"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "beslutninger": {
+          "type": "integer"
+        },
+        "saker": {
+          "type": "integer"
+        },
+        "vindu": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "feilede",
+        "kall",
+        "maks_ms",
+        "ms",
+        "p50_ms",
+        "p95_ms",
+        "totaler"
+      ],
+      "properties": {
+        "kall": {
+          "type": "integer"
+        },
+        "feilede": {
+          "type": "integer"
+        },
+        "p50_ms": {
+          "type": "number"
+        },
+        "p95_ms": {
+          "type": "number"
+        },
+        "maks_ms": {
+          "type": "number"
+        },
+        "totaler": {
+          "type": "array",
+          "items": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "ms": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}
