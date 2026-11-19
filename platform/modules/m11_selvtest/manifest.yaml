@@ -37,8 +37,8 @@
 id: m11_selvtest
 navn: Integrasjons- og selvtestagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: dørene eies av `disponit_m37_claimer`,
 # og RØDE prober køes som varsel i SAMME transaksjon som runden
 # skrives — en rød probe uten varsel i køen er urepresenterbar.
@@ -51,9 +51,25 @@ i18n_prefiks: selvtest
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m11-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m11-suite-v1-20261119T230634Z.json
+    artefakt_sha256: b33d095c161da4e605c4420512f4feecc7fbb7e8f6f13d21eab7ae26208ed446
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 28 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
     status: ja

@@ -200,7 +200,7 @@ export const MODULSTATUS = {
   37: "i_drift",    // m37_unntak: aktiv, produksjon — rollback drillet i lease-form
                     // 17/9 (m37-rollback-v1); de fem andre punktene ja siden aug.
   10: "i_drift",    // m10_backup: aktiv, produksjon
-  11: "bygges",     // m11_selvtest: under_utvikling, ikke_i_drift
+  11: "i_drift",    // m11_selvtest: aktiv, produksjon
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
   38: "bygges",
