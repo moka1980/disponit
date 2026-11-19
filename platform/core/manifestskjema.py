@@ -5689,6 +5689,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m30_personvern",
                          "platform/drift/personvernsveip.py"),
     },
+    "m09_kunnskap": {
+        "modul_fil": "begrepssveip",
+        "funntabell": "begrepsfunn",
+        "subjektkolonne": "begrep_id",
+        "tenantkilde": "begrep",
+        "maalerolle": "disponit_kunnskap_eier",
+        "sveipedor": "m9_sveip_utlopte(int)",
+        "dsn_variabel": "DISPONIT_KUNNSKAPSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m09-fasit-v1",
+        "feilinjisering_krav": "m09-feilinjisering-v1",
+        "ytelse_krav": "m09-ytelse-v1",
+        "rollback_krav": "m09-rollback-v1",
+        "riggmodul": "m09_fasit",
+        "releasefiler": ("platform/modules/m09_kunnskap",
+                         "platform/drift/begrepssveip.py",
+                         "platform/core/db/migrations/212_m9_evidens.sql"),
+    },
     "m12_tilgang": {
         "modul_fil": "tilgangssveip",
         "funntabell": "tilgangsfunn",
@@ -6673,6 +6692,18 @@ registrer_sveipgrenser("m30_personvern", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m30_personvern", "m30",
                       ("platform/core/tests/test_m30_personvern.py",),
                       min_tester=3000, min_andel_tester=30)
+
+# M-09 (ADR-002, klasse A etter 212): seks begreper i to tenanter; fem
+# dørhendelser + én ny versjon gir seks evidenshendelser, skrevet av
+# triggeren i 212.
+registrer_fasitgrense("m09_kunnskap", min_subjekter=6, min_evidens=6,
+                      tenantprefiks="t-m09fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m09_kunnskap", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=4)
+
+registrer_suitegrense("m09_kunnskap", "m09",
+                      ("platform/core/tests/test_m9_kunnskap.py",),
+                      min_tester=3000, min_andel_tester=20)
 
 # M-12 (ADR-002, klasse A): fem tilganger i to tenanter; sveipen kan
 # bare reise `gjennomgang_utlopt`, de tre andre typene er utelukket av

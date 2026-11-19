@@ -26,6 +26,10 @@
 # krav; i v1 er det en NOT NULL, ikke en policy.
 #
 # TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# EVIDENSEN KOM 19/11 (migrasjon 212, ADR-002 D1): hver INSERT på
+# `begrep` skriver én hendelse i revisjonsloggen gjennom en trigger, så
+# begge dørene — og den neste — er dekket. M-9 er dermed klasse A, og
+# den generiske sveiplesten gjelder (`deploy/staging/m09_fasit.py`).
 id: m09_kunnskap
 navn: Kunnskaps- og ordlisteagent
 versjon: 0.1.0
