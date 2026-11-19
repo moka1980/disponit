@@ -47,8 +47,8 @@
 id: m15_likviditet
 navn: Likviditets- og kostnadsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: de fire registrene prognosen leser, og
 # policymotoren som eier enhver utførelse modulen selv ikke gjør.
 avhengigheter:
@@ -62,9 +62,25 @@ i18n_prefiks: likviditet
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m15-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m15-suite-v1-20261119T004226Z.json
+    artefakt_sha256: e997cf81b5418fee42f892a3dc6e16f11020f4a82c0f6963f9b0da120fe98b98
     notat: >-
-      SUITEN KJØRER.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 37 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m15_fasit.py`:
