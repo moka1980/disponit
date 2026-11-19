@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m04-feilinjisering-v1.json",
+  "title": "m04-feilinjisering-v1 — to ekte driftsfeil: tidsgrense under målekostnaden og en tilkobling uten EXECUTE (ADR-002 D2)",
+  "comment": "Produsert av deploy/staging/m04-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m04_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m04-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "injeksjoner",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "injeksjoner": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "antall_lagre",
+        "funn_etter_uten_execute",
+        "funn_for_uten_execute",
+        "gjenoppretting_ferdig",
+        "injeksjonsrolle_har_execute",
+        "registeret_urort",
+        "tidsgrense_beholdning_uten_maaling",
+        "tidsgrense_maaling_avbrutt",
+        "tidsgrense_maalt",
+        "tidsgrense_umaalbare",
+        "tidsgrense_verken_eller",
+        "umaalbare_etter_gjenoppretting",
+        "umaalbare_for_injeksjon",
+        "uten_execute_alarm",
+        "uten_execute_feilet",
+        "uten_execute_returkoder"
+      ],
+      "properties": {
+        "antall_lagre": {
+          "type": "integer"
+        },
+        "tidsgrense_maalt": {
+          "type": "integer"
+        },
+        "tidsgrense_umaalbare": {
+          "type": "integer"
+        },
+        "tidsgrense_verken_eller": {
+          "type": "integer"
+        },
+        "tidsgrense_beholdning_uten_maaling": {
+          "type": "integer"
+        },
+        "tidsgrense_maaling_avbrutt": {
+          "type": "boolean"
+        },
+        "gjenoppretting_ferdig": {
+          "type": "boolean"
+        },
+        "umaalbare_for_injeksjon": {
+          "type": "integer"
+        },
+        "umaalbare_etter_gjenoppretting": {
+          "type": "integer"
+        },
+        "injeksjonsrolle_har_execute": {
+          "type": "boolean"
+        },
+        "uten_execute_feilet": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "uten_execute_alarm": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "uten_execute_returkoder": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "funn_for_uten_execute": {
+          "type": "integer"
+        },
+        "funn_etter_uten_execute": {
+          "type": "integer"
+        },
+        "registeret_urort": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
