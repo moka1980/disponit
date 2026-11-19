@@ -39,7 +39,7 @@ export const MODULSTATUS = {
   5: "i_drift",    // m05_dokumentmal: aktiv, produksjon
   6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
                     // (rollback i kjerne-form; fasit og suite målt på nytt etter 210)
-  8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
+  8: "i_drift",    // m08_kalender: aktiv, produksjon
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
   9: "i_drift",    // m09_kunnskap: aktiv, produksjon

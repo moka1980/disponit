@@ -1,0 +1,53 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m08-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "avvist": true,
+        "brudd": "deaktiver_slot_med_valg",
+        "sqlstate": "23000",
+        "urort": true,
+        "utfall": null
+      },
+      {
+        "avvist": true,
+        "brudd": "materiell_idempotenskonflikt",
+        "sqlstate": "23505",
+        "urort": true,
+        "utfall": null
+      },
+      {
+        "avvist": true,
+        "brudd": "dor_uten_tenantkontekst",
+        "sqlstate": "42501",
+        "urort": true,
+        "utfall": null
+      },
+      {
+        "avvist": true,
+        "brudd": "flytt_slottid",
+        "sqlstate": "42501",
+        "urort": true,
+        "utfall": null
+      },
+      {
+        "avvist": true,
+        "brudd": "valg_med_feil_mac",
+        "sqlstate": null,
+        "urort": true,
+        "utfall": "uniformt_avslag"
+      }
+    ],
+    "injiserte": 5
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "4dc0c865b2d0de95658416479afb40ae03ba61a17fce893f04d957929a750fbf",
+    "modul": "m08_kalender",
+    "runde": "e14e7eb4",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T13:03:28.293544+00:00"
+}

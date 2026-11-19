@@ -1,0 +1,110 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m08-fasit-v1",
+  "maalt": {
+    "evidens_avvik": 0,
+    "evidens_delte_input_hash": 0,
+    "evidens_per_tenant": {
+      "a": {
+        "slot.deaktivert": 1,
+        "slot.opprettet": 3,
+        "slotvalg.valgt": 2,
+        "tidsvalgtoken.utstedt": 2
+      },
+      "b": {
+        "slot.opprettet": 1,
+        "slotvalg.valgt": 1,
+        "tidsvalgtoken.utstedt": 1
+      }
+    },
+    "evidens_totalt": 11,
+    "evidens_uten_aktor": 0,
+    "evidens_ventet": {
+      "a": {
+        "slot.deaktivert": 1,
+        "slot.opprettet": 3,
+        "slotvalg.valgt": 2,
+        "tidsvalgtoken.utstedt": 2
+      },
+      "b": {
+        "slot.opprettet": 1,
+        "slotvalg.valgt": 1,
+        "tidsvalgtoken.utstedt": 1
+      }
+    },
+    "gjenspill_urort": true,
+    "gjenspill_utfall": "valgt",
+    "per_tenant": [
+      {
+        "fikk": {
+          "slots": {
+            "aktiv": 2,
+            "deaktivert": 1
+          },
+          "tokener": {
+            "brukt": 2
+          },
+          "valg": 2
+        },
+        "tenant": "a",
+        "ventet": {
+          "slots": {
+            "aktiv": 2,
+            "deaktivert": 1
+          },
+          "tokener": {
+            "brukt": 2
+          },
+          "valg": 2
+        }
+      },
+      {
+        "fikk": {
+          "slots": {
+            "aktiv": 1
+          },
+          "tokener": {
+            "brukt": 1
+          },
+          "valg": 1
+        },
+        "tenant": "b",
+        "ventet": {
+          "slots": {
+            "aktiv": 1
+          },
+          "tokener": {
+            "brukt": 1
+          },
+          "valg": 1
+        }
+      }
+    ],
+    "tenanter": 2,
+    "tilstandsavvik": 0,
+    "utfall": {
+      "a": [
+        "valgt",
+        "slot_fullt",
+        "valgt"
+      ],
+      "b": [
+        "valgt"
+      ]
+    },
+    "utfall_lik_fasit": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "4dc0c865b2d0de95658416479afb40ae03ba61a17fce893f04d957929a750fbf",
+    "modul": "m08_kalender",
+    "runde": "1dbf2734",
+    "tenanter": {
+      "a": "t-m08fasit-a-1dbf2734",
+      "b": "t-m08fasit-b-1dbf2734"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T13:03:27.590767+00:00"
+}
