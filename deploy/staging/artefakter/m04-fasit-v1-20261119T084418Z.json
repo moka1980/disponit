@@ -1,0 +1,159 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m04-fasit-v1",
+  "maalt": {
+    "endrede_fremmede_tabeller": [],
+    "fremmede_tabeller_sett": 371,
+    "funnavvik": 0,
+    "funnavvik_forste": 0,
+    "funntyper_dekket": [
+      "reaper_henger",
+      "reaper_mangler",
+      "umaalbar",
+      "uregistrert",
+      "uten_dom"
+    ],
+    "maaler_execute_grants": [
+      "m4_mal_lagre"
+    ],
+    "maaler_skriverett": [],
+    "maaling1_ferdig": true,
+    "maaling1_nye": 6,
+    "maaling2_ferdig": true,
+    "maaling2_lukkede": 1,
+    "maaling2_nye": 0,
+    "nye_revisjonsrader": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "uregistrert"
+        ],
+        "lager_id": "uregistrert:fm4_3fb5dd0b_ureg",
+        "merke": "uregistrert",
+        "ventet": "uregistrert"
+      },
+      {
+        "fikk": [
+          "umaalbar"
+        ],
+        "lager_id": "fm4_3fb5dd0b_umaal",
+        "merke": "umaalbar",
+        "ventet": "umaalbar"
+      },
+      {
+        "fikk": [
+          "uten_dom"
+        ],
+        "lager_id": "fm4_3fb5dd0b_udom",
+        "merke": "uten_dom",
+        "ventet": "uten_dom"
+      },
+      {
+        "fikk": [
+          "reaper_mangler"
+        ],
+        "lager_id": "fm4_3fb5dd0b_rmang",
+        "merke": "reaper_mangler",
+        "ventet": "reaper_mangler"
+      },
+      {
+        "fikk": [
+          "reaper_henger"
+        ],
+        "lager_id": "fm4_3fb5dd0b_rheng",
+        "merke": "reaper_henger",
+        "ventet": "reaper_henger"
+      },
+      {
+        "fikk": [],
+        "lager_id": "uregistrert:fm4_3fb5dd0b_ren",
+        "merke": "ren",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "lager_id": "fm4_3fb5dd0b_ok",
+        "merke": "ok",
+        "ventet": null
+      }
+    ],
+    "per_subjekt_forste": [
+      {
+        "fikk": [
+          "uregistrert"
+        ],
+        "lager_id": "uregistrert:fm4_3fb5dd0b_ureg",
+        "merke": "uregistrert",
+        "ventet": "uregistrert"
+      },
+      {
+        "fikk": [
+          "umaalbar"
+        ],
+        "lager_id": "fm4_3fb5dd0b_umaal",
+        "merke": "umaalbar",
+        "ventet": "umaalbar"
+      },
+      {
+        "fikk": [
+          "uten_dom"
+        ],
+        "lager_id": "fm4_3fb5dd0b_udom",
+        "merke": "uten_dom",
+        "ventet": "uten_dom"
+      },
+      {
+        "fikk": [
+          "reaper_mangler"
+        ],
+        "lager_id": "fm4_3fb5dd0b_rmang",
+        "merke": "reaper_mangler",
+        "ventet": "reaper_mangler"
+      },
+      {
+        "fikk": [
+          "reaper_henger"
+        ],
+        "lager_id": "fm4_3fb5dd0b_rheng",
+        "merke": "reaper_henger",
+        "ventet": "reaper_henger"
+      },
+      {
+        "fikk": [
+          "uregistrert"
+        ],
+        "lager_id": "uregistrert:fm4_3fb5dd0b_ren",
+        "merke": "ren",
+        "ventet": "uregistrert"
+      },
+      {
+        "fikk": [],
+        "lager_id": "fm4_3fb5dd0b_ok",
+        "merke": "ok",
+        "ventet": null
+      }
+    ],
+    "registerskrivere": [],
+    "revisjonsrader_etter": 0,
+    "revisjonsrader_for": 0,
+    "subjekter": 7
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "9a347cead4a60ea4bae9e983837d5e24cc301b77da8bf987dab8c258acaf4178",
+    "modul": "m04_dataforvalter",
+    "runde": "3fb5dd0b",
+    "subjekter": {
+      "ok": "fm4_3fb5dd0b_ok",
+      "reaper_henger": "fm4_3fb5dd0b_rheng",
+      "reaper_mangler": "fm4_3fb5dd0b_rmang",
+      "ren": "uregistrert:fm4_3fb5dd0b_ren",
+      "umaalbar": "fm4_3fb5dd0b_umaal",
+      "uregistrert": "uregistrert:fm4_3fb5dd0b_ureg",
+      "uten_dom": "fm4_3fb5dd0b_udom"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T08:44:18.767457+00:00"
+}

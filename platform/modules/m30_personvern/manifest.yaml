@@ -36,8 +36,8 @@
 id: m30_personvern
 navn: Personvern- og datasubjektagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: hver forespørsel og hvert svar bokføres i
 # evidenskjeden (m02) — en innsynsbehandling som ikke kan gjenfinnes er
 # ikke dokumentert overholdelse. M-4 føres fordi registeret PEKER på

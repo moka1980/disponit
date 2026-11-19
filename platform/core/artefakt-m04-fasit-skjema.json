@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m04-fasit-v1.json",
+  "title": "m04-fasit-v1 — fasitsett med kjent dom i den isolerte basen, og MÅLT FRAVÆR i revisjonsloggen (ADR-002 D1)",
+  "comment": "Produsert av deploy/staging/m04-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m04_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m04-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "subjekter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subjekter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endrede_fremmede_tabeller",
+        "fremmede_tabeller_sett",
+        "funnavvik",
+        "funnavvik_forste",
+        "funntyper_dekket",
+        "maaler_execute_grants",
+        "maaler_skriverett",
+        "maaling1_ferdig",
+        "maaling1_nye",
+        "maaling2_ferdig",
+        "maaling2_lukkede",
+        "maaling2_nye",
+        "nye_revisjonsrader",
+        "per_subjekt",
+        "per_subjekt_forste",
+        "registerskrivere",
+        "revisjonsrader_etter",
+        "revisjonsrader_for",
+        "subjekter"
+      ],
+      "properties": {
+        "subjekter": {
+          "type": "integer"
+        },
+        "funntyper_dekket": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "per_subjekt_forste": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "merke",
+              "ventet",
+              "fikk",
+              "lager_id"
+            ],
+            "properties": {
+              "merke": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ventet": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fikk": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lager_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "per_subjekt": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "merke",
+              "ventet",
+              "fikk",
+              "lager_id"
+            ],
+            "properties": {
+              "merke": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ventet": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fikk": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lager_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "funnavvik_forste": {
+          "type": "integer"
+        },
+        "funnavvik": {
+          "type": "integer"
+        },
+        "maaling1_ferdig": {
+          "type": "boolean"
+        },
+        "maaling2_ferdig": {
+          "type": "boolean"
+        },
+        "maaling1_nye": {
+          "type": "integer"
+        },
+        "maaling2_nye": {
+          "type": "integer"
+        },
+        "maaling2_lukkede": {
+          "type": "integer"
+        },
+        "revisjonsrader_for": {
+          "type": "integer"
+        },
+        "revisjonsrader_etter": {
+          "type": "integer"
+        },
+        "nye_revisjonsrader": {
+          "type": "integer"
+        },
+        "fremmede_tabeller_sett": {
+          "type": "integer"
+        },
+        "endrede_fremmede_tabeller": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "registerskrivere": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maaler_skriverett": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maaler_execute_grants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
