@@ -24,8 +24,8 @@ PUNKTENE (ADR-002 D1–D4):
                   målt; og MÅLT FRAVÆR: null nye rader i revisjonsloggen,
                   null endrede rader utenfor M-04s fem egne tabeller,
                   ingen innloggingsrolle utenom migratoren med skriverett
-                  på registeret, og nøyaktig ett eksplisitt EXECUTE-grant til
-                  rolle kan kalle.
+                  på registeret, og nøyaktig ett eksplisitt EXECUTE-grant
+                  til målerens rolle.
   feilinjisering  to ekte driftsfeil: `statement_timeout` på 1 ms (hvert
                   lager skal bli målt ELLER et `umaalbar`-funn, aldri en
                   null), og en tilkobling uten EXECUTE (feilet, alarm på
