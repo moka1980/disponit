@@ -57,7 +57,7 @@ export const MODULSTATUS = {
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
   16: "i_drift",    // m16_nokkeltall: aktiv, produksjon
-  21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
+  21: "i_drift",    // m21_avtalefrist: aktiv, produksjon
   22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
   30: "i_drift",    // m30_personvern: aktiv, produksjon
   34: "i_drift",    // m34_compliance: aktiv, produksjon

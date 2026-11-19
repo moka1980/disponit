@@ -36,8 +36,8 @@
 id: m21_avtalefrist
 navn: Avtale- og fristagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # REELL, MÅLT avhengighet (m35-formen, ulikt de fire søsknene i
 # klyngen): M-21 KØER VARSEL. Varselveien er tenant- og brukerskopet og
 # hører til plattformens varselmodell; forpliktelsesregisteret er den
@@ -51,9 +51,25 @@ i18n_prefiks: avtalefrist
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m21-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m21-suite-v1-20261119T220539Z.json
+    artefakt_sha256: 7ca1df13fba07c07f3921e8645642e163f7d20401df9e8d8b57ace024dd64ae0
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 23 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med `deploy/staging/forpass-lest.py --modul
     # m21_avtalefrist` (ADR-003 klasse E) i den isolerte basen på 55432. Forpasset
