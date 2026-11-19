@@ -136,7 +136,8 @@ def test_riggkontrakten_er_hel_for_hver_sveipmodul():
             (modul_id, rigg.RENSES)
 
 
-def _funntyper_fra_migrasjonen(funntabell: str) -> set[str]:
+def _funntyper_fra_migrasjonen(funntabell: str,
+                               typekolonne: str = "funntype") -> set[str]:
     """Registerets LUKKEDE mengde funntyper, lest av CHECK-beskrankningen
     i funntabellens egen `CREATE TABLE`.
 
@@ -158,9 +159,11 @@ def _funntyper_fra_migrasjonen(funntabell: str) -> set[str]:
             if start not in sql:
                 continue
             blokk = sql.split(start, 1)[1].split("\n);", 1)[0]
-            if "funntype IN (" not in blokk:
+            # M-55 skriver `varseltype`; 220 avleder `funntype` av den
+            # som generert kolonne, så CHECK-en står på originalnavnet.
+            if f"{typekolonne} IN (" not in blokk:
                 continue
-            liste = blokk.split("funntype IN (", 1)[1]
+            liste = blokk.split(f"{typekolonne} IN (", 1)[1]
             # Balanser parentesene: lista slutter der den åpnende lukkes.
             dybde, ut = 1, []
             for tegn in liste:
@@ -191,7 +194,8 @@ def test_settet_dekker_registerets_funntyper_eller_sier_hvorfor_ikke():
             continue
         sett_noen = True
         rigg = __import__(k["riggmodul"])
-        registerets = _funntyper_fra_migrasjonen(k["funntabell"])
+        registerets = _funntyper_fra_migrasjonen(
+            k["funntabell"], k.get("typekolonne_ddl", "funntype"))
         settets = {v for v in rigg.forventet().values() if v}
         unaabare = dict(getattr(rigg, "UNAABARE", {}))
         assert settets | set(unaabare) == registerets, \
