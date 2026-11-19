@@ -1,23 +1,23 @@
-"""M-43s fasitsett: seks subjekter i to tenanter med KJENT dom.
+"""M-43s fasitsett: fem subjekter i to tenanter med KJENT dom.
 
 Telefoniregisteret har syv funntyper på `referanse` (samtale-,
-eskalerings- eller linje-id). Fire er utelukket av datamodellen (se
-`UNAABARE`, med migrasjonens egne grunner); de tre sveipen kan reise,
-rigges alle:
+eskalerings- eller linje-id). Fire er utelukket av datamodellen, og
+`eskalering_over_frist` kan ikke nås samme dag (se `UNAABARE`); de to
+andre rigges:
 
   tenant A (samtaletak 1 t, eskaleringsfrist 1 døgn, terskel 7000 bp)
     1. `samtale_uten_avslutning`   — startet for 5 timer siden, aldri avsluttet
-    2. `eskalering_over_frist`     — eskalert for 5 døgn siden, aldri lukket
-    3. `ubekreftet_linje_uavklart` — transkribert linje med 1000 bp
-    4. (ren)                       — som 1; AVSLUTTES mellom kjøringene
-    5. (ok)                        — startet for 5 timer siden, avsluttet
+    2. `ubekreftet_linje_uavklart` — transkribert linje med 1000 bp
+    3. (ren)                       — som 1; AVSLUTTES mellom kjøringene
+    4. (ok)                        — startet for 5 timer siden, avsluttet
   tenant B (samtaletak 2 t, eskaleringsfrist 2 døgn)
-    6. `samtale_uten_avslutning`   — samme regel i en annen tenant
+    5. `samtale_uten_avslutning`   — samme regel i en annen tenant
 
 SAMTALENS START ER EN DØRPARAMETER (`p_startet_ts`), så samtalealderen
-trenger ingen bakdatering. ESKALERINGEN bakdateres som migrator —
-`eskalert_ts` er DEFAULT now() uten dørparameter, og
-`test_m43_telefoni` går samme vei.
+trenger ingen bakdatering. ESKALERINGEN kan derimot bare bli gammel ved
+at tiden går: testsuiten slår av vakten for å bakdatere den, og det gjør
+ikke riggen i driftsbasen (M-48s `utdatert_vurdering` er presedensen).
+Eskaleringen rigges likevel, så dens evidens er med.
 """
 from __future__ import annotations
 
@@ -46,6 +46,11 @@ UNAABARE: dict[str, str] = {
         "`identifisert_ts` er NOT NULL, døra nekter en identifikasjon "
         "senere enn tenantens frist, og ingen transkripsjonslinje kan "
         "dateres før den — agenten kan ikke ha talt før den sa hva den er.",
+    "eskalering_over_frist":
+        "`eskalering.eskalert_ts` er DEFAULT now() uten dørparameter og "
+        "frosset av `m43_eskaleringsvakt`, og eskaleringsfristen har gulv "
+        "ett døgn (CHECK 1–90). En eskalering kan dermed ikke være over "
+        "fristen samme dag den ble opprettet; riggen ville målt klokka.",
     "eskalering_uten_regel":
         "`eskalering.regel_id` er NOT NULL med fremmednøkkel til tenantens "
         "egen eskaleringsregel, og døra nekter en avviklet regel; en "
@@ -56,7 +61,6 @@ NEGATIV_KONTROLL = "ok"
 
 SETT: tuple[tuple[str, str | None, str], ...] = (
     ("samtale", "samtale_uten_avslutning", "a"),
-    ("eskalering", "eskalering_over_frist", "a"),
     ("linje", "ubekreftet_linje_uavklart", "a"),
     ("ren", None, "a"),
     ("ok", None, "a"),
@@ -131,12 +135,6 @@ def forbered(rt, runde: str, mg=None) -> dict:
         rt.execute("SELECT m43_avslutt_samtale(%s,%s,"
                    " now() - interval '4 hours', %s)", (a, s_esk, AKTOR))
         rt.commit()
-        _sk(mg, a)
-        mg.execute("UPDATE eskalering SET eskalert_ts = now()"
-                   " - interval '5 days' WHERE tenant=%s"
-                   " AND eskalering_id=%s", (a, eid))
-        mg.commit()
-        s["eskalering"] = eid
         s["linje"] = lid
         s["ren"] = _samtale(rt, a, avslutt=False)
         s["ok"] = _samtale(rt, a, avslutt=True)

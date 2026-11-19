@@ -6745,10 +6745,10 @@ registrer_suitegrense("m12_tilgang", "m12",
                       min_tester=3000, min_andel_tester=20)
 
 
-# M-43 (ADR-002, klasse A): seks subjekter i to tenanter; alle tre
-# nåbare funntyper rigget, fire utelukket av datamodellen. Gulvene
-# foreløpige.
-registrer_fasitgrense("m43_telefoni", min_subjekter=6, min_evidens=8,
+# M-43 (ADR-002, klasse A): fem subjekter i to tenanter; fire funntyper
+# utelukket av datamodellen, eskalering_over_frist ikke nåbar samme dag
+# (M-48-presedensen). Gulvene foreløpige.
+registrer_fasitgrense("m43_telefoni", min_subjekter=5, min_evidens=8,
                       tenantprefiks="t-m43fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m43_telefoni", maks_sekunder=60.0,
                        min_tenanter=2, min_rullbakk_funn=4)
