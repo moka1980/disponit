@@ -19,7 +19,9 @@
 # forsiktighet, den er den eneste som gir et revisjonsspor å måle mot
 # når provisjoneringen kommer.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# KODEN FINNES (097 + platform/drift/tilgangssveip.py), og dørene skriver
+# evidens selv (`m12_evidens`). ADR-002 plasserer M-12 i klasse A: den
+# generiske sveiplesten gjelder uten tolkning.
 id: m12_tilgang
 navn: Identitets- og tilgangsagent
 versjon: 0.1.0
@@ -37,36 +39,124 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet (m02-suite-formen). Ingen
-      kode finnes; ingen måling finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m12_fasit.py`:
+    #
+    # M-12s fasitsett: fem tilganger i to tenanter med KJENT dom.
+    #
+    # Tilgangsregisteret har fire funntyper, alle på `tilgang_id`. Sveipen
+    # kan i v1 bare reise én av dem, `gjennomgang_utlopt`. De tre andre er
+    # utelukket av skjemaet (se `UNAABARE`).
+    #
+    #   tenant A
+    #     1. `gjennomgang_utlopt` — opprettet for 400 døgn siden, frist 1 døgn
+    #     2. (ren)                — som 1; GJENNOMGÅS mellom kjøringene
+    #     3. (ok)                 — registrert i dag gjennom døra, frist 365
+    #   tenant B
+    #     4. `gjennomgang_utlopt` — samme regel i en annen tenant
+    #     5. (ok)                 — som 3
+    #
+    # BAKDATERINGEN SKJER VED INNSETTINGEN, som eieren — og det er ikke en
+    # snarvei. `opprettet_dato` er DEFAULT current_date, døra tar ingen dato,
+    # og vakten fryser kolonnen. Den eneste veien registeret tillater til en
+    # tilgang som er gammel, er å bli født gammel; testsuitens `_forfalt` går
+    # samme vei og begrunner det samme sted. Tilstanden er heller ikke
+    # kunstig: den oppstår av seg selv i drift, når tiden går.
+    #
+    # De bakdaterte radene går derfor UTENOM evidenskjeden. Det er riktig:
+    # de simulerer en registrering som skjedde for 400 døgn siden, og den
+    # ville hatt sin hendelse den gang. Evidensen som måles er dørenes egen —
+    # objektene, tilgangene registrert i dag, og gjennomgangen som renser.
+    #
+    # Eieren må være et aktivt medlem; medlemskapet skrives med
+    # migratortilkoblingen (ingen dør, som i M-18 og M-30).
+    status: ja
+    krav_id: m12-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m12-fasit-v1-20261119T082251Z.json
+    artefakt_sha256: 5cc25d587428b325f3b5f6571fd6397e958fb4349ed0660f536e75fa05d25d29
     notat: >-
-      KREVER: et syntetisk tilgangssett med KJENT fasit for hvilke
-      avvik som skal reises — tilganger uten eier, uten hjemmel, forbi
-      gjennomgangsfrist — kjørt likt lokalt og på staging med begge
-      datasett-identitetene bundet. Uten fasit måler en avvikstelling
-      bare at spørringen ikke kastet feil.
+      Runde 7e85b30e: 5 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m12-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m12-fasit-v1-20261119T082251Z.json
+    artefakt_sha256: 5cc25d587428b325f3b5f6571fd6397e958fb4349ed0660f536e75fa05d25d29
     notat: >-
-      KREVER: avklaring av hva punktet betyr for en modul som per v1
-      ikke beslutter noe. Registerets rader er append-only og sporet i
-      sitt eget lager; om det er «revisjonslogg korrekt» i punktets
-      forstand er en arkitektdom. Står nei framfor å låne en tolkning.
+      5 hendelser i kjeden (tilgang.gjennomgatt: 1, tilgang.registrert: 2,
+      tilgangsobjekt.registrert: 2), 0 uten aktør, 0 som deler input_hash
+      med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m12-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m12-feilinjisering-v1-20261119T082251Z.json
+    artefakt_sha256: 7b8ed4a098c91c0f351d8ae6b708bb35b31f4443758e3c7a56d2f26be0d74861
     notat: >-
-      KREVER: gjennomgangssveipen bygget. Formen er gitt (advisory-lås,
-      hoppet_over skilt fra feil, alarm etter to sammenhengende feil),
-      men ingen kode kjører.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 5 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m12-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m12-ytelse-v1-20261119T082251Z.json
+    artefakt_sha256: 6c49239e9bae5c99aa1131fbd2f441920c0130064ac76d6910f1613489750da2
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden under realistisk
-      tilgangsmengde, og en målt kjøring mot den. Ingen grense pinnet.
+      Tre kjøringer (0,0104 / 0,0103 / 0,0111 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0111 s mot taket på 60 — 0,0037 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m12-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m12-rollback-v1-20261119T082253Z.json
+    artefakt_sha256: 273e18713cb3a79a17cd5cc8771b3659a6c1ed84c5e20f4b01e45a4368e924e2
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet d1799bfb ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 3 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
