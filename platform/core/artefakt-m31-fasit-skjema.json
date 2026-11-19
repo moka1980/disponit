@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m31-fasit-v1.json",
+  "title": "m31-fasit-v1 — golden-settets hash lik driftsbasens, kjent dørsekvens med kjente portutfall, én hendelse per overgang (ADR-007 klasse H)",
+  "comment": "Produsert av deploy/staging/m31-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m31_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m31-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "modul_i_registeret",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "modul_i_registeret": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cli_returkoder",
+        "dommer",
+        "drift_hasher",
+        "eksempler",
+        "hendelser",
+        "hendelser_totalt",
+        "hendelser_uten_aktor",
+        "hendelser_ventet",
+        "portutfall",
+        "portutfall_ventet",
+        "registrert_hash_lik_fil",
+        "runtime_skriverett",
+        "sett_hasher"
+      ],
+      "properties": {
+        "sett_hasher": {
+          "type": "object"
+        },
+        "drift_hasher": {
+          "type": "object"
+        },
+        "cli_returkoder": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "registrert_hash_lik_fil": {
+          "type": "boolean"
+        },
+        "eksempler": {
+          "type": "integer"
+        },
+        "portutfall": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "portutfall_ventet": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dommer": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "hendelser": {
+          "type": "object"
+        },
+        "hendelser_ventet": {
+          "type": "object"
+        },
+        "hendelser_totalt": {
+          "type": "integer"
+        },
+        "hendelser_uten_aktor": {
+          "type": "integer"
+        },
+        "runtime_skriverett": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

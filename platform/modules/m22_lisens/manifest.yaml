@@ -43,34 +43,79 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/forpass-lest.py --modul
+    # m22_lisens` (ADR-003 klasse E) i den isolerte basen på 55432. Forpasset
+    # kjøres gjennom den EKTE senderen som disponit_varselsender, med en
+    # oppsamlende send i stedet for SMTP.
+    status: ja
+    krav_id: m22-fasit-v1
+    bevismaalinger:
+      - maalt.ankeravvik
+      - maalt.ankre_kjoring1
+      - maalt.kjoring2_nye
+      - maalt.varselavvik
+      - maalt.epost_sendt
+    artefakt: deploy/staging/artefakter/m22-fasit-v1-20261119T210510Z.json
+    artefakt_sha256: 45de7349507f6fc9219129eb83453f6bab3f6aaaef1185ed31546cd4c6a1f925
     notat: >-
-      KREVER: et lisenssett med KJENT fasit for hvilke varsler som skal
-      køes ved hvilket tidspunkt — og hvilke som IKKE skal køes en gang
-      til — kjørt likt lokalt og på staging med begge
-      datasett-identitetene bundet.
+      7 subjekter i to tenanter, 9 ankre etter første kjøring og
+      0 avvik fra fasiten; 2 subjekter skulle ikke varsles og ble
+      det ikke. Hvert anker peker på ett varsel til eieren (0 avvik), og
+      kanalvalget ble fulgt (e-post {'a': 0, 'b': 1}). Mellom kjøringene ble ett
+      subjekt kvittert/fornyet; andre kjøring køet 0 nye.
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1 (gjelder klasse E uendret): hver dør og hvert køet varsel
+    # skriver én hendelse med aktør og egen input_hash.
+    status: ja
+    krav_id: m22-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_avvik
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m22-fasit-v1-20261119T210510Z.json
+    artefakt_sha256: 45de7349507f6fc9219129eb83453f6bab3f6aaaef1185ed31546cd4c6a1f925
     notat: >-
-      KREVER: at koblingen mot evidenskjeden er bygget og målt. Den er
-      oppført som avhengighet fordi den SKAL finnes, ikke fordi den
-      finnes. Punktet står nei til målingen er gjort.
+      18 hendelser, nøyaktig per handling og tenant (0 avvik);
+      0 uten aktør og 0 delte input_hash.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-003 E2: to ekte driftsfeil i forpasset — tilbaketrukket EXECUTE og et
+    # låst register (lock_timeout) — aldri en bryter rigget inne i modulen.
+    status: ja
+    krav_id: m22-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injeksjoner
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m22-feilinjisering-v1-20261119T210515Z.json
+    artefakt_sha256: c57ca3d5fc7e7c01a8641177a7284f8798234ebf4ca8e5d73e269e6a58d5d15b
     notat: >-
-      KREVER: forpasset bygget. Porten er skarp av samme grunn som i
-      M-21: en feil i forpasset må ikke kunne stanse den ORDINÆRE
-      varselsendingen. Uten kode er det en påstand, ikke en måling.
+      execute_trukket: forpass_feil 1, ordinær sending gikk, 0 ankre, kode 2; register_laast: forpass_feil 1, ordinær sending gikk, 0 ankre, kode 2. Etter reparasjonen gikk forpasset rent (kode 0) og nådde fasitens
+      9 ankre.
   ytelse_bestatt:
-    status: nei
+    # ADR-003 E4: forpasset alene, fullt tak forfalne subjekter per kjøring.
+    status: ja
+    krav_id: m22-ytelse-v1
+    bevismaalinger:
+      - maalt.maks_sekunder
+      - maalt.kjoringer
+      - maalt.koet_totalt
+    artefakt: deploy/staging/artefakter/m22-ytelse-v1-20261119T210517Z.json
+    artefakt_sha256: 9698bf7a64b02a8e86c91fe831ecb2553f0a25aeca377a42ec6de9f813f6e1b1
     notat: >-
-      KREVER: pinnet grense for hva forpasset koster per sveip, og en
-      målt kjøring mot den. Et forpass i en eksisterende jobb er billig
-      å legge inn og dyrt å oppdage at ble tregt.
+      5 kjøringer à 100: maks 0.0502 s (taket er 5 s), 500 køet.
   rollback_testet:
-    status: nei
+    # ADR-003 E3: kjernen rullet; forgjengerens og kandidatens sender på hvert
+    # sitt like sett, og kandidaten over forgjengerens sett.
+    status: ja
+    krav_id: m22-rollback-v1
+    bevismaalinger:
+      - maalt.ankre_like
+      - maalt.kandidat_etter_rullbakk_nye
+    artefakt: deploy/staging/artefakter/m22-rollback-v1-20261119T210516Z.json
+    artefakt_sha256: 10e7eb2c5dc0379dee64094bf677656f7cc0b602856f07076935cc053952a920
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Kjerne 3b3567c63394 ← forgjenger a108dd30aa42: like ankre
+      per subjekt, lik fasiten; kandidaten etter forgjengeren køet
+      0 nye — ingen dobbeltvarsel over rullingen.

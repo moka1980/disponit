@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m11-feilinjisering-v1.json",
+  "title": "m11-feilinjisering-v1 — ekte driftsfeil: ugyldig grunnlag og trukne rettigheter gir støy og ingen rader (ADR-004)",
+  "comment": "Produsert av deploy/staging/plattformvakt-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_pv_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m11-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "brudd",
+        "forpass",
+        "frisk_etterpa"
+      ],
+      "properties": {
+        "brudd": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "frisk_etterpa": {
+          "type": "object"
+        },
+        "forpass": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m22-rollback-v1",
+  "maalt": {
+    "ankre_forgjenger": {
+      "avsluttet": 0,
+      "b20": 2,
+      "b40": 1,
+      "egne": 1,
+      "fjern": 0,
+      "fornyet": 2,
+      "passert": 3
+    },
+    "ankre_kandidat": {
+      "avsluttet": 0,
+      "b20": 2,
+      "b40": 1,
+      "egne": 1,
+      "fjern": 0,
+      "fornyet": 2,
+      "passert": 3
+    },
+    "ankre_lik_fasit": true,
+    "ankre_like": true,
+    "forpass_feil": [
+      0,
+      0,
+      0
+    ],
+    "kandidat_etter_rullbakk_nye": 0
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "3b3567c63394b4f857c8b647f27db17498f904c8fc1a4913701da6e1141f7e07",
+    "modul": "m22_lisens",
+    "modul_forgjenger": "c03b99a9b27509bf50c21236ab454bc6b771dae435a488533385fbeaa57e7389",
+    "modul_kandidat": "c3565a32d15a68bdf4111fcdf911dea74f7c92bd9cb86d296fe186480c42b445",
+    "runde": "df24b0dc",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:05:16.514371+00:00"
+}

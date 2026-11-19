@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m31-feilinjisering-v1.json",
+  "title": "m31-feilinjisering-v1 — porten feiler synkront og lukket, og hash-avvik stopper før første modellkall (ADR-007)",
+  "comment": "Produsert av deploy/staging/m31-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m31_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m31-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "brudd",
+        "injiserte"
+      ],
+      "properties": {
+        "brudd": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "injiserte": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

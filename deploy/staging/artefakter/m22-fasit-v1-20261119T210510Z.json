@@ -1,0 +1,102 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m22-fasit-v1",
+  "maalt": {
+    "ankeravvik": 0,
+    "ankre_kjoring1": 9,
+    "epost_sendt": {
+      "a": 0,
+      "b": 1
+    },
+    "epost_ventet": {
+      "a": 0,
+      "b": 1
+    },
+    "evidens_avvik": 0,
+    "evidens_delte_input_hash": 0,
+    "evidens_per_tenant": {
+      "a": {
+        "lisens.avsluttet": 1,
+        "lisens.fornyet": 1,
+        "lisens.registrert": 6,
+        "lisens.utlopsvarsel_koet": 8
+      },
+      "b": {
+        "lisens.registrert": 1,
+        "lisens.utlopsvarsel_koet": 1
+      }
+    },
+    "evidens_totalt": 18,
+    "evidens_uten_aktor": 0,
+    "evidens_ventet": {
+      "a": {
+        "lisens.avsluttet": 1,
+        "lisens.fornyet": 1,
+        "lisens.registrert": 6,
+        "lisens.utlopsvarsel_koet": 8
+      },
+      "b": {
+        "lisens.registrert": 1,
+        "lisens.utlopsvarsel_koet": 1
+      }
+    },
+    "forpass_feil": [
+      0,
+      0
+    ],
+    "forpass_stderr": "",
+    "kjoring2_nye": 0,
+    "per_subjekt": [
+      {
+        "fikk": 1,
+        "merke": "b40",
+        "ventet": 1
+      },
+      {
+        "fikk": 2,
+        "merke": "b20",
+        "ventet": 2
+      },
+      {
+        "fikk": 3,
+        "merke": "passert",
+        "ventet": 3
+      },
+      {
+        "fikk": 0,
+        "merke": "fjern",
+        "ventet": 0
+      },
+      {
+        "fikk": 0,
+        "merke": "avsluttet",
+        "ventet": 0
+      },
+      {
+        "fikk": 2,
+        "merke": "fornyet",
+        "ventet": 2
+      },
+      {
+        "fikk": 1,
+        "merke": "egne",
+        "ventet": 1
+      }
+    ],
+    "subjekter": 7,
+    "varselavvik": 0
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "modul": "m22_lisens",
+    "runde": "6c026557",
+    "tenanter": {
+      "a": "t-m22fasit-a-6c026557",
+      "b": "t-m22fasit-b-6c026557"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:05:10.641368+00:00"
+}

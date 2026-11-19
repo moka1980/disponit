@@ -3,7 +3,9 @@
 # Derfor er dette en av de mest udramatiske jobbene i huset. Feiler den, ser
 # mottakeren varselet neste gang hun logger inn — innboksen er sannheten.
 # Exit-koden er 0 så lenge senderen selv virket; en avvist adresse er data,
-# ikke en driftsfeil, og telles på raden i stedet.
+# ikke en driftsfeil, og telles på raden i stedet. Et forpass som feilet
+# (M-10, M-11, M-21, M-22 …) gir kode 2: det er varsler som aldri ble køet,
+# og uniten skal stå `failed` til noen har sett det (ADR-003).
 #
 # Senderen ser på TVERS av tenanter, men aldri med BYPASSRLS på egen rolle:
 # den når `varsel` kun gjennom `varsel_klaim_epost()`,

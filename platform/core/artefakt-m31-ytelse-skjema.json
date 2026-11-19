@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m31-ytelse-v1.json",
+  "title": "m31-ytelse-v1 — en ekte evaluering mot vertens modell, p95 per eksempel mot en pinnet grense (ADR-007)",
+  "comment": "Produsert av deploy/staging/m31-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_m31_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m31-ytelse-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_digest",
+        "base",
+        "bevisrot_sha256",
+        "modell_url",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "modell_url": {
+          "type": "string"
+        },
+        "artifact_digest": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bestatt",
+        "cli_returkode",
+        "eksempler",
+        "modellfeil",
+        "modellnavn",
+        "p50_ms",
+        "p95_ms",
+        "varighet_s"
+      ],
+      "properties": {
+        "cli_returkode": {
+          "type": "integer"
+        },
+        "eksempler": {
+          "type": "integer"
+        },
+        "bestatt": {
+          "type": "integer"
+        },
+        "modellfeil": {
+          "type": "integer"
+        },
+        "p50_ms": {
+          "type": "integer"
+        },
+        "p95_ms": {
+          "type": "integer"
+        },
+        "varighet_s": {
+          "type": "number"
+        },
+        "modellnavn": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

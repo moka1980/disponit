@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m22-feilinjisering-v1.json",
+  "title": "m22-feilinjisering-v1 — ekte driftsfeil i forpasset stanser ikke den ordinære sendingen, telles separat og gir returkode ≠ 0 (ADR-003 D2)",
+  "comment": "Produsert av deploy/staging/forpass-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_forpass_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m22-feilinjisering-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "injeksjoner",
+        "injiserte",
+        "ventet_ankre"
+      ],
+      "properties": {
+        "injeksjoner": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "injiserte": {
+          "type": "integer"
+        },
+        "ventet_ankre": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m21-feilinjisering-v1",
+  "maalt": {
+    "injeksjoner": [
+      {
+        "egne_ankre_etter": 9,
+        "egne_ankre_under": 0,
+        "feilmelding": "varselsender: fristsveipen (M-21) feilet: InsufficientPrivilege: permission denied for function m21_koe_fristvarsler\n",
+        "forpass_feil_etter": 0,
+        "forpass_feil_under": 1,
+        "injeksjon": "execute_trukket",
+        "journal_under": "varselsender: sendt=0 feilet=0 gjenkoet=0 mistet=0 forpass_feil=1 grunn=smtp_ikke_konfigurert\nvarselsender: fristsveipen (M-21) feilet: InsufficientPrivilege: permission denied for function m21_koe_fristvarsler\n",
+        "ordinaer_sendt": true,
+        "returkode_etter": 0,
+        "returkode_under": 2
+      },
+      {
+        "egne_ankre_etter": 9,
+        "egne_ankre_under": 0,
+        "feilmelding": "e to lock timeout\nLINE 2:                             FROM public.plikt p\n                                         ^\nQUERY:  SELECT array_agg(DISTINCT p.tenant ORDER BY p.tenant)\n                            FROM public.plikt p\n     WHERE p.status = 'apen'\n       AND p.frist_ts <= now() + interval '3650 days'\nCONTEXT:  PL/pgSQL function public.m21_koe_fristvarsler(integer) line 16 at SQL statement\n",
+        "forpass_feil_etter": 0,
+        "forpass_feil_under": 1,
+        "injeksjon": "register_laast",
+        "journal_under": "e to lock timeout\nLINE 2:                             FROM public.plikt p\n                                         ^\nQUERY:  SELECT array_agg(DISTINCT p.tenant ORDER BY p.tenant)\n                            FROM public.plikt p\n     WHERE p.status = 'apen'\n       AND p.frist_ts <= now() + interval '3650 days'\nCONTEXT:  PL/pgSQL function public.m21_koe_fristvarsler(integer) line 16 at SQL statement\n",
+        "ordinaer_sendt": true,
+        "returkode_etter": 0,
+        "returkode_under": 2
+      }
+    ],
+    "injiserte": 2,
+    "ventet_ankre": 9
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "modul": "m21_avtalefrist",
+    "runde": "626c4083",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:04:58.276923+00:00"
+}
