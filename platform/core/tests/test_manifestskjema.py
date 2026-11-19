@@ -930,7 +930,8 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling",
                          "m42_kontovakt", "m44_kampanje", "m46_anbud",
                          "m47_myndighetsrapport", "m48_motpart",
-                         "m52_tollkode", "m54_ehf", "m57_ats", "wcag_audit"], st
+                         "m49_sanksjon", "m52_tollkode", "m54_ehf", "m57_ats",
+                         "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg", "m06_epost",
                           "m13_avstemming", "m14_fakturakontroll",
                           "m15_likviditet", "m17_kundeservice",
@@ -940,7 +941,8 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                           "m37_unntak", "m39_lonnsgrunnlag", "m41_betaling",
                           "m42_kontovakt", "m44_kampanje", "m46_anbud",
                           "m47_myndighetsrapport", "m48_motpart",
-                          "m52_tollkode", "m54_ehf", "m57_ats", "wcag_audit"], (
+                          "m49_sanksjon", "m52_tollkode", "m54_ehf",
+                          "m57_ats", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 

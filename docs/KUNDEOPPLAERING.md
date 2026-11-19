@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, M-34 lagt til 18.11.2026. Dekker de **21 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **29 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -162,6 +162,14 @@ strengt — det er hele poenget med modulen.
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
 | **Kontrollregister / compliance (M-34)** | Kontroller som ikke er etterprøvd innen fristen, og kontroller der eieren ikke lenger er med i firmaet | Etterprøver ikke selv og attesterer ingenting. «Oppfylt» krever en etterprøving med dato og evidenshenvisning. |
+| **Likviditet (M-15)** | Prognoser som bygger på et grunnlag eldre enn grensen, prognoser der banen går under null, prognoser mot en modell som ikke gjelder lenger, og modeller som snart utløper | Flytter ingen penger og tar ikke opp lån. Prognosen er et øyeblikksbilde: lag en ny når grunnlaget har endret seg. |
+| **Nettside og innhold (M-20)** | Utkast som er merket klare uten at noen har sett dem, og kilder som snart utløper mens de bærer en publisert påstand | Publiserer ingenting av seg selv. Publisering krever en forhåndsvisning av nøyaktig det som publiseres. |
+| **Anbud (M-46)** | Frister som nærmer seg eller er passert, krav som ikke er dekket, anbud uten krav, og anbud utenfor søkeprofilen | Leverer ikke tilbud. Den holder oversikten over hva som mangler. |
+| **Myndighetsrapportering (M-47)** | Rapportplikter med frist som nærmer seg eller er passert uten bevis, og regelverk som utløper eller er utløpt | Sender ingenting til myndighetene. Et bevis er kvitteringen kunden selv fikk. |
+| **Motparter (M-48)** | Motparter ingen har vurdert, profiler uten vurdering, avviklede foretak, forslag over taket, og gjentatte feil mot foretaksregisteret | Setter ingen kredittgrense og stopper ingen ordre. |
+| **Sanksjonskontroll (M-49)** | Subjekter som ikke er kontrollert, treff ingen har avklart, bekreftede treff, og kontroller mot en liste som er avløst | Avviser ingen kunde. Et treff er en sak for et menneske. |
+| **Tollklassifisering (M-52)** | Forslag under sikkerhetsterskelen, forslag som ikke er merket klare, og regelverk som utløper eller er utløpt | Deklarerer ingenting. Et forslag under terskelen avgis aldri. |
+| **EHF-kontroll (M-54)** | Formfeil uten retting, rettinger som ikke er merket klare, og regelsett som utløper eller er utløpt | Sender ingen faktura. Den kontrollerer formen, ikke innholdet. |
 | **WCAG-kontroll (M-56)** | Automatisk tilgjengelighetskontroll av nettsteder kunden har bekreftet at de kontrollerer | Retter ikke nettstedet. |
 
 ---
@@ -191,6 +199,14 @@ i enhver opplæringsøkt.
 | Kampanje | «Lagre grense» → «Lagre avsender» | Frekvenstak og avsender |
 | Rekruttering | Fanen «Profiler» → «Ny profil» | En stillingsprofil med vektede krav |
 | Kontrollregister | «Registrer kontroll» | Kravreferanse, eier og hvor ofte den skal etterprøves |
+| Likviditet | «Lagre grensene» → «Registrer modell» | Horisont, grunnlagsalder og målefrist, så en modell |
+| Nettside og innhold | «Lagre grenser» → «Lagre kilde» | Hvor lenge en kilde gjelder, og varselfristen |
+| Anbud | «Lagre søkeprofil» | Bransjekoder, geografi og verdispenn — tenantens egne |
+| Myndighetsrapportering | «Lagre varselfrister» → «Registrer regelverk» | Varsel før frist, eskalering og regelverksvarsel |
+| Motparter | «Lagre policy» → «Registrer motpart» | Hvor lenge en vurdering gjelder, og taket for forslag |
+| Sanksjonskontroll | «Lagre policy» → «Registrer listeversjon» | Matchterskel og frister — kunden velger selv |
+| Tollklassifisering | «Lagre terskler» → «Lagre regelverk» | Sikkerhetsterskelen — kunden velger selv |
+| EHF-kontroll | «Lagre terskler» → «Lagre regelsett» | Utløpsvarsel og avviksfrist |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
@@ -236,7 +252,7 @@ fullmakt noen har gitt bevisst. Det er en beslutning, ikke en oppgave.
 
 ## 9. Hva som ennå ikke er der
 
-36 av 57 moduler er ikke sertifisert ennå. **En modul som ikke står i
+28 av 57 moduler er ikke sertifisert ennå. **En modul som ikke står i
 tabellen over, er ikke i drift** — uansett hva katalogen på nettsiden
 lover om den.
 

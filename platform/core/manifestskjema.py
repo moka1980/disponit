@@ -6389,7 +6389,7 @@ registrer_sveipgrenser("m25_prosjekt", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m13_avstemming", min_subjekter=6, min_evidens=8,
                       tenantprefiks="t-m13fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=3)
+                       min_rullbakk_funn=4)
 
 #: M-18s grenser. Tre funntyper, alle nåbare — men ALLE TRE henger på
 #: samme subjektnøkkel, og `steg_over_frist` gir én rad per forsinket
@@ -6399,7 +6399,7 @@ registrer_sveipgrenser("m13_avstemming", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m18_onboarding", min_subjekter=6, min_evidens=17,
                       tenantprefiks="t-m18fasit-", min_sveip1_nye=4)
 registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=3)
+                       min_rullbakk_funn=4)
 
 #: M-41s grenser. Fire funntyper, alle nåbare — hele alders-aksen er en
 #: dørparameter. Gulvet for første sveip er FEM, altså settets faktiske
@@ -6409,7 +6409,7 @@ registrer_sveipgrenser("m18_onboarding", maks_sekunder=60.0, min_tenanter=2,
 registrer_fasitgrense("m41_betaling", min_subjekter=6, min_evidens=13,
                       tenantprefiks="t-m41fasit-", min_sveip1_nye=5)
 registrer_sveipgrenser("m41_betaling", maks_sekunder=60.0, min_tenanter=2,
-                       min_rullbakk_funn=3)
+                       min_rullbakk_funn=4)
 
 #: M-39s grenser. Fem funntyper, alle nåbare. Funnene aggregeres PER
 #: LØNNSTAKER, så hver merkelapp har sin egen taker med nøyaktig én dag.
@@ -6550,6 +6550,7 @@ registrer_suitegrense("m54_ehf", "m54",
                       ("platform/core/tests/test_m54_ehf.py",),
                       min_tester=3000, min_andel_tester=35)
 
+
 # M-46: gulvene er litt under det målte 18/11 (9 subjekter, 30
 # evidenshendelser; sju typer + det rene udekkede anbudet).
 registrer_fasitgrense("m46_anbud", min_subjekter=9, min_evidens=27,
@@ -6560,6 +6561,8 @@ registrer_sveipgrenser("m46_anbud", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m46_anbud", "m46",
                       ("platform/core/tests/test_m46_anbud.py",),
                       min_tester=3000, min_andel_tester=28)
+
+
 # M-48: gulvene er litt under det målte 18/11 (8 subjekter, 39
 # evidenshendelser; seks typer + den rene uvurderte motparten).
 registrer_fasitgrense("m48_motpart", min_subjekter=8, min_evidens=35,
@@ -6571,6 +6574,7 @@ registrer_suitegrense("m48_motpart", "m48",
                       ("platform/core/tests/test_m48_motpart.py",),
                       min_tester=3000, min_andel_tester=40)
 
+
 # M-49: gulvene er litt under det målte 18/11 (8 subjekter, 19
 # evidenshendelser; seks typer + det rene ukontrollerte subjektet).
 registrer_fasitgrense("m49_sanksjon", min_subjekter=8, min_evidens=17,
@@ -6581,6 +6585,8 @@ registrer_sveipgrenser("m49_sanksjon", maks_sekunder=60.0, min_tenanter=3,
 registrer_suitegrense("m49_sanksjon", "m49",
                       ("platform/core/tests/test_m49_sanksjon.py",),
                       min_tester=3000, min_andel_tester=25)
+
+
 # M-53: gulvene er litt under det målte 18/11 (9 subjekter, 12
 # evidenshendelser; fem typer + den rene utløpte regelen).
 registrer_fasitgrense("m53_hms", min_subjekter=9, min_evidens=10,
@@ -6591,6 +6597,8 @@ registrer_sveipgrenser("m53_hms", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m53_hms", "m53",
                       ("platform/core/tests/test_m53_hms.py",),
                       min_tester=3000, min_andel_tester=32)
+
+
 # M-20: gulvene er litt under det målte 18/11 (6 subjekter, 20
 # evidenshendelser; to typer over to utkast og én kilde).
 registrer_fasitgrense("m20_innhold", min_subjekter=6, min_evidens=18,
@@ -6601,6 +6609,8 @@ registrer_sveipgrenser("m20_innhold", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m20_innhold", "m20",
                       ("platform/core/tests/test_m20_innhold.py",),
                       min_tester=3000, min_andel_tester=38)
+
+
 # M-15: gulvene er litt under det målte 18/11 (8 subjekter, 13
 # evidenshendelser; fem typer + den rene modellen).
 registrer_fasitgrense("m15_likviditet", min_subjekter=8, min_evidens=11,
@@ -6611,6 +6621,7 @@ registrer_sveipgrenser("m15_likviditet", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m15_likviditet", "m15",
                       ("platform/core/tests/test_m15_likviditet.py",),
                       min_tester=3000, min_andel_tester=32)
+
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),

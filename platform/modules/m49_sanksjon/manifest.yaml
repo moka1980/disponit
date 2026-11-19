@@ -45,8 +45,8 @@
 id: m49_sanksjon
 navn: Sanksjons- og hvitvaskingsvakt
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m49-v1` bærer invarianten
 # `matchterskel_hardkodet` — hvor likt et navn må være før det er en
 # kandidat er tenantens vurdering, ikke en konstant.
