@@ -1,0 +1,66 @@
+{
+  "bestatt": true,
+  "krav_id": "m07-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 34,
+    "apne_for": 34,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
+    "per_type_etter": {
+      "aksjon_over_frist": [
+        8,
+        0
+      ],
+      "mote_uten_referat": [
+        21,
+        3
+      ],
+      "ubekreftet_punkt_uavklart": [
+        5,
+        1
+      ]
+    },
+    "per_type_for": {
+      "aksjon_over_frist": [
+        8,
+        0
+      ],
+      "mote_uten_referat": [
+        21,
+        3
+      ],
+      "ubekreftet_punkt_uavklart": [
+        5,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 17
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "motefunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m7_sveip_moter(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_mote_eier",
+    "modul": "m07_moteoperasjon",
+    "riggmodul": "m07_fasit",
+    "riggtenanter": [
+      "t-m07fasit-a-7d19f8ec",
+      "t-m07fasit-b-7d19f8ec"
+    ],
+    "runde": "7d19f8ec",
+    "sveipedor": "m7_sveip_moter(int)",
+    "tenantkilde": [
+      "motekrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T14:25:01.004280+00:00"
+}

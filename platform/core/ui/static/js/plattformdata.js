@@ -168,7 +168,7 @@ export const MODULSTATUS = {
   // fjerner siden — ikke at noen handlet på den.
   //
   // Flippes av en modulaksept, aldri av en byggemilepæl.
-  7: "bygges",      // m7_moteoperasjon: under_utvikling, ikke_i_drift
+  7: "i_drift",    // m07_moteoperasjon: aktiv, produksjon
   20: "i_drift",    // m20_innhold: aktiv, produksjon
   43: "bygges",     // m43_telefoni: under_utvikling, ikke_i_drift
   45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
