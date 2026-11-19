@@ -5706,9 +5706,11 @@ SVEIPMODULER: dict[str, dict] = {
         "ytelse_krav": "m09-ytelse-v1",
         "rollback_krav": "m09-rollback-v1",
         "riggmodul": "m09_fasit",
+        # Migrasjonen 212 står IKKE her: den er skjema, ikke modulens
+        # releasebytes, og en forgjenger fra før 212 har den ikke.
+        # Kjernedigesten (platform/core) dekker den allerede.
         "releasefiler": ("platform/modules/m09_kunnskap",
-                         "platform/drift/begrepssveip.py",
-                         "platform/core/db/migrations/212_m9_evidens.sql"),
+                         "platform/drift/begrepssveip.py"),
     },
     "m12_tilgang": {
         "modul_fil": "tilgangssveip",

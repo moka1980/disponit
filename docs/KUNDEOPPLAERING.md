@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **36 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **37 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Ordliste (M-09)** | Begreper som har gått ut på dato eller snart gjør det | Skriver ikke begreper selv. Ordlisten fylles av plattformen; en endring er en ny versjon, og den gamle består. |
 | **Nøkkeltall (M-16)** | Tellinger over det som faktisk har skjedd: beslutninger, unntak åpnet og lukket, og hvor lang tid lukkingen tok, for 24 timer, 7 eller 30 dager | Analyserer ikke og spår ingenting. Tallene er tellinger over rader som finnes, og andelene står ved siden av tellingene de er regnet fra. |
 | **Tilskudd (M-51)** | Aktive ordninger uten estimat, estimater uten beløp eller over ordningens tak, og søknadsfrister som nærmer seg eller er passert | Søker ikke på egen hånd og lover ingen utbetaling. Et estimat er et anslag til den som skal søke. |
 | **Tilganger (M-12)** | Tilganger som har stått lenger enn sin egen gjennomgangsfrist uten at noen navngitt har sett på dem | Oppretter, flytter og fjerner ingen tilganger. En gjennomgang er en attestasjon fra et navngitt menneske, datert i dag. |
