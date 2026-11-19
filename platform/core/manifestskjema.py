@@ -3800,6 +3800,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
     # kjenne hvert felt for å kunne si noe om hva det BETYR.
     if krav_id in _M04_GRENSER:
         return feil + _M04_GRENSER[krav_id](grense, art)
+    if krav_id in _M05_GRENSER:
+        return feil + _M05_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -10024,4 +10026,199 @@ registrer_suitegrense(
     "m04_dataforvalter", "m04",
     ("platform/core/tests/test_m4_retensjon.py",
      "platform/core/tests/test_m4_registeret_dekker_modulene_port.py"),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-05 — KLASSE C I ADR-002 (tenantregister uten sveip).
+#
+# Én produsent (`deploy/staging/m05-lest.py`), fire artefakter, alle i den
+# isolerte basen på 55432 bygget fra commiten som måles. Fasiten er en
+# KJENT DØRSEKVENS med kjent sluttilstand, re-regnet av radene; evidensen
+# skrives av triggerne i 213 og telles per handling.
+# ===========================================================================
+
+M05_MODULFILER: tuple[str, ...] = (
+    "platform/core/api/dokumentmal.py",
+    "platform/core/db/migrations/094_m5_malregister.sql",
+    "platform/core/db/migrations/177_m5_forkast_malversjon.sql",
+    "platform/core/db/migrations/213_m5_evidens.sql",
+)
+M05_BEVISROT: tuple[str, ...] = ("deploy/staging/m05-lest.py",)
+
+
+def m05_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M05_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m05_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m05_dokumentmal":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m05_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/m05-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m05_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m05_felles(art)
+    if not m:
+        return feil
+    per = m.get("per_tenant")
+    if not isinstance(per, list) or len(per) < 2:
+        return feil + ["krever to tenanter i per_tenant"]
+    regnet = sum(0 if (isinstance(r, dict) and r.get("fikk") == r.get("ventet"))
+                 else 1 for r in per)
+    if regnet != m.get("tilstandsavvik") or regnet:
+        feil.append(f"tilstandsavvik={m.get('tilstandsavvik')!r}, regnet"
+                    f" {regnet}, taket er 0")
+    if not isinstance(m.get("dorkall"), int) \
+            or m["dorkall"] < grense["min_dorkall"]:
+        feil.append("færre dørkall enn sekvensen krever")
+    for felt in ("utfylling_lik_fasit", "gjenspill_urort"):
+        if m.get(felt) is not True:
+            feil.append(f"maalt.{felt} er ikke true")
+    if m.get("gjenspill_feilet") != 0:
+        feil.append("et gjenspill feilet — et stille ja skal ikke kaste")
+    ev, vent = m.get("evidens_per_tenant"), m.get("evidens_ventet")
+    if not isinstance(ev, dict) or not isinstance(vent, dict) \
+            or not vent:
+        feil.append("evidensen mangler per tenant")
+    else:
+        regnet_ev = sum(1 for k in vent if ev.get(k) != vent[k])
+        if regnet_ev != m.get("evidens_avvik") or regnet_ev:
+            feil.append(f"evidens_avvik={m.get('evidens_avvik')!r}, regnet"
+                        f" {regnet_ev}, taket er 0")
+        totalt = sum(sum(v.values()) for v in ev.values()
+                     if isinstance(v, dict))
+        if totalt != m.get("evidens_totalt") \
+                or totalt < grense["min_evidens"]:
+            feil.append(f"evidens_totalt={m.get('evidens_totalt')!r},"
+                        f" regnet {totalt}, krever >= {grense['min_evidens']}")
+    for felt in ("evidens_uten_aktor", "evidens_delte_input_hash"):
+        if m.get(felt) != 0:
+            feil.append(f"maalt.{felt}={m.get(felt)!r}, krever 0")
+    return feil
+
+
+def _grenser_m05_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m05_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    if not isinstance(br, list) or len(br) < grense["min_brudd"] \
+            or m.get("injiserte") != len(br):
+        return feil + [f"krever minst {grense['min_brudd']} brudd"]
+    for b in br:
+        navn = b.get("brudd") if isinstance(b, dict) else "?"
+        if not isinstance(b, dict) or b.get("avvist") is not True:
+            feil.append(f"{navn}: ble ikke avvist")
+            continue
+        if not (isinstance(b.get("sqlstate"), str)
+                and len(b["sqlstate"]) == 5):
+            feil.append(f"{navn}: avvisningen var ikke typet (SQLSTATE)")
+        if b.get("urort") is not True:
+            feil.append(f"{navn}: en avvist dør etterlot spor i registeret"
+                        " eller i evidenskjeden")
+    return feil
+
+
+def _grenser_m05_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m05_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    for felt in ("rullbakk_status", "kandidat_status"):
+        if m.get(felt) != 200:
+            feil.append(f"maalt.{felt}={m.get(felt)!r}, krever 200")
+    for felt in ("svar_like", "kandidat_baerer_riggen"):
+        if m.get(felt) is not True:
+            feil.append(f"maalt.{felt} er ikke true")
+    return feil
+
+
+def _grenser_m05_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m05_felles(art)
+    if not m:
+        return feil
+    ms = m.get("ms")
+    if not isinstance(ms, list) or len(ms) < grense["min_kall"] \
+            or m.get("kall") != len(ms):
+        return feil + [f"krever minst {grense['min_kall']} målte kall"]
+    s = sorted(float(x) for x in ms)
+    p95 = s[max(0, int(round(0.95 * len(s))) - 1)]
+    if abs(p95 - float(m.get("p95_ms", -1))) > 0.01:
+        feil.append("p95_ms stemmer ikke med målingene")
+    if p95 > grense["maks_p95_ms"]:
+        feil.append(f"p95={p95} ms, taket er {grense['maks_p95_ms']}")
+    if m.get("feilede") != 0:
+        feil.append(f"feilede={m.get('feilede')!r}, krever 0")
+    if m.get("riktige") != m.get("kall"):
+        feil.append("ikke hver utfylling ga fasitens tekst")
+    return feil
+
+
+KRAVGRENSER["m05-fasit-v1"] = {
+    "min_dorkall": 11, "min_evidens": 11,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.tilstandsavvik", "maalt.dorkall",
+            "maalt.utfylling_lik_fasit", "maalt.gjenspill_urort"),
+        "revisjonslogg_korrekt": (
+            "maalt.evidens_avvik", "maalt.evidens_totalt",
+            "maalt.evidens_uten_aktor", "maalt.evidens_delte_input_hash"),
+    },
+}
+KRAVGRENSER["m05-feilinjisering-v1"] = {
+    "min_brudd": 5,
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m05-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like",
+                            "maalt.kandidat_baerer_riggen"),
+    },
+}
+KRAVGRENSER["m05-ytelse-v1"] = {
+    "min_kall": 200, "maks_p95_ms": 100.0,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede", "maalt.riktige"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m05-{_krav}-v1"] = f"artefakt-m05-{_krav}-skjema.json"
+
+_M05_GRENSER = {
+    "m05-fasit-v1": _grenser_m05_fasit,
+    "m05-feilinjisering-v1": _grenser_m05_feilinjisering,
+    "m05-rollback-v1": _grenser_m05_rollback,
+    "m05-ytelse-v1": _grenser_m05_ytelse,
+}
+
+registrer_suitegrense(
+    "m05_dokumentmal", "m05",
+    ("platform/core/tests/test_m5_malregister.py",
+     "platform/core/tests/test_m5_forkast_port.py",
+     "platform/core/tests/test_m5_editor_port.py"),
     min_tester=3000, min_andel_tester=20)
