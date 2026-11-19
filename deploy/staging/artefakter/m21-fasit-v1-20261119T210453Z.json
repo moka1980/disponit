@@ -1,0 +1,107 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m21-fasit-v1",
+  "maalt": {
+    "ankeravvik": 0,
+    "ankre_kjoring1": 9,
+    "epost_sendt": {
+      "a": 0,
+      "b": 1
+    },
+    "epost_ventet": {
+      "a": 0,
+      "b": 1
+    },
+    "evidens_avvik": 0,
+    "evidens_delte_input_hash": 0,
+    "evidens_per_tenant": {
+      "a": {
+        "plikt.bortfalt": 1,
+        "plikt.fristvarsel_koet": 8,
+        "plikt.kvittert": 2,
+        "plikt.registrert": 7
+      },
+      "b": {
+        "plikt.fristvarsel_koet": 1,
+        "plikt.registrert": 1
+      }
+    },
+    "evidens_totalt": 20,
+    "evidens_uten_aktor": 0,
+    "evidens_ventet": {
+      "a": {
+        "plikt.bortfalt": 1,
+        "plikt.fristvarsel_koet": 8,
+        "plikt.kvittert": 2,
+        "plikt.registrert": 7
+      },
+      "b": {
+        "plikt.fristvarsel_koet": 1,
+        "plikt.registrert": 1
+      }
+    },
+    "forpass_feil": [
+      0,
+      0
+    ],
+    "forpass_stderr": "",
+    "kjoring2_nye": 0,
+    "per_subjekt": [
+      {
+        "fikk": 1,
+        "merke": "p30",
+        "ventet": 1
+      },
+      {
+        "fikk": 2,
+        "merke": "p7",
+        "ventet": 2
+      },
+      {
+        "fikk": 3,
+        "merke": "forfalt",
+        "ventet": 3
+      },
+      {
+        "fikk": 0,
+        "merke": "fjern",
+        "ventet": 0
+      },
+      {
+        "fikk": 0,
+        "merke": "lukket",
+        "ventet": 0
+      },
+      {
+        "fikk": 0,
+        "merke": "bortfalt",
+        "ventet": 0
+      },
+      {
+        "fikk": 2,
+        "merke": "rull",
+        "ventet": 2
+      },
+      {
+        "fikk": 1,
+        "merke": "egne",
+        "ventet": 1
+      }
+    ],
+    "subjekter": 8,
+    "varselavvik": 0
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "modul": "m21_avtalefrist",
+    "runde": "212549d3",
+    "tenanter": {
+      "a": "t-m21fasit-a-212549d3",
+      "b": "t-m21fasit-b-212549d3"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:04:53.889922+00:00"
+}
