@@ -51,34 +51,135 @@ i18n_prefiks: personvern
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m30-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m30-suite-v1-20261119T012155Z.json
+    artefakt_sha256: 8107f5825d1624524d75a683c821cd3219a06762c404563afbc9a32cd62a7050
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m30_fasit.py`:
+    #
+    # M-30s fasitsett: seks personvernsaker i to tenanter med KJENT dom.
+    #
+    # Personvernregisteret har tre funntyper, alle på `sak_id`. To av dem
+    # gjelder fristen og én gjelder lagrene saken skal ryddes i — så en sak
+    # som skal måle fristen må HA et lager, og en sak som skal måle lagrene må
+    # ha fristen langt unna (den ordinære fristen er mottatt + én måned, og
+    # varselvinduet er 7 døgn).
+    #
+    #   tenant A
+    #     1. `frist_oversittet`  — mottatt for 40 døgn siden, har lager
+    #     2. `frist_naermer_seg` — fristen om ca. 3 døgn, har lager
+    #     3. `sak_uten_lagre`    — mottatt i dag, ingen lagre
+    #     4. (ren)               — som 1; fristen FORLENGES mellom kjøringene
+    #     5. (ok)                — mottatt i dag, har lager
+    #   tenant B
+    #     6. `sak_uten_lagre`    — samme regel i en annen tenant
+    #
+    # Lagrene er M-4s: `personvernsak_lager` nekter et lager som ikke står i
+    # `retensjonslager` med klassen persondata. Riggen bruker det første som
+    # finnes. Eieren må være et aktivt medlem; medlemskapet skrives med
+    # migratortilkoblingen (ingen dør, som i M-18).
+    status: ja
+    krav_id: m30-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m30-fasit-v1-20261119T010706Z.json
+    artefakt_sha256: 12ca8fbc2d03edb356322f8f9f0585096c4fb6931b011127b98547a844842fb1
     notat: >-
-      KREVER: et forespørselssett med KJENT fasit for hvilke frister
-      som skal varsles og hvilke som skal bli funn, kjørt likt lokalt
-      og på staging med begge datasett-identitetene bundet.
+      Runde c34be73f: 6 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m30-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m30-fasit-v1-20261119T010706Z.json
+    artefakt_sha256: 12ca8fbc2d03edb356322f8f9f0585096c4fb6931b011127b98547a844842fb1
     notat: >-
-      KREVER: at hver forespørsel og hvert svar faktisk står i
-      evidenskjeden, målt som hendelser med identitet. Oppført som
-      avhengighet fordi det SKAL finnes; punktet står nei til målingen
-      er gjort.
+      7 hendelser i kjeden (personvernsak.frist_forlenget: 1,
+      personvernsak.registrert: 6), 0 uten aktør, 0 som deler input_hash med
+      en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m30-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m30-feilinjisering-v1-20261119T010707Z.json
+    artefakt_sha256: 0f350d8cf088f86363e94603f0881c03735c18a8c47383083ce84d024d5d7716
     notat: >-
-      KREVER: fristsveipen bygget, og at en feil i den ikke stanser den
-      ordinære varselsendingen (M-21s forpassform).
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 25 åpne og 4 lukkede over 11 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m30-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m30-ytelse-v1-20261119T010707Z.json
+    artefakt_sha256: ba0af02502b4d19f6c997a2c913c0b8c3b001f19c81988572857e6f269e250cc
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring mot
-      den. Ingen grense pinnet.
+      Tre kjøringer (0,0150 / 0,0117 / 0,0155 s) over 9 tenanter; den
+      DÅRLIGSTE er dommen. 0,0155 s mot taket på 60 — 0,0017 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m30-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m30-rollback-v1-20261119T010708Z.json
+    artefakt_sha256: 9b5b936357d0c310f987d82165be650eca55dfbf391b6d074aca4cfdf80773e6
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 1642a9c7 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 5 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
