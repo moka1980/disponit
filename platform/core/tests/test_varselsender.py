@@ -4198,6 +4198,15 @@ def test_inngangspunktet_leser_dsn_fra_credential_katalogen(tmp_path,
     assert sett["dsn"] == "postgresql:///falsk", sett
     assert sett.get("lukket"), "forbindelsen ble ikke lukket"
 
+    # ET FEILET FORPASS GIR KODE ≠ 0 (ADR-003 D2) — og bare det. Positiv
+    # kontroll over: forpass_feil fraværende gir 0; her: 0 gir 0, 1 gir 2.
+    for feil, kode in ((0, 0), (1, 2)):
+        monkeypatch.setattr(kjor_varselsender.varselsender, "kjor",
+                            lambda conn, f=feil: {"sendt": 1, "feilet": 0,
+                                                  "gjenkoet": 0,
+                                                  "forpass_feil": f})
+        assert kjor_varselsender.main() == kode, (feil, kode)
+
 
 def test_hver_unit_med_loadcredential_hydrerer_dem():
     """Porten, ikke bare fiksen: hvert inngangspunkt en unit starter med
