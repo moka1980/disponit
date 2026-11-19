@@ -3808,8 +3808,6 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M08_GRENSER[krav_id](grense, art)
     if krav_id in _M16_GRENSER:
         return feil + _M16_GRENSER[krav_id](grense, art)
-    if krav_id in _M35_GRENSER:
-        return feil + _M35_GRENSER[krav_id](grense, art)
     if krav_id in _FORPASS_GRENSER:
         return feil + _FORPASS_GRENSER[krav_id](grense, art)
     if krav_id in _PLATTFORMVAKT_GRENSER:
@@ -3818,6 +3816,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M38_GRENSER[krav_id](grense, art)
     if krav_id in _M31_GRENSER:
         return feil + _M31_GRENSER[krav_id](grense, art)
+    if krav_id in _M35_GRENSER:
+        return feil + _M35_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -5854,6 +5854,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m55_fasit",
         "releasefiler": ("platform/modules/m55_merkevare",
                          "platform/drift/merkevaresveip.py"),
+    },
     "m28_transport": {
         "modul_fil": "transportsveip",
         "funntabell": "transportfunn",
@@ -5871,6 +5872,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m28_fasit",
         "releasefiler": ("platform/modules/m28_transport",
                          "platform/drift/transportsveip.py"),
+    },
     "m29_hendelse": {
         "modul_fil": "hendelsessveip",
         "funntabell": "hendelsesfunn",
@@ -5888,6 +5890,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m29_fasit",
         "releasefiler": ("platform/modules/m29_hendelse",
                          "platform/drift/hendelsessveip.py"),
+    },
     "m32_skatt": {
         "modul_fil": "skattesveip",
         "funntabell": "skattefunn",
@@ -5905,6 +5908,7 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m32_fasit",
         "releasefiler": ("platform/modules/m32_skatt",
                          "platform/drift/skattesveip.py"),
+    },
     "m33_prognose": {
         "modul_fil": "prognosesveip",
         "funntabell": "prognosefunn",
@@ -6990,6 +6994,9 @@ registrer_sveipgrenser("m55_merkevare", maks_sekunder=60.0,
 
 registrer_suitegrense("m55_merkevare", "m55",
                       ("platform/core/tests/test_m55_merkevare.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
 # M-28 (ADR-002, klasse A): fem subjekter i to tenanter; to nåbare
 # funntyper (alderen satt som migrator, suitens vei), sju i UNAABARE.
 # Gulvene foreløpige.
@@ -7000,6 +7007,9 @@ registrer_sveipgrenser("m28_transport", maks_sekunder=60.0,
 
 registrer_suitegrense("m28_transport", "m28",
                       ("platform/core/tests/test_m28_transport.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
 # M-29 (ADR-002, klasse A): fem subjekter i to tenanter; to nåbare
 # funntyper (alderen satt som migrator, suitens vei), åtte i UNAABARE.
 # Gulvene foreløpige.
@@ -7010,6 +7020,9 @@ registrer_sveipgrenser("m29_hendelse", maks_sekunder=60.0,
 
 registrer_suitegrense("m29_hendelse", "m29",
                       ("platform/core/tests/test_m29_hendelse.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
 # M-32 (ADR-002, klasse A): fire subjekter i tre tenanter; én nåbar
 # funntype (alderen satt som migrator, suitens vei), åtte i UNAABARE.
 # Gulvene foreløpige.
@@ -7020,6 +7033,9 @@ registrer_sveipgrenser("m32_skatt", maks_sekunder=60.0,
 
 registrer_suitegrense("m32_skatt", "m32",
                       ("platform/core/tests/test_m32_skatt.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
 # M-33 (ADR-006, klasse A-isolert): fem subjekter i to tenanter; tre
 # nåbare funntyper, én uten skriver. Gulvene foreløpige.
 registrer_fasitgrense("m33_prognose", min_subjekter=5, min_evidens=12,
@@ -11154,108 +11170,6 @@ M35_BEVISROT: tuple[str, ...] = ("deploy/staging/m35-lest.py",)
 def m35_bevisrot_sha256() -> str:
     h = hashlib.sha256()
     for rel in M35_BEVISROT:
-# KLASSE E I ADR-003 — FORPASS I VARSELSENDEREN (M-21, M-22).
-#
-# Én produsent (`deploy/staging/forpass-lest.py --modul X`), fire artefakter
-# per modul, alle i den isolerte basen på 55432 bygget fra commiten som
-# måles. Forpasset kjøres gjennom den ekte senderen som
-# `disponit_varselsender`; fasiten er et kjent antall ankre per subjekt,
-# re-regnet av ankrene, og feilinjiseringen er ekte driftsfeil (trukket
-# EXECUTE, låst register) — aldri en bryter rigget inne i modulen.
-# ===========================================================================
-
-FORPASSMODULER: dict[str, dict] = {
-    "m21_avtalefrist": {
-        "kort": "m21", "evidenskilde": "m21_avtalefrist",
-        "forpass": "m21_koe_fristvarsler", "eier": "disponit_plikt_eier",
-        "register": "plikt", "anker": "pliktvarsel_sendt",
-        "subjekt": "plikt_id", "art": "pliktfrist",
-        "sveipaktor": "fristsveip",
-        "h_registrert": "plikt.registrert",
-        "h_koet": "plikt.fristvarsel_koet",
-        "h_for": {"lukk": "plikt.kvittert", "bortfall": "plikt.bortfalt"},
-        "mellom": "rull", "h_mellom": "plikt.kvittert",
-        "modulfiler": ("platform/drift/varselsender.py",
-                       "platform/drift/kjor_varselsender.py",
-                       "platform/core/db/migrations/096_m21_pliktregister.sql"),
-    },
-    "m22_lisens": {
-        "kort": "m22", "evidenskilde": "m22_lisens",
-        "forpass": "m22_koe_utlopsvarsler", "eier": "disponit_lisens_eier",
-        "register": "lisens", "anker": "lisensvarsel_sendt",
-        "subjekt": "lisens_id", "art": "lisensutlop",
-        "sveipaktor": "lisenssveip",
-        "h_registrert": "lisens.registrert",
-        "h_koet": "lisens.utlopsvarsel_koet",
-        "h_for": {"avslutt": "lisens.avsluttet"},
-        "mellom": "fornyet", "h_mellom": "lisens.fornyet",
-        "modulfiler": ("platform/drift/varselsender.py",
-                       "platform/drift/kjor_varselsender.py",
-                       "platform/core/db/migrations/098_m22_lisensregister.sql"),
-    },
-}
-FORPASS_BEVISROT: tuple[str, ...] = ("deploy/staging/forpass-lest.py",)
-
-
-def forpass_bevisrot_sha256() -> str:
-    h = hashlib.sha256()
-    for rel in FORPASS_BEVISROT:
-# M-38 — KLASSE G I ADR-005 (kjernekrok: rekkefølge og memoisering).
-#
-# M-38 skriver ingenting eget. Fasiten er en KJENT KØ drenert gjennom den
-# ekte claim-funksjonen, og memoiseringen målt som antall skjemavandringer.
-# Revisjonsloggen er MÅLT FRAVÆR: en claim endrer bare køtabellen og sin
-# egen historikk, og ingen revisjonsrad skrives av krokene.
-# ===========================================================================
-
-M38_MODULFILER: tuple[str, ...] = (
-    "platform/core/m38",
-    "platform/core/api/policyregister.py",
-    "platform/core/db/migrations/085_m38_fairness.sql",
-)
-M38_BEVISROT: tuple[str, ...] = (
-    "deploy/staging/m38-lest.py",
-    "platform/core/tests/test_m37.py",
-    "platform/core/tests/test_bootstrap_ankerrad.py",
-)
-M38_SAK_VENTET = ["a1", "b1", "c1", "a2", "c2", "a3", "a4", "a5", "a6"]
-
-
-def m38_bevisrot_sha256() -> str:
-    h = hashlib.sha256()
-    for rel in M38_BEVISROT:
-# M-31 — KLASSE H I ADR-007 (plattformport: golden-sett-porten).
-#
-# Tre administratordører, en port inne i `bytt_release` og en egen
-# append-only hendelsesstrøm. Fasiten binder golden-settenes kanoniske
-# hash til det DRIFTSBASEN har registrert, og en kjent dørsekvens til
-# kjente portutfall. Ytelsen er en ekte evaluering mot vertens modell.
-# ===========================================================================
-
-M31_MODULFILER: tuple[str, ...] = (
-    "platform/core/m31",
-    "deploy/staging/kjor-m31-evaluering.py",
-    "deploy/staging/registrer-m31-golden-sett.py",
-    "platform/core/db/migrations/087_m31_modellstyring.sql",
-)
-M31_BEVISROT: tuple[str, ...] = (
-    "deploy/staging/m31-lest.py",
-    "platform/core/tests/test_m31_modellstyring.py",
-    "deploy/staging/m57-golden-v1.json",
-    "deploy/staging/m57-golden-v2.json",
-)
-#: Hashene driftsbasen bærer i `golden_sett` (lest 19.11.2026). Fasiten
-#: krever at repoets filer gir nøyaktig disse — «samme datasett lokalt og
-#: på staging» er da en likhet mellom to målte tall, ikke en påstand.
-M31_DRIFTSHASHER: dict[int, str] = {
-    1: "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c",
-    2: "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8",
-}
-
-
-def m31_bevisrot_sha256() -> str:
-    h = hashlib.sha256()
-    for rel in M31_BEVISROT:
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
@@ -11329,9 +11243,62 @@ _M35_GRENSER = {
 registrer_suitegrense(
     "m35_kontinuitet", "m35",
     ("platform/core/tests/test_m35_kontinuitet.py",),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# KLASSE E I ADR-003 — FORPASS I VARSELSENDEREN (M-21, M-22).
+#
+# Én produsent (`deploy/staging/forpass-lest.py --modul X`), fire artefakter
+# per modul, alle i den isolerte basen på 55432 bygget fra commiten som
+# måles. Forpasset kjøres gjennom den ekte senderen som
+# `disponit_varselsender`; fasiten er et kjent antall ankre per subjekt,
+# re-regnet av ankrene, og feilinjiseringen er ekte driftsfeil (trukket
+# EXECUTE, låst register) — aldri en bryter rigget inne i modulen.
+# ===========================================================================
+
+FORPASSMODULER: dict[str, dict] = {
+    "m21_avtalefrist": {
+        "kort": "m21", "evidenskilde": "m21_avtalefrist",
+        "forpass": "m21_koe_fristvarsler", "eier": "disponit_plikt_eier",
+        "register": "plikt", "anker": "pliktvarsel_sendt",
+        "subjekt": "plikt_id", "art": "pliktfrist",
+        "sveipaktor": "fristsveip",
+        "h_registrert": "plikt.registrert",
+        "h_koet": "plikt.fristvarsel_koet",
+        "h_for": {"lukk": "plikt.kvittert", "bortfall": "plikt.bortfalt"},
+        "mellom": "rull", "h_mellom": "plikt.kvittert",
+        "modulfiler": ("platform/drift/varselsender.py",
+                       "platform/drift/kjor_varselsender.py",
+                       "platform/core/db/migrations/096_m21_pliktregister.sql"),
+    },
+    "m22_lisens": {
+        "kort": "m22", "evidenskilde": "m22_lisens",
+        "forpass": "m22_koe_utlopsvarsler", "eier": "disponit_lisens_eier",
+        "register": "lisens", "anker": "lisensvarsel_sendt",
+        "subjekt": "lisens_id", "art": "lisensutlop",
+        "sveipaktor": "lisenssveip",
+        "h_registrert": "lisens.registrert",
+        "h_koet": "lisens.utlopsvarsel_koet",
+        "h_for": {"avslutt": "lisens.avsluttet"},
+        "mellom": "fornyet", "h_mellom": "lisens.fornyet",
+        "modulfiler": ("platform/drift/varselsender.py",
+                       "platform/drift/kjor_varselsender.py",
+                       "platform/core/db/migrations/098_m22_lisensregister.sql"),
+    },
+}
+FORPASS_BEVISROT: tuple[str, ...] = ("deploy/staging/forpass-lest.py",)
+
+
+def forpass_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in FORPASS_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
 def _forpass_felles(art: dict) -> tuple[list[str], dict, dict]:
-def _m38_felles(art: dict) -> tuple[list[str], dict, dict]:
-def _m31_felles(art: dict) -> tuple[list[str], dict, dict]:
     feil: list[str] = []
     m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
     o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
@@ -11349,23 +11316,6 @@ def _m31_felles(art: dict) -> tuple[list[str], dict, dict]:
         if o.get("bevisrot_sha256") != forpass_bevisrot_sha256():
             feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
                         " deploy/staging/forpass-lest.py")
-    if o.get("modul") != "m38_ruter":
-        feil.append(f"oppsett.modul={o.get('modul')!r}")
-    if o.get("base") != "disponit_test@55432":
-        feil.append("lesten hører hjemme i disponit_test@55432")
-    try:
-        if o.get("bevisrot_sha256") != m38_bevisrot_sha256():
-            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
-                        " produsenten og riggens testhjelpere")
-    if o.get("modul") != "m31_modellstyring":
-        feil.append(f"oppsett.modul={o.get('modul')!r}")
-    if o.get("base") != "disponit_test@55432":
-        feil.append("registeret er globalt; lesten hører hjemme i"
-                    " disponit_test@55432")
-    try:
-        if o.get("bevisrot_sha256") != m31_bevisrot_sha256():
-            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
-                        " produsenten, testhjelperne og golden-settene")
     except OSError as e:
         feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
     return feil, m, o
@@ -11748,117 +11698,6 @@ def _grenser_pv_feilinjisering(grense: dict, art: dict) -> list[str]:
 
 def _grenser_pv_rollback(grense: dict, art: dict) -> list[str]:
     feil, m, o, _modul = _pv_felles(art)
-def _grenser_m38_fasit(grense: dict, art: dict) -> list[str]:
-    feil, m, _o = _m38_felles(art)
-    if not m:
-        return feil
-    feil += _m04_er(m, "sak_ventet", M38_SAK_VENTET)
-    feil += _m04_er(m, "sak_rekkefolge", M38_SAK_VENTET)
-    rekke = m.get("oppdrag_rekkefolge")
-    if not isinstance(rekke, list) or rekke[:2] != ["d1", "e1"]:
-        feil.append(f"oppdragskøen: de to første claimene var {rekke!r},"
-                    " fasiten sier ['d1', 'e1']")
-    feil += _m04_er(m, "oppdrag_alle", True)
-    feil += _m04_er(m, "prioritet_forst", True)
-    feil += _m04_minst(m, "cache_lesinger", grense["min_lesinger"])
-    feil += _m04_er(m, "cache_valideringer", 1)
-    feil += _m04_er(m, "cache_ulike_svar", 1)
-    feil += _m04_er(m, "cache_ny_versjon_valideringer", 1)
-    # MÅLT FRAVÆR: en claim endrer køtabellen og ingenting annet, og ingen
-    # av krokene skriver en revisjonsrad.
-    # `unntak_historikk` er claimens EGEN revisjon (003/005, lenge før
-    # M-38): hver statusovergang på en sak fører en historikkrad. Målt
-    # 19.11.2026 — kroken legger ingen tabell til de to.
-    feil += _m04_er(m, "claim_endrede_tabeller_sak",
-                    ["unntak", "unntak_historikk"])
-    feil += _m04_er(m, "claim_endrede_tabeller_oppdrag", ["oppdrag"])
-    feil += _m04_er(m, "nye_revisjonsrader_claim", 0)
-    feil += _m04_er(m, "nye_revisjonsrader_cache", 0)
-    return feil
-
-
-def _grenser_m38_feilinjisering(grense: dict, art: dict) -> list[str]:
-    feil, m, _o = _m38_felles(art)
-    if not m:
-        return feil
-    br = m.get("brudd")
-    navn = sorted(b.get("brudd") for b in br if isinstance(b, dict)) \
-        if isinstance(br, list) else []
-    if navn != sorted(["ugyldig_claim_id", "statement_timeout",
-                       "execute_trukket", "korrupt_innhold_etter_treff"]) \
-            or m.get("injiserte") != len(br):
-        return feil + ["krever de fire injeksjonene"]
-    for b in br:
-        n = b["brudd"]
-        if b.get("avvist") is not True:
-            feil.append(f"{n}: ble ikke avvist")
-            continue
-        typet = (isinstance(b.get("sqlstate"), str) and len(b["sqlstate"]) == 5) \
-            or str(b.get("feiltype") or "").startswith("PolicyKorrupt")
-        if not typet:
-            feil.append(f"{n}: avvisningen var ikke typet")
-        if b.get("urort") is not True:
-            feil.append(f"{n}: en avvist claim etterlot en endret kø")
-        if n == "korrupt_innhold_etter_treff" and b.get("treff_for") is not True:
-            feil.append(f"{n}: cachen var ikke varm før korrupsjonen — da"
-                        " er porten aldri målt bak et treff")
-    return feil
-
-
-def _grenser_m38_rollback(grense: dict, art: dict) -> list[str]:
-    feil, m, o = _m38_felles(art)
-def _grenser_m31_fasit(grense: dict, art: dict) -> list[str]:
-    feil, m, _o = _m31_felles(art)
-    if not m:
-        return feil
-    drift = {str(v): h for v, h in M31_DRIFTSHASHER.items()}
-    feil += _m04_er(m, "drift_hasher", drift)
-    feil += _m04_er(m, "sett_hasher", drift)
-    feil += _m04_er(m, "cli_returkoder", [0, 0])
-    feil += _m04_er(m, "registrert_hash_lik_fil", True)
-    feil += _m04_minst(m, "eksempler", grense["min_eksempler"])
-    ventet = ["byttet", "nektet", "byttet", "nektet", "nektet"]
-    feil += _m04_er(m, "portutfall_ventet", ventet)
-    feil += _m04_er(m, "portutfall", ventet)
-    feil += _m04_er(m, "dommer", [True, False])
-    hv = {"sett_registrert": 1, "krav_satt": 2, "kjoring_registrert": 2}
-    feil += _m04_er(m, "hendelser_ventet", hv)
-    feil += _m04_er(m, "hendelser", hv)
-    feil += _m04_er(m, "hendelser_totalt", 5)
-    feil += _m04_er(m, "hendelser_uten_aktor", 0)
-    feil += _m04_er(m, "runtime_skriverett", [])
-    return feil
-
-
-def _grenser_m31_feilinjisering(grense: dict, art: dict) -> list[str]:
-    feil, m, _o = _m31_felles(art)
-    if not m:
-        return feil
-    br = m.get("brudd")
-    if not isinstance(br, list) or len(br) < grense["min_brudd"] \
-            or m.get("injiserte") != len(br):
-        return feil + [f"krever minst {grense['min_brudd']} brudd"]
-    for b in br:
-        n = b.get("brudd") if isinstance(b, dict) else "?"
-        if not isinstance(b, dict) or b.get("avvist") is not True:
-            feil.append(f"{n}: ble ikke avvist")
-            continue
-        if n == "hash_avvik_for_modellkall":
-            if b.get("modellkall") != 0:
-                feil.append(f"{n}: modellen ble kalt før hashen var målt")
-        elif not (isinstance(b.get("sqlstate"), str)
-                  and len(b["sqlstate"]) == 5):
-            feil.append(f"{n}: avvisningen var ikke typet (SQLSTATE)")
-        if b.get("urort") is not True:
-            feil.append(f"{n}: en avvist dør etterlot spor i registeret")
-    if "hash_avvik_for_modellkall" not in {b.get("brudd") for b in br
-                                           if isinstance(b, dict)}:
-        feil.append("hash-avviket før modellkall er ikke målt")
-    return feil
-
-
-def _grenser_m31_rollback(grense: dict, art: dict) -> list[str]:
-    feil, m, o = _m31_felles(art)
     if not m:
         return feil
     kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
@@ -11947,6 +11786,125 @@ registrer_suitegrense(
     "m11_selvtest", "m11",
     ("platform/core/tests/test_m11_selvtest.py",),
     min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-38 — KLASSE G I ADR-005 (kjernekrok: rekkefølge og memoisering).
+#
+# M-38 skriver ingenting eget. Fasiten er en KJENT KØ drenert gjennom den
+# ekte claim-funksjonen, og memoiseringen målt som antall skjemavandringer.
+# Revisjonsloggen er MÅLT FRAVÆR: en claim endrer bare køtabellen og sin
+# egen historikk, og ingen revisjonsrad skrives av krokene.
+# ===========================================================================
+
+M38_MODULFILER: tuple[str, ...] = (
+    "platform/core/m38",
+    "platform/core/api/policyregister.py",
+    "platform/core/db/migrations/085_m38_fairness.sql",
+)
+M38_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/m38-lest.py",
+    "platform/core/tests/test_m37.py",
+    "platform/core/tests/test_bootstrap_ankerrad.py",
+)
+M38_SAK_VENTET = ["a1", "b1", "c1", "a2", "c2", "a3", "a4", "a5", "a6"]
+
+
+def m38_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M38_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m38_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m38_ruter":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m38_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " produsenten og riggens testhjelpere")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m38_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m38_felles(art)
+    if not m:
+        return feil
+    feil += _m04_er(m, "sak_ventet", M38_SAK_VENTET)
+    feil += _m04_er(m, "sak_rekkefolge", M38_SAK_VENTET)
+    rekke = m.get("oppdrag_rekkefolge")
+    if not isinstance(rekke, list) or rekke[:2] != ["d1", "e1"]:
+        feil.append(f"oppdragskøen: de to første claimene var {rekke!r},"
+                    " fasiten sier ['d1', 'e1']")
+    feil += _m04_er(m, "oppdrag_alle", True)
+    feil += _m04_er(m, "prioritet_forst", True)
+    feil += _m04_minst(m, "cache_lesinger", grense["min_lesinger"])
+    feil += _m04_er(m, "cache_valideringer", 1)
+    feil += _m04_er(m, "cache_ulike_svar", 1)
+    feil += _m04_er(m, "cache_ny_versjon_valideringer", 1)
+    # MÅLT FRAVÆR: en claim endrer køtabellen og ingenting annet, og ingen
+    # av krokene skriver en revisjonsrad.
+    # `unntak_historikk` er claimens EGEN revisjon (003/005, lenge før
+    # M-38): hver statusovergang på en sak fører en historikkrad. Målt
+    # 19.11.2026 — kroken legger ingen tabell til de to.
+    feil += _m04_er(m, "claim_endrede_tabeller_sak",
+                    ["unntak", "unntak_historikk"])
+    feil += _m04_er(m, "claim_endrede_tabeller_oppdrag", ["oppdrag"])
+    feil += _m04_er(m, "nye_revisjonsrader_claim", 0)
+    feil += _m04_er(m, "nye_revisjonsrader_cache", 0)
+    return feil
+
+
+def _grenser_m38_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m38_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    navn = sorted(b.get("brudd") for b in br if isinstance(b, dict)) \
+        if isinstance(br, list) else []
+    if navn != sorted(["ugyldig_claim_id", "statement_timeout",
+                       "execute_trukket", "korrupt_innhold_etter_treff"]) \
+            or m.get("injiserte") != len(br):
+        return feil + ["krever de fire injeksjonene"]
+    for b in br:
+        n = b["brudd"]
+        if b.get("avvist") is not True:
+            feil.append(f"{n}: ble ikke avvist")
+            continue
+        typet = (isinstance(b.get("sqlstate"), str) and len(b["sqlstate"]) == 5) \
+            or str(b.get("feiltype") or "").startswith("PolicyKorrupt")
+        if not typet:
+            feil.append(f"{n}: avvisningen var ikke typet")
+        if b.get("urort") is not True:
+            feil.append(f"{n}: en avvist claim etterlot en endret kø")
+        if n == "korrupt_innhold_etter_treff" and b.get("treff_for") is not True:
+            feil.append(f"{n}: cachen var ikke varm før korrupsjonen — da"
+                        " er porten aldri målt bak et treff")
+    return feil
+
+
+def _grenser_m38_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m38_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    feil += _m04_er(m, "svar_like", True)
     feil += _m04_er(m, "kandidat_lik_fasit", True)
     return feil
 
@@ -11986,6 +11944,159 @@ KRAVGRENSER["m38-fasit-v1"] = {
     },
 }
 KRAVGRENSER["m38-feilinjisering-v1"] = {
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m38-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like", "maalt.kandidat_lik_fasit"),
+    },
+}
+KRAVGRENSER["m38-ytelse-v1"] = {
+    "min_kall": 200, "maks_p95_ms": 100.0, "min_koelengde": 500,
+    "min_treffrate": 0.99,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede",
+                           "maalt.treffrate"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m38-{_krav}-v1"] = f"artefakt-m38-{_krav}-skjema.json"
+
+_M38_GRENSER = {
+    "m38-fasit-v1": _grenser_m38_fasit,
+    "m38-feilinjisering-v1": _grenser_m38_feilinjisering,
+    "m38-rollback-v1": _grenser_m38_rollback,
+    "m38-ytelse-v1": _grenser_m38_ytelse,
+}
+
+registrer_suitegrense(
+    "m38_ruter", "m38",
+    ("platform/core/tests/test_m37.py",
+     "platform/core/tests/test_pr013_policyadmin_flyt.py",
+     "platform/core/tests/test_slett_policy.py"),
+    min_tester=3000, min_andel_tester=100)
+
+
+# ===========================================================================
+# M-31 — KLASSE H I ADR-007 (plattformport: golden-sett-porten).
+#
+# Tre administratordører, en port inne i `bytt_release` og en egen
+# append-only hendelsesstrøm. Fasiten binder golden-settenes kanoniske
+# hash til det DRIFTSBASEN har registrert, og en kjent dørsekvens til
+# kjente portutfall. Ytelsen er en ekte evaluering mot vertens modell.
+# ===========================================================================
+
+M31_MODULFILER: tuple[str, ...] = (
+    "platform/core/m31",
+    "deploy/staging/kjor-m31-evaluering.py",
+    "deploy/staging/registrer-m31-golden-sett.py",
+    "platform/core/db/migrations/087_m31_modellstyring.sql",
+)
+M31_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/m31-lest.py",
+    "platform/core/tests/test_m31_modellstyring.py",
+    "deploy/staging/m57-golden-v1.json",
+    "deploy/staging/m57-golden-v2.json",
+)
+#: Hashene driftsbasen bærer i `golden_sett` (lest 19.11.2026). Fasiten
+#: krever at repoets filer gir nøyaktig disse — «samme datasett lokalt og
+#: på staging» er da en likhet mellom to målte tall, ikke en påstand.
+M31_DRIFTSHASHER: dict[int, str] = {
+    1: "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c",
+    2: "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8",
+}
+
+
+def m31_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M31_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m31_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m31_modellstyring":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("registeret er globalt; lesten hører hjemme i"
+                    " disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m31_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " produsenten, testhjelperne og golden-settene")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m31_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m31_felles(art)
+    if not m:
+        return feil
+    drift = {str(v): h for v, h in M31_DRIFTSHASHER.items()}
+    feil += _m04_er(m, "drift_hasher", drift)
+    feil += _m04_er(m, "sett_hasher", drift)
+    feil += _m04_er(m, "cli_returkoder", [0, 0])
+    feil += _m04_er(m, "registrert_hash_lik_fil", True)
+    feil += _m04_minst(m, "eksempler", grense["min_eksempler"])
+    ventet = ["byttet", "nektet", "byttet", "nektet", "nektet"]
+    feil += _m04_er(m, "portutfall_ventet", ventet)
+    feil += _m04_er(m, "portutfall", ventet)
+    feil += _m04_er(m, "dommer", [True, False])
+    hv = {"sett_registrert": 1, "krav_satt": 2, "kjoring_registrert": 2}
+    feil += _m04_er(m, "hendelser_ventet", hv)
+    feil += _m04_er(m, "hendelser", hv)
+    feil += _m04_er(m, "hendelser_totalt", 5)
+    feil += _m04_er(m, "hendelser_uten_aktor", 0)
+    feil += _m04_er(m, "runtime_skriverett", [])
+    return feil
+
+
+def _grenser_m31_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m31_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    if not isinstance(br, list) or len(br) < grense["min_brudd"] \
+            or m.get("injiserte") != len(br):
+        return feil + [f"krever minst {grense['min_brudd']} brudd"]
+    for b in br:
+        n = b.get("brudd") if isinstance(b, dict) else "?"
+        if not isinstance(b, dict) or b.get("avvist") is not True:
+            feil.append(f"{n}: ble ikke avvist")
+            continue
+        if n == "hash_avvik_for_modellkall":
+            if b.get("modellkall") != 0:
+                feil.append(f"{n}: modellen ble kalt før hashen var målt")
+        elif not (isinstance(b.get("sqlstate"), str)
+                  and len(b["sqlstate"]) == 5):
+            feil.append(f"{n}: avvisningen var ikke typet (SQLSTATE)")
+        if b.get("urort") is not True:
+            feil.append(f"{n}: en avvist dør etterlot spor i registeret")
+    if "hash_avvik_for_modellkall" not in {b.get("brudd") for b in br
+                                           if isinstance(b, dict)}:
+        feil.append("hash-avviket før modellkall er ikke målt")
+    return feil
+
+
+def _grenser_m31_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m31_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
     for felt in ("svar_like", "hash_lik_drift", "scoring_skiller"):
         feil += _m04_er(m, felt, True)
     feil += _m04_er(m, "port_for_og_etter", ["nektet", "byttet"])
@@ -12026,35 +12137,6 @@ KRAVGRENSER["m31-feilinjisering-v1"] = {
         "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
     },
 }
-KRAVGRENSER["m38-rollback-v1"] = {
-    "punktbinding": {
-        "rollback_testet": ("maalt.svar_like", "maalt.kandidat_lik_fasit"),
-    },
-}
-KRAVGRENSER["m38-ytelse-v1"] = {
-    "min_kall": 200, "maks_p95_ms": 100.0, "min_koelengde": 500,
-    "min_treffrate": 0.99,
-    "punktbinding": {
-        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede",
-                           "maalt.treffrate"),
-    },
-}
-for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
-    ARTEFAKTSKJEMAER[f"m38-{_krav}-v1"] = f"artefakt-m38-{_krav}-skjema.json"
-
-_M38_GRENSER = {
-    "m38-fasit-v1": _grenser_m38_fasit,
-    "m38-feilinjisering-v1": _grenser_m38_feilinjisering,
-    "m38-rollback-v1": _grenser_m38_rollback,
-    "m38-ytelse-v1": _grenser_m38_ytelse,
-}
-
-registrer_suitegrense(
-    "m38_ruter", "m38",
-    ("platform/core/tests/test_m37.py",
-     "platform/core/tests/test_pr013_policyadmin_flyt.py",
-     "platform/core/tests/test_slett_policy.py"),
-    min_tester=3000, min_andel_tester=100)
 KRAVGRENSER["m31-rollback-v1"] = {
     "punktbinding": {
         "rollback_testet": ("maalt.svar_like", "maalt.hash_lik_drift",
