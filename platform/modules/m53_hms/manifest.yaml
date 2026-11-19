@@ -60,9 +60,25 @@ i18n_prefiks: hms
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m53-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m53-suite-v1-20261119T001420Z.json
+    artefakt_sha256: 10cbefaf7dd4feb23c95448223df1fdd95981d775b50ee0b78a590cb2fd3dd1b
     notat: >-
-      SUITEN KJØRER.
+      5524 tester, 0 feilet, 0 hoppet; modulens andel 37 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 18/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m53_fasit.py`:
