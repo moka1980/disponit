@@ -16,10 +16,10 @@
 # BLOKKERER ingen bestilling. Blokkering er en policy-endring som hører
 # hjemme i en v2 med attestasjon, ikke i en måler.
 #
-# TO AKSER, ÆRLIG LEST (m16/m38-formen): `status: under_utvikling` er
-# GODKJENT-aksen — ingen aksepthendelse finnes. `driftstilstand:
-# ikke_i_drift` er bokstavelig: ingen kode, ingen release, ingen
-# arbeider.
+# KODEN FINNES (092, `platform/drift/kvalitetsprofilering.py`, timeren
+# `disponit-kvalitetsprofil`). ADR-002 plasserer M-3 i klasse B
+# (plattformregister + måler): lesten er `deploy/staging/m03-lest.py`, og
+# revisjonslogg-punktet er MÅLT FRAVÆR med positiv kontroll.
 id: m03_datakvalitet
 navn: Datakvalitetsagent
 versjon: 0.1.0
