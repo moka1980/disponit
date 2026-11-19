@@ -879,7 +879,10 @@ def test_port7e_alle_syv_dorene_eies_av_claimeren(migrator):
     assert set(rader) == {
         "m35_opprett_tjeneste", "m35_oppdater_tjeneste",
         "m35_opprett_kontakt", "m35_bekreft_kontakt",
-        "m35_opprett_hendelse", "m35_legg_post", "m35_lukk_hendelse"}
+        "m35_opprett_hendelse", "m35_legg_post", "m35_lukk_hendelse",
+        # 219: evidenstriggerne og skriveren deres — også claimerens.
+        "m35_evidens_skriv", "m35_tjeneste_evidens", "m35_kontakt_evidens",
+        "m35_post_evidens"}
     assert set(rader.values()) == {"disponit_m37_claimer"}
 
     eierskap = (ROT / "deploy" / "staging" / "eierskap-reparasjon.sql") \
