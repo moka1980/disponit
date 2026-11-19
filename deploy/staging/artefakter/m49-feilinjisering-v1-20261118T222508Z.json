@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m49-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 33,
+    "apne_for": 33,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "bekreftet_treff": [
+        5,
+        0
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "ingen_liste": [
+        5,
+        0
+      ],
+      "kontroll_mot_gammel_liste": [
+        5,
+        0
+      ],
+      "uavklart_treff": [
+        5,
+        0
+      ],
+      "ukontrollert_subjekt": [
+        8,
+        2
+      ]
+    },
+    "per_type_for": {
+      "bekreftet_treff": [
+        5,
+        0
+      ],
+      "ingen_krav": [
+        5,
+        0
+      ],
+      "ingen_liste": [
+        5,
+        0
+      ],
+      "kontroll_mot_gammel_liste": [
+        5,
+        0
+      ],
+      "uavklart_treff": [
+        5,
+        0
+      ],
+      "ukontrollert_subjekt": [
+        8,
+        2
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 16
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "sanksjonsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m49_sveip_sanksjoner(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_sanksjon_eier",
+    "modul": "m49_sanksjon",
+    "riggmodul": "m49_fasit",
+    "riggtenanter": [
+      "t-m49fasit-a-5c65f6c1",
+      "t-m49fasit-b-5c65f6c1",
+      "t-m49fasit-c-5c65f6c1"
+    ],
+    "runde": "5c65f6c1",
+    "sveipedor": "m49_sveip_sanksjoner(int)",
+    "tenantkilde": [
+      "sanksjonssubjekt"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:25:08.001963+00:00"
+}

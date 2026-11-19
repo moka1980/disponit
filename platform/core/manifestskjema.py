@@ -5592,6 +5592,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m48_motpart",
                          "platform/drift/motpartssveip.py"),
     },
+    "m49_sanksjon": {
+        "modul_fil": "sanksjonssveip",
+        "funntabell": "sanksjonsfunn",
+        "subjektkolonne": "subjekt_id",
+        "tenantkilde": "sanksjonssubjekt",
+        "maalerolle": "disponit_sanksjon_eier",
+        "sveipedor": "m49_sveip_sanksjoner(int)",
+        "dsn_variabel": "DISPONIT_SANKSJONSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m49-fasit-v1",
+        "feilinjisering_krav": "m49-feilinjisering-v1",
+        "ytelse_krav": "m49-ytelse-v1",
+        "rollback_krav": "m49-rollback-v1",
+        "riggmodul": "m49_fasit",
+        "releasefiler": ("platform/modules/m49_sanksjon",
+                         "platform/drift/sanksjonssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6495,6 +6513,17 @@ registrer_sveipgrenser("m48_motpart", maks_sekunder=60.0, min_tenanter=3,
 registrer_suitegrense("m48_motpart", "m48",
                       ("platform/core/tests/test_m48_motpart.py",),
                       min_tester=3000, min_andel_tester=40)
+
+# M-49: gulvene er litt under det målte 18/11 (8 subjekter, 19
+# evidenshendelser; seks typer + det rene ukontrollerte subjektet).
+registrer_fasitgrense("m49_sanksjon", min_subjekter=8, min_evidens=17,
+                      tenantprefiks="t-m49fasit-", min_sveip1_nye=7)
+registrer_sveipgrenser("m49_sanksjon", maks_sekunder=60.0, min_tenanter=3,
+                       min_rullbakk_funn=7)
+
+registrer_suitegrense("m49_sanksjon", "m49",
+                      ("platform/core/tests/test_m49_sanksjon.py",),
+                      min_tester=3000, min_andel_tester=25)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
