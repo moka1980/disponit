@@ -1,0 +1,66 @@
+{
+  "bestatt": true,
+  "krav_id": "m30-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 25,
+    "apne_for": 25,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 4,
+    "lukkede_for": 4,
+    "per_type_etter": {
+      "frist_naermer_seg": [
+        5,
+        2
+      ],
+      "frist_oversittet": [
+        10,
+        2
+      ],
+      "sak_uten_lagre": [
+        10,
+        0
+      ]
+    },
+    "per_type_for": {
+      "frist_naermer_seg": [
+        5,
+        2
+      ],
+      "frist_oversittet": [
+        10,
+        2
+      ],
+      "sak_uten_lagre": [
+        10,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 11
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "personvernfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m30_sveip_frister(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_personvern_eier",
+    "modul": "m30_personvern",
+    "riggmodul": "m30_fasit",
+    "riggtenanter": [
+      "t-m30fasit-a-82bd4ff2",
+      "t-m30fasit-b-82bd4ff2"
+    ],
+    "runde": "82bd4ff2",
+    "sveipedor": "m30_sveip_frister(int)",
+    "tenantkilde": [
+      "personvernsak"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T01:07:07.468562+00:00"
+}

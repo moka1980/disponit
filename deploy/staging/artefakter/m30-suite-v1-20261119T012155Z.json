@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m30-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 35,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m30_personvern.py"
+    ],
+    "bevisrot_sha256": "9c39931664f45b6fee9c893d7999d37ccc67f7490564447895ae665658d121d7",
+    "commit": "7f67b52cd20721d7f043ae37d9b42054f98dbb92",
+    "modul": "m30_personvern",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T01:21:55.116992+00:00"
+}
