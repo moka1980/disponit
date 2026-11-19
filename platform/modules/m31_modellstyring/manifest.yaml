@@ -49,42 +49,80 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet (m02-suite-formen). CI-portene i
-      test_m31_modellstyring.py kjører i CI, men det er ikke denne
-      portens måling.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
-    notat: >-
-      KREVER: golden-settet (syntetiske, blindede søknadstekster —
-      aldri persondata, dom 1) registrert med samme kanoniske hash
-      lokalt og på staging, og begge identitetene bundet i et
-      m31-v1-artefakt. Settet finnes ennå ikke; runbooken
-      (docs/RELEASE-M31.md) er seedingen.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-007 klasse H.
+    status: ja
+    krav_id: m31-fasit-v1
+    bevismaalinger:
+      - maalt.sett_hasher
+      - maalt.drift_hasher
+      - maalt.registrert_hash_lik_fil
+      - maalt.portutfall
+    artefakt: deploy/staging/artefakter/m31-fasit-v1-20261119T223126Z.json
+    artefakt_sha256: 8cb7fa7a893b385c334be4d6fa2996c160bfd725f0e4f6eacd38b59847a1c011
+    notat: |-
+      sett_hasher = {"1": "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c", "2": "d399e2a98d4dd82419cb959c8f896…;
+      drift_hasher = {"1": "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c", "2": "d399e2a98d4dd82419cb959c8f896…;
+      registrert_hash_lik_fil = true;
+      portutfall = ["byttet", "nektet", "byttet", "nektet", "nektet"].
   revisjonslogg_korrekt:
-    status: nei
-    notat: >-
-      KREVER: måling av at modellstyring_hendelse bærer hver
-      dørovergang (sett_registrert/krav_satt/kjoring_registrert) for
-      en staging-kjøring. Strømmen finnes (086); målingen finnes ikke.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-007 klasse H.
+    status: ja
+    krav_id: m31-fasit-v1
+    bevismaalinger:
+      - maalt.hendelser
+      - maalt.hendelser_totalt
+      - maalt.hendelser_uten_aktor
+      - maalt.runtime_skriverett
+    artefakt: deploy/staging/artefakter/m31-fasit-v1-20261119T223126Z.json
+    artefakt_sha256: 8cb7fa7a893b385c334be4d6fa2996c160bfd725f0e4f6eacd38b59847a1c011
+    notat: |-
+      hendelser = {"kjoring_registrert": 2, "krav_satt": 2, "sett_registrert": 1};
+      hendelser_totalt = 5;
+      hendelser_uten_aktor = 0;
+      runtime_skriverett = [].
   feilinjisering_til_unntakskø:
-    status: nei
-    notat: >-
-      M-31 v1 har ingen egen kø eller arbeider å injisere feil i —
-      porten bor i bytt_release og feiler synkront mot kalleren.
-      Hva punktet skal bety for en portmodul er samme
-      arkitektavklaring som m38-punktet.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-007 klasse H.
+    status: ja
+    krav_id: m31-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m31-feilinjisering-v1-20261119T223127Z.json
+    artefakt_sha256: 62eb882029e9d41183c2fdcb5efee549ddac18db9d60fd80b0c81860ba191ff2
+    notat: |-
+      brudd = [{"avvist": true, "brudd": "bytte_uten_bestatt_kjoring", "sqlstate": "22023", "urort": true}, {"avvist": true…;
+      injiserte = 5.
   ytelse_bestatt:
-    status: nei
-    notat: >-
-      KREVER: pinnet ytelsesgrense for evalueringskjøringen (p95 per
-      eksempel mot staging-Ollama) og en målt kjøring mot den. Ingen
-      grenseverdi er vedtatt; terskel_maks_p95_ms i kravraden settes
-      av runbookens målekjøring.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-007 klasse H.
+    status: ja
+    krav_id: m31-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.modellfeil
+      - maalt.bestatt
+    artefakt: deploy/staging/artefakter/m31-ytelse-v1-20261119T223719Z.json
+    artefakt_sha256: fd8b4540dd1b5d91ed55d1551c5c8a779f419669bcb76b6ddf791940bcafe44b
+    notat: |-
+      p95_ms = 19126;
+      modellfeil = 0;
+      bestatt = 24.
+      Første måling traff en KALD modell: lastingen tok over to minutter,
+      og første eksempel ble en modellfeil (23 av 24 besto). Produsenten
+      varmer derfor modellen eksplisitt (oppvarming_ms i artefaktet).
+      Runbooken for modellbytte bør gjøre det samme.
   rollback_testet:
-    status: nei
-    notat: >-
-      M-31 v1 har ingen egen release å rulle tilbake — koden skipper
-      med kjernen. Portens egen rollback-semantikk (fail-closed FØR
-      byttet) måles av CI-portene 1–5 i test_m31_modellstyring.py,
-      men det er ikke dette punktets staging-måling.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-007 klasse H.
+    status: ja
+    krav_id: m31-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.hash_lik_drift
+      - maalt.port_for_og_etter
+    artefakt: deploy/staging/artefakter/m31-rollback-v1-20261119T223128Z.json
+    artefakt_sha256: 9bec0c2f08afb0a21ed5507204f1d02670ff53da0a8c4c28865e225b1fcde23e
+    notat: |-
+      svar_like = true;
+      hash_lik_drift = true;
+      port_for_og_etter = ["nektet", "byttet"].

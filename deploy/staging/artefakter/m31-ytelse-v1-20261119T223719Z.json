@@ -1,0 +1,26 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m31-ytelse-v1",
+  "maalt": {
+    "bestatt": 24,
+    "cli_returkode": 1,
+    "eksempler": 24,
+    "modellfeil": 0,
+    "modellnavn": "qwen2.5:3b-instruct",
+    "oppvarming_ms": 3073,
+    "p50_ms": 13072,
+    "p95_ms": 19126,
+    "varighet_s": 347.31
+  },
+  "oppsett": {
+    "artifact_digest": "357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b",
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "d64c66a7d1c9e3e485fb086bde767a23d0d42c7b049d1f5cfc05b02bc267476c",
+    "modell_url": "http://127.0.0.1:11434",
+    "modul": "m31_modellstyring",
+    "runde": "e71d4a1c",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:37:19.350540+00:00"
+}
