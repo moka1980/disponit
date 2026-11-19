@@ -303,6 +303,9 @@ def fasit() -> Path:
                 continue
             if handling.startswith("post_") and tkey == "a" and n == "H1":
                 continue          # H1 er lukket: en post der er et brudd
+            if handling == "tjeneste" and tkey == "a" and n == "T1":
+                continue          # T1 er oppdatert: opprettelsen med det
+                                  # gamle innholdet er en materiell konflikt
             try:
                 _kall(rt, tenant, handling, n, rigg["ider"][tkey])
             except psycopg.Error:
