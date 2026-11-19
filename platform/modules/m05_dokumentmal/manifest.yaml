@@ -23,7 +23,10 @@
 #     klausulkomponent merket låst kan ikke endres av utfyllingen, og
 #     forsøket er urepresenterbart framfor usannsynlig.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# KODEN FINNES (094 + 177, `platform/core/api/dokumentmal.py`), og fra
+# 213 skriver hver dør sin hendelse i evidenskjeden. ADR-002 plasserer
+# M-5 i klasse C (tenantregister uten sveip): lesten er
+# `deploy/staging/m05-lest.py`.
 id: m05_dokumentmal
 navn: Dokument- og malagent
 versjon: 0.1.0
