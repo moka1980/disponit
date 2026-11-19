@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m33-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.012,
+      0.0122,
+      0.0104
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 2
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 2
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 2
+      }
+    ],
+    "sekunder": 0.0122,
+    "sekunder_per_tenant": 0.0061,
+    "tenanter": 2
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m33_prognose",
+    "sveip": "prognosesveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:20.441718+00:00"
+}

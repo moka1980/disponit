@@ -1,0 +1,54 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m38-rollback-v1",
+  "maalt": {
+    "forgjenger": {
+      "hasher": [
+        "1d50ef8702d1b5d9b214880fd23f14047f89e54fc4255644e460338cd84a2005"
+      ],
+      "rekke": [
+        "a1",
+        "b1",
+        "c1",
+        "a2",
+        "c2",
+        "a3",
+        "a4",
+        "a5"
+      ],
+      "valideringer": 1
+    },
+    "kandidat": {
+      "hasher": [
+        "1d50ef8702d1b5d9b214880fd23f14047f89e54fc4255644e460338cd84a2005"
+      ],
+      "rekke": [
+        "a1",
+        "b1",
+        "c1",
+        "a2",
+        "c2",
+        "a3",
+        "a4",
+        "a5"
+      ],
+      "valideringer": 1
+    },
+    "kandidat_lik_fasit": true,
+    "svar_like": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "23ee6ff7341112b8e5ed05c6802e1c796e426a71cf4ce95f0388d8d08edd4e6e",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "fab0ae95155163b9797ea9b95aafb3d88c05eec840ef5579f6c8cf682ac55901",
+    "modul": "m38_ruter",
+    "modul_forgjenger": "9494a11da9182f9b1da0d4494405cf090fb069c1a9957d83a00f3f3c14fdfa64",
+    "modul_kandidat": "9494a11da9182f9b1da0d4494405cf090fb069c1a9957d83a00f3f3c14fdfa64",
+    "runde": "662f11c6",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:29:31.611743+00:00"
+}

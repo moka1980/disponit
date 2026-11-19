@@ -1,0 +1,66 @@
+{
+  "bestatt": true,
+  "krav_id": "m33-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 13,
+    "apne_for": 13,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "prognose_paa_ukjent_datakvalitet": [
+        8,
+        0
+      ],
+      "prognose_uten_maaling": [
+        3,
+        1
+      ],
+      "slaar_ikke_naiv_baseline": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "prognose_paa_ukjent_datakvalitet": [
+        8,
+        0
+      ],
+      "prognose_uten_maaling": [
+        3,
+        1
+      ],
+      "slaar_ikke_naiv_baseline": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 4
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "prognosefunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m33_sveip_prognose(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_prognose_eier",
+    "modul": "m33_prognose",
+    "riggmodul": "m33_fasit",
+    "riggtenanter": [
+      "t-m33fasit-a-9912d98e",
+      "t-m33fasit-b-9912d98e"
+    ],
+    "runde": "9912d98e",
+    "sveipedor": "m33_sveip_prognose(int)",
+    "tenantkilde": [
+      "prognosekrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:20.926602+00:00"
+}

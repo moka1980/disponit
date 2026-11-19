@@ -60,40 +60,123 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      Modulen er bygget (130, 5/9) og portene er grønne lokalt og i
-      CI. KREVER FORTSATT: suitekjøring PÅ STAGING med modulens andel
-      pinnet og stagingidentitet bundet. En grønn CI er ikke en grønn
-      staging.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m33_fasit.py`:
+    #
+    # M-33s fasitsett: fem subjekter i to tenanter med KJENT dom.
+    #
+    # KJØRER BARE I DEN ISOLERTE BASEN (ADR-006). En prognose er append-only,
+    # også for migrator: `laget_dato` settes av døra til dagens dato, og
+    # `m33_evidensvakt` nekter enhver endring. Ingen funn som krever at
+    # horisonten er passert kan derfor oppstå samme dag — og den eneste måten å
+    # elde en prognose på er den testsuiten selv bruker: vakten av, alderen
+    # flyttet, vakten på. Det gjøres ALDRI i driftsbasen. Riggen nekter derfor å
+    # kjøre noe annet sted enn `disponit_test` på 55432.
+    #
+    #   tenant a (horisont 1 uke, målefrist 1 døgn, domsgrunnlag 4 uker)
+    #     1. `prognose_uten_maaling`   — eldet 30 døgn, ingen har målt uken
+    #                                    (subjektet er `<prognose>:1`)
+    #     2. `prognose_paa_ukjent_datakvalitet` — SAMME prognose: tenanten har
+    #                                    aldri fått datakvaliteten sin profilert
+    #                                    (subjektet er prognosen)
+    #     3. (ren)                     — som 1; uken MÅLES mellom kjøringene
+    #     4. (ok)                      — en fersk prognose, horisonten løper
+    #   tenant b (horisont 2 uker, målefrist 2 døgn, domsgrunnlag 2 uker)
+    #     5. `slaar_ikke_naiv_baseline` — begge ukene målt til nøyaktig
+    #                                    basislinjens tall: modellen bommer,
+    #                                    basislinjen treffer (subjektet er
+    #                                    modellversjonen)
+    #
+    # HISTORIKKEN ER STIGENDE (100, 200 … 800 minutter per uke), som i suiten:
+    # da er snittet (450) og forrige uke (800) ulike tall, og modellen og
+    # basislinjen kan skilles.
+    status: ja
+    krav_id: m33-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m33-fasit-v1-20261119T222019Z.json
+    artefakt_sha256: f40a70293ac4fc3dda3b9ecde07c9b7210e97a2814a76cd016b37b4a265e406e
     notat: >-
-      Portene har en slik tidsserie: stigende bemanning der snittet er
-      450 og basislinjen 800, og der begge utfall er målt — modellen
-      taper på 900, vinner på 460. KREVER FORTSATT: at det samme
-      datasettet finnes PÅ STAGING.
+      Runde cf40c6b1: 5 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m33-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m33-fasit-v1-20261119T222019Z.json
+    artefakt_sha256: f40a70293ac4fc3dda3b9ecde07c9b7210e97a2814a76cd016b37b4a265e406e
     notat: >-
-      Sporbarheten ER bygget: `bemanningsprognose` bærer
-      `modellversjon`, `baselinje`, `grunnlag_uker`,
-      `grunnlag_siste_dato` og `datakvalitet` som NOT NULL, og
-      `m33_evidens` skriver hver handling til revisjonsloggen. KREVER
-      FORTSATT: en verifisert kjede PÅ STAGING.
+      13 hendelser i kjeden (lag_prognose: 4, registrer_maaling: 3,
+      registrer_modell: 4, sett_krav: 2), 0 uten aktør, 0 som deler
+      input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m33-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m33-feilinjisering-v1-20261119T222020Z.json
+    artefakt_sha256: f8ed4a461aecb744ea91bb488ec936a2fe9f4f1512f26fbff1567f9636ed2326
     notat: >-
-      Funnet finnes: `slaar_ikke_naiv_baseline` reises av sveipen når
-      modellens samlede absoluttavvik er større enn ELLER LIK
-      basislinjens over minst `domsgrunnlag_uker` målte uker, og
-      lukkes bare av at modellen faktisk blir bedre. KREVER FORTSATT:
-      en injisert feil på staging.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 13 åpne og 1 lukkede over 4 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m33-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m33-ytelse-v1-20261119T222020Z.json
+    artefakt_sha256: 9cf7b5ac0c28871a37f0f09dc4dc4a766b567076dd5a14d6b539ffdc66415a1a
     notat: >-
-      Taket er satt (500 tenanter per kjøring, `TimeoutStartSec=10min`)
-      og sveipens tre setninger er indeksdekket. KREVER FORTSATT: en
-      MÅLT kjøring — et tak er ikke en måling.
+      Tre kjøringer (0,0120 / 0,0122 / 0,0104 s) over 2 tenanter; den
+      DÅRLIGSTE er dommen. 0,0122 s mot taket på 60 — 0,0061 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m33-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m33-rollback-v1-20261119T222022Z.json
+    artefakt_sha256: 7ca9ee86a3d558e6af053dcb7b72fb23d33f3b2d60456c1975d57d54bb5735fb
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 528c709a ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 7 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

@@ -53,32 +53,72 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet. Portene finnes og er grønne lokalt
-      (test_m11_selvtest.py).
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
-    notat: >-
-      KREVER: et probesett med KJENT fasit for hva som er grønt, rødt
-      og ikke konfigurert, kjørt likt lokalt og på staging. Skillet
-      mellom «ikke satt opp» og «delvis satt opp» må gi samme svar
-      begge steder.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m11-fasit-v1
+    bevismaalinger:
+      - maalt.uteblitt_forste
+      - maalt.uteblitt_samme_dogn
+      - maalt.uteblitt_etter_fersk
+      - maalt.uteblitt_fordeling
+    artefakt: deploy/staging/artefakter/m11-fasit-v1-20261119T222104Z.json
+    artefakt_sha256: 5971efdf6aa51331c40dc5725845ef3dfe64e44e54a9253cce3380677e061d4b
+    notat: |-
+      uteblitt_forste = 2;
+      uteblitt_samme_dogn = 0;
+      uteblitt_etter_fersk = 0;
+      uteblitt_fordeling = {"a": 1, "b": 1, "c": 0, "status_avvik": 0}.
   revisjonslogg_korrekt:
-    status: nei
-    notat: >-
-      KREVER: at samletdommen felles I BASEN og ikke av kalleren, og
-      at hver rød probe har sitt varsel i køen fra samme transaksjon.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m11-fasit-v1
+    bevismaalinger:
+      - maalt.nye_revisjonsrader
+      - maalt.skrivedor_execute
+      - maalt.tabellskrivere
+    artefakt: deploy/staging/artefakter/m11-fasit-v1-20261119T222104Z.json
+    artefakt_sha256: 5971efdf6aa51331c40dc5725845ef3dfe64e44e54a9253cce3380677e061d4b
+    notat: |-
+      nye_revisjonsrader = 0;
+      skrivedor_execute = ["disponit_selvtest"];
+      tabellskrivere = ["disponit_m37_claimer:INSERT"].
   feilinjisering_til_unntakskø:
-    status: nei
-    notat: >-
-      KREVER: at en feilet probe ikke hindrer at runden registreres —
-      en selvtest som stopper på første feil måler bare den første
-      feilen — og at `ikke_konfigurert` ALDRI varsles.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m11-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.frisk_etterpa
+      - maalt.forpass
+    artefakt: deploy/staging/artefakter/m11-feilinjisering-v1-20261119T222105Z.json
+    artefakt_sha256: a796d6cb485b1cff1bd0025c8b7983cf1283c6ba6e9950d10ae686011ac8dcee
+    notat: |-
+      brudd = [{"brudd": "prober_feiler", "nye_rader": 1, "prober_i_runden": 14, "prober_maalt": 14, "returkode": 0, "samle…;
+      frisk_etterpa = {"nye_rader": 1, "returkode": 0, "skrevet": 1};
+      forpass = {"brudd": "forpass_execute_trukket", "forpass_feil": 1, "forpass_feil_etter": 0, "ordinaer_sendt": true, "ret….
   ytelse_bestatt:
-    status: nei
-    notat: >-
-      KREVER: pinnet grense for rundens kostnad og en målt kjøring.
+    # MÅLT 2026-11-19 på disponit-srv (disponit), ADR-004 klasse F.
+    status: ja
+    krav_id: m11-ytelse-v1
+    bevismaalinger:
+      - maalt.maks_sekunder
+      - maalt.feilede
+    artefakt: deploy/staging/artefakter/m11-ytelse-v1-20261119T223333Z.json
+    artefakt_sha256: 7fb571733aa08e031f21fe5dd2db8441021f8e4c45b24dd4c7b9ec1a9c5f9be9
+    notat: |-
+      maks_sekunder = 1.24;
+      feilede = 0.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m11-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.gjenspill_over_rulling
+    artefakt: deploy/staging/artefakter/m11-rollback-v1-20261119T222107Z.json
+    artefakt_sha256: 2e2a57dc17fa9951ae2cb6d40a8f3b0270b614c001a6df2433c8fe47a1b0225e
+    notat: |-
+      svar_like = true;
+      gjenspill_over_rulling = 0.

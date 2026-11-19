@@ -1,0 +1,44 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m11-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "brudd": "prober_feiler",
+        "nye_rader": 1,
+        "prober_i_runden": 14,
+        "prober_maalt": 14,
+        "returkode": 0,
+        "samlet": "rod"
+      },
+      {
+        "brudd": "skrivedor_execute_trukket",
+        "grunn": "{\"hendelse\": \"selvtestkjoring\", \"grunn\": \"registrering_feilet\", \"feiltype\": \"InsufficientPrivilege\"}",
+        "nye_rader": 0,
+        "returkode": 1
+      }
+    ],
+    "forpass": {
+      "brudd": "forpass_execute_trukket",
+      "forpass_feil": 1,
+      "forpass_feil_etter": 0,
+      "ordinaer_sendt": true,
+      "returkode": 2,
+      "returkode_etter": 0
+    },
+    "frisk_etterpa": {
+      "nye_rader": 1,
+      "returkode": 0,
+      "skrevet": 1
+    }
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "modul": "m11_selvtest",
+    "runde": "e9a00219",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:05.748507+00:00"
+}

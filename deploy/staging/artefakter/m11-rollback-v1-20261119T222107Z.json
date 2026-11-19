@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m11-rollback-v1",
+  "maalt": {
+    "forgjenger": {
+      "ny": 1,
+      "status": {
+        "api_live": "rod",
+        "api_ready": "rod",
+        "db_drift": "gronn",
+        "ollama": "ikke_konfigurert",
+        "smtp_oppsett": "rod",
+        "timer_disponit-artefaktrydding": "ikke_konfigurert",
+        "timer_disponit-backup": "ikke_konfigurert",
+        "timer_disponit-domenerevalidering": "ikke_konfigurert",
+        "timer_disponit-domeneverifisering": "ikke_konfigurert",
+        "timer_disponit-evidensreaper": "ikke_konfigurert",
+        "timer_disponit-helse": "ikke_konfigurert",
+        "timer_disponit-plan": "ikke_konfigurert",
+        "timer_disponit-rydd-pending": "ikke_konfigurert",
+        "timer_disponit-varselsender": "ikke_konfigurert"
+      }
+    },
+    "gjenspill_over_rulling": 0,
+    "kandidat": {
+      "ny": 1,
+      "status": {
+        "api_live": "rod",
+        "api_ready": "rod",
+        "db_drift": "gronn",
+        "ollama": "ikke_konfigurert",
+        "smtp_oppsett": "rod",
+        "timer_disponit-artefaktrydding": "ikke_konfigurert",
+        "timer_disponit-backup": "ikke_konfigurert",
+        "timer_disponit-domenerevalidering": "ikke_konfigurert",
+        "timer_disponit-domeneverifisering": "ikke_konfigurert",
+        "timer_disponit-evidensreaper": "ikke_konfigurert",
+        "timer_disponit-helse": "ikke_konfigurert",
+        "timer_disponit-plan": "ikke_konfigurert",
+        "timer_disponit-rydd-pending": "ikke_konfigurert",
+        "timer_disponit-varselsender": "ikke_konfigurert"
+      }
+    },
+    "lesedor_baerer_begge": true,
+    "svar_like": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "091a874d501e655352b165838420fa9e03d0c4fcf84bbd2625e81ecd95694ded",
+    "modul": "m11_selvtest",
+    "modul_forgjenger": "f20e6594aaf60af7fcb8c1e49e2c1094d68d728219486b756e0be103c64ff16a",
+    "modul_kandidat": "f20e6594aaf60af7fcb8c1e49e2c1094d68d728219486b756e0be103c64ff16a",
+    "runde": "4f7975e4",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:07.014075+00:00"
+}
