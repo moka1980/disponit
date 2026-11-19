@@ -3816,6 +3816,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _PLATTFORMVAKT_GRENSER[krav_id](grense, art)
     if krav_id in _M38_GRENSER:
         return feil + _M38_GRENSER[krav_id](grense, art)
+    if krav_id in _M31_GRENSER:
+        return feil + _M31_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -11079,6 +11081,38 @@ M38_SAK_VENTET = ["a1", "b1", "c1", "a2", "c2", "a3", "a4", "a5", "a6"]
 def m38_bevisrot_sha256() -> str:
     h = hashlib.sha256()
     for rel in M38_BEVISROT:
+# M-31 — KLASSE H I ADR-007 (plattformport: golden-sett-porten).
+#
+# Tre administratordører, en port inne i `bytt_release` og en egen
+# append-only hendelsesstrøm. Fasiten binder golden-settenes kanoniske
+# hash til det DRIFTSBASEN har registrert, og en kjent dørsekvens til
+# kjente portutfall. Ytelsen er en ekte evaluering mot vertens modell.
+# ===========================================================================
+
+M31_MODULFILER: tuple[str, ...] = (
+    "platform/core/m31",
+    "deploy/staging/kjor-m31-evaluering.py",
+    "deploy/staging/registrer-m31-golden-sett.py",
+    "platform/core/db/migrations/087_m31_modellstyring.sql",
+)
+M31_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/m31-lest.py",
+    "platform/core/tests/test_m31_modellstyring.py",
+    "deploy/staging/m57-golden-v1.json",
+    "deploy/staging/m57-golden-v2.json",
+)
+#: Hashene driftsbasen bærer i `golden_sett` (lest 19.11.2026). Fasiten
+#: krever at repoets filer gir nøyaktig disse — «samme datasett lokalt og
+#: på staging» er da en likhet mellom to målte tall, ikke en påstand.
+M31_DRIFTSHASHER: dict[int, str] = {
+    1: "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c",
+    2: "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8",
+}
+
+
+def m31_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M31_BEVISROT:
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
@@ -11154,6 +11188,7 @@ registrer_suitegrense(
     ("platform/core/tests/test_m35_kontinuitet.py",),
 def _forpass_felles(art: dict) -> tuple[list[str], dict, dict]:
 def _m38_felles(art: dict) -> tuple[list[str], dict, dict]:
+def _m31_felles(art: dict) -> tuple[list[str], dict, dict]:
     feil: list[str] = []
     m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
     o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
@@ -11179,6 +11214,15 @@ def _m38_felles(art: dict) -> tuple[list[str], dict, dict]:
         if o.get("bevisrot_sha256") != m38_bevisrot_sha256():
             feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
                         " produsenten og riggens testhjelpere")
+    if o.get("modul") != "m31_modellstyring":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("registeret er globalt; lesten hører hjemme i"
+                    " disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m31_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " produsenten, testhjelperne og golden-settene")
     except OSError as e:
         feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
     return feil, m, o
@@ -11620,6 +11664,58 @@ def _grenser_m38_feilinjisering(grense: dict, art: dict) -> list[str]:
 
 def _grenser_m38_rollback(grense: dict, art: dict) -> list[str]:
     feil, m, o = _m38_felles(art)
+def _grenser_m31_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m31_felles(art)
+    if not m:
+        return feil
+    drift = {str(v): h for v, h in M31_DRIFTSHASHER.items()}
+    feil += _m04_er(m, "drift_hasher", drift)
+    feil += _m04_er(m, "sett_hasher", drift)
+    feil += _m04_er(m, "cli_returkoder", [0, 0])
+    feil += _m04_er(m, "registrert_hash_lik_fil", True)
+    feil += _m04_minst(m, "eksempler", grense["min_eksempler"])
+    ventet = ["byttet", "nektet", "byttet", "nektet", "nektet"]
+    feil += _m04_er(m, "portutfall_ventet", ventet)
+    feil += _m04_er(m, "portutfall", ventet)
+    feil += _m04_er(m, "dommer", [True, False])
+    hv = {"sett_registrert": 1, "krav_satt": 2, "kjoring_registrert": 2}
+    feil += _m04_er(m, "hendelser_ventet", hv)
+    feil += _m04_er(m, "hendelser", hv)
+    feil += _m04_er(m, "hendelser_totalt", 5)
+    feil += _m04_er(m, "hendelser_uten_aktor", 0)
+    feil += _m04_er(m, "runtime_skriverett", [])
+    return feil
+
+
+def _grenser_m31_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m31_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    if not isinstance(br, list) or len(br) < grense["min_brudd"] \
+            or m.get("injiserte") != len(br):
+        return feil + [f"krever minst {grense['min_brudd']} brudd"]
+    for b in br:
+        n = b.get("brudd") if isinstance(b, dict) else "?"
+        if not isinstance(b, dict) or b.get("avvist") is not True:
+            feil.append(f"{n}: ble ikke avvist")
+            continue
+        if n == "hash_avvik_for_modellkall":
+            if b.get("modellkall") != 0:
+                feil.append(f"{n}: modellen ble kalt før hashen var målt")
+        elif not (isinstance(b.get("sqlstate"), str)
+                  and len(b["sqlstate"]) == 5):
+            feil.append(f"{n}: avvisningen var ikke typet (SQLSTATE)")
+        if b.get("urort") is not True:
+            feil.append(f"{n}: en avvist dør etterlot spor i registeret")
+    if "hash_avvik_for_modellkall" not in {b.get("brudd") for b in br
+                                           if isinstance(b, dict)}:
+        feil.append("hash-avviket før modellkall er ikke målt")
+    return feil
+
+
+def _grenser_m31_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m31_felles(art)
     if not m:
         return feil
     kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
@@ -11747,6 +11843,42 @@ KRAVGRENSER["m38-fasit-v1"] = {
     },
 }
 KRAVGRENSER["m38-feilinjisering-v1"] = {
+    for felt in ("svar_like", "hash_lik_drift", "scoring_skiller"):
+        feil += _m04_er(m, felt, True)
+    feil += _m04_er(m, "port_for_og_etter", ["nektet", "byttet"])
+    return feil
+
+
+def _grenser_m31_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m31_felles(art)
+    if not m:
+        return feil
+    feil += _m04_minst(m, "eksempler", grense["min_eksempler"])
+    feil += _m04_er(m, "modellfeil", 0)
+    p95 = m.get("p95_ms")
+    if isinstance(p95, bool) or not isinstance(p95, int) \
+            or p95 > grense["maks_p95_ms"] or p95 <= 0:
+        feil.append(f"p95_ms={p95!r}, taket er {grense['maks_p95_ms']}")
+    if not isinstance(m.get("bestatt"), int) \
+            or m["bestatt"] < grense["min_bestatt"]:
+        feil.append(f"bestatt={m.get('bestatt')!r}, krever >="
+                    f" {grense['min_bestatt']}")
+    return feil
+
+
+KRAVGRENSER["m31-fasit-v1"] = {
+    "min_eksempler": 20,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.sett_hasher", "maalt.drift_hasher",
+            "maalt.registrert_hash_lik_fil", "maalt.portutfall"),
+        "revisjonslogg_korrekt": (
+            "maalt.hendelser", "maalt.hendelser_totalt",
+            "maalt.hendelser_uten_aktor", "maalt.runtime_skriverett"),
+    },
+}
+KRAVGRENSER["m31-feilinjisering-v1"] = {
+    "min_brudd": 5,
     "punktbinding": {
         "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
     },
@@ -11780,3 +11912,33 @@ registrer_suitegrense(
      "platform/core/tests/test_pr013_policyadmin_flyt.py",
      "platform/core/tests/test_slett_policy.py"),
     min_tester=3000, min_andel_tester=100)
+KRAVGRENSER["m31-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like", "maalt.hash_lik_drift",
+                            "maalt.port_for_og_etter"),
+    },
+}
+# Driftsbasens tre kjøringer (31/8–17/9) målte p95 på 17–76 s per
+# eksempel på samme vert og modell; den beståtte lå på 17,4 s. Taket er
+# satt FØR denne målingen, med rom for en kald modell.
+KRAVGRENSER["m31-ytelse-v1"] = {
+    "min_eksempler": 20, "maks_p95_ms": 60000, "min_bestatt": 20,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.modellfeil",
+                           "maalt.bestatt"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m31-{_krav}-v1"] = f"artefakt-m31-{_krav}-skjema.json"
+
+_M31_GRENSER = {
+    "m31-fasit-v1": _grenser_m31_fasit,
+    "m31-feilinjisering-v1": _grenser_m31_feilinjisering,
+    "m31-rollback-v1": _grenser_m31_rollback,
+    "m31-ytelse-v1": _grenser_m31_ytelse,
+}
+
+registrer_suitegrense(
+    "m31_modellstyring", "m31",
+    ("platform/core/tests/test_m31_modellstyring.py",),
+    min_tester=3000, min_andel_tester=15)
