@@ -73,29 +73,123 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m40_fasit.py`:
+    #
+    # M-40s fasitsett: syv subjekter i to tenanter med KJENT dom.
+    #
+    # Medarbeiderregisteret har ti funntyper på `referanse`. Seks er utelukket
+    # av datamodellen og står i `UNAABARE` med migrasjonens egne grunner; de
+    # fire sveipen kan reise, rigges alle:
+    #
+    #   tenant A (frist 1 døgn, gruppeterskel 5)
+    #     1. `ansatt_uten_lop`                — ansatt for 5 døgn siden, intet løp
+    #     2. `apent_lop_over_frist`           — løpet startet for 5 døgn siden
+    #     3. `maaling_uten_lesbar_gruppe`     — lukket måling med to svar i én
+    #                                           gruppe; terskelen er 5
+    #     4. `kontrakt_paa_tilbaketrukket_mal`— kontrakt på en M-5-versjon som
+    #                                           trekkes tilbake etter utstedelsen
+    #     5. (ren)                            — som 1; løpet startes MELLOM
+    #                                           kjøringene
+    #     6. (ok)                             — ansatt for 5 døgn siden, med et
+    #                                           løp startet i dag
+    #   tenant B (frist 2 døgn, gruppeterskel 6)
+    #     7. `ansatt_uten_lop`                — samme regel i en annen tenant
+    #
+    # ALDEREN SETTES SOM MIGRATOR, testsuitens vei: `lonnstaker` er M-39s
+    # tabell (M-40 har bare lesing der), og `ansattlop.startet` er DEFAULT
+    # now() uten dørparameter. `test_m40_medarbeider` bakdaterer begge på
+    # samme måte og begrunner det der.
+    #
+    # MALEN GÅR GJENNOM M-5S DØRER — familie, versjon, publisering og
+    # tilbaketrekking — så kontrakten står på en mal slik den faktisk oppstår.
+    status: ja
+    krav_id: m40-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m40-fasit-v1-20261119T140127Z.json
+    artefakt_sha256: c1cbb194d6c7196707ecf241c3ba621f76fbf1b8851b1fca26cf50ec0ee15d57
     notat: >-
-      KREVER: en gruppe som KRYMPER under terskelen mellom to
-      målinger, slik at porten kan måle at gårsdagens aggregat blir
-      stille i dag. Anonymitet er en egenskap ved settet.
+      Runde 96fb0fe3: 7 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m40-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m40-fasit-v1-20261119T140127Z.json
+    artefakt_sha256: c1cbb194d6c7196707ecf241c3ba621f76fbf1b8851b1fca26cf50ec0ee15d57
     notat: >-
-      KREVER: at hver kontrakt kan spores til malversjon og kildefelt
-      — og at INGEN pulsrad kan spores til et menneske.
+      9 hendelser i kjeden (apne_maaling: 1, lukk_maaling: 1, sett_krav: 2,
+      start_lop: 4, utsted_kontrakt: 1), 0 uten aktør, 0 som deler
+      input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m40-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m40-feilinjisering-v1-20261119T140127Z.json
+    artefakt_sha256: 0397aa8d5871ac63090289ab4fc1da9cb8d682f0b6fd74b28751526898749c82
     notat: >-
-      KREVER: at et forsøk på en beslutning med rettsvirkning gir et
-      funn og ingen beslutning.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 13 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m40-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m40-ytelse-v1-20261119T140127Z.json
+    artefakt_sha256: 4982f6e42511bb5d2c2f2efd569e049297d2dac3805b5f15e59f366bf6de28ce
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0179 / 0,0145 / 0,0169 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0179 s mot taket på 60 — 0,0060 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m40-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m40-rollback-v1-20261119T140129Z.json
+    artefakt_sha256: 26da2349526a89b2f8c2fc6e4a95401d8f0eacce9ceb60dc5e1374639c1c6430
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 5f792d9e ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 6 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

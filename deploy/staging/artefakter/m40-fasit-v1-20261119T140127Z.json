@@ -1,0 +1,94 @@
+{
+  "bestatt": true,
+  "krav_id": "m40-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "apne_maaling": 1,
+      "lukk_maaling": 1,
+      "sett_krav": 2,
+      "start_lop": 4,
+      "utsted_kontrakt": 1
+    },
+    "evidens_totalt": 9,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "ansatt_uten_lop"
+        ],
+        "merke": "ansatt",
+        "subjekt_id": "36f88042-2773-4924-bc35-13caf70bbb86",
+        "ventet": "ansatt_uten_lop"
+      },
+      {
+        "fikk": [
+          "apent_lop_over_frist"
+        ],
+        "merke": "lop",
+        "subjekt_id": "28bf42b7-9f9a-4a8e-a49b-acebedbfff8c",
+        "ventet": "apent_lop_over_frist"
+      },
+      {
+        "fikk": [
+          "maaling_uten_lesbar_gruppe"
+        ],
+        "merke": "maaling",
+        "subjekt_id": "d6dd7475-db31-4362-aa43-1aa5e8dd90b5",
+        "ventet": "maaling_uten_lesbar_gruppe"
+      },
+      {
+        "fikk": [
+          "kontrakt_paa_tilbaketrukket_mal"
+        ],
+        "merke": "kontrakt",
+        "subjekt_id": "1a4ff1c4-ff8d-42a1-9ff0-e3e1cade6adf",
+        "ventet": "kontrakt_paa_tilbaketrukket_mal"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "3a121553-5f00-4911-9b95-35d251ad29a1",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "cbd788bd-b851-4121-aa28-56d5c087f48a",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ansatt_uten_lop"
+        ],
+        "merke": "ansatt_b",
+        "subjekt_id": "2be9e8b4-3f5e-4f74-b377-6c0e3e779546",
+        "ventet": "ansatt_uten_lop"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 7,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "2b67128af4fecb39b5cb928ac27c481da30b5d8e959cf0f7b24b8feebf389c92",
+    "evidenskilde": "m40_medarbeider",
+    "modul": "m40_medarbeider",
+    "riggmodul": "m40_fasit",
+    "runde": "96fb0fe3",
+    "sett_sha256": "ede8073058a5335f4629e0f52468dd29a1749e0b1bf6d739272002c77524d14e",
+    "tenanter": [
+      "t-m40fasit-a-96fb0fe3",
+      "t-m40fasit-b-96fb0fe3"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T14:01:27.152646+00:00"
+}
