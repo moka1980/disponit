@@ -5687,6 +5687,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m30_personvern",
                          "platform/drift/personvernsveip.py"),
     },
+    "m12_tilgang": {
+        "modul_fil": "tilgangssveip",
+        "funntabell": "tilgangsfunn",
+        "subjektkolonne": "tilgang_id",
+        "tenantkilde": "tilgang",
+        "maalerolle": "disponit_tilgang_eier",
+        "sveipedor": "m12_sveip_gjennomganger(int)",
+        "dsn_variabel": "DISPONIT_TILGANGSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m12-fasit-v1",
+        "feilinjisering_krav": "m12-feilinjisering-v1",
+        "ytelse_krav": "m12-ytelse-v1",
+        "rollback_krav": "m12-rollback-v1",
+        "riggmodul": "m12_fasit",
+        "releasefiler": ("platform/modules/m12_tilgang",
+                         "platform/drift/tilgangssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6653,6 +6671,20 @@ registrer_sveipgrenser("m30_personvern", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m30_personvern", "m30",
                       ("platform/core/tests/test_m30_personvern.py",),
                       min_tester=3000, min_andel_tester=30)
+
+# M-12 (ADR-002, klasse A): fem tilganger i to tenanter; sveipen kan
+# bare reise `gjennomgang_utlopt`, de tre andre typene er utelukket av
+# skjemaet. Gulvene er settets egen konstruksjon (fem dørhendelser:
+# to objekter, to tilganger, én gjennomgang).
+registrer_fasitgrense("m12_tilgang", min_subjekter=5, min_evidens=5,
+                      tenantprefiks="t-m12fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m12_tilgang", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=3)
+
+registrer_suitegrense("m12_tilgang", "m12",
+                      ("platform/core/tests/test_m12_tilgang.py",),
+                      min_tester=3000, min_andel_tester=20)
+
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),

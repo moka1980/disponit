@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **33 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **34 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Tilganger (M-12)** | Tilganger som har stått lenger enn sin egen gjennomgangsfrist uten at noen navngitt har sett på dem | Oppretter, flytter og fjerner ingen tilganger. En gjennomgang er en attestasjon fra et navngitt menneske, datert i dag. |
 | **Personvernforespørsler (M-30)** | Innsyns- og sletteforespørsler som har passert fristen eller nærmer seg den, og forespørsler som ikke peker på noen lagre | Sletter ingenting og svarer ikke på egen hånd. En forespørsel lukkes av et skrevet svar, aldri av at fristen går ut. |
 | **Postjournal og innsyn (M-50)** | Journalposter mot en kilde som har utløpt, kilder som snart utløper, og personopplysninger der slettefristen er passert eller nærmer seg | Publiserer ingenting og anonymiserer ikke selv. Anonymisering er en egen handling med navn på. |
 | **HMS og avvik (M-53)** | Regelverk som har utløpt eller snart utløper, avvik der oppbevaringstiden snart går ut, og avvik som ble anonymisert for tidlig | Lukker ingen avvik og melder ikke videre til myndigheter. |
@@ -214,6 +215,7 @@ i enhver opplæringsøkt.
 | Personvern | «Registrer forespørsel» | Hvem som spør, hva slags forespørsel, når den kom, og hvilke lagre den gjelder |
 | Postjournal | «Lagre grenser» → «Registrer kilde» | Varselfrister, så kilden journalpostene hentes fra |
 | HMS og avvik | «Lagre grensene» → «Meld avviket» | Varselfrister og regelverket avvikene meldes mot |
+| Tilganger | «Registrer objekt» → «Registrer tilgang» | Systemet, så hvem som har tilgang, med eier, hjemmel og hvor ofte den skal gjennomgås |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
