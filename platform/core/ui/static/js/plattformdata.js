@@ -48,7 +48,7 @@ export const MODULSTATUS = {
   // klynge 1: alle fire er REGISTRE og MÅLERE, ingen av dem er en ny
   // endringsvei mot kundens data. Ordet er `bygges` fordi manifestet
   // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
-  12: "i_drift",    // m12_tilgang: aktiv, produksjon
+  12: "bygges",     // m12_tilgang: under_utvikling, ikke_i_drift
   // m16_nokkeltall: ETTERREGISTRERT kjerneflate — nøkkeltallsflaten
   // kjører i produksjon (BASISRUTE `nokkeltall`), men MODULEN har
   // ingen aksepthendelse, og registerets regel (drift krever aktiv,

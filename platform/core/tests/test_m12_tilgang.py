@@ -1707,13 +1707,24 @@ def test_grensen_dekker_manifestets_atte_invarianter():
 def test_manifestet_staar_som_registrert():
     """Modulkatalogen er én fil, og den er v1-dommen. Porten måler at
     ingen har flippet en akse mens koden ble skrevet: koden er ikke en
-    aksepthendelse, og en modul som får kode blir ikke `aktiv` av det."""
+    aksepthendelse, og en modul som får kode blir ikke `aktiv` av det.
+
+    FLIPPET ER AVLESNINGEN AV AKSEPTEN (m56/m57-formen): `aktiv` og
+    `produksjon` står HVIS OG BARE HVIS alle seks sjekklistepunktene er
+    `ja`. Før sertifiseringen 19/11 (ADR-002) var det ingen; nå er det
+    alle — og porten måler sammenhengen, ikke et øyeblikksbilde."""
     import yaml
     m = yaml.safe_load((MODULROT / "manifest.yaml").read_text(
         encoding="utf-8"))
     assert m["id"] == "m12_tilgang"
-    assert m["status"] == "under_utvikling"
-    assert m["driftstilstand"] == "ikke_i_drift"
+    alle_ja = all(p.get("status") == "ja"
+                  for p in m["staging_sjekkliste"].values())
+    if alle_ja:
+        assert m["status"] == "aktiv"
+        assert m["driftstilstand"] == "produksjon"
+    else:
+        assert m["status"] == "under_utvikling"
+        assert m["driftstilstand"] == "ikke_i_drift"
     assert m["i18n_prefiks"] == "tilgang"
     assert m["avhengigheter"] == []
 

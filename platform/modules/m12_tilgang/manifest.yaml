@@ -25,8 +25,8 @@
 id: m12_tilgang
 navn: Identitets- og tilgangsagent
 versjon: 0.1.0
-status: aktiv
-driftstilstand: produksjon
+status: under_utvikling        # aktiv | inaktiv | under_utvikling
+driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
 # INGEN avhengigheter i v1: registeret er et tenant-skopet lager med
 # dører og en sveip. Det bestiller ingenting gjennom policyporten og
 # beslutter ingenting. Blir provisjonering v2, er m01 en REELL
@@ -37,25 +37,9 @@ i18n_prefiks: tilgang
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
-    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
-    status: ja
-    krav_id: m12-suite-v1
-    bevismaalinger:
-      - maalt.andel_feilet
-      - maalt.andel_tester
-      - maalt.andel_hoppet
-      - maalt.andel_exitkode
-      - maalt.tester_feilet
-      - maalt.tester_totalt
-      - maalt.tester_hoppet
-      - maalt.suite_exitkode
-    artefakt: deploy/staging/artefakter/m12-suite-v1-20261119T083949Z.json
-    artefakt_sha256: 60dfa7a1966873911220a094f1d9a79c7bda222844dcd1fdd2fe8f4c100cb7f4
+    status: nei
     notat: >-
-      5556 tester, 0 feilet, 0 hoppet; modulens andel 38 tester,
-      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
-      så en endret testfil felles av porten.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m12_fasit.py`:
