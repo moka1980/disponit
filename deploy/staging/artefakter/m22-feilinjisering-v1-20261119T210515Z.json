@@ -1,0 +1,43 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m22-feilinjisering-v1",
+  "maalt": {
+    "injeksjoner": [
+      {
+        "egne_ankre_etter": 9,
+        "egne_ankre_under": 0,
+        "feilmelding": "varselsender: utløpssveipen (M-22) feilet: InsufficientPrivilege: permission denied for function m22_koe_utlopsvarsler\n",
+        "forpass_feil_etter": 0,
+        "forpass_feil_under": 1,
+        "injeksjon": "execute_trukket",
+        "journal_under": "varselsender: sendt=0 feilet=0 gjenkoet=0 mistet=0 forpass_feil=1 grunn=smtp_ikke_konfigurert\nvarselsender: utløpssveipen (M-22) feilet: InsufficientPrivilege: permission denied for function m22_koe_utlopsvarsler\n",
+        "ordinaer_sendt": true,
+        "returkode_etter": 0,
+        "returkode_under": 2
+      },
+      {
+        "egne_ankre_etter": 9,
+        "egne_ankre_under": 0,
+        "feilmelding": "to lock timeout\nLINE 2:                             FROM public.lisens l\n                                         ^\nQUERY:  SELECT array_agg(DISTINCT l.tenant ORDER BY l.tenant)\n                            FROM public.lisens l\n     WHERE l.status = 'aktiv'\n       AND l.beslutningsdato <= current_date + 3650\nCONTEXT:  PL/pgSQL function public.m22_koe_utlopsvarsler(integer) line 16 at SQL statement\n",
+        "forpass_feil_etter": 0,
+        "forpass_feil_under": 1,
+        "injeksjon": "register_laast",
+        "journal_under": "to lock timeout\nLINE 2:                             FROM public.lisens l\n                                         ^\nQUERY:  SELECT array_agg(DISTINCT l.tenant ORDER BY l.tenant)\n                            FROM public.lisens l\n     WHERE l.status = 'aktiv'\n       AND l.beslutningsdato <= current_date + 3650\nCONTEXT:  PL/pgSQL function public.m22_koe_utlopsvarsler(integer) line 16 at SQL statement\n",
+        "ordinaer_sendt": true,
+        "returkode_etter": 0,
+        "returkode_under": 2
+      }
+    ],
+    "injiserte": 2,
+    "ventet_ankre": 9
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "modul": "m22_lisens",
+    "runde": "16de9815",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:05:15.088121+00:00"
+}

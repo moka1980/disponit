@@ -1,0 +1,50 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m22-ytelse-v1",
+  "maalt": {
+    "kjoringer": [
+      {
+        "egne": 100,
+        "feilet": false,
+        "koet": 100,
+        "sekunder": 0.0421
+      },
+      {
+        "egne": 100,
+        "feilet": false,
+        "koet": 100,
+        "sekunder": 0.0399
+      },
+      {
+        "egne": 100,
+        "feilet": false,
+        "koet": 100,
+        "sekunder": 0.0359
+      },
+      {
+        "egne": 100,
+        "feilet": false,
+        "koet": 100,
+        "sekunder": 0.0458
+      },
+      {
+        "egne": 100,
+        "feilet": false,
+        "koet": 100,
+        "sekunder": 0.0502
+      }
+    ],
+    "koet_totalt": 500,
+    "maks_sekunder": 0.0502,
+    "per_kjoring": 100
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "87759a95497e4c8207a22967e104534590b2a968f0ce6251ccfcd4bf62fda06e",
+    "modul": "m22_lisens",
+    "runde": "b77b2c8a",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:05:17.514857+00:00"
+}

@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m22-fasit-v1.json",
+  "title": "m22-fasit-v1 — kjent subjektsett med kjent antall ankre, idempotent andre kjøring og evidens per handling (ADR-003 klasse E)",
+  "comment": "Produsert av deploy/staging/forpass-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_forpass_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m22-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "tenanter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenanter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ankeravvik",
+        "ankre_kjoring1",
+        "epost_sendt",
+        "epost_ventet",
+        "evidens_avvik",
+        "evidens_delte_input_hash",
+        "evidens_per_tenant",
+        "evidens_totalt",
+        "evidens_uten_aktor",
+        "evidens_ventet",
+        "forpass_feil",
+        "forpass_stderr",
+        "kjoring2_nye",
+        "per_subjekt",
+        "subjekter",
+        "varselavvik"
+      ],
+      "properties": {
+        "per_subjekt": {
+          "type": "array"
+        },
+        "subjekter": {
+          "type": "integer"
+        },
+        "ankeravvik": {
+          "type": "integer"
+        },
+        "ankre_kjoring1": {
+          "type": "integer"
+        },
+        "kjoring2_nye": {
+          "type": "integer"
+        },
+        "varselavvik": {
+          "type": "integer"
+        },
+        "epost_sendt": {
+          "type": "object"
+        },
+        "epost_ventet": {
+          "type": "object"
+        },
+        "forpass_feil": {
+          "type": "array"
+        },
+        "forpass_stderr": {
+          "type": "string"
+        },
+        "evidens_per_tenant": {
+          "type": "object"
+        },
+        "evidens_ventet": {
+          "type": "object"
+        },
+        "evidens_avvik": {
+          "type": "integer"
+        },
+        "evidens_totalt": {
+          "type": "integer"
+        },
+        "evidens_uten_aktor": {
+          "type": "integer"
+        },
+        "evidens_delte_input_hash": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

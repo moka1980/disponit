@@ -7,7 +7,8 @@ minnet mellom kjøringer.
 En feilet sending er IKKE en feilet kjøring. Varselet står i portalen uansett;
 det er der det egentlig bor. Exit-koden er derfor 0 så lenge senderen selv
 virket — driften skal ikke vekkes av at én adresse ikke tok imot, bare av at
-senderen ikke kunne kjøre.
+senderen ikke kunne kjøre — eller av at et FORPASS ikke kjørte (kode 2):
+da er det varsler som aldri ble køet, og dem henter ingen backoff inn.
 """
 from __future__ import annotations
 
@@ -36,6 +37,14 @@ def main() -> int:
     finally:
         conn.close()
     print("varselsender: " + " ".join(f"{k}={v}" for k, v in res.items()))
+    # ET FORPASS SOM FEILET ER STØY, IKKE STILLHET (ADR-003 D2). Sendingen
+    # har alt gått — forpassene er skjermet, så koden under endrer ingenting
+    # i det som ble sendt. Men en sveip som ikke kjørte er varsler som ALDRI
+    # BLE KØET, og som ingen backoff henter inn; med 0 her sto den bare som
+    # et tall i en journallinje ingen leser. Kode 2 gjør uniten `failed`,
+    # og det er den tilstanden driften faktisk ser etter.
+    if res.get("forpass_feil"):
+        return 2
     return 0
 
 

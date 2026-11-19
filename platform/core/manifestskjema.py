@@ -3810,6 +3810,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M16_GRENSER[krav_id](grense, art)
     if krav_id in _M35_GRENSER:
         return feil + _M35_GRENSER[krav_id](grense, art)
+    if krav_id in _FORPASS_GRENSER:
+        return feil + _FORPASS_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
         return feil + _grenser_feilinjisering(grense, art)
     if krav_id == "rollback-m01-v1":
@@ -11003,6 +11005,52 @@ M35_BEVISROT: tuple[str, ...] = ("deploy/staging/m35-lest.py",)
 def m35_bevisrot_sha256() -> str:
     h = hashlib.sha256()
     for rel in M35_BEVISROT:
+# KLASSE E I ADR-003 — FORPASS I VARSELSENDEREN (M-21, M-22).
+#
+# Én produsent (`deploy/staging/forpass-lest.py --modul X`), fire artefakter
+# per modul, alle i den isolerte basen på 55432 bygget fra commiten som
+# måles. Forpasset kjøres gjennom den ekte senderen som
+# `disponit_varselsender`; fasiten er et kjent antall ankre per subjekt,
+# re-regnet av ankrene, og feilinjiseringen er ekte driftsfeil (trukket
+# EXECUTE, låst register) — aldri en bryter rigget inne i modulen.
+# ===========================================================================
+
+FORPASSMODULER: dict[str, dict] = {
+    "m21_avtalefrist": {
+        "kort": "m21", "evidenskilde": "m21_avtalefrist",
+        "forpass": "m21_koe_fristvarsler", "eier": "disponit_plikt_eier",
+        "register": "plikt", "anker": "pliktvarsel_sendt",
+        "subjekt": "plikt_id", "art": "pliktfrist",
+        "sveipaktor": "fristsveip",
+        "h_registrert": "plikt.registrert",
+        "h_koet": "plikt.fristvarsel_koet",
+        "h_for": {"lukk": "plikt.kvittert", "bortfall": "plikt.bortfalt"},
+        "mellom": "rull", "h_mellom": "plikt.kvittert",
+        "modulfiler": ("platform/drift/varselsender.py",
+                       "platform/drift/kjor_varselsender.py",
+                       "platform/core/db/migrations/096_m21_pliktregister.sql"),
+    },
+    "m22_lisens": {
+        "kort": "m22", "evidenskilde": "m22_lisens",
+        "forpass": "m22_koe_utlopsvarsler", "eier": "disponit_lisens_eier",
+        "register": "lisens", "anker": "lisensvarsel_sendt",
+        "subjekt": "lisens_id", "art": "lisensutlop",
+        "sveipaktor": "lisenssveip",
+        "h_registrert": "lisens.registrert",
+        "h_koet": "lisens.utlopsvarsel_koet",
+        "h_for": {"avslutt": "lisens.avsluttet"},
+        "mellom": "fornyet", "h_mellom": "lisens.fornyet",
+        "modulfiler": ("platform/drift/varselsender.py",
+                       "platform/drift/kjor_varselsender.py",
+                       "platform/core/db/migrations/098_m22_lisensregister.sql"),
+    },
+}
+FORPASS_BEVISROT: tuple[str, ...] = ("deploy/staging/forpass-lest.py",)
+
+
+def forpass_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in FORPASS_BEVISROT:
         h.update(rel.encode("utf-8") + b"\x00")
         h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
     return h.hexdigest()
@@ -11076,4 +11124,212 @@ _M35_GRENSER = {
 registrer_suitegrense(
     "m35_kontinuitet", "m35",
     ("platform/core/tests/test_m35_kontinuitet.py",),
+def _forpass_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    kort = str(art.get("krav_id", "")).split("-")[0]
+    modul = next((k for k, v in FORPASSMODULER.items()
+                  if v["kort"] == kort), None)
+    if o.get("modul") != modul:
+        feil.append(f"oppsett.modul={o.get('modul')!r}, kravet gjelder"
+                    f" {modul!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != forpass_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " deploy/staging/forpass-lest.py")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_forpass_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _forpass_felles(art)
+    if not m:
+        return feil
+    per = m.get("per_subjekt")
+    if not isinstance(per, list) or len(per) < grense["min_subjekter"] \
+            or m.get("subjekter") != len(per):
+        return feil + [f"krever minst {grense['min_subjekter']} subjekter"]
+    regnet = sum(0 if (isinstance(r, dict) and r.get("fikk") == r.get("ventet")
+                       and isinstance(r.get("ventet"), int)) else 1
+                 for r in per)
+    if regnet != m.get("ankeravvik") or regnet:
+        feil.append(f"ankeravvik={m.get('ankeravvik')!r}, regnet {regnet},"
+                    " taket er 0")
+    try:
+        ankre = sum(int(r["fikk"]) for r in per)
+        tomme = sum(1 for r in per if r["ventet"] == 0)
+    except (KeyError, TypeError, ValueError):
+        return feil + ["maalt.per_subjekt er misformet"]
+    if ankre != m.get("ankre_kjoring1") or ankre < grense["min_ankre"]:
+        feil.append(f"ankre_kjoring1={m.get('ankre_kjoring1')!r}, regnet"
+                    f" {ankre}, krever >= {grense['min_ankre']}")
+    # NEGATIV KONTROLL: et sett der alt skal varsles, måler ikke at
+    # forpasset lar noe være.
+    if tomme < grense["min_tomme"]:
+        feil.append(f"bare {tomme} subjekter uten varsel — krever"
+                    f" {grense['min_tomme']} (fjern, lukket, bortfalt)")
+    feil += _m04_er(m, "kjoring2_nye", 0)
+    feil += _m04_er(m, "varselavvik", 0)
+    feil += _m04_er(m, "forpass_feil", [0, 0])
+    if m.get("epost_sendt") != m.get("epost_ventet") \
+            or not isinstance(m.get("epost_ventet"), dict):
+        feil.append(f"epost_sendt={m.get('epost_sendt')!r}, ventet"
+                    f" {m.get('epost_ventet')!r} — kanalvalget ble ikke fulgt")
+    ev, vent = m.get("evidens_per_tenant"), m.get("evidens_ventet")
+    if not isinstance(ev, dict) or not isinstance(vent, dict) or not vent:
+        feil.append("evidensen mangler per tenant")
+    else:
+        regnet_ev = sum(1 for k in vent if ev.get(k) != vent[k])
+        if regnet_ev != m.get("evidens_avvik") or regnet_ev:
+            feil.append(f"evidens_avvik={m.get('evidens_avvik')!r}, regnet"
+                        f" {regnet_ev}, taket er 0")
+        totalt = sum(sum(v.values()) for v in ev.values()
+                     if isinstance(v, dict))
+        if totalt != m.get("evidens_totalt") \
+                or totalt < grense["min_evidens"]:
+            feil.append(f"evidens_totalt={m.get('evidens_totalt')!r},"
+                        f" regnet {totalt}, krever >= {grense['min_evidens']}")
+    for felt in ("evidens_uten_aktor", "evidens_delte_input_hash"):
+        feil += _m04_er(m, felt, 0)
+    return feil
+
+
+def _grenser_forpass_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _forpass_felles(art)
+    if not m:
+        return feil
+    inj = m.get("injeksjoner")
+    navn = sorted(i.get("injeksjon") for i in inj
+                  if isinstance(i, dict)) if isinstance(inj, list) else []
+    if navn != ["execute_trukket", "register_laast"] \
+            or m.get("injiserte") != len(inj):
+        return feil + ["krever nøyaktig injeksjonene execute_trukket og"
+                       " register_laast"]
+    vent = m.get("ventet_ankre")
+    for i in inj:
+        n = i["injeksjon"]
+        # Feilen er DENNE modulens forpass og ingen andres.
+        if i.get("forpass_feil_under") != 1:
+            feil.append(f"{n}: forpass_feil={i.get('forpass_feil_under')!r},"
+                        " krever 1 — feilen telles separat, og bare den")
+        if i.get("ordinaer_sendt") is not True:
+            feil.append(f"{n}: den ordinære sendingen stanset")
+        if i.get("egne_ankre_under") != 0:
+            feil.append(f"{n}: forpasset skrev ankre under feilen")
+        rk = i.get("returkode_under")
+        if not isinstance(rk, int) or isinstance(rk, bool) or rk == 0:
+            feil.append(f"{n}: inngangspunktet avsluttet med {rk!r} — en"
+                        " feilet sveip skal gi støy, ikke stillhet")
+        if i.get("forpass_feil_etter") != 0 or i.get("returkode_etter") != 0:
+            feil.append(f"{n}: forpasset gikk ikke rent etter reparasjonen")
+        if not isinstance(vent, int) or i.get("egne_ankre_etter") != vent:
+            feil.append(f"{n}: egne_ankre_etter={i.get('egne_ankre_etter')!r},"
+                        f" fasiten sier {vent!r}")
+    return feil
+
+
+def _grenser_forpass_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _forpass_felles(art)
+    if not m:
+        return feil
+    kf, kk = o.get("kjerne_forgjenger"), o.get("kjerne_kandidat")
+    if not (isinstance(kf, str) and isinstance(kk, str) and kf and kk):
+        feil.append("kjernedigestene mangler")
+    elif kf == kk:
+        feil.append("forgjengeren har SAMME kjernedigest — ingenting ble"
+                    " rullet")
+    for felt in ("ankre_like", "ankre_lik_fasit"):
+        feil += _m04_er(m, felt, True)
+    feil += _m04_er(m, "kandidat_etter_rullbakk_nye", 0)
+    feil += _m04_er(m, "forpass_feil", [0, 0, 0])
+    return feil
+
+
+def _grenser_forpass_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _forpass_felles(art)
+    if not m:
+        return feil
+    kj = m.get("kjoringer")
+    if not isinstance(kj, list) or len(kj) < grense["min_kjoringer"]:
+        return feil + [f"krever minst {grense['min_kjoringer']} kjøringer"]
+    per = m.get("per_kjoring")
+    if not isinstance(per, int) or per < grense["min_per_kjoring"]:
+        feil.append(f"per_kjoring={per!r}, krever >="
+                    f" {grense['min_per_kjoring']}")
+    try:
+        maks = max(float(k["sekunder"]) for k in kj)
+        egne = sum(int(k["egne"]) for k in kj)
+        if any(k["feilet"] or k["egne"] != per for k in kj):
+            feil.append("en kjøring feilet eller køet ikke hele taket")
+    except (KeyError, TypeError, ValueError):
+        return feil + ["maalt.kjoringer er misformet"]
+    if abs(maks - float(m.get("maks_sekunder", -1))) > 1e-6:
+        feil.append("maks_sekunder stemmer ikke med kjøringene")
+    if maks > grense["maks_sekunder"]:
+        feil.append(f"maks_sekunder={maks}, taket er"
+                    f" {grense['maks_sekunder']}")
+    if egne != m.get("koet_totalt"):
+        feil.append("koet_totalt stemmer ikke med kjøringene")
+    return feil
+
+
+_FORPASS_GRENSER: dict = {}
+for _modul, _k in FORPASSMODULER.items():
+    _p = _k["kort"]
+    KRAVGRENSER[f"{_p}-fasit-v1"] = {
+        "min_subjekter": 7, "min_ankre": 8, "min_tomme": 2,
+        "min_evidens": 18,
+        "punktbinding": {
+            "syntetisk_datasett_likt_lokalt": (
+                "maalt.ankeravvik", "maalt.ankre_kjoring1",
+                "maalt.kjoring2_nye", "maalt.varselavvik",
+                "maalt.epost_sendt"),
+            "revisjonslogg_korrekt": (
+                "maalt.evidens_avvik", "maalt.evidens_totalt",
+                "maalt.evidens_uten_aktor",
+                "maalt.evidens_delte_input_hash"),
+        },
+    }
+    KRAVGRENSER[f"{_p}-feilinjisering-v1"] = {
+        "punktbinding": {
+            "feilinjisering_til_unntakskø": (
+                "maalt.injeksjoner", "maalt.injiserte"),
+        },
+    }
+    KRAVGRENSER[f"{_p}-rollback-v1"] = {
+        "punktbinding": {
+            "rollback_testet": ("maalt.ankre_like",
+                                "maalt.kandidat_etter_rullbakk_nye"),
+        },
+    }
+    # Forpasset deler senderens fristvindu (FRIST_S = 240 s) med den
+    # ordinære sendingen. Et fullt tak skal bruke en brøkdel av det.
+    KRAVGRENSER[f"{_p}-ytelse-v1"] = {
+        "maks_sekunder": 5.0, "min_kjoringer": 5, "min_per_kjoring": 100,
+        "punktbinding": {
+            "ytelse_bestatt": ("maalt.maks_sekunder", "maalt.kjoringer",
+                               "maalt.koet_totalt"),
+        },
+    }
+    for _krav, _fn in (("fasit", _grenser_forpass_fasit),
+                       ("feilinjisering", _grenser_forpass_feilinjisering),
+                       ("rollback", _grenser_forpass_rollback),
+                       ("ytelse", _grenser_forpass_ytelse)):
+        ARTEFAKTSKJEMAER[f"{_p}-{_krav}-v1"] = \
+            f"artefakt-{_p}-{_krav}-skjema.json"
+        _FORPASS_GRENSER[f"{_p}-{_krav}-v1"] = _fn
+
+registrer_suitegrense(
+    "m21_avtalefrist", "m21",
+    ("platform/core/tests/test_m21_pliktregister.py",),
+    min_tester=3000, min_andel_tester=20)
+registrer_suitegrense(
+    "m22_lisens", "m22",
+    ("platform/core/tests/test_m22_lisens.py",),
     min_tester=3000, min_andel_tester=20)
