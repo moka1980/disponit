@@ -5734,6 +5734,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m12_tilgang",
                          "platform/drift/tilgangssveip.py"),
     },
+    "m43_telefoni": {
+        "modul_fil": "telefonisveip",
+        "funntabell": "telefonifunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "telefonikrav",
+        "maalerolle": "disponit_telefoni_eier",
+        "sveipedor": "m43_sveip_telefoni(int)",
+        "dsn_variabel": "DISPONIT_TELEFONISVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m43-fasit-v1",
+        "feilinjisering_krav": "m43-feilinjisering-v1",
+        "ytelse_krav": "m43-ytelse-v1",
+        "rollback_krav": "m43-rollback-v1",
+        "riggmodul": "m43_fasit",
+        "releasefiler": ("platform/modules/m43_telefoni",
+                         "platform/drift/telefonisveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6724,6 +6742,19 @@ registrer_sveipgrenser("m12_tilgang", maks_sekunder=60.0, min_tenanter=2,
 
 registrer_suitegrense("m12_tilgang", "m12",
                       ("platform/core/tests/test_m12_tilgang.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-43 (ADR-002, klasse A): seks subjekter i to tenanter; alle tre
+# nåbare funntyper rigget, fire utelukket av datamodellen. Gulvene
+# foreløpige.
+registrer_fasitgrense("m43_telefoni", min_subjekter=6, min_evidens=8,
+                      tenantprefiks="t-m43fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m43_telefoni", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m43_telefoni", "m43",
+                      ("platform/core/tests/test_m43_telefoni.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
