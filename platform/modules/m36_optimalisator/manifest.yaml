@@ -56,8 +56,8 @@
 id: m36_optimalisator
 navn: Bedriftsoptimalisator
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. Katalogens «modul 1–35» er en ambisjon,
 # ikke en måling: v1 leser de åpne funnene, og de kommer fra
 # modulregistrene gjennom deres egne lesedører. Policymotoren står her
@@ -72,9 +72,25 @@ i18n_prefiks: optimalisator
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m36-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m36-suite-v1-20261119T215004Z.json
+    artefakt_sha256: 87a0246a49aa42e6c73a71d64902a46bf6c2461eaad22406e52c86b1044efef7
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 52 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m36_fasit.py`:
