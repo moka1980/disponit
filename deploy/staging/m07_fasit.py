@@ -81,12 +81,16 @@ def _mote(rt, tenant: str, merke: str) -> str:
     return mid
 
 
-def _punkt(rt, tenant: str, mid: str, sikkerhet: int) -> str:
+def _punkt(rt, tenant: str, mid: str, sikkerhet: int,
+           kilde: str = "manuell") -> str:
+    """Et MANUELT punkt får alltid full sikkerhet (døra setter 10000 —
+    et menneske som skriver selv er sikker på det). Et ubekreftet punkt
+    må derfor komme fra agendaen, der den oppgitte sikkerheten står."""
     pid = str(uuid.uuid4())
     _sk(rt, tenant)
     rt.execute("SELECT * FROM m7_registrer_referatpunkt(%s,%s,%s,1,"
-               "'Fasitpunkt','manuell','fasit',%s,NULL,%s)",
-               (tenant, pid, mid, sikkerhet, AKTOR))
+               "'Fasitpunkt',%s,'fasit',%s,NULL,%s)",
+               (tenant, pid, mid, kilde, sikkerhet, AKTOR))
     rt.commit()
     return pid
 
@@ -96,10 +100,12 @@ def forbered(rt, runde: str) -> dict:
     kommer mellom kjøringene."""
     rigg = {"a": tenantnavn(runde, "a"), "b": tenantnavn(runde, "b"),
             "subjekter": {}}
-    for tkey in ("a", "b"):
+    # Ulike aksjonsfrister per tenant: evidensens input_hash bærer ikke
+    # tenanten, så to like kravhendelser ville delt hash.
+    for tkey, aksjonsfrist in (("a", 1), ("b", 2)):
         _sk(rt, rigg[tkey])
-        rt.execute("SELECT * FROM m7_sett_krav(%s,1,1,7000,%s,%s)",
-                   (rigg[tkey], AKTOR, f"fasit-{runde}-{tkey}"))
+        rt.execute("SELECT * FROM m7_sett_krav(%s,1,%s,7000,%s,%s)",
+                   (rigg[tkey], aksjonsfrist, AKTOR, f"fasit-{runde}-{tkey}"))
         rt.commit()
     a, b = rigg["a"], rigg["b"]
     s = rigg["subjekter"]
@@ -114,7 +120,7 @@ def forbered(rt, runde: str) -> dict:
     rt.commit()
     s["aksjon"] = aid
     m_ub = _mote(rt, a, "ubekreftet")
-    s["ubekreftet"] = _punkt(rt, a, m_ub, 1000)
+    s["ubekreftet"] = _punkt(rt, a, m_ub, 1000, kilde="agenda")
     s["ren"] = _mote(rt, a, "ren")
     m_ok = _mote(rt, a, "ok")
     _punkt(rt, a, m_ok, 9000)
