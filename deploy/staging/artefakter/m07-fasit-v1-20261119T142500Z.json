@@ -1,0 +1,85 @@
+{
+  "bestatt": true,
+  "krav_id": "m07-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "registrer_aksjon": 1,
+      "registrer_mote": 6,
+      "registrer_referatpunkt": 4,
+      "sett_krav": 2
+    },
+    "evidens_totalt": 13,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "mote_uten_referat"
+        ],
+        "merke": "uten_referat",
+        "subjekt_id": "85e84b19-509a-467b-b189-63f64d0104b0",
+        "ventet": "mote_uten_referat"
+      },
+      {
+        "fikk": [
+          "aksjon_over_frist"
+        ],
+        "merke": "aksjon",
+        "subjekt_id": "a19d33be-4196-4794-a3e9-85c10e34e6f3",
+        "ventet": "aksjon_over_frist"
+      },
+      {
+        "fikk": [
+          "ubekreftet_punkt_uavklart"
+        ],
+        "merke": "ubekreftet",
+        "subjekt_id": "d56828b9-585a-45c1-a5e6-f680525650a8",
+        "ventet": "ubekreftet_punkt_uavklart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "d41e283a-30dc-4c3e-b0a0-fb9fa2805ed9",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "c6eb000d-ddc5-45f3-adc0-678a45bf7ecb",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "mote_uten_referat"
+        ],
+        "merke": "uten_referat_b",
+        "subjekt_id": "e9b01e94-2619-4a5a-b0fb-875d633ab857",
+        "ventet": "mote_uten_referat"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 5,
+    "sveip1_tenanter": 15,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 29
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5ed9e076c75352b760871dd57f34afc1340632a13398428f2020b0bb5795e92a",
+    "evidenskilde": "m07_moteoperasjon",
+    "modul": "m07_moteoperasjon",
+    "riggmodul": "m07_fasit",
+    "runde": "406c88de",
+    "sett_sha256": "40b8d4c2f28be0e14b61ba5a9906dc0d6bcab1c47e9ed739ca166feef8b54d4d",
+    "tenanter": [
+      "t-m07fasit-a-406c88de",
+      "t-m07fasit-b-406c88de"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T14:25:00.193417+00:00"
+}
