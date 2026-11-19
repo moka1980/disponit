@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m16-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 24,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m16_nokkeltall.py"
+    ],
+    "bevisrot_sha256": "49372ee473438c9baf7504264cb1b588fa594700434665d5797a7221fd383387",
+    "commit": "892765f192e094856a9f4ad00ae650c67b4dc6bd",
+    "modul": "m16_nokkeltall",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T09:34:34.162327+00:00"
+}

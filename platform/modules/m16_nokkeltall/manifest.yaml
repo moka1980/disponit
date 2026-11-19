@@ -41,8 +41,8 @@
 id: m16_nokkeltall
 navn: Rapporterings- og KPI-agent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i registerets forstand: flaten bestiller
 # ingenting gjennom policyporten (m01) og skriver ingenting til
 # evidenskjeden (m02) — den LESER kjernens beslutningsdata over samme
@@ -58,9 +58,25 @@ i18n_prefiks: nokkeltall
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m16-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m16-suite-v1-20261119T093434Z.json
+    artefakt_sha256: 8202e6634ced746422bca9a7a75cc7be38c8dd026d648001704127f749e74f2e
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 24 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m16-lest.py` (ADR-002
     # klasse D), gjennom DET EKTE ENDEPUNKTET (`lag_app`, token preget i
