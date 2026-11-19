@@ -45,33 +45,121 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m09_fasit.py`:
+    #
+    # M-9s fasitsett: seks begreper i to tenanter med KJENT dom.
+    #
+    # Begrepsregisteret har to funntyper, begge på `begrep_id`, og sveipen ser
+    # bare den GJELDENDE versjonen av hvert begrep. Varselvinduet er 30 døgn
+    # (`begrepssveip.VARSELVINDU_DOGN`).
+    #
+    #   tenant A
+    #     1. `utlopt`         — gyldig til for 5 døgn siden
+    #     2. `utloper_snart`  — gyldig til om 10 døgn
+    #     3. (ren)            — som 1; får en NY VERSJON mellom kjøringene,
+    #                           gyldig ett år fram
+    #     4. (ok)             — gyldig til om ett år
+    #   tenant B
+    #     5. `utlopt`         — samme regel i en annen tenant
+    #     6. (ok)             — som 4
+    #
+    # DØRENE ER DEPLOYENS, IKKE RUNTIMES. v1 har ingen HTTP-skrivevei (095):
+    # ordlisten fylles gjennom dørene av en sporet deploy-handling. Riggen
+    # kaller dem derfor som registerets eier, med migratortilkoblingen — den
+    # samme veien en deploy går. Evidensen skrives av triggeren i 212, ikke av
+    # riggen.
+    #
+    # DEN RENE ER EN NY VERSJON, ikke en redigering: den gamle raden består
+    # uendret med `gjeldende = false`, og funnet på den gamle `begrep_id`
+    # skal lukkes fordi den ikke lenger er gjeldende. Den nye versjonen får
+    # ingen funn.
+    status: ja
+    krav_id: m09-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m09-fasit-v1-20261119T102242Z.json
+    artefakt_sha256: 3bd85e1de7ae051bec03960362c0c67728b6d03a95d3c5786e7ff4201a2d8a3a
     notat: >-
-      KREVER: et begrepssett med KJENT fasit for hvilke søk som skal
-      treffe (inkludert norsk bøying og sammensetning), kjørt likt
-      lokalt og på staging med begge datasett-identitetene bundet.
-      Uten fasit måler en søketest bare at spørringen ikke kastet feil.
+      Runde 54a37232: 6 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m09-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m09-fasit-v1-20261119T102242Z.json
+    artefakt_sha256: 3bd85e1de7ae051bec03960362c0c67728b6d03a95d3c5786e7ff4201a2d8a3a
     notat: >-
-      KREVER: avklaring av hva punktet betyr for et register som per v1
-      ikke beslutter noe. Står nei framfor å låne en tolkning.
+      7 hendelser i kjeden (begrep.ny_versjon: 1, begrep.registrert: 6), 0
+      uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m09-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m09-feilinjisering-v1-20261119T102243Z.json
+    artefakt_sha256: 9c18efefcf67fcff90f51860e34ab70deea3d6e814a0922565cd60b1449907e1
     notat: >-
-      KREVER: en jobb å injisere feil i. Utløpssveipen (begreper forbi
-      gyldighetsdato → funn) er en slik jobb, men den er ikke bygget.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 7 åpne og 1 lukkede over 4 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m09-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m09-ytelse-v1-20261119T102242Z.json
+    artefakt_sha256: a06d7beeb43ff5c966af68759c6e1523f8344eeb55688c423633f07ee29b2527
     notat: >-
-      KREVER: pinnet grense for søkekostnaden under realistisk
-      begrepsmengde, og en målt kjøring mot den. Ingen grense pinnet —
-      og en GIN-indeks er en påstand om ytelse som skal MÅLES, ikke
-      antas (086-lærdommen: 47,6 → 0,33 ms ble målt, ikke gjettet).
+      Tre kjøringer (0,0104 / 0,0099 / 0,0077 s) over 2 tenanter; den
+      DÅRLIGSTE er dommen. 0,0104 s mot taket på 60 — 0,0052 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m09-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m09-rollback-v1-20261119T102312Z.json
+    artefakt_sha256: 1faf3e7922bf92203f741317daa81922f69fb60d183f837f570cebc89df544b6
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 8a322b55 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 4 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
