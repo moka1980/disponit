@@ -5648,6 +5648,25 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m20_innhold",
                          "platform/drift/innholdssveip.py"),
     },
+    "m15_likviditet": {
+        "modul_fil": "likviditetssveip",
+        "funntabell": "likviditetsfunn",
+        # Funnraden bærer nøyaktig én av to nøkler.
+        "subjektkolonne": "coalesce(prognose_id, modell_id)",
+        "tenantkilde": ("likviditetsmodell", "likviditetsprognose"),
+        "maalerolle": "disponit_likviditet_eier",
+        "sveipedor": "m15_sveip_likviditet(int)",
+        "dsn_variabel": "DISPONIT_LIKVIDITETSSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m15-fasit-v1",
+        "feilinjisering_krav": "m15-feilinjisering-v1",
+        "ytelse_krav": "m15-ytelse-v1",
+        "rollback_krav": "m15-rollback-v1",
+        "riggmodul": "m15_fasit",
+        "releasefiler": ("platform/modules/m15_likviditet",
+                         "platform/drift/likviditetssveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6582,6 +6601,16 @@ registrer_sveipgrenser("m20_innhold", maks_sekunder=60.0, min_tenanter=2,
 registrer_suitegrense("m20_innhold", "m20",
                       ("platform/core/tests/test_m20_innhold.py",),
                       min_tester=3000, min_andel_tester=38)
+# M-15: gulvene er litt under det målte 18/11 (8 subjekter, 13
+# evidenshendelser; fem typer + den rene modellen).
+registrer_fasitgrense("m15_likviditet", min_subjekter=8, min_evidens=11,
+                      tenantprefiks="t-m15fasit-", min_sveip1_nye=6)
+registrer_sveipgrenser("m15_likviditet", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=6)
+
+registrer_suitegrense("m15_likviditet", "m15",
+                      ("platform/core/tests/test_m15_likviditet.py",),
+                      min_tester=3000, min_andel_tester=32)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),

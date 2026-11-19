@@ -1,0 +1,83 @@
+{
+  "bestatt": true,
+  "krav_id": "m15-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 12,
+    "apne_for": 12,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "bane_under_null": [
+        3,
+        0
+      ],
+      "ingen_gyldig_modell": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "modell_utloper_snart": [
+        3,
+        1
+      ],
+      "prognose_mot_utdatert_grunnlag": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "bane_under_null": [
+        3,
+        0
+      ],
+      "ingen_gyldig_modell": [
+        2,
+        0
+      ],
+      "ingen_krav": [
+        2,
+        0
+      ],
+      "modell_utloper_snart": [
+        3,
+        1
+      ],
+      "prognose_mot_utdatert_grunnlag": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "likviditetsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m15_sveip_likviditet(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_likviditet_eier",
+    "modul": "m15_likviditet",
+    "riggmodul": "m15_fasit",
+    "riggtenanter": [
+      "t-m15fasit-a-fe41cd61",
+      "t-m15fasit-b-fe41cd61"
+    ],
+    "runde": "fe41cd61",
+    "sveipedor": "m15_sveip_likviditet(int)",
+    "tenantkilde": [
+      "likviditetsmodell",
+      "likviditetsprognose"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-18T22:45:39.410125+00:00"
+}

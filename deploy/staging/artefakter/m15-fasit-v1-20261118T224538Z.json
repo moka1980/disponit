@@ -1,0 +1,100 @@
+{
+  "bestatt": true,
+  "krav_id": "m15-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "modell_avviklet": 2,
+      "modell_registrert": 5,
+      "post_registrert": 1,
+      "prognose_laget": 4,
+      "sett_krav": 1
+    },
+    "evidens_totalt": 13,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [],
+        "merke": "m_hoved",
+        "subjekt_id": "8b187bcc-11f9-4638-a4a4-e37444e0ee94",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "modell_utloper_snart"
+        ],
+        "merke": "snart",
+        "subjekt_id": "87f5f3ca-3481-4b24-bc00-9264c19b99cb",
+        "ventet": "modell_utloper_snart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "681b8df9-0127-41b7-80a0-2a4bba4859e7",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_krav"
+        ],
+        "merke": "uten_krav",
+        "subjekt_id": "05694ca9-3ebf-47e5-a003-2bc8ed19812f",
+        "ventet": "ingen_krav"
+      },
+      {
+        "fikk": [
+          "prognose_mot_utdatert_grunnlag"
+        ],
+        "merke": "utdatert",
+        "subjekt_id": "69c9c3a6-8275-4a9f-8d65-934276c7f8a4",
+        "ventet": "prognose_mot_utdatert_grunnlag"
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "53258bb6-16c4-4a84-b3f1-f1c86eb8d32b",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_gyldig_modell"
+        ],
+        "merke": "uten_modell",
+        "subjekt_id": "a9902c63-415f-40f8-948b-9b4f14e6b471",
+        "ventet": "ingen_gyldig_modell"
+      },
+      {
+        "fikk": [
+          "bane_under_null"
+        ],
+        "merke": "under_null",
+        "subjekt_id": "2627d659-8e81-427e-832b-ca45d9f51289",
+        "ventet": "bane_under_null"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 8,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "d87d3e9a06fb35fdf24514c533d8808412719c763ea0d394b71acf0b935ac7f9",
+    "evidenskilde": "m15_likviditet",
+    "modul": "m15_likviditet",
+    "riggmodul": "m15_fasit",
+    "runde": "b47a5f88",
+    "sett_sha256": "2b2bb4517626d8a1156961029b12d4f3862468d3358616baf6b56b27168a6756",
+    "tenanter": [
+      "t-m15fasit-a-b47a5f88",
+      "t-m15fasit-b-b47a5f88"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-18T22:45:38.559778+00:00"
+}
