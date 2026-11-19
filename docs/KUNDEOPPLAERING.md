@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **44 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **45 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Optimalisator (M-36)** | Rangeringer der det øverste forslaget hviler bare på korrelasjon, rangeringer ingen har målt effekten av, og en porteføljestopp som blir stående | Iverksetter ingenting. Anslaget på hvert tiltak er et menneskes, og hvert forslag sier om det hviler på korrelasjon, eksperiment eller regel. |
 | **Bærekraft / ESG (M-45)** | Åpne rapportperioder der standarden har fått en nyere versjon, og perioder der for mye av utslippet hviler på estimater | Sender ingen rapport og skriver ingen påstand uten kilde. Hvert tall sier om det er målt eller anslått. |
 | **Telefoni (M-43)** | Samtaler som aldri ble avsluttet, eskaleringer ingen tok, og transkriberte linjer med lav sikkerhet som ingen har rettet | Tar ikke opp uten hjemmel og forutgående varsling, og agenten sier alltid at den er automatisert før den snakker. Eskalerer bare etter kundens egne regler. |
 | **Møter (M-07)** | Møter uten referat etter fristen, aksjoner over fristen, og referatpunkter ført med lav sikkerhet som ingen har rettet eller bekreftet | Tar ikke opp uten registrert hjemmel og varsling, og skriver ikke referatet selv. Et usikkert punkt merkes, det rettes av et menneske. |
@@ -230,6 +231,7 @@ i enhver opplæringsøkt.
 | Dokumentmaler | «Opprett malfamilie» → «Publiser versjonen» | En familie, en versjon med tekst og felt, og publisering før den kan fylles ut |
 | Møter | «Lagre krav» → «Registrer møte» | Referatfrist, aksjonsfrist og sikkerhetsterskel |
 | Telefoni | «Lagre krav» → «Registrer regel» | Sikkerhetsterskel, identifikasjonsfrist, eskaleringsfrist og samtaletak, så eskaleringsreglene |
+| Optimalisator | Ingen oppsettsknapp i flaten ennå | Grenser, modell og tiltak registreres foreløpig gjennom API-et. Flaten viser rangeringen og lar dere vurdere tiltak, måle effekt og lukke funn. Modulen rulles ut til kunder når oppsettsskjemaene er på plass. |
 | Bærekraft / ESG | «Lagre krav» → «Registrer kilde» → «Åpne periode» | Estimatterskel og -frist, kildedokumentene og standarden perioden rapporterer etter |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
