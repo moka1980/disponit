@@ -127,7 +127,16 @@ def _oppsett(runde: str) -> dict:
 # ingen dør; radene den teller skrives av andre moduler i drift.
 # ---------------------------------------------------------------------------
 
+def _kontekst(mg, tenant: str) -> None:
+    """RLS på revisjonslogg og unntak krever tenantkonteksten — også for
+    migratoren (testsuitens `_sett_kontekst`)."""
+    mg.execute("SELECT set_config('disponit.tenant', %s, true),"
+               " set_config('disponit.aktor', 'm16-fasit', true)",
+               (tenant,))
+
+
 def _logg(mg, tenant: str, beslutning: str, ts_sql: str = "now()") -> int:
+    _kontekst(mg, tenant)
     return mg.execute(
         "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
         " beslutning, begrunnelse, idempotency_key, kilde, ts) VALUES"
@@ -137,6 +146,7 @@ def _logg(mg, tenant: str, beslutning: str, ts_sql: str = "now()") -> int:
 
 
 def _sak(mg, tenant: str, status: str, ts_sql: str, status_ts_sql: str):
+    _kontekst(mg, tenant)
     mg.execute("INSERT INTO tenant_nokler (tenant, key_id, wrapped_dek)"
                " VALUES (%s,'k1','\\x00'::bytea) ON CONFLICT DO NOTHING",
                (tenant,))
@@ -456,12 +466,13 @@ def ytelse(kall: int, beslutninger: int, saker: int) -> Path:
     mg = psycopg.connect(_env("DISPONIT_TEST_MIGRATOR_DSN"))
     runde = secrets.token_hex(4)
     tenant = f"t-m16fasit-ytelse-{runde}"
+    _kontekst(mg, tenant)
     mg.execute(
         "INSERT INTO revisjonslogg (tenant, input_hash, policy_id,"
         " beslutning, begrunnelse, idempotency_key, kilde, ts)"
-        " SELECT %s, 'h', 'p', (ARRAY['TILLAT','STOPP'])[1 + g % 2],"
+        " SELECT %s, 'h', 'p', (ARRAY['TILLAT','STOPP'])[1 + g %% 2],"
         " '[]'::jsonb, md5(random()::text || g), 'arbeidskapabilitet',"
-        " now() - (g % 720) * interval '1 hour'"
+        " now() - (g %% 720) * interval '1 hour'"
         " FROM generate_series(1, %s) g", (tenant, beslutninger))
     for i in range(saker):
         _sak(mg, tenant, "løst" if i % 2 else "manuell",
