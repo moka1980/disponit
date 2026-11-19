@@ -120,7 +120,7 @@ def forbered(rt, runde: str, mg=None) -> dict:
         rt.execute("SELECT m43_registrer_regel(%s,%s,'Fasitregel: eskaler til vakt',"
                    "'vakt@x.test', current_date - 1, NULL, %s)",
                    (a, rid, AKTOR))
-        rt.execute("SELECT * FROM m43_eskaler(%s,%s,%s,%s,'Fasit',%s)",
+        rt.execute("SELECT * FROM m43_eskaler(%s,%s,%s,%s,'Fasit: kunden ba om et menneske',%s)",
                    (a, eid, s_esk, rid, AKTOR))
         # Linjen hører til samme samtale: datert etter identifikasjonen.
         lid = str(uuid.uuid4())
