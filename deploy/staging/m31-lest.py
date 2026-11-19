@@ -435,7 +435,7 @@ def main() -> int:
     ap.add_argument("--forgjenger", type=Path)
     ap.add_argument("--modell-url", default="http://127.0.0.1:11434")
     ap.add_argument("--modellnavn", default="qwen2.5:3b-instruct")
-    ap.add_argument("--digest")
+    ap.add_argument("--digest", default=os.environ.get("M31_DIGEST"))
     a = ap.parse_args()
     if a.punkt == "fasit":
         sti = fasit()
