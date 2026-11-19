@@ -171,7 +171,7 @@ export const MODULSTATUS = {
   7: "i_drift",    // m07_moteoperasjon: aktiv, produksjon
   20: "i_drift",    // m20_innhold: aktiv, produksjon
   43: "i_drift",    // m43_telefoni: aktiv, produksjon
-  45: "bygges",     // m45_esg: under_utvikling, ikke_i_drift
+  45: "i_drift",    // m45_esg: aktiv, produksjon
   // KLYNGE 10 — HANDLINGENE. Registrert med grensene, før koden.
   //
   // EN HANDLING MED VIRKNING I DEN VIRKELIGE VERDEN ANGRES IKKE AV EN

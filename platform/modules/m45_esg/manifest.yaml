@@ -43,8 +43,8 @@
 id: m45_esg
 navn: Bærekrafts- og ESG-agent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. IKKE «kildesystemer for energi og
 # transport» — de finnes ikke, og en avhengighet til noe som ikke
 # finnes er en løgn manifestet ikke skal bære.
@@ -57,31 +57,139 @@ i18n_prefiks: esg
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m45-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m45-suite-v1-20261119T154839Z.json
+    artefakt_sha256: 3dc4c9fdfff0814a8da06d9e61bf3c11704765a341860286baac8b10030fff01
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 37 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m45_fasit.py`:
+    #
+    # M-45s fasitsett: fem subjekter i to tenanter med KJENT dom.
+    #
+    # ESG-registeret har åtte funntyper på `referanse`. Fem er utelukket av
+    # datamodellen, og `estimat_ikke_erstattet_over_frist` kan ikke nås samme
+    # dag (se `UNAABARE`). De to andre rigges, begge på `periode_id`:
+    #
+    #   tenant A (estimatterskel 1000 bp, estimatfrist 1 døgn)
+    #     1. `standardversjon_foreldet_i_apen_periode`
+    #                                 — åpen periode på standard S1 v1, og en
+    #                                   faktor i S1 v2 gyldig senere
+    #     2. `estimatandel_over_terskel_uavklart`
+    #                                 — periode på S2 v1 der hele utslippet er
+    #                                   estimat
+    #     3. (ren)                    — som 1 (egen standard S3); perioden LUKKES
+    #                                   mellom kjøringene
+    #     4. (ok)                     — periode på S4 v1 med en målt (ikke
+    #                                   estimert) mengde
+    #   tenant B (estimatterskel 1001 bp)
+    #     5. `estimatandel_over_terskel_uavklart` — samme regel
+    #
+    # HVER PERIODE HAR SIN EGEN STANDARD — OG SIN EGEN KATEGORI. «Foreldet»
+    # gjelder alle åpne perioder på samme standard, så en delt standard ville
+    # gitt subjektene flere funn enn fasiten sier; og faktorens unikhet er
+    # (tenant, kategori, standardversjon, gyldig_fra) uten standarden, så to
+    # standarder med samme kategori og dato ville kollidert.
+    status: ja
+    krav_id: m45-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m45-fasit-v1-20261119T153329Z.json
+    artefakt_sha256: 8c77cdbd72d3d6423a2d2baf6d5bb174e6823c2e13da51d63a22b19ce5e3467f
     notat: >-
-      KREVER: to rapportperioder med ULIKE faktorversjoner på samme
-      mengde, slik at porten kan måle at tallet følger periodens
-      faktor og ikke den nyeste.
+      Runde a16e7dc5: 5 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m45-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m45-fasit-v1-20261119T153329Z.json
+    artefakt_sha256: 8c77cdbd72d3d6423a2d2baf6d5bb174e6823c2e13da51d63a22b19ce5e3467f
     notat: >-
-      KREVER: at hvert tall kan spores til kilden og faktorversjonen.
-      Et tall uten det er ikke revisjonsklart — det er en påstand.
+      20 hendelser i kjeden (apne_periode: 5, lukk_periode: 1,
+      registrer_faktor: 7, registrer_kilde: 2, registrer_maaling: 3,
+      sett_krav: 2), 0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m45-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m45-feilinjisering-v1-20261119T153330Z.json
+    artefakt_sha256: 5ca30f167c15cab24d333248a5d30e7b258e56b9eef2e59a8d2a01d35e3c8a24
     notat: >-
-      KREVER: at et estimat som IKKE er merket som estimat gir et
-      funn og ikke en rapportlinje.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 10 åpne og 1 lukkede over 11 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m45-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m45-ytelse-v1-20261119T153330Z.json
+    artefakt_sha256: bad53ef14b79feed679147c9c854799269d1d2031a2860a86d9e995b28b0f1fb
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0196 / 0,0195 / 0,0183 s) over 9 tenanter; den
+      DÅRLIGSTE er dommen. 0,0196 s mot taket på 60 — 0,0022 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m45-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m45-rollback-v1-20261119T153331Z.json
+    artefakt_sha256: deb4a1c17708c0c8d8f262c317f2c1cff82d1f5c6d3b71946999c9a2f8f85a6e
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet a6a257a1 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 4 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

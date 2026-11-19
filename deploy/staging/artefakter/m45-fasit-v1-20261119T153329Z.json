@@ -1,0 +1,79 @@
+{
+  "bestatt": true,
+  "krav_id": "m45-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "apne_periode": 5,
+      "lukk_periode": 1,
+      "registrer_faktor": 7,
+      "registrer_kilde": 2,
+      "registrer_maaling": 3,
+      "sett_krav": 2
+    },
+    "evidens_totalt": 20,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "standardversjon_foreldet_i_apen_periode"
+        ],
+        "merke": "foreldet",
+        "subjekt_id": "325e58f7-48e0-4dc9-87a8-914ef40f9423",
+        "ventet": "standardversjon_foreldet_i_apen_periode"
+      },
+      {
+        "fikk": [
+          "estimatandel_over_terskel_uavklart"
+        ],
+        "merke": "estimat",
+        "subjekt_id": "07c3c2f5-befd-45f3-a141-1a031ad06b0e",
+        "ventet": "estimatandel_over_terskel_uavklart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "2fedcb15-5e81-462d-bb35-c610e366fcd6",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "1ceaa2df-fb8d-4059-801b-99b2b914aa5a",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "estimatandel_over_terskel_uavklart"
+        ],
+        "merke": "estimat_b",
+        "subjekt_id": "42a66bb5-9ae9-4cad-85e8-b624fa02e18d",
+        "ventet": "estimatandel_over_terskel_uavklart"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7e2a9dd151f230bead720cc4129516721480971d5eae80bee236feef9b3b9337",
+    "evidenskilde": "m45_esg",
+    "modul": "m45_esg",
+    "riggmodul": "m45_fasit",
+    "runde": "a16e7dc5",
+    "sett_sha256": "910cb74eddc048f0bdf13f23f5f2f4b78552f8928956d3c7140e9c01252cfa5d",
+    "tenanter": [
+      "t-m45fasit-a-a16e7dc5",
+      "t-m45fasit-b-a16e7dc5"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T15:33:29.848727+00:00"
+}

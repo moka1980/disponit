@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m45-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0196,
+      0.0195,
+      0.0183
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 6,
+        "tenanter": 9
+      }
+    ],
+    "sekunder": 0.0196,
+    "sekunder_per_tenant": 0.0022,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m45_esg",
+    "sveip": "esgsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:33:30.208628+00:00"
+}

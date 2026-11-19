@@ -94,8 +94,8 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-19 fra 2026-09-17 (natt): første modul på de GENERISKE
     // sveipprodusentene for feilinjisering, ytelse og rollback.
     [2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 24, 25,
-     26, 27, 30, 34, 37, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52,
-     53, 54, 56, 57],
+     26, 27, 30, 34, 37, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+     52, 53, 54, 56, 57],
     "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
@@ -131,7 +131,7 @@ test("erTilgjengelig: brikka følger BEGGE aksene", () => {
     assert.equal(erTilgjengelig(post.id), modulStatus(post.id) === "i_drift",
       `M-${post.id} lover noe annet enn MODULSTATUS bærer`);
   }
-  assert.equal(erTilgjengelig(45), false, "ukjent modul er planlagt");
+  assert.equal(erTilgjengelig(99), false, "ukjent modul er planlagt");
   // …og i staging-modus loves ingenting, uansett hva som kjører.
   settProduksjonsmiljo(false);
   for (const post of TILBUD) {

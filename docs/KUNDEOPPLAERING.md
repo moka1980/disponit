@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **43 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **44 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Bærekraft / ESG (M-45)** | Åpne rapportperioder der standarden har fått en nyere versjon, og perioder der for mye av utslippet hviler på estimater | Sender ingen rapport og skriver ingen påstand uten kilde. Hvert tall sier om det er målt eller anslått. |
 | **Telefoni (M-43)** | Samtaler som aldri ble avsluttet, eskaleringer ingen tok, og transkriberte linjer med lav sikkerhet som ingen har rettet | Tar ikke opp uten hjemmel og forutgående varsling, og agenten sier alltid at den er automatisert før den snakker. Eskalerer bare etter kundens egne regler. |
 | **Møter (M-07)** | Møter uten referat etter fristen, aksjoner over fristen, og referatpunkter ført med lav sikkerhet som ingen har rettet eller bekreftet | Tar ikke opp uten registrert hjemmel og varsling, og skriver ikke referatet selv. Et usikkert punkt merkes, det rettes av et menneske. |
 | **Medarbeider (M-40)** | Nyansatte uten førsteuke, førsteuker som står åpne for lenge, pulsmålinger der ingen gruppe er stor nok til å vises, og kontrakter på en mal som er trukket tilbake | Tar ingen beslutninger om ansettelse, oppsigelse eller lønn, og bygger ingen profil av enkeltpersoner. Pulssvar vises bare for grupper over terskelen. |
@@ -229,6 +230,7 @@ i enhver opplæringsøkt.
 | Dokumentmaler | «Opprett malfamilie» → «Publiser versjonen» | En familie, en versjon med tekst og felt, og publisering før den kan fylles ut |
 | Møter | «Lagre krav» → «Registrer møte» | Referatfrist, aksjonsfrist og sikkerhetsterskel |
 | Telefoni | «Lagre krav» → «Registrer regel» | Sikkerhetsterskel, identifikasjonsfrist, eskaleringsfrist og samtaletak, så eskaleringsreglene |
+| Bærekraft / ESG | «Lagre krav» → «Registrer kilde» → «Åpne periode» | Estimatterskel og -frist, kildedokumentene og standarden perioden rapporterer etter |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
