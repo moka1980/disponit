@@ -41,6 +41,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+# Testhjelperne leser nøklene ved import; verdiene er suitens egne.
+os.environ.setdefault("DISPONIT_KEK", "b" * 64)
+os.environ.setdefault("DISPONIT_TOKEN_PEPPER", "p" * 40)
 sys.path.insert(0, str(REPO / "platform/core"))
 sys.path.insert(0, str(REPO / "platform"))
 
