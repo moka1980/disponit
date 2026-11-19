@@ -10,7 +10,7 @@ varselvinduet er 7 døgn).
     1. `frist_oversittet`  — mottatt for 40 døgn siden, har lager
     2. `frist_naermer_seg` — fristen om ca. 3 døgn, har lager
     3. `sak_uten_lagre`    — mottatt i dag, ingen lagre
-    4. (ren)               — som 1; BESVARES mellom kjøringene
+    4. (ren)               — som 1; fristen FORLENGES mellom kjøringene
     5. (ok)                — mottatt i dag, har lager
   tenant B
     6. `sak_uten_lagre`    — samme regel i en annen tenant
@@ -45,7 +45,7 @@ SETT: tuple[tuple[str, str | None, str, str, bool], ...] = (
      "(current_date - interval '1 month')::date + 3", True),
     ("uten_lagre", "sak_uten_lagre", "a", "current_date", False),
     # Den RENE fødes med fristen oversittet: funnet den får i første sveip
-    # er nettopp det andre sveip skal lukke, når saken er besvart.
+    # er nettopp det andre sveip skal lukke, når fristen er forlenget.
     ("ren", None, "a", "current_date - 40", True),
     ("ok", None, "a", "current_date", True),
     ("uten_lagre_b", "sak_uten_lagre", "b", "current_date", False),
@@ -119,12 +119,16 @@ def riggtenanter(rigg: dict) -> list[str]:
 
 
 def kontroller_ren(rt, rigg: dict) -> None:
-    """Svaret som gjør den rene saken ren — MELLOM sveipene. En besvart
-    sak er ikke lenger åpen, og ingen av de tre kandidatene ser den."""
+    """Forlengelsen som gjør den rene saken ren — MELLOM sveipene.
+
+    IKKE et svar: `m30_besvar_sak` lukker funnet i døra selv, og da ville
+    sveipen ikke hatt noe å lukke. Forlengelsen rører bare saken, så det
+    er sveipen som må se at fristen ikke lenger er passert. Taket er
+    mottatt + tre måneder (art. 12 nr. 3); 30 døgn fram er godt innenfor."""
     _sk(rt, rigg["a"])
-    rt.execute("SELECT m30_besvar_sak(%s,%s,%s,%s)",
-               (rigg["a"], rigg["subjekter"][RENSES]["subjekt_id"],
-                "SVAR-fasit", AKTOR))
+    rt.execute("SELECT m30_forleng_frist(%s,%s, current_date + 30,"
+               " 'Fasit: kompleks forespørsel', %s)",
+               (rigg["a"], rigg["subjekter"][RENSES]["subjekt_id"], AKTOR))
     rt.commit()
 
 
