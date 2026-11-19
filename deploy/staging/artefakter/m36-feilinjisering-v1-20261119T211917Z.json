@@ -1,0 +1,52 @@
+{
+  "bestatt": true,
+  "krav_id": "m36-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 5,
+    "apne_for": 5,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "korrelasjon_alene_paa_topp": [
+        5,
+        1
+      ]
+    },
+    "per_type_for": {
+      "korrelasjon_alene_paa_topp": [
+        5,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "optimaliseringsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m36_sveip_optimalisering(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_optimalisator_eier",
+    "modul": "m36_optimalisator",
+    "riggmodul": "m36_fasit",
+    "riggtenanter": [
+      "t-m36fasit-a-fb8e61a0",
+      "t-m36fasit-b-fb8e61a0",
+      "t-m36fasit-c-fb8e61a0",
+      "t-m36fasit-d-fb8e61a0"
+    ],
+    "runde": "fb8e61a0",
+    "sveipedor": "m36_sveip_optimalisering(int)",
+    "tenantkilde": [
+      "optimaliseringskrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:19:17.158337+00:00"
+}

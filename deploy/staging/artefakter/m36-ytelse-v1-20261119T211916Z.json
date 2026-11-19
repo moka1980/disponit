@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m36-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0216,
+      0.0311,
+      0.043
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 2,
+        "tenanter": 5
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 2,
+        "tenanter": 5
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 2,
+        "tenanter": 5
+      }
+    ],
+    "sekunder": 0.043,
+    "sekunder_per_tenant": 0.0086,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m36_optimalisator",
+    "sveip": "optimalisatorsveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:19:16.168282+00:00"
+}

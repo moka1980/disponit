@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m36-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 52,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m36_optimalisator.py"
+    ],
+    "bevisrot_sha256": "f3930809d8e5e149c35018562941554ad736aec6bc9a98e271bc1c390d272079",
+    "commit": "9e955ed1c6936d5a46280cd3884617471dbe4781",
+    "modul": "m36_optimalisator",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:50:04.119709+00:00"
+}

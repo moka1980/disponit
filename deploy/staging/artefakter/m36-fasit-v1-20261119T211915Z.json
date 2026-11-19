@@ -1,0 +1,71 @@
+{
+  "bestatt": true,
+  "krav_id": "m36-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "foresla_tiltak": 6,
+      "rangere": 5,
+      "registrer_modell": 4,
+      "sett_krav": 4
+    },
+    "evidens_totalt": 19,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "korrelasjon_alene_paa_topp"
+        ],
+        "merke": "korr",
+        "subjekt_id": "d2b922ae-afdf-4faf-a92c-fd959859f801",
+        "ventet": "korrelasjon_alene_paa_topp"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "76a5603e-b0d8-474c-8c54-94d70053af87",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "75472869-b38e-440b-a528-e6de6b604161",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "korrelasjon_alene_paa_topp"
+        ],
+        "merke": "korr_d",
+        "subjekt_id": "351567d0-af44-4db2-979d-b96db812d1d5",
+        "ventet": "korrelasjon_alene_paa_topp"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 4,
+    "sveip1_nye": 3,
+    "sveip1_tenanter": 5,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 2
+  },
+  "oppsett": {
+    "bevisrot_sha256": "d77845eddbec20d365b0d6b0196782b6331bc444271fc1c97a977cc7582d4c24",
+    "evidenskilde": "m36_optimalisator",
+    "modul": "m36_optimalisator",
+    "riggmodul": "m36_fasit",
+    "runde": "5a80afb0",
+    "sett_sha256": "01df3e0d74175d19c34db51a48f1d49f5a4ca4bf690b318bfa4f53188d2b812f",
+    "tenanter": [
+      "t-m36fasit-a-5a80afb0",
+      "t-m36fasit-b-5a80afb0",
+      "t-m36fasit-c-5a80afb0",
+      "t-m36fasit-d-5a80afb0"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T21:19:15.465494+00:00"
+}

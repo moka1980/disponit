@@ -1,0 +1,63 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/528c709ae2cba289ebf13e77581b6f4838dbd11d/platform/drift/optimalisatorsveip.py",
+    "avbrutt_pid": 468387,
+    "kandidat_fil": "/opt/disponit/releases/528c709ae2cba289ebf13e77581b6f4838dbd11d/platform/drift/optimalisatorsveip.py",
+    "kandidat_pid": 468520,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/optimalisatorsveip.py",
+    "rullback_pid": 468463
+  },
+  "krav_id": "m36-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 3,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 3,
+    "rullbakk_rader": 3
+  },
+  "oppsett": {
+    "arbeidernokkel": 508213667,
+    "avbrutt_backend_pid": 468420,
+    "bevisrot_sha256": "e96ea185fc0d3a8f42df62dbb3f2b4ed8c881a3c62b1fa6b6bf5d0348e3cc5e5",
+    "drillet_digest": "2b4787bda0c924378220ed7da7b75bbc243c96ca77d1f0268b944f82e1d767ac",
+    "drillet_katalog": "/opt/disponit/releases/528c709ae2cba289ebf13e77581b6f4838dbd11d",
+    "drillet_kjernedigest": "392b2667437703c6176d37f7e8c9152361f5cd7f81afc36f397721df9cee907a",
+    "drillet_release": "528c709ae2cba289ebf13e77581b6f4838dbd11d",
+    "forgjenger_digest": "2b4787bda0c924378220ed7da7b75bbc243c96ca77d1f0268b944f82e1d767ac",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "optimaliseringsfunn",
+    "maalerolle": "disponit_optimalisator_eier",
+    "miljo": "staging",
+    "modul": "m36_optimalisator",
+    "runde": "6795f59e",
+    "tenanter": [
+      "t-m36fasit-a-6795f59e",
+      "t-m36fasit-b-6795f59e",
+      "t-m36fasit-c-6795f59e",
+      "t-m36fasit-d-6795f59e"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T21:19:20.214252+00:00"
+}

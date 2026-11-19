@@ -158,7 +158,7 @@ export const MODULSTATUS = {
   // Flippes av en modulaksept, aldri av en byggemilepæl.
   15: "i_drift",    // m15_likviditet: aktiv, produksjon
   33: "bygges",     // m33_prognose: under_utvikling, ikke_i_drift
-  36: "bygges",     // m36_optimalisator: under_utvikling
+  36: "i_drift",    // m36_optimalisator: aktiv, produksjon
   // KLYNGE 9 — YTRINGENE. Registrert med grensene, før koden.
   //
   // EN YTRING AVGITT I HUSETS NAVN KAN IKKE TAS TILBAKE — og den som
