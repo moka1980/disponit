@@ -56,8 +56,8 @@
 id: m36_optimalisator
 navn: Bedriftsoptimalisator
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. Katalogens «modul 1–35» er en ambisjon,
 # ikke en måling: v1 leser de åpne funnene, og de kommer fra
 # modulregistrene gjennom deres egne lesedører. Policymotoren står her
@@ -72,48 +72,134 @@ i18n_prefiks: optimalisator
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m36-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m36-suite-v1-20261119T215004Z.json
+    artefakt_sha256: 87a0246a49aa42e6c73a71d64902a46bf6c2461eaad22406e52c86b1044efef7
     notat: >-
-      Modulen er bygget (132, 5/9) og portene er grønne lokalt og i
-      CI. KREVER FORTSATT: suitekjøring PÅ STAGING med modulens andel
-      pinnet og stagingidentitet bundet. En grønn CI er ikke en grønn
-      staging.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 52 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m36_fasit.py`:
+    #
+    # M-36s fasitsett: fire subjekter i fire tenanter med KJENT dom.
+    #
+    # Optimalisatorens register har fire funntyper på `referanse`. Én er
+    # utelukket av datamodellen, og to kan ikke nås samme dag uten å slå av
+    # en vakt (se `UNAABARE`). Den siste, `korrelasjon_alene_paa_topp`,
+    # rigges på `rangering_id`:
+    #
+    #   tenant a  1. `korrelasjon_alene_paa_topp` — ett korrelasjonstiltak,
+    #                                  rangert
+    #   tenant b  2. (ren)           — som 1; mellom kjøringene foreslås et
+    #                                  større regeltiltak og det rangeres på
+    #                                  nytt, så den ferskeste toppen ikke
+    #                                  lenger hviler bare på korrelasjon
+    #   tenant c  3. (ok)            — regeltiltaket er størst og står øverst;
+    #                                  korrelasjonstiltaket står på plass 2
+    #   tenant d  4. `korrelasjon_alene_paa_topp` — samme regel, andre grenser
+    #
+    # ÉN TENANT PER SUBJEKT. Sveipen leser bare den FERSKESTE rangeringen i
+    # hver tenant, så to subjekter i samme tenant ville gjort det eldste til
+    # et subjekt sveipen med vilje aldri ser.
+    status: ja
+    krav_id: m36-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m36-fasit-v1-20261119T211915Z.json
+    artefakt_sha256: 0e01ebf015d0fd9a8c378b04eee1da085e00602dcbc819297dbba68b29497607
     notat: >-
-      Portene har et slikt sett: to forslag med identisk anslag der
-      det ene hviler på korrelasjon og det andre på en regel, og
-      `korrelasjon_alene_paa_topp` reises når det første havner
-      øverst. KREVER FORTSATT: at det samme datasettet finnes PÅ
-      STAGING.
+      Runde 5a80afb0: 4 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m36-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m36-fasit-v1-20261119T211915Z.json
+    artefakt_sha256: 0e01ebf015d0fd9a8c378b04eee1da085e00602dcbc819297dbba68b29497607
     notat: >-
-      Sporbarheten ER bygget: `grunnlagstype` KOPIERES inn i
-      `rangeringspost` ved avgivelse (et join ville gitt dagens verdi,
-      ikke den som gjaldt da), forslagets innhold er frosset, og
-      `kilde_modul`/`kilde_funntype` peker tilbake til registeret
-      signalet kom fra. KREVER FORTSATT: en verifisert kjede PÅ
-      STAGING.
+      19 hendelser i kjeden (foresla_tiltak: 6, rangere: 5,
+      registrer_modell: 4, sett_krav: 4), 0 uten aktør, 0 som deler
+      input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m36-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m36-feilinjisering-v1-20261119T211917Z.json
+    artefakt_sha256: 1cc1c0adcc2f168d31553aa27d4d7608210ede7b1bf3c8cd2c7e472312675122
     notat: >-
-      Stoppen stopper: `m36_rangere` NEKTER med aktiv stopp, og
-      `test_portefoljestoppen_hindrer_en_ny_rangering` måler både
-      nektet og at rangeringen går igjen etter oppheving. MERK
-      begrensningen, som står i klartekst i modulen: stoppen stanser
-      M-36, ikke porteføljen — å stanse en annen modul ville vært å
-      overstyre dens grense. KREVER FORTSATT: en injisert feil på
-      staging.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 5 åpne og 1 lukkede over 9 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m36-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m36-ytelse-v1-20261119T211916Z.json
+    artefakt_sha256: cb7aa5957b1adb414648885af0b9e0825362eb317afe188e2616b00a226810d1
     notat: >-
-      Taket er satt (500 tenanter, `TimeoutStartSec=10min`), og
-      `m36_apne_funn` gjør ÉN spørring per register per tenant — 32
-      registre. Det er den bredeste sveipen i huset, og anslaget fra
-      fundamentet holdt. KREVER FORTSATT: en MÅLT kjøring — et tak er
-      ikke en måling.
+      Tre kjøringer (0,0216 / 0,0311 / 0,0430 s) over 5 tenanter; den
+      DÅRLIGSTE er dommen. 0,0430 s mot taket på 60 — 0,0086 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m36-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m36-rollback-v1-20261119T211920Z.json
+    artefakt_sha256: d7cc0bad9529cd5acf421630045d55fcda48991e389533e0cbbd4b78e7ff29df
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 528c709a ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 3 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.
