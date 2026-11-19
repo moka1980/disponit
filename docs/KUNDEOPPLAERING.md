@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **29 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **30 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Tilganger (M-12)** | Tilganger som har stått lenger enn sin egen gjennomgangsfrist uten at noen navngitt har sett på dem | Oppretter, flytter og fjerner ingen tilganger. En gjennomgang er en attestasjon fra et navngitt menneske, datert i dag. |
 | **Kontrollregister / compliance (M-34)** | Kontroller som ikke er etterprøvd innen fristen, og kontroller der eieren ikke lenger er med i firmaet | Etterprøver ikke selv og attesterer ingenting. «Oppfylt» krever en etterprøving med dato og evidenshenvisning. |
 | **Likviditet (M-15)** | Prognoser som bygger på et grunnlag eldre enn grensen, prognoser der banen går under null, prognoser mot en modell som ikke gjelder lenger, og modeller som snart utløper | Flytter ingen penger og tar ikke opp lån. Prognosen er et øyeblikksbilde: lag en ny når grunnlaget har endret seg. |
 | **Nettside og innhold (M-20)** | Utkast som er merket klare uten at noen har sett dem, og kilder som snart utløper mens de bærer en publisert påstand | Publiserer ingenting av seg selv. Publisering krever en forhåndsvisning av nøyaktig det som publiseres. |
@@ -207,6 +208,7 @@ i enhver opplæringsøkt.
 | Sanksjonskontroll | «Lagre policy» → «Registrer listeversjon» | Matchterskel og frister — kunden velger selv |
 | Tollklassifisering | «Lagre terskler» → «Lagre regelverk» | Sikkerhetsterskelen — kunden velger selv |
 | EHF-kontroll | «Lagre terskler» → «Lagre regelsett» | Utløpsvarsel og avviksfrist |
+| Tilganger | «Registrer objekt» → «Registrer tilgang» | Systemet, så hvem som har tilgang, med eier, hjemmel og hvor ofte den skal gjennomgås |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
