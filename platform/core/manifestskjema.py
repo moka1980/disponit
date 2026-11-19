@@ -5871,6 +5871,23 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m28_fasit",
         "releasefiler": ("platform/modules/m28_transport",
                          "platform/drift/transportsveip.py"),
+    "m29_hendelse": {
+        "modul_fil": "hendelsessveip",
+        "funntabell": "hendelsesfunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "hendelseskrav",
+        "maalerolle": "disponit_hendelse_eier",
+        "sveipedor": "m29_sveip_hendelse(int)",
+        "dsn_variabel": "DISPONIT_HENDELSESSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m29-fasit-v1",
+        "feilinjisering_krav": "m29-feilinjisering-v1",
+        "ytelse_krav": "m29-ytelse-v1",
+        "rollback_krav": "m29-rollback-v1",
+        "riggmodul": "m29_fasit",
+        "releasefiler": ("platform/modules/m29_hendelse",
+                         "platform/drift/hendelsessveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6946,6 +6963,16 @@ registrer_sveipgrenser("m28_transport", maks_sekunder=60.0,
 
 registrer_suitegrense("m28_transport", "m28",
                       ("platform/core/tests/test_m28_transport.py",),
+# M-29 (ADR-002, klasse A): fem subjekter i to tenanter; to nåbare
+# funntyper (alderen satt som migrator, suitens vei), åtte i UNAABARE.
+# Gulvene foreløpige.
+registrer_fasitgrense("m29_hendelse", min_subjekter=5, min_evidens=10,
+                      tenantprefiks="t-m29fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m29_hendelse", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m29_hendelse", "m29",
+                      ("platform/core/tests/test_m29_hendelse.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
