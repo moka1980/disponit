@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m43-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.033,
+      0.0305,
+      0.0475
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 27
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 27
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 32,
+        "tenanter": 27
+      }
+    ],
+    "sekunder": 0.0475,
+    "sekunder_per_tenant": 0.0018,
+    "tenanter": 27
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m43_telefoni",
+    "sveip": "telefonisveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T15:09:46.070916+00:00"
+}
