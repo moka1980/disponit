@@ -5824,6 +5824,27 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m36_optimalisator",
                          "platform/drift/optimalisatorsveip.py"),
     },
+    "m33_prognose": {
+        "modul_fil": "prognosesveip",
+        "funntabell": "prognosefunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "prognosekrav",
+        "maalerolle": "disponit_prognose_eier",
+        "sveipedor": "m33_sveip_prognose(int)",
+        "dsn_variabel": "DISPONIT_PROGNOSESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m33-fasit-v1",
+        "feilinjisering_krav": "m33-feilinjisering-v1",
+        "ytelse_krav": "m33-ytelse-v1",
+        "rollback_krav": "m33-rollback-v1",
+        "riggmodul": "m33_fasit",
+        # ADR-006: riggen elder en append-only prognose med vakten avslått
+        # og nekter selv å kjøre utenfor disponit_test@55432.
+        "isolert": True,
+        "releasefiler": ("platform/modules/m33_prognose",
+                         "platform/drift/prognosesveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6876,6 +6897,18 @@ registrer_sveipgrenser("m36_optimalisator", maks_sekunder=60.0,
 
 registrer_suitegrense("m36_optimalisator", "m36",
                       ("platform/core/tests/test_m36_optimalisator.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-33 (ADR-006, klasse A-isolert): fem subjekter i to tenanter; tre
+# nåbare funntyper, én uten skriver. Gulvene foreløpige.
+registrer_fasitgrense("m33_prognose", min_subjekter=5, min_evidens=12,
+                      tenantprefiks="t-m33fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m33_prognose", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m33_prognose", "m33",
+                      ("platform/core/tests/test_m33_prognose.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
