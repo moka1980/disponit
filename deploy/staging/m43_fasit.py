@@ -117,7 +117,7 @@ def forbered(rt, runde: str, mg=None) -> dict:
         s_esk = _samtale(rt, a, avslutt=False)
         rid, eid = str(uuid.uuid4()), str(uuid.uuid4())
         _sk(rt, a)
-        rt.execute("SELECT m43_registrer_regel(%s,%s,'Fasitregel',"
+        rt.execute("SELECT m43_registrer_regel(%s,%s,'Fasitregel: eskaler til vakt',"
                    "'vakt@x.test', current_date - 1, NULL, %s)",
                    (a, rid, AKTOR))
         rt.execute("SELECT * FROM m43_eskaler(%s,%s,%s,%s,'Fasit',%s)",
