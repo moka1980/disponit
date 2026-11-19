@@ -5888,6 +5888,23 @@ SVEIPMODULER: dict[str, dict] = {
         "riggmodul": "m29_fasit",
         "releasefiler": ("platform/modules/m29_hendelse",
                          "platform/drift/hendelsessveip.py"),
+    "m32_skatt": {
+        "modul_fil": "skattesveip",
+        "funntabell": "skattefunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "skattekrav",
+        "maalerolle": "disponit_skatt_eier",
+        "sveipedor": "m32_sveip_skatt(int)",
+        "dsn_variabel": "DISPONIT_SKATTESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m32-fasit-v1",
+        "feilinjisering_krav": "m32-feilinjisering-v1",
+        "ytelse_krav": "m32-ytelse-v1",
+        "rollback_krav": "m32-rollback-v1",
+        "riggmodul": "m32_fasit",
+        "releasefiler": ("platform/modules/m32_skatt",
+                         "platform/drift/skattesveip.py"),
     },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
@@ -6973,6 +6990,16 @@ registrer_sveipgrenser("m29_hendelse", maks_sekunder=60.0,
 
 registrer_suitegrense("m29_hendelse", "m29",
                       ("platform/core/tests/test_m29_hendelse.py",),
+# M-32 (ADR-002, klasse A): fire subjekter i tre tenanter; én nåbar
+# funntype (alderen satt som migrator, suitens vei), åtte i UNAABARE.
+# Gulvene foreløpige.
+registrer_fasitgrense("m32_skatt", min_subjekter=4, min_evidens=7,
+                      tenantprefiks="t-m32fasit-", min_sveip1_nye=3)
+registrer_sveipgrenser("m32_skatt", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=3)
+
+registrer_suitegrense("m32_skatt", "m32",
+                      ("platform/core/tests/test_m32_skatt.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
