@@ -73,6 +73,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "ekskluderte_kolonner",
         "endrede_tabeller",
         "fremmede_tabeller_sett",
         "funnavvik",
@@ -148,6 +149,15 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "ekskluderte_kolonner": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

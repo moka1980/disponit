@@ -262,7 +262,27 @@ def _kall(rot: Path, tokener: dict, vinduer=("24t",), n: int = 1) -> list:
 
 
 def _kjerne(body: dict) -> dict:
-    return {k: body.get(k) for k in KJERNEFELT}
+    """Svaret i fasitens forstand. `andeler` er AVLEDET i API-laget (fase
+    2): den sammenlignes ikke med fasiten, men regnes om fra tellingene
+    og må stemme — ellers er svaret ikke fasitens."""
+    ut = {k: body.get(k) for k in KJERNEFELT}
+    b = ut.get("beslutninger")
+    if isinstance(b, dict):
+        andeler = b.get("andeler")
+        total = b.get("total") or 0
+        regnet = {k: round(v / total, 4) for k, v in
+                  (b.get("deler") or {}).items()} if total else {}
+        if andeler is not None and andeler != regnet:
+            ut["andeler_avvik"] = {"fikk": andeler, "regnet": regnet}
+        ut["beslutninger"] = {"total": b.get("total"),
+                              "deler": b.get("deler")}
+    return ut
+
+
+#: Kolonner radbildet ser BORT fra: autentiseringens sist-brukt-stempel
+#: settes av kjernen på hvert autentiserte kall, uansett modul. Alt annet
+#: i `api_tokener` måles fortsatt.
+EKSKLUDERTE_KOLONNER = {"api_tokener": ["last_used_at"]}
 
 
 def _radbilde(sup) -> dict[str, str]:
@@ -272,8 +292,12 @@ def _radbilde(sup) -> dict[str, str]:
         " AND c.relkind IN ('r','p') ORDER BY 1").fetchall()]
     bilde = {}
     for t in tabeller:
+        uttrykk = "to_jsonb(x)"
+        for kol in EKSKLUDERTE_KOLONNER.get(t, ()):
+            uttrykk += f" - '{kol}'"
         n, h = sup.execute(
-            f'SELECT count(*), coalesce(sum(hashtext(x::text)::bigint), 0)'
+            f'SELECT count(*),'
+            f' coalesce(sum(hashtext(({uttrykk})::text)::bigint), 0)'
             f' FROM public."{t}" x').fetchone()
         bilde[t] = f"{n}:{h}"
     sup.rollback()
@@ -357,6 +381,7 @@ def fasit() -> Path:
             "nye_revisjonsrader": rev_etter - rev_for,
             "fremmede_tabeller_sett": len(bilde_for),
             "endrede_tabeller": endret,
+            "ekskluderte_kolonner": EKSKLUDERTE_KOLONNER,
             "m16_definere": antall_definere,
             "volatile_definere": volatile,
         },

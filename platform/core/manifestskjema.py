@@ -9791,6 +9791,9 @@ def _grenser_m16_fasit(grense: dict, art: dict) -> list[str]:
     if not isinstance(endret, list) or set(endret) - set(
             grense["tillatt_endret"]):
         feil.append(f"lesekallet endret tabeller: {endret!r}")
+    if m.get("ekskluderte_kolonner") != grense["ekskluderte_kolonner"]:
+        feil.append("radbildet så bort fra andre kolonner enn de pinnede:"
+                    f" {m.get('ekskluderte_kolonner')!r}")
     if not isinstance(m.get("fremmede_tabeller_sett"), int) \
             or m["fremmede_tabeller_sett"] < grense["min_tabeller"]:
         feil.append("radbildet dekket ikke basen")
@@ -9882,6 +9885,9 @@ def _grenser_m16_ytelse(grense: dict, art: dict) -> list[str]:
 KRAVGRENSER["m16-fasit-v1"] = {
     "min_svar": 4, "min_tabeller": 50, "min_definere": 8,
     "tillatt_endret": M16_TILLATT_ENDRET,
+    # Autentiseringens sist-brukt-stempel settes av KJERNEN på hvert
+    # autentiserte kall; radbildet ser bort fra akkurat den kolonnen.
+    "ekskluderte_kolonner": {"api_tokener": ["last_used_at"]},
     "punktbinding": {
         "syntetisk_datasett_likt_lokalt": (
             "maalt.funnavvik", "maalt.svar", "maalt.tenanter"),
