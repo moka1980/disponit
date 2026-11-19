@@ -3804,6 +3804,8 @@ def _sjekk_grenser(krav_id: str, art: dict) -> list[str]:
         return feil + _M03_GRENSER[krav_id](grense, art)
     if krav_id in _M05_GRENSER:
         return feil + _M05_GRENSER[krav_id](grense, art)
+    if krav_id in _M08_GRENSER:
+        return feil + _M08_GRENSER[krav_id](grense, art)
     if krav_id in _M16_GRENSER:
         return feil + _M16_GRENSER[krav_id](grense, art)
     if krav_id == "feilinjisering-m01-v1":
@@ -10669,4 +10671,159 @@ _M03_GRENSER = {
 registrer_suitegrense(
     "m03_datakvalitet", "m03",
     ("platform/core/tests/test_m3_datakvalitet.py",),
+    min_tester=3000, min_andel_tester=20)
+
+
+# ===========================================================================
+# M-08 — KLASSE C I ADR-002 (tenantregister uten sveip), M-05-formen.
+#
+# Riggen går M-57-kjedens lovlige vei gjennom testsuitens egne hjelpere;
+# de tre testfilene er derfor en del av bevisroten sammen med produsenten.
+# ===========================================================================
+
+M08_MODULFILER: tuple[str, ...] = (
+    "platform/core/api/tidsvalg.py",
+    "platform/core/db/migrations/082_m8_tidsvalg.sql",
+    "platform/core/db/migrations/214_m8_evidens.sql",
+)
+M08_BEVISROT: tuple[str, ...] = (
+    "deploy/staging/m08-lest.py",
+    "platform/core/tests/test_m8_tidsvalg.py",
+    "platform/core/tests/test_m57_utsender.py",
+    "platform/core/tests/test_m57_utsending.py",
+)
+
+
+def m08_bevisrot_sha256() -> str:
+    h = hashlib.sha256()
+    for rel in M08_BEVISROT:
+        h.update(rel.encode("utf-8") + b"\x00")
+        h.update(hashlib.sha256((REPOROT / rel).read_bytes()).digest())
+    return h.hexdigest()
+
+
+def _m08_felles(art: dict) -> tuple[list[str], dict, dict]:
+    feil: list[str] = []
+    m = art.get("maalt") if isinstance(art.get("maalt"), dict) else None
+    o = art.get("oppsett") if isinstance(art.get("oppsett"), dict) else {}
+    if m is None:
+        return ["artefaktet mangler `maalt`"], {}, o
+    if o.get("modul") != "m08_kalender":
+        feil.append(f"oppsett.modul={o.get('modul')!r}")
+    if o.get("base") != "disponit_test@55432":
+        feil.append("lesten hører hjemme i disponit_test@55432")
+    try:
+        if o.get("bevisrot_sha256") != m08_bevisrot_sha256():
+            feil.append("bevisrot_sha256 er ikke de innsjekkede bytene i"
+                        " produsenten og riggens testhjelpere")
+    except OSError as e:
+        feil.append(f"bevisroten lot seg ikke hashe lokalt: {e}")
+    return feil, m, o
+
+
+def _grenser_m08_fasit(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m08_felles(art)
+    if not m:
+        return feil
+    # Felles form med M-05: tilstand, evidens per handling, aktør, hash.
+    m05lik = {**art, "oppsett": {**o, "modul": "m05_dokumentmal"}}
+    ut = [f for f in _grenser_m05_fasit(
+        {"min_dorkall": 0, "min_evidens": grense["min_evidens"]},
+        {**m05lik, "maalt": {**m, "dorkall": 0,
+                             "utfylling_lik_fasit": True,
+                             "gjenspill_feilet": 0}})
+        if "bevisrot" not in f and "oppsett.modul" not in f]
+    feil += ut
+    if m.get("utfall_lik_fasit") is not True:
+        feil.append("valgdørens utfall var ikke fasitens (valgt, slot_fullt,"
+                    " valgt / valgt)")
+    if m.get("gjenspill_utfall") != "valg_alt_registrert":
+        feil.append(f"gjenspillet ga {m.get('gjenspill_utfall')!r}, ikke"
+                    " det stille ja-et valg_alt_registrert")
+    return feil
+
+
+def _grenser_m08_feilinjisering(grense: dict, art: dict) -> list[str]:
+    feil, m, _o = _m08_felles(art)
+    if not m:
+        return feil
+    br = m.get("brudd")
+    if not isinstance(br, list) or len(br) < grense["min_brudd"] \
+            or m.get("injiserte") != len(br):
+        return feil + [f"krever minst {grense['min_brudd']} brudd"]
+    for b in br:
+        navn = b.get("brudd") if isinstance(b, dict) else "?"
+        if not isinstance(b, dict) or b.get("avvist") is not True:
+            feil.append(f"{navn}: ble ikke avvist")
+            continue
+        typet = (isinstance(b.get("sqlstate"), str)
+                 and len(b["sqlstate"]) == 5) or (
+                     isinstance(b.get("utfall"), str)
+                     and b["utfall"] != "valgt")
+        if not typet:
+            feil.append(f"{navn}: avvisningen var verken en SQLSTATE eller"
+                        " et navngitt utfall")
+        if b.get("urort") is not True:
+            feil.append(f"{navn}: en avvist dør etterlot spor")
+    return feil
+
+
+KRAVGRENSER["m08-fasit-v1"] = {
+    "min_evidens": 10,
+    "punktbinding": {
+        "syntetisk_datasett_likt_lokalt": (
+            "maalt.tilstandsavvik", "maalt.utfall_lik_fasit",
+            "maalt.gjenspill_urort"),
+        "revisjonslogg_korrekt": (
+            "maalt.evidens_avvik", "maalt.evidens_totalt",
+            "maalt.evidens_uten_aktor", "maalt.evidens_delte_input_hash"),
+    },
+}
+KRAVGRENSER["m08-feilinjisering-v1"] = {
+    "min_brudd": 5,
+    "punktbinding": {
+        "feilinjisering_til_unntakskø": ("maalt.brudd", "maalt.injiserte"),
+    },
+}
+KRAVGRENSER["m08-rollback-v1"] = {
+    "punktbinding": {
+        "rollback_testet": ("maalt.svar_like",
+                            "maalt.kandidat_baerer_riggen"),
+    },
+}
+KRAVGRENSER["m08-ytelse-v1"] = {
+    "min_kall": 200, "maks_p95_ms": 100.0,
+    "punktbinding": {
+        "ytelse_bestatt": ("maalt.p95_ms", "maalt.feilede", "maalt.riktige"),
+    },
+}
+for _krav in ("fasit", "feilinjisering", "rollback", "ytelse"):
+    ARTEFAKTSKJEMAER[f"m08-{_krav}-v1"] = f"artefakt-m08-{_krav}-skjema.json"
+
+
+def _grenser_m08_rollback(grense: dict, art: dict) -> list[str]:
+    feil, m, o = _m08_felles(art)
+    return feil + [f for f in _grenser_m05_rollback(
+        grense, {**art, "oppsett": {**o, "modul": "m05_dokumentmal",
+                                    "base": "disponit_test@55432"}})
+        if "bevisrot" not in f]
+
+
+def _grenser_m08_ytelse(grense: dict, art: dict) -> list[str]:
+    feil, _m, o = _m08_felles(art)
+    return feil + [f for f in _grenser_m05_ytelse(
+        grense, {**art, "oppsett": {**o, "modul": "m05_dokumentmal"}})
+        if "bevisrot" not in f]
+
+
+_M08_GRENSER = {
+    "m08-fasit-v1": _grenser_m08_fasit,
+    "m08-feilinjisering-v1": _grenser_m08_feilinjisering,
+    "m08-rollback-v1": _grenser_m08_rollback,
+    "m08-ytelse-v1": _grenser_m08_ytelse,
+}
+
+registrer_suitegrense(
+    "m08_kalender", "m08",
+    ("platform/core/tests/test_m8_tidsvalg.py",),
     min_tester=3000, min_andel_tester=20)
