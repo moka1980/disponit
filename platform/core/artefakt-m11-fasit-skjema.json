@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m11-fasit-v1.json",
+  "title": "m11-fasit-v1 — taushet varsles én gang per døgn til administratorene, jobbens grunnlag står med egne tall, målt fravær i revisjonsloggen (ADR-004 klasse F)",
+  "comment": "Produsert av deploy/staging/plattformvakt-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_pv_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m11-fasit-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "modul",
+        "runde",
+        "tenanter",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenanter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gjenspill_ny",
+        "gjenspill_urort",
+        "nye_revisjonsrader",
+        "rodvarsel_fordeling",
+        "rundeavvik",
+        "runder",
+        "skrivedor_execute",
+        "tabellskrivere",
+        "uteblitt_etter_fersk",
+        "uteblitt_fersk_fordeling",
+        "uteblitt_fordeling",
+        "uteblitt_forste",
+        "uteblitt_samme_dogn"
+      ],
+      "properties": {
+        "uteblitt_forste": {
+          "type": "integer"
+        },
+        "uteblitt_samme_dogn": {
+          "type": "integer"
+        },
+        "uteblitt_fordeling": {
+          "type": "object"
+        },
+        "uteblitt_etter_fersk": {
+          "type": "integer"
+        },
+        "uteblitt_fersk_fordeling": {
+          "type": "object"
+        },
+        "nye_revisjonsrader": {
+          "type": "integer"
+        },
+        "tabellskrivere": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skrivedor_execute": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runder": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "rundeavvik": {
+          "type": "integer"
+        },
+        "rodvarsel_fordeling": {
+          "type": "object"
+        },
+        "gjenspill_ny": {
+          "type": "integer"
+        },
+        "gjenspill_urort": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

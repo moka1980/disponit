@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://disponit.no/skjema/artefakt-m11-rollback-v1.json",
+  "title": "m11-rollback-v1 — forgjengerens og kandidatens jobbkode mot samme rigg (ADR-004)",
+  "comment": "Produsert av deploy/staging/plattformvakt-lest.py. `bestatt` er produsentens påstand; porten er manifestskjema._grenser_pv_*.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "krav_id",
+    "ts",
+    "bestatt",
+    "oppsett",
+    "maalt"
+  ],
+  "properties": {
+    "krav_id": {
+      "const": "m11-rollback-v1"
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bestatt": {
+      "type": "boolean"
+    },
+    "feil": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "oppsett": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base",
+        "bevisrot_sha256",
+        "forgjenger",
+        "kjerne_forgjenger",
+        "kjerne_kandidat",
+        "modul",
+        "modul_forgjenger",
+        "modul_kandidat",
+        "runde",
+        "vert"
+      ],
+      "properties": {
+        "modul": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vert": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bevisrot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "runde": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forgjenger": {
+          "type": "string"
+        },
+        "kjerne_forgjenger": {
+          "type": "string"
+        },
+        "kjerne_kandidat": {
+          "type": "string"
+        },
+        "modul_forgjenger": {
+          "type": "string"
+        },
+        "modul_kandidat": {
+          "type": "string"
+        }
+      }
+    },
+    "maalt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forgjenger",
+        "gjenspill_over_rulling",
+        "kandidat",
+        "lesedor_baerer_begge",
+        "svar_like"
+      ],
+      "properties": {
+        "forgjenger": {
+          "type": "object"
+        },
+        "kandidat": {
+          "type": "object"
+        },
+        "svar_like": {
+          "type": "boolean"
+        },
+        "gjenspill_over_rulling": {
+          "type": "integer"
+        },
+        "lesedor_baerer_begge": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
