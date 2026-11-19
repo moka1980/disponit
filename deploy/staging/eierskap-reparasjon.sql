@@ -252,6 +252,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm9_sok(text,text,integer)',                         'disponit_kunnskap_eier'),
     ('FUNCTION', 'm9_apne_funn(text,integer)',                        'disponit_kunnskap_eier'),
     ('FUNCTION', 'm9_sveip_utlopte(integer)',                         'disponit_kunnskap_eier'),
+    ('FUNCTION', 'm9_begrep_evidens()',                               'disponit_kunnskap_eier'),
     -- 096 (M-21): pliktregisterets doerer og fristsveipen. NOLOGIN-eieren
     -- `disponit_plikt_eier` eier funksjonene, ikke tabellene -- de tre
     -- tabellene er migrators, som 089/090/091-familien. Eierskapet ER

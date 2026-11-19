@@ -1178,8 +1178,11 @@ def test_alle_fem_dorene_eies_av_modulens_egen_rolle(migrator):
         " JOIN pg_roles r ON r.oid = p.proowner"
         " WHERE p.proname LIKE 'm9\\_%' AND p.prosecdef").fetchall())
     migrator.rollback()
+    # + evidenstriggeren fra 212 (ADR-002): ingen dør, men en
+    # SECURITY DEFINER-funksjon som skriver revisjonsloggen som eieren.
     assert set(rader) == {"m9_registrer_begrep", "m9_ny_begrepsversjon",
-                          "m9_sok", "m9_apne_funn", "m9_sveip_utlopte"}
+                          "m9_sok", "m9_apne_funn", "m9_sveip_utlopte",
+                          "m9_begrep_evidens"}
     assert set(rader.values()) == {"disponit_kunnskap_eier"}
 
     eierskap = (ROT / "deploy" / "staging" / "eierskap-reparasjon.sql") \
