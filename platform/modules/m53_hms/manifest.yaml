@@ -45,8 +45,8 @@
 id: m53_hms
 navn: HMS- og avviksmottak
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: grensen `m53-v1` bærer invarianten
 # `varsler_identitet_lekket`, og M-30 står her fordi konflikten mellom
 # oppbevaringsplikt og sletteplikt er REELL og må avklares i koden.

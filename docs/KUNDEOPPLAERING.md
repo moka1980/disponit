@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **29 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **33 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,10 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Personvernforespørsler (M-30)** | Innsyns- og sletteforespørsler som har passert fristen eller nærmer seg den, og forespørsler som ikke peker på noen lagre | Sletter ingenting og svarer ikke på egen hånd. En forespørsel lukkes av et skrevet svar, aldri av at fristen går ut. |
+| **Postjournal og innsyn (M-50)** | Journalposter mot en kilde som har utløpt, kilder som snart utløper, og personopplysninger der slettefristen er passert eller nærmer seg | Publiserer ingenting og anonymiserer ikke selv. Anonymisering er en egen handling med navn på. |
+| **HMS og avvik (M-53)** | Regelverk som har utløpt eller snart utløper, avvik der oppbevaringstiden snart går ut, og avvik som ble anonymisert for tidlig | Lukker ingen avvik og melder ikke videre til myndigheter. |
+| **Retensjon (M-04)** | Plattformens egne lagre: lagre uten skrevet slettedom, lagre som ikke lot seg måle, og sletting som henger etter fristen | Sletter ingenting. Viser hvor data ligger og hvor lenge, slik at personvernforespørsler vet hvilke lagre de gjelder. |
 | **Kontrollregister / compliance (M-34)** | Kontroller som ikke er etterprøvd innen fristen, og kontroller der eieren ikke lenger er med i firmaet | Etterprøver ikke selv og attesterer ingenting. «Oppfylt» krever en etterprøving med dato og evidenshenvisning. |
 | **Likviditet (M-15)** | Prognoser som bygger på et grunnlag eldre enn grensen, prognoser der banen går under null, prognoser mot en modell som ikke gjelder lenger, og modeller som snart utløper | Flytter ingen penger og tar ikke opp lån. Prognosen er et øyeblikksbilde: lag en ny når grunnlaget har endret seg. |
 | **Nettside og innhold (M-20)** | Utkast som er merket klare uten at noen har sett dem, og kilder som snart utløper mens de bærer en publisert påstand | Publiserer ingenting av seg selv. Publisering krever en forhåndsvisning av nøyaktig det som publiseres. |
@@ -207,6 +211,9 @@ i enhver opplæringsøkt.
 | Sanksjonskontroll | «Lagre policy» → «Registrer listeversjon» | Matchterskel og frister — kunden velger selv |
 | Tollklassifisering | «Lagre terskler» → «Lagre regelverk» | Sikkerhetsterskelen — kunden velger selv |
 | EHF-kontroll | «Lagre terskler» → «Lagre regelsett» | Utløpsvarsel og avviksfrist |
+| Personvern | «Registrer forespørsel» | Hvem som spør, hva slags forespørsel, når den kom, og hvilke lagre den gjelder |
+| Postjournal | «Lagre grenser» → «Registrer kilde» | Varselfrister, så kilden journalpostene hentes fra |
+| HMS og avvik | «Lagre grensene» → «Meld avviket» | Varselfrister og regelverket avvikene meldes mot |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som
