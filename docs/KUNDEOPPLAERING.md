@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **36 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **39 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,9 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Datakvalitet (M-03)** | Tomme felt, feil format og duplikater i plattformens egne tabeller, målt mot faste regler — og regler som ikke lot seg måle | Retter ingenting, slår ingenting sammen og stopper ingen bestilling. Et funn forsvinner når dataene er rettet og neste måling ikke finner det igjen. |
+| **Dokumentmaler (M-05)** | Malfamilier og versjoner gjennom utkast, publisert, tilbaketrukket og forkastet; utfylling fra en publisert mal | Skriver ingen dokumenter av seg selv og dikter ikke felt: et felt uten verdi markeres som manglende. En publisert versjon kan aldri endres — en endring er en ny versjon. |
+| **Ordliste (M-09)** | Begreper som har gått ut på dato eller snart gjør det | Skriver ikke begreper selv. Ordlisten fylles av plattformen; en endring er en ny versjon, og den gamle består. |
 | **Nøkkeltall (M-16)** | Tellinger over det som faktisk har skjedd: beslutninger, unntak åpnet og lukket, og hvor lang tid lukkingen tok, for 24 timer, 7 eller 30 dager | Analyserer ikke og spår ingenting. Tallene er tellinger over rader som finnes, og andelene står ved siden av tellingene de er regnet fra. |
 | **Tilskudd (M-51)** | Aktive ordninger uten estimat, estimater uten beløp eller over ordningens tak, og søknadsfrister som nærmer seg eller er passert | Søker ikke på egen hånd og lover ingen utbetaling. Et estimat er et anslag til den som skal søke. |
 | **Tilganger (M-12)** | Tilganger som har stått lenger enn sin egen gjennomgangsfrist uten at noen navngitt har sett på dem | Oppretter, flytter og fjerner ingen tilganger. En gjennomgang er en attestasjon fra et navngitt menneske, datert i dag. |
@@ -219,6 +222,7 @@ i enhver opplæringsøkt.
 | HMS og avvik | «Lagre grensene» → «Meld avviket» | Varselfrister og regelverket avvikene meldes mot |
 | Tilganger | «Registrer objekt» → «Registrer tilgang» | Systemet, så hvem som har tilgang, med eier, hjemmel og hvor ofte den skal gjennomgås |
 | Tilskudd | «Lagre terskler» → «Aktiver ordning» | Varselfrister, så hvilke ordninger dere følger |
+| Dokumentmaler | «Opprett malfamilie» → «Publiser versjonen» | En familie, en versjon med tekst og felt, og publisering før den kan fylles ut |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 
 **En ting som overrasker:** skriveknappene vises bare for brukere som

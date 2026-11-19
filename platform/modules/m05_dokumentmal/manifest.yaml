@@ -23,12 +23,15 @@
 #     klausulkomponent merket låst kan ikke endres av utfyllingen, og
 #     forsøket er urepresenterbart framfor usannsynlig.
 #
-# TO AKSER, ÆRLIG LEST: ingen aksepthendelse, ingen kode, ingen release.
+# KODEN FINNES (094 + 177, `platform/core/api/dokumentmal.py`), og fra
+# 213 skriver hver dør sin hendelse i evidenskjeden. ADR-002 plasserer
+# M-5 i klasse C (tenantregister uten sveip): lesten er
+# `deploy/staging/m05-lest.py`.
 id: m05_dokumentmal
 navn: Dokument- og malagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i v1: malregisteret er et lager med dører, det
 # bestiller ingenting gjennom policyporten. Utfyllingen returnerer
 # tekst; den sender ingenting og beslutter ingenting. Blir utsending en
@@ -39,34 +42,99 @@ i18n_prefiks: dokumentmal
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m05-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m05-suite-v1-20261119T112452Z.json
+    artefakt_sha256: e30510c33c16c0908b0c44dfac394c894e1571d9f9a8ce85d9d5a86c71125dba
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 39 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 19/11 PÅ disponit.com med `deploy/staging/m05-lest.py` (ADR-002
+    # klasse C) i den isolerte basen på 55432, bygget fra commiten som måles.
+    # Fasiten er en KJENT DØRSEKVENS i to tenanter, kalt som runtime: tre
+    # familier, fire versjoner gjennom alle fire statusene. Sluttilstanden er
+    # re-regnet av radene.
+    status: ja
+    krav_id: m05-fasit-v1
+    bevismaalinger:
+      - maalt.tilstandsavvik
+      - maalt.dorkall
+      - maalt.utfylling_lik_fasit
+      - maalt.gjenspill_urort
+    artefakt: deploy/staging/artefakter/m05-fasit-v1-20261119T110951Z.json
+    artefakt_sha256: 4bb2e81148dae85370670c270995d09e621e3a44cbc150e6f6858573f0629777
     notat: >-
-      KREVER: et malsett med KJENT fasit for hvilke felt som skal
-      merkes manglende og hvilke klausuler som er låste, fylt ut likt
-      lokalt og på staging med begge datasett-identitetene bundet.
+      11 dørkall, 0 tilstandsavvik. Utfyllingen av den publiserte malen
+      ga fasitens tekst. Gjenspill av hver skrivende dør var et stille ja:
+      ingen nye rader og ingen nye hendelser.
   revisjonslogg_korrekt:
-    status: nei
+    # ADR-002 D1: hver dør som endrer tenanttilstand skriver én hendelse.
+    # Triggerne i 213 (211/212-formen) dekker fødsel og hver statusovergang;
+    # publiseringen pinner sha256 over innholdet som ble frosset.
+    status: ja
+    krav_id: m05-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_avvik
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m05-fasit-v1-20261119T110951Z.json
+    artefakt_sha256: 4bb2e81148dae85370670c270995d09e621e3a44cbc150e6f6858573f0629777
     notat: >-
-      KREVER: avklaring av hva punktet betyr for en modul som per v1
-      ikke beslutter noe. Malversjonene er append-only og sporet i sitt
-      eget lager; om det er «revisjonslogg korrekt» i punktets forstand
-      er en arkitektdom. Står nei framfor å låne en tolkning.
+      11 hendelser, nøyaktig som ventet per handling og tenant (0 avvik);
+      0 uten riktig aktør og 0 delte input_hash.
   feilinjisering_til_unntakskø:
-    status: nei
+    # ADR-002 D2, KLASSE C: et vaktbrudd skal avvises TYPET, uten delvis
+    # skriving og uten en evidensrad.
+    status: ja
+    krav_id: m05-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m05-feilinjisering-v1-20261119T110951Z.json
+    artefakt_sha256: 8d53ff7069278da8038aa0161af5d590c1567882662a713a3459380f41b7bf60
     notat: >-
-      KREVER: en jobb eller arbeider å injisere feil i. v1 har ingen —
-      malregisteret er dører og lesevei, ingen kø.
+      Fem brudd: publiser_publisert (23000), trekk_tilbake_utkast (23000), materiell_idempotenskonflikt (23505), dor_uten_tenantkontekst (42501), endre_publisert_innhold (42501).
+      Alle avvist, og digesten over modulens fire tabeller og
+      revisjonsloggen var uendret etter hvert.
   ytelse_bestatt:
-    status: nei
+    # ADR-002 D4: utfyllingsdøra — den kundene faktisk bruker — under last.
+    status: ja
+    krav_id: m05-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.feilede
+      - maalt.riktige
+    artefakt: deploy/staging/artefakter/m05-ytelse-v1-20261119T110954Z.json
+    artefakt_sha256: b999f0b0ba0b6d008a5eed49162e9d5a4e6b4800cebbb9c941a7600a4fbf50e6
     notat: >-
-      KREVER: pinnet grense for utfyllingskostnaden per dokument og en
-      målt kjøring mot den. Ingen grense pinnet.
+      200 utfyllinger: p50 0.654 ms, p95 0.861 ms (taket er 100 ms); 0 feilede,
+      200 med fasitens tekst.
   rollback_testet:
-    status: nei
+    # ADR-002 D3. Forgjengeren MÅ kjenne 213: oppstartsvakten nekter en kjerne
+    # å starte på en base med ukjente migrasjoner (målt 19/11), så en rollback
+    # forbi en migrasjon er sperret med vilje. Forgjengeren er releasen som
+    # innførte 213.
+    status: ja
+    krav_id: m05-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.kandidat_baerer_riggen
+    artefakt: deploy/staging/artefakter/m05-rollback-v1-20261119T110953Z.json
+    artefakt_sha256: 0f878c929cd664800dfb56a5ddf43e3b3ce3c0bedfa435f5f9792dd834c50adb
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Kjerne 49bd423eaa6e ← forgjenger 95d0965ff25b: begge svarte
+      200 på GET /v1/dokumentmal med like svar, og svaret bærer riggens versjoner.

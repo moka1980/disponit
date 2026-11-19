@@ -1,0 +1,26 @@
+{
+  "bestatt": true,
+  "krav_id": "m05-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 39,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m5_malregister.py",
+      "platform/core/tests/test_m5_forkast_port.py",
+      "platform/core/tests/test_m5_editor_port.py"
+    ],
+    "bevisrot_sha256": "88d7c42fc561d9238f59c147b928050cccc70c388887d150b43a901971bd4c10",
+    "commit": "dcd5c843aca74d5100b0aeeffb0305c2fdd1f02c",
+    "modul": "m05_dokumentmal",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:24:52.468865+00:00"
+}

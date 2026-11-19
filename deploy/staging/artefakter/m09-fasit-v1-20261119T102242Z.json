@@ -1,0 +1,81 @@
+{
+  "bestatt": true,
+  "krav_id": "m09-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "begrep.ny_versjon": 1,
+      "begrep.registrert": 6
+    },
+    "evidens_totalt": 7,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "utlopt"
+        ],
+        "merke": "utlopt",
+        "subjekt_id": "56faaa74-3549-4e84-bf12-3b2b31c2bd3c",
+        "ventet": "utlopt"
+      },
+      {
+        "fikk": [
+          "utloper_snart"
+        ],
+        "merke": "snart",
+        "subjekt_id": "de32dae0-f436-4325-a454-1c640f2390bd",
+        "ventet": "utloper_snart"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "ad970556-7739-4ce6-a378-f41f208b019f",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "b82d3c31-ce67-4833-9fa6-2c6b0d87549d",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "utlopt"
+        ],
+        "merke": "utlopt_b",
+        "subjekt_id": "041c9b52-d6e5-4a37-8c5e-3fc78c1e028d",
+        "ventet": "utlopt"
+      },
+      {
+        "fikk": [],
+        "merke": "ok_b",
+        "subjekt_id": "1af36796-1919-483c-94e2-61ebdaf24382",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 6,
+    "sveip1_nye": 4,
+    "sveip1_tenanter": 2,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 3
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f6464a84247a146b3d478526a6baa7acc92ef48c001c38fde49ebdd0ad8ca240",
+    "evidenskilde": "m09_kunnskap",
+    "modul": "m09_kunnskap",
+    "riggmodul": "m09_fasit",
+    "runde": "54a37232",
+    "sett_sha256": "2c96d543031a242bdcc3956804b3159f01739dbec19905ddec4ae828f764e1e0",
+    "tenanter": [
+      "t-m09fasit-a-54a37232",
+      "t-m09fasit-b-54a37232"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T10:22:42.407063+00:00"
+}

@@ -36,13 +36,13 @@ export const MODULSTATUS = {
   // og ingen av dem flippes av en byggemilepæl — bare av en aksept.
   3: "i_drift",    // m03_datakvalitet: aktiv, produksjon
   4: "i_drift",    // m04_dataforvalter: aktiv, produksjon
-  5: "bygges",      // m05_dokumentmal: under_utvikling, ikke_i_drift
+  5: "i_drift",    // m05_dokumentmal: aktiv, produksjon
   6: "i_drift",     // m06_epost: aktiv, produksjon — alle seks punkter ja 17/9
                     // (rollback i kjerne-form; fasit og suite målt på nytt etter 210)
   8: "bygges",      // m08_kalender: under_utvikling, ikke_i_drift —
                     // v1 er tidsvalg-benen (082); flippes av en
                     // M-8-aksept, aldri av en byggemilepæl
-  9: "bygges",      // m09_kunnskap: under_utvikling, ikke_i_drift
+  9: "i_drift",    // m09_kunnskap: aktiv, produksjon
   // KLYNGE 2 «tilgang, lisens og etterlevelse» (097-100) — registrert
   // 1/9 sammen med grensene m12-v1…m34-v1. Samme trygge form som
   // klynge 1: alle fire er REGISTRE og MÅLERE, ingen av dem er en ny

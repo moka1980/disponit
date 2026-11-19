@@ -1,0 +1,58 @@
+{
+  "bestatt": true,
+  "krav_id": "m09-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 7,
+    "apne_for": 7,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "utloper_snart": [
+        2,
+        0
+      ],
+      "utlopt": [
+        5,
+        1
+      ]
+    },
+    "per_type_for": {
+      "utloper_snart": [
+        2,
+        0
+      ],
+      "utlopt": [
+        5,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 4
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "begrepsfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m9_sveip_utlopte(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_kunnskap_eier",
+    "modul": "m09_kunnskap",
+    "riggmodul": "m09_fasit",
+    "riggtenanter": [
+      "t-m09fasit-a-340085f8",
+      "t-m09fasit-b-340085f8"
+    ],
+    "runde": "340085f8",
+    "sveipedor": "m9_sveip_utlopte(int)",
+    "tenantkilde": [
+      "begrep"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T10:22:43.117790+00:00"
+}
