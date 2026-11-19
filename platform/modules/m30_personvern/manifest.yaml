@@ -51,9 +51,25 @@ i18n_prefiks: personvern
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m30-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m30-suite-v1-20261119T012155Z.json
+    artefakt_sha256: 8107f5825d1624524d75a683c821cd3219a06762c404563afbc9a32cd62a7050
     notat: >-
-      SUITEN KJØRER.
+      5556 tester, 0 feilet, 0 hoppet; modulens andel 35 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 19/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m30_fasit.py`:
