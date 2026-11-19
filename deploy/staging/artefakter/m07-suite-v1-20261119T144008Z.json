@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m07-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 42,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m7_moteoperasjon.py"
+    ],
+    "bevisrot_sha256": "0516cabfd1c927997260d5910e742fd674e05a59e0a057131c9eb0653467b1f0",
+    "commit": "137bdd34cbb1f0fbda9f9c1f7c68f199a8a81814",
+    "modul": "m07_moteoperasjon",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T14:40:08.941878+00:00"
+}
