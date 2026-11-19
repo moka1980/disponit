@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m08-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 20,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m8_tidsvalg.py"
+    ],
+    "bevisrot_sha256": "c77d7a76af4e2e4caf3cd660bfc6fc9a94c0b1a6f6dbe53efe68b1edd49342cd",
+    "commit": "9b7c2fce87a3cb680b05eee87fa9e662d6a607a0",
+    "modul": "m08_kalender",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T13:18:41.861943+00:00"
+}
