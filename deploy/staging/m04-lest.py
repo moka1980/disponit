@@ -102,10 +102,12 @@ def _skriv(krav: str, art: dict) -> Path:
     art["krav_id"] = krav
     art["ts"] = datetime.now(timezone.utc).isoformat()
     art.setdefault("feil", [])
+    # Formatet valideres med `bestatt` på plass (skjemaet krever feltet);
+    # dommen settes etterpå, av feillisten.
+    art["bestatt"] = True
     art["feil"] = sorted(set(art["feil"]
                              + valider_artefaktformat(art, krav)
-                             + _sjekk_grenser(krav, {**art,
-                                                     "bestatt": True})))
+                             + _sjekk_grenser(krav, art)))
     art["bestatt"] = not art["feil"]
     UT.mkdir(parents=True, exist_ok=True)
     navn = (f"{krav}-"
