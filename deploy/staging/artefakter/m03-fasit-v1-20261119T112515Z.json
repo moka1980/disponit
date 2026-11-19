@@ -1,0 +1,162 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m03-fasit-v1",
+  "maalt": {
+    "endrede_fremmede_tabeller": [],
+    "fremmede_tabeller_sett": 372,
+    "funnavvik": 0,
+    "funnavvik_forste": 0,
+    "funntyper_dekket": [
+      "regel_uten_kolonne",
+      "terskel_overskredet",
+      "ukjent_tabell",
+      "umaalbar"
+    ],
+    "kjoring1_fullfort": true,
+    "kjoring1_nye": 6,
+    "kjoring2_fullfort": true,
+    "kjoring2_lukkede": 1,
+    "kjoring2_nye": 0,
+    "maaler_execute_grants": [
+      "m3_profiler"
+    ],
+    "nye_revisjonsrader": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "terskel_overskredet"
+        ],
+        "merke": "terskel_a",
+        "regel_id": "fm3_977d335d.terskel.ikke_tom",
+        "ventet": "terskel_overskredet"
+      },
+      {
+        "fikk": [
+          "terskel_overskredet"
+        ],
+        "merke": "terskel_b",
+        "regel_id": "fm3_977d335d.terskel.ikke_tom",
+        "ventet": "terskel_overskredet"
+      },
+      {
+        "fikk": [
+          "umaalbar"
+        ],
+        "merke": "umaalbar",
+        "regel_id": "fm3_977d335d.umaal.ikke_tom",
+        "ventet": "umaalbar"
+      },
+      {
+        "fikk": [
+          "ukjent_tabell"
+        ],
+        "merke": "ukjent_tabell",
+        "regel_id": "fm3_977d335d.borte.ikke_tom",
+        "ventet": "ukjent_tabell"
+      },
+      {
+        "fikk": [
+          "regel_uten_kolonne"
+        ],
+        "merke": "uten_kolonne",
+        "regel_id": "fm3_977d335d.ukol.ikke_tom",
+        "ventet": "regel_uten_kolonne"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "regel_id": "fm3_977d335d.ren.ikke_tom",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "regel_id": "fm3_977d335d.ok.ikke_tom",
+        "ventet": null
+      }
+    ],
+    "per_subjekt_forste": [
+      {
+        "fikk": [
+          "terskel_overskredet"
+        ],
+        "merke": "terskel_a",
+        "regel_id": "fm3_977d335d.terskel.ikke_tom",
+        "ventet": "terskel_overskredet"
+      },
+      {
+        "fikk": [
+          "terskel_overskredet"
+        ],
+        "merke": "terskel_b",
+        "regel_id": "fm3_977d335d.terskel.ikke_tom",
+        "ventet": "terskel_overskredet"
+      },
+      {
+        "fikk": [
+          "umaalbar"
+        ],
+        "merke": "umaalbar",
+        "regel_id": "fm3_977d335d.umaal.ikke_tom",
+        "ventet": "umaalbar"
+      },
+      {
+        "fikk": [
+          "ukjent_tabell"
+        ],
+        "merke": "ukjent_tabell",
+        "regel_id": "fm3_977d335d.borte.ikke_tom",
+        "ventet": "ukjent_tabell"
+      },
+      {
+        "fikk": [
+          "regel_uten_kolonne"
+        ],
+        "merke": "uten_kolonne",
+        "regel_id": "fm3_977d335d.ukol.ikke_tom",
+        "ventet": "regel_uten_kolonne"
+      },
+      {
+        "fikk": [
+          "terskel_overskredet"
+        ],
+        "merke": "ren",
+        "regel_id": "fm3_977d335d.ren.ikke_tom",
+        "ventet": "terskel_overskredet"
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "regel_id": "fm3_977d335d.ok.ikke_tom",
+        "ventet": null
+      }
+    ],
+    "registerskrivere": [],
+    "revisjonsrader_etter": 0,
+    "revisjonsrader_for": 0,
+    "subjekter": 7
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "18b8eb92efbea025af3df193f0149892f5ead2b074509a51ddf4ae35b1ed2e86",
+    "modul": "m03_datakvalitet",
+    "regler": {
+      "ok": "fm3_977d335d.ok.ikke_tom",
+      "ren": "fm3_977d335d.ren.ikke_tom",
+      "terskel_a": "fm3_977d335d.terskel.ikke_tom",
+      "terskel_b": "fm3_977d335d.terskel.ikke_tom",
+      "ukjent_tabell": "fm3_977d335d.borte.ikke_tom",
+      "umaalbar": "fm3_977d335d.umaal.ikke_tom",
+      "uten_kolonne": "fm3_977d335d.ukol.ikke_tom"
+    },
+    "runde": "977d335d",
+    "tenanter": {
+      "a": "t-m03fasit-a-977d335d",
+      "b": "t-m03fasit-b-977d335d",
+      "p": "__plattform_kvalitet"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:25:15.359297+00:00"
+}
