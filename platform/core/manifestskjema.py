@@ -10990,7 +10990,8 @@ registrer_suitegrense(
 #
 # M-38 skriver ingenting eget. Fasiten er en KJENT KØ drenert gjennom den
 # ekte claim-funksjonen, og memoiseringen målt som antall skjemavandringer.
-# Revisjonsloggen er MÅLT FRAVÆR: en claim endrer bare køtabellen.
+# Revisjonsloggen er MÅLT FRAVÆR: en claim endrer bare køtabellen og sin
+# egen historikk, og ingen revisjonsrad skrives av krokene.
 # ===========================================================================
 
 M38_MODULFILER: tuple[str, ...] = (
@@ -11051,7 +11052,11 @@ def _grenser_m38_fasit(grense: dict, art: dict) -> list[str]:
     feil += _m04_er(m, "cache_ny_versjon_valideringer", 1)
     # MÅLT FRAVÆR: en claim endrer køtabellen og ingenting annet, og ingen
     # av krokene skriver en revisjonsrad.
-    feil += _m04_er(m, "claim_endrede_tabeller_sak", ["unntak"])
+    # `unntak_historikk` er claimens EGEN revisjon (003/005, lenge før
+    # M-38): hver statusovergang på en sak fører en historikkrad. Målt
+    # 19.11.2026 — kroken legger ingen tabell til de to.
+    feil += _m04_er(m, "claim_endrede_tabeller_sak",
+                    ["unntak", "unntak_historikk"])
     feil += _m04_er(m, "claim_endrede_tabeller_oppdrag", ["oppdrag"])
     feil += _m04_er(m, "nye_revisjonsrader_claim", 0)
     feil += _m04_er(m, "nye_revisjonsrader_cache", 0)

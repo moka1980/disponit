@@ -505,6 +505,8 @@ rekke = []
 while True:
     c = koble(dsn)
     cid = secrets.token_hex(16)
+    c.execute("SELECT set_config('disponit.aktor','m37-arbeider',true),"
+              " set_config('disponit.request_id',%s,true)", (cid,))
     rad = c.execute("SELECT tenant, id FROM claim_neste_sak(%s,120)",
                     (cid,)).fetchone()
     c.commit(); c.close()

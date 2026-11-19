@@ -38,8 +38,10 @@ bevisroten, som for M-08.
 - **Memoisering:** 50 lesinger av samme innhold gir én skjemavandring, og en
   ny versjon gir én til.
 
-**G2. Revisjonslogg: målt fravær.** En claim endrer **køtabellen og
-ingenting annet**. Dette måles fra innsiden av transaksjonen med
+**G2. Revisjonslogg: målt fravær.** En claim endrer **køtabellen og sin
+egen historikk, og ingenting annet**. For sakskøen er det `unntak` og
+`unntak_historikk`, som har ført claimens overganger siden lenge før M-38.
+For oppdragskøen er det bare `oppdrag`. Dette måles fra innsiden av transaksjonen med
 `pg_stat_xact_user_tables`. Hverken claimene eller lesingene skriver en
 revisjonsrad. Claimen selv er allerede auditert av kjernen. M-38 legger
 ikke til noen skrivevei, og det er nettopp det som måles.
