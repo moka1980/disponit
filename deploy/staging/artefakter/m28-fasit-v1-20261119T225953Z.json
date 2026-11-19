@@ -1,0 +1,77 @@
+{
+  "bestatt": true,
+  "krav_id": "m28-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "foresla": 3,
+      "forkast": 1,
+      "registrer_kolli": 5,
+      "sett_krav": 2
+    },
+    "evidens_totalt": 11,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "apent_forslag_over_frist"
+        ],
+        "merke": "forslag",
+        "subjekt_id": "6b471546-23a7-43ae-80cf-cf0c71dc6663",
+        "ventet": "apent_forslag_over_frist"
+      },
+      {
+        "fikk": [
+          "kolli_uten_forslag"
+        ],
+        "merke": "kolli",
+        "subjekt_id": "5b5b9af0-ddcf-406d-ab60-31bf2d4b8c41",
+        "ventet": "kolli_uten_forslag"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "95e97be3-7b1d-410e-bf6c-946099262089",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "b361e5b9-5ef3-4dea-b3bc-9ab338a55209",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "kolli_uten_forslag"
+        ],
+        "merke": "kolli_b",
+        "subjekt_id": "4ed8ee80-5855-4908-a65f-b2bbb11effea",
+        "ventet": "kolli_uten_forslag"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 4,
+    "sveip1_tenanter": 3,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "f3e124284a918ee9f84e6af4e5f4e29dd9493d96d5b5d388d82dbee8750af440",
+    "evidenskilde": "m28_transport",
+    "modul": "m28_transport",
+    "riggmodul": "m28_fasit",
+    "runde": "47413fdd",
+    "sett_sha256": "ae5a112ed0668bb054273180ee06efa0b3b951c92aaed95f13603d5fc86893ef",
+    "tenanter": [
+      "t-m28fasit-a-47413fdd",
+      "t-m28fasit-b-47413fdd"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T22:59:53.952181+00:00"
+}

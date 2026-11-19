@@ -1,0 +1,78 @@
+{
+  "bestatt": true,
+  "krav_id": "m29-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "foresla_inngrep": 3,
+      "korreler": 5,
+      "registrer_playbook": 2,
+      "registrer_regel": 2,
+      "sett_krav": 2
+    },
+    "evidens_totalt": 14,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "hendelse_uten_forslag"
+        ],
+        "merke": "uten_forslag",
+        "subjekt_id": "a8660573-1164-45d1-8cc1-b0eac3271f92",
+        "ventet": "hendelse_uten_forslag"
+      },
+      {
+        "fikk": [
+          "apen_hendelse_over_frist"
+        ],
+        "merke": "over_frist",
+        "subjekt_id": "209ceb33-82cc-4656-9dd8-0dfea0cf241f",
+        "ventet": "apen_hendelse_over_frist"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "f509fd3b-616a-4300-a328-2287149c8972",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "61d8c094-26ad-46fa-b530-973d59eb89c1",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "hendelse_uten_forslag"
+        ],
+        "merke": "uten_forslag_b",
+        "subjekt_id": "7e5c60cc-5832-48c9-a95a-354f29595cc2",
+        "ventet": "hendelse_uten_forslag"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 10,
+    "sveip1_tenanter": 9,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 13
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5c717f3a73ae694629fed6297f17681a38fdc73e69d784fad4d498e1fd22d913",
+    "evidenskilde": "m29_hendelse",
+    "modul": "m29_hendelse",
+    "riggmodul": "m29_fasit",
+    "runde": "39e21c5e",
+    "sett_sha256": "5e71019a8b73b8a317a523a80569821a642c3d591421daaf0923af874be1de86",
+    "tenanter": [
+      "t-m29fasit-a-39e21c5e",
+      "t-m29fasit-b-39e21c5e"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T23:00:37.419703+00:00"
+}

@@ -51,28 +51,120 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 20/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m32_fasit.py`:
+    #
+    # M-32s fasitsett: fire subjekter i tre tenanter med KJENT dom.
+    #
+    # Skatteregisteret har ni funntyper på `referanse`. Fire er utelukket av
+    # datamodellen, tre måler LANDPAKKENE — plattformdommer felt i migrasjon —
+    # og `krav_mangler` har ingen skriver (se `UNAABARE`). Den siste,
+    # `stor_vurdering_ukontrollert`, rigges på `vurdering_id`:
+    #
+    #   tenant a (kontrollgrense 1 000 øre, frist 1 døgn)
+    #     1. `stor_vurdering_ukontrollert` — 500 000 øre, eldet ti døgn
+    #     2. (ok)                          — 500 øre, eldet ti døgn: under
+    #                                        grensen
+    #   tenant b (kontrollgrense 2 000 øre, frist 2 døgn)
+    #     3. `stor_vurdering_ukontrollert` — samme regel
+    #   tenant c (kontrollgrense 1 500 øre, frist 1 døgn)
+    #     4. (ren)                         — som 1; GRENSEN HEVES mellom
+    #                                        kjøringene
+    #
+    # DEN RENE BOR I EGEN TENANT. Modulen kan ikke rette en beregning, og en
+    # vurdering kan ikke «kontrolleres» bort: funnet lukkes bare når tenanten
+    # hever grensen sin. Det ville lukket alle funn i samme tenant.
+    #
+    # ALDEREN SETTES SOM MIGRATOR, testsuitens vei: `beregnet_ts` har DEFAULT
+    # now() og settes aldri av kalleren, og `test_m32_skatt.py` flytter den med
+    # en vanlig UPDATE (M-12/M-40-presedensen). Ingen vakt skrus av. Adressen
+    # skrives også som migrator, som i suiten: M-19s dører er ikke M-32s.
+    status: ja
+    krav_id: m32-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m32-fasit-v1-20261119T230004Z.json
+    artefakt_sha256: 3b53c251bc78eea1431e67613cc7857c827c424f862d0cfda1adc641533cdbd1
     notat: >-
-      KREVER: to landpakker der den ene er KOMPLETT og den andre ikke,
-      slik at porten kan måle at den ufullstendige ikke gir en sats.
+      Runde ef31bf16: 4 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m32-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m32-fasit-v1-20261119T230004Z.json
+    artefakt_sha256: 3b53c251bc78eea1431e67613cc7857c827c424f862d0cfda1adc641533cdbd1
     notat: >-
-      KREVER: at hver beregning kan spores til regelversjonen som
-      gjaldt da den ble gjort — ikke til den nyeste.
+      8 hendelser i kjeden (beregn: 4, sett_krav: 4), 0 uten aktør, 0 som
+      deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m32-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m32-feilinjisering-v1-20261119T230006Z.json
+    artefakt_sha256: c180cdae36199491733efe17665193075df3e9f1d28adf8788958530771efc6e
     notat: >-
-      KREVER: at en transaksjon med usikker jurisdiksjon gir et funn
-      og ingen sats.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 6 åpne og 1 lukkede over 7 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m32-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m32-ytelse-v1-20261119T230005Z.json
+    artefakt_sha256: 6e22403268f07d9a539f806b5bfc89b1c536fe76723ef443da6f53a2f2a5b68c
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0347 / 0,0553 / 0,0485 s) over 4 tenanter; den
+      DÅRLIGSTE er dommen. 0,0553 s mot taket på 60 — 0,0138 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m32-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m32-rollback-v1-20261119T230009Z.json
+    artefakt_sha256: 0f9f371f895434faf888991961e82d2d79bab6cb5d4029c43142deb28e04f815
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 77a7b249 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 3 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

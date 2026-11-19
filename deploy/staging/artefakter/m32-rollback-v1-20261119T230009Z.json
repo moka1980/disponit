@@ -1,0 +1,62 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf/platform/drift/skattesveip.py",
+    "avbrutt_pid": 606853,
+    "kandidat_fil": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf/platform/drift/skattesveip.py",
+    "kandidat_pid": 607039,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/skattesveip.py",
+    "rullback_pid": 606946
+  },
+  "krav_id": "m32-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 3,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 3,
+    "rullbakk_rader": 3
+  },
+  "oppsett": {
+    "arbeidernokkel": 418267915,
+    "avbrutt_backend_pid": 606894,
+    "bevisrot_sha256": "da39a3fb74993d0c6785a4f3f681bbfff91a936a6589a17344bc806546d53e97",
+    "drillet_digest": "2173c0979837c183573a17621b623d8a275dcd3d5e4f7ea35337c6769b2782d1",
+    "drillet_katalog": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf",
+    "drillet_kjernedigest": "09e2a6e8842c5de744793b1c44429cb0ed0646e8bca28fe297f0998054aaf4d0",
+    "drillet_release": "77a7b2497b93feaa12f6232136c3a0f3aa5656bf",
+    "forgjenger_digest": "2173c0979837c183573a17621b623d8a275dcd3d5e4f7ea35337c6769b2782d1",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "skattefunn",
+    "maalerolle": "disponit_skatt_eier",
+    "miljo": "staging",
+    "modul": "m32_skatt",
+    "runde": "fc0d64cb",
+    "tenanter": [
+      "t-m32fasit-a-fc0d64cb",
+      "t-m32fasit-b-fc0d64cb",
+      "t-m32fasit-c-fc0d64cb"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T23:00:09.395346+00:00"
+}

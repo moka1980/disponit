@@ -54,30 +54,120 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 20/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m55_fasit.py`:
+    #
+    # M-55s fasitsett: sju subjekter i tre tenanter med KJENT dom.
+    #
+    # Varselregisteret har seks typer, på to nivåer: merket (`funn_id IS NULL`)
+    # eller funnet. Migrasjon 220 avleder husets funnform — `funntype` er
+    # `varseltype`, og `subjekt` er funnet når varselet gjelder et funn, ellers
+    # merket. `funn_eldre_enn_frist` kan ikke nås samme dag (se `UNAABARE`).
+    #
+    #   tenant a (terskel 80)
+    #     1. `merkevare_uten_funn`   — aktivt merke uten ett eneste funn
+    #     2. `funn_uten_vurdering`   — et funn ingen har vurdert
+    #     3. `forveksling_ikke_henvist` — identisk navn (likhet 100 ≥ 80), vurdert
+    #                                  og ikke henvist
+    #     4. (ren)                   — som 2; funnet VURDERES mellom kjøringene
+    #                                  (ulikt navn, under terskel)
+    #     5. (ok)                    — et ulikt navn, vurdert under terskel
+    #   tenant b (ingen grenser satt)
+    #     6. `ingen_terskler`        — aktivt merke i en tenant uten terskel
+    #   tenant c (terskel 70, så 75)
+    #     7. `vurdering_med_utdatert_terskel` — vurdert under 70, og terskelen
+    #                                  heves til 75 før første kjøring
+    #
+    # ULIKE TERSKLER PER TENANT: kravhendelsen bærer versjon og terskel, og to
+    # tenanter med samme første krav ville delt `input_hash`.
+    status: ja
+    krav_id: m55-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m55-fasit-v1-20261119T225948Z.json
+    artefakt_sha256: 62901aae0f5d497d63e335c2ec42be0a06e0ccfb6182fca16d2f9d15ff0df057
     notat: >-
-      KREVER: funn med KJENT fasit for hva som er forveksling og hva som
-      bare ligner, kjørt likt lokalt og på staging. Vurderingen må gi
-      samme svar begge steder — den er deterministisk eller ingenting.
+      Runde b0adc3a4: 7 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m55-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m55-fasit-v1-20261119T225948Z.json
+    artefakt_sha256: 62901aae0f5d497d63e335c2ec42be0a06e0ccfb6182fca16d2f9d15ff0df057
     notat: >-
-      KREVER: at hvert funn har URL, tidsstempel og bevaringskopi i
-      evidenskjeden. Et funn uten bevaringskopi er ingen sak.
+      24 hendelser i kjeden (bevaringskopi_registrert: 5,
+      forvekslingsvurdering_gjort: 4, merkevare_registrert: 7,
+      merkevarefunn_registrert: 5, merkevarekrav_satt: 3), 0 uten aktør, 0
+      som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m55-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m55-feilinjisering-v1-20261119T225949Z.json
+    artefakt_sha256: fde339201a040f360aa19cddc11c0b78299d754389b617953c2abdea4726a813
     notat: >-
-      KREVER: merkevaresveipen bygget, og at en feil i den ikke lar et
-      funn uten bevaringskopi se dokumentert ut. Et funn ingen kan
-      bevise er verre enn ingen funn, fordi noen handler på det.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 12 åpne og 2 lukkede over 7 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m55-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m55-ytelse-v1-20261119T225948Z.json
+    artefakt_sha256: 6e6c48d8b604f224225b0305b80dfc621395df4d2822a9f0b696e59095a2d14e
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0445 / 0,0290 / 0,0258 s) over 4 tenanter; den
+      DÅRLIGSTE er dommen. 0,0445 s mot taket på 60 — 0,0111 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m55-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m55-rollback-v1-20261119T225952Z.json
+    artefakt_sha256: a4f097300d9376c6c4c99f065badcd143c7ad28ec90d5d09fc3c5da5bbeabd8a
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 77a7b249 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 6 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

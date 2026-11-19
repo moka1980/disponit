@@ -1,0 +1,51 @@
+{
+  "bestatt": true,
+  "krav_id": "m32-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 6,
+    "apne_for": 6,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "stor_vurdering_ukontrollert": [
+        6,
+        1
+      ]
+    },
+    "per_type_for": {
+      "stor_vurdering_ukontrollert": [
+        6,
+        1
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "skattefunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m32_sveip_skatt(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_skatt_eier",
+    "modul": "m32_skatt",
+    "riggmodul": "m32_fasit",
+    "riggtenanter": [
+      "t-m32fasit-a-45899aae",
+      "t-m32fasit-b-45899aae",
+      "t-m32fasit-c-45899aae"
+    ],
+    "runde": "45899aae",
+    "sveipedor": "m32_sveip_skatt(int)",
+    "tenantkilde": [
+      "skattekrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T23:00:06.643580+00:00"
+}

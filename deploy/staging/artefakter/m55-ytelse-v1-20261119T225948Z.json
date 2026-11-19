@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m55-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0445,
+      0.029,
+      0.0258
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 7,
+        "tenanter": 4
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 7,
+        "tenanter": 4
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 7,
+        "tenanter": 4
+      }
+    ],
+    "sekunder": 0.0445,
+    "sekunder_per_tenant": 0.0111,
+    "tenanter": 4
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m55_merkevare",
+    "sveip": "merkevaresveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:59:48.887344+00:00"
+}
