@@ -5734,6 +5734,42 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m12_tilgang",
                          "platform/drift/tilgangssveip.py"),
     },
+    "m43_telefoni": {
+        "modul_fil": "telefonisveip",
+        "funntabell": "telefonifunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "telefonikrav",
+        "maalerolle": "disponit_telefoni_eier",
+        "sveipedor": "m43_sveip_telefoni(int)",
+        "dsn_variabel": "DISPONIT_TELEFONISVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m43-fasit-v1",
+        "feilinjisering_krav": "m43-feilinjisering-v1",
+        "ytelse_krav": "m43-ytelse-v1",
+        "rollback_krav": "m43-rollback-v1",
+        "riggmodul": "m43_fasit",
+        "releasefiler": ("platform/modules/m43_telefoni",
+                         "platform/drift/telefonisveip.py"),
+    },
+    "m40_medarbeider": {
+        "modul_fil": "medarbeidersveip",
+        "funntabell": "medarbeiderfunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "medarbeiderkrav",
+        "maalerolle": "disponit_medarbeider_eier",
+        "sveipedor": "m40_sveip_medarbeider(int)",
+        "dsn_variabel": "DISPONIT_MEDARBEIDERSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m40-fasit-v1",
+        "feilinjisering_krav": "m40-feilinjisering-v1",
+        "ytelse_krav": "m40-ytelse-v1",
+        "rollback_krav": "m40-rollback-v1",
+        "riggmodul": "m40_fasit",
+        "releasefiler": ("platform/modules/m40_medarbeider",
+                         "platform/drift/medarbeidersveip.py"),
+    },
     "m07_moteoperasjon": {
         "modul_fil": "motesveip",
         "funntabell": "motefunn",
@@ -6762,6 +6798,29 @@ registrer_suitegrense("m12_tilgang", "m12",
                       ("platform/core/tests/test_m12_tilgang.py",),
                       min_tester=3000, min_andel_tester=20)
 
+
+# M-43 (ADR-002, klasse A): fem subjekter i to tenanter; fire funntyper
+# utelukket av datamodellen, eskalering_over_frist ikke nåbar samme dag
+# (M-48-presedensen). Gulvene foreløpige.
+registrer_fasitgrense("m43_telefoni", min_subjekter=5, min_evidens=8,
+                      tenantprefiks="t-m43fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m43_telefoni", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m43_telefoni", "m43",
+                      ("platform/core/tests/test_m43_telefoni.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+# M-40 (ADR-002, klasse A): syv subjekter i to tenanter; alle fire nåbare
+# funntyper rigget, seks utelukket av datamodellen. Gulvene foreløpige.
+registrer_fasitgrense("m40_medarbeider", min_subjekter=7, min_evidens=8,
+                      tenantprefiks="t-m40fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m40_medarbeider", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=5)
+
+registrer_suitegrense("m40_medarbeider", "m40",
+                      ("platform/core/tests/test_m40_medarbeider.py",),
+                      min_tester=3000, min_andel_tester=20)
 
 # M-07 (ADR-002, klasse A): seks subjekter i to tenanter; tre av fire
 # funntyper nåbare, den fjerde utelukket av datamodellen. Gulvene er

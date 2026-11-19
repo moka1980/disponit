@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/5f792d9eb8d7692069aefb85f2168eb6cbb376b5/platform/drift/medarbeidersveip.py",
+    "avbrutt_pid": 256362,
+    "kandidat_fil": "/opt/disponit/releases/5f792d9eb8d7692069aefb85f2168eb6cbb376b5/platform/drift/medarbeidersveip.py",
+    "kandidat_pid": 256367,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/medarbeidersveip.py",
+    "rullback_pid": 256365
+  },
+  "krav_id": "m40-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 6,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 6,
+    "rullbakk_rader": 6
+  },
+  "oppsett": {
+    "arbeidernokkel": 641802355,
+    "avbrutt_backend_pid": 256363,
+    "bevisrot_sha256": "3b71f5f10eef6a52d9345b80567619ca76d0332f0615d23e475dab9bfc6cd71c",
+    "drillet_digest": "48e9db1ccdb73cd525b9c336e188f337476e482bd2ce260f13549bb09378083a",
+    "drillet_katalog": "/opt/disponit/releases/5f792d9eb8d7692069aefb85f2168eb6cbb376b5",
+    "drillet_kjernedigest": "3da416d0456a96f72fba7c3cdf67594a930cb7d426068c87e0a99659e8d96736",
+    "drillet_release": "5f792d9eb8d7692069aefb85f2168eb6cbb376b5",
+    "forgjenger_digest": "48e9db1ccdb73cd525b9c336e188f337476e482bd2ce260f13549bb09378083a",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "medarbeiderfunn",
+    "maalerolle": "disponit_medarbeider_eier",
+    "miljo": "staging",
+    "modul": "m40_medarbeider",
+    "runde": "bc424fe9",
+    "tenanter": [
+      "t-m40fasit-a-bc424fe9",
+      "t-m40fasit-b-bc424fe9"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T14:01:29.283570+00:00"
+}

@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m40-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 36,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m40_medarbeider.py"
+    ],
+    "bevisrot_sha256": "82ae9bf611ad221d1505bf847935eb2830deb349da26c2c4fefed71ba156f774",
+    "commit": "8a2ca430c1bb87fe2a8f809ee352a621a641e786",
+    "modul": "m40_medarbeider",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T14:16:22.608478+00:00"
+}

@@ -1,0 +1,74 @@
+{
+  "bestatt": true,
+  "krav_id": "m40-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 13,
+    "apne_for": 13,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "ansatt_uten_lop": [
+        6,
+        1
+      ],
+      "apent_lop_over_frist": [
+        3,
+        0
+      ],
+      "kontrakt_paa_tilbaketrukket_mal": [
+        2,
+        0
+      ],
+      "maaling_uten_lesbar_gruppe": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "ansatt_uten_lop": [
+        6,
+        1
+      ],
+      "apent_lop_over_frist": [
+        3,
+        0
+      ],
+      "kontrakt_paa_tilbaketrukket_mal": [
+        2,
+        0
+      ],
+      "maaling_uten_lesbar_gruppe": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "medarbeiderfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m40_sveip_medarbeider(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_medarbeider_eier",
+    "modul": "m40_medarbeider",
+    "riggmodul": "m40_fasit",
+    "riggtenanter": [
+      "t-m40fasit-a-1e712dad",
+      "t-m40fasit-b-1e712dad"
+    ],
+    "runde": "1e712dad",
+    "sveipedor": "m40_sveip_medarbeider(int)",
+    "tenantkilde": [
+      "medarbeiderkrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T14:01:27.910526+00:00"
+}

@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **40 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **41 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,7 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Medarbeider (M-40)** | Nyansatte uten førsteuke, førsteuker som står åpne for lenge, pulsmålinger der ingen gruppe er stor nok til å vises, og kontrakter på en mal som er trukket tilbake | Tar ingen beslutninger om ansettelse, oppsigelse eller lønn, og bygger ingen profil av enkeltpersoner. Pulssvar vises bare for grupper over terskelen. |
 | **Tidsvalg for intervju (M-08)** | Intervjutider per rekrutteringsprosess, og hvilken tid hver invitert kandidat har valgt | Skriver ikke i kundens kalender. Kandidaten velger selv bak en personlig lenke uten innlogging; et bekreftet valg er endelig, og en tid med et valg kan ikke trekkes. |
 | **Datakvalitet (M-03)** | Tomme felt, feil format og duplikater i plattformens egne tabeller, målt mot faste regler — og regler som ikke lot seg måle | Retter ingenting, slår ingenting sammen og stopper ingen bestilling. Et funn forsvinner når dataene er rettet og neste måling ikke finner det igjen. |
 | **Dokumentmaler (M-05)** | Malfamilier og versjoner gjennom utkast, publisert, tilbaketrukket og forkastet; utfylling fra en publisert mal | Skriver ingen dokumenter av seg selv og dikter ikke felt: et felt uten verdi markeres som manglende. En publisert versjon kan aldri endres — en endring er en ny versjon. |
