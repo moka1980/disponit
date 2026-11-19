@@ -5667,6 +5667,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m15_likviditet",
                          "platform/drift/likviditetssveip.py"),
     },
+    "m30_personvern": {
+        "modul_fil": "personvernsveip",
+        "funntabell": "personvernfunn",
+        "subjektkolonne": "sak_id",
+        "tenantkilde": "personvernsak",
+        "maalerolle": "disponit_personvern_eier",
+        "sveipedor": "m30_sveip_frister(int)",
+        "dsn_variabel": "DISPONIT_PERSONVERNSVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m30-fasit-v1",
+        "feilinjisering_krav": "m30-feilinjisering-v1",
+        "ytelse_krav": "m30-ytelse-v1",
+        "rollback_krav": "m30-rollback-v1",
+        "riggmodul": "m30_fasit",
+        "releasefiler": ("platform/modules/m30_personvern",
+                         "platform/drift/personvernsveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6622,6 +6640,17 @@ registrer_suitegrense("m15_likviditet", "m15",
                       ("platform/core/tests/test_m15_likviditet.py",),
                       min_tester=3000, min_andel_tester=32)
 
+
+# M-30: provisoriske gulv — heves til litt under det målte. Fem nye
+# funn i første sveip (tre typer + den rene saken).
+registrer_fasitgrense("m30_personvern", min_subjekter=6, min_evidens=6,
+                      tenantprefiks="t-m30fasit-", min_sveip1_nye=5)
+registrer_sveipgrenser("m30_personvern", maks_sekunder=60.0, min_tenanter=2,
+                       min_rullbakk_funn=5)
+
+registrer_suitegrense("m30_personvern", "m30",
+                      ("platform/core/tests/test_m30_personvern.py",),
+                      min_tester=3000, min_andel_tester=30)
 
 registrer_suitegrense("m42_kontovakt", "m42",
                       ("platform/core/tests/test_m42_kontovakt.py",),
