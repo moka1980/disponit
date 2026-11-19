@@ -5734,6 +5734,24 @@ SVEIPMODULER: dict[str, dict] = {
         "releasefiler": ("platform/modules/m12_tilgang",
                          "platform/drift/tilgangssveip.py"),
     },
+    "m07_moteoperasjon": {
+        "modul_fil": "motesveip",
+        "funntabell": "motefunn",
+        "subjektkolonne": "referanse",
+        "tenantkilde": "motekrav",
+        "maalerolle": "disponit_mote_eier",
+        "sveipedor": "m7_sveip_moter(int)",
+        "dsn_variabel": "DISPONIT_MOTESVEIP_URL",
+        "dsn_uten_execute": "DATABASE_URL",
+        "rolle_uten_execute": "disponit",
+        "fasit_krav": "m07-fasit-v1",
+        "feilinjisering_krav": "m07-feilinjisering-v1",
+        "ytelse_krav": "m07-ytelse-v1",
+        "rollback_krav": "m07-rollback-v1",
+        "riggmodul": "m07_fasit",
+        "releasefiler": ("platform/modules/m07_moteoperasjon",
+                         "platform/drift/motesveip.py"),
+    },
     "m13_avstemming": {
         "modul_fil": "avstemmingssveip",
         "funntabell": "avstemmingsfunn",
@@ -6724,6 +6742,19 @@ registrer_sveipgrenser("m12_tilgang", maks_sekunder=60.0, min_tenanter=2,
 
 registrer_suitegrense("m12_tilgang", "m12",
                       ("platform/core/tests/test_m12_tilgang.py",),
+                      min_tester=3000, min_andel_tester=20)
+
+
+# M-07 (ADR-002, klasse A): seks subjekter i to tenanter; tre av fire
+# funntyper nåbare, den fjerde utelukket av datamodellen. Gulvene er
+# foreløpige og heves til litt under det målte.
+registrer_fasitgrense("m07_moteoperasjon", min_subjekter=6, min_evidens=10,
+                      tenantprefiks="t-m07fasit-", min_sveip1_nye=4)
+registrer_sveipgrenser("m07_moteoperasjon", maks_sekunder=60.0,
+                       min_tenanter=2, min_rullbakk_funn=4)
+
+registrer_suitegrense("m07_moteoperasjon", "m07",
+                      ("platform/core/tests/test_m7_moteoperasjon.py",),
                       min_tester=3000, min_andel_tester=20)
 
 
