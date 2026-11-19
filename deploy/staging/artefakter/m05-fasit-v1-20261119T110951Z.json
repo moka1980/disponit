@@ -1,0 +1,99 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m05-fasit-v1",
+  "maalt": {
+    "dorkall": 11,
+    "evidens_avvik": 0,
+    "evidens_delte_input_hash": 0,
+    "evidens_per_tenant": {
+      "a": {
+        "malfamilie.opprettet": 2,
+        "malversjon.forkastet": 1,
+        "malversjon.opprettet": 3,
+        "malversjon.publisert": 2,
+        "malversjon.tilbaketrukket": 1
+      },
+      "b": {
+        "malfamilie.opprettet": 1,
+        "malversjon.opprettet": 1
+      }
+    },
+    "evidens_totalt": 11,
+    "evidens_uten_aktor": 0,
+    "evidens_ventet": {
+      "a": {
+        "malfamilie.opprettet": 2,
+        "malversjon.forkastet": 1,
+        "malversjon.opprettet": 3,
+        "malversjon.publisert": 2,
+        "malversjon.tilbaketrukket": 1
+      },
+      "b": {
+        "malfamilie.opprettet": 1,
+        "malversjon.opprettet": 1
+      }
+    },
+    "gjenspill_feilet": 0,
+    "gjenspill_urort": true,
+    "per_tenant": [
+      {
+        "fikk": {
+          "familier": 2,
+          "felt": 6,
+          "komponenter": 15,
+          "versjoner": {
+            "forkastet": 1,
+            "publisert": 1,
+            "tilbaketrukket": 1
+          }
+        },
+        "tenant": "a",
+        "ventet": {
+          "familier": 2,
+          "felt": 6,
+          "komponenter": 15,
+          "versjoner": {
+            "forkastet": 1,
+            "publisert": 1,
+            "tilbaketrukket": 1
+          }
+        }
+      },
+      {
+        "fikk": {
+          "familier": 1,
+          "felt": 2,
+          "komponenter": 5,
+          "versjoner": {
+            "utkast": 1
+          }
+        },
+        "tenant": "b",
+        "ventet": {
+          "familier": 1,
+          "felt": 2,
+          "komponenter": 5,
+          "versjoner": {
+            "utkast": 1
+          }
+        }
+      }
+    ],
+    "tenanter": 2,
+    "tilstandsavvik": 0,
+    "utfylling_lik_fasit": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "ae242cce156b57ede46a191de886106e0a8e5e8b59a59b608400a1afaec47c98",
+    "modul": "m05_dokumentmal",
+    "runde": "3f92f1c2",
+    "tenanter": {
+      "a": "t-m05fasit-a-3f92f1c2",
+      "b": "t-m05fasit-b-3f92f1c2"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T11:09:51.463906+00:00"
+}
