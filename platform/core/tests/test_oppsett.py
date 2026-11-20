@@ -321,10 +321,10 @@ def test_godkjenning_teller_dem_som_kan_attestere_og_ser_invitasjonen(
     _okt(migrator, ["policyforvalter"])
     assert les(cookie)["kan_godkjenne"] == for1["kan_godkjenne"] + 1
 
-    # En ren leser har ikke `policy:read` og får ikke delen.
+    # En leser har `policy:read` og får delen — men ikke knappen: den
+    # krever `firma:inviter`, og dashbordet ber henne spørre administratoren.
     leser = _okt(migrator, ["leser"])
-    r = klient.get("/v1/oppsett", cookies={_C_SESJON(): leser})
-    assert "godkjenning" not in r.json()
+    assert les(leser)["kan_godkjenne"] == for1["kan_godkjenne"] + 1
 
     _sett_kontekst(migrator, TENANT)
     migrator.execute(
