@@ -7141,5 +7141,6 @@
   "ui.kontinuitet.kontakter.rollehjelp": "For example \"on-call\" or \"managing director\". Priority 1 is alerted first.",
   "ui.kontinuitet.kontakter.opptatt": "The role already has a contact with this priority. Choose another priority.",
   "ui.kontinuitet.kontakter.bekreft": "Confirm now",
-  "ui.kontinuitet.kontakter.bekreft_hvem": "Confirm {navn} as {rolle}"
+  "ui.kontinuitet.kontakter.bekreft_hvem": "Confirm {navn} as {rolle}",
+  "ui.kontinuitet.kart.minutter": "{n} min"
 }

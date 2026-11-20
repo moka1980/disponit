@@ -82,6 +82,14 @@ function velger(id, verdier, tekstFor, valgt) {
   return v;
 }
 
+// Målene vises i samme enhet som skjemaet tar dem imot. Et mål som
+// ikke er hele minutter (satt utenom skjemaet) vises som det er.
+function maalTekst(sek) {
+  return sek % 60 === 0
+    ? t("ui.kontinuitet.kart.minutter").replace("{n}", String(sek / 60))
+    : t("ui.kontinuitet.ovelse.sekunder").replace("{n}", String(sek));
+}
+
 function playbookNavn(ref) {
   const kutt = ref.indexOf("@");
   return kutt > 0 ? ref.slice(0, kutt) : ref;
@@ -96,10 +104,14 @@ function playbookNavn(ref) {
 // «60» fra den som mente en time.
 function kartSkjema(tj, d, ctx, last) {
   const pre = tj ? `kart-${tj.tjeneste_id}` : "kart-ny";
-  const skjema = el("form", { class: "kv-skjema" });
+  // RUTENETT (opt-in): feltene side om side når det er plass, hjelpen
+  // i feltet den gjelder, knappen på egen rad nederst.
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const utfall = el("p", { "aria-live": "polite" });
-  const felt = (id, etikett, kontroll) => [
-    el("label", { for: `${pre}-${id}`, text: t(etikett) }), kontroll];
+  const felt = (id, etikett, kontroll, hjelp) => el("div", { class: "felt" },
+    el("label", { for: `${pre}-${id}`, text: t(etikett) }), kontroll,
+    hjelp ? (hjelp.nodeType ? hjelp
+      : el("p", { class: "muted", text: t(hjelp) })) : null);
   const typeV = tj ? null : velger(`${pre}-type`, REFERENTTYPER,
     (x) => t(`ui.kontinuitet.referenttype.${x}`), "ekstern");
   const navnF = tj ? null : el("input", { id: `${pre}-navn`,
@@ -130,18 +142,18 @@ function kartSkjema(tj, d, ctx, last) {
     text: t(tj ? "ui.kontinuitet.kart.lagre" : "ui.kontinuitet.kart.legg_til") });
   if (!tj) {
     skjema.append(
-      ...felt("type", "ui.kontinuitet.kart.felt.type", typeV),
-      ...felt("navn", "ui.kontinuitet.kart.felt.navn", navnF),
-      el("p", { class: "muted", text: t("ui.kontinuitet.kart.navnhjelp") }));
+      felt("navn", "ui.kontinuitet.kart.felt.navn", navnF,
+        "ui.kontinuitet.kart.navnhjelp"),
+      felt("type", "ui.kontinuitet.kart.felt.type", typeV));
   }
   skjema.append(
-    ...felt("krit", "ui.kontinuitet.kolonne.kritikalitet", kritV),
-    ...felt("tid", "ui.kontinuitet.kart.felt.tid", rtoF),
-    ...felt("tap", "ui.kontinuitet.kart.felt.tap", rpoF),
-    ...felt("pb", "ui.kontinuitet.kolonne.playbook", pbV), pbNaar,
-    ...felt("rolle", "ui.kontinuitet.kolonne.kontaktrolle", rolleF),
-    el("p", { class: "muted", text: t("ui.kontinuitet.kart.rollehjelp") }),
-    knapp);
+    felt("krit", "ui.kontinuitet.kolonne.kritikalitet", kritV),
+    felt("tid", "ui.kontinuitet.kart.felt.tid", rtoF),
+    felt("tap", "ui.kontinuitet.kart.felt.tap", rpoF),
+    felt("pb", "ui.kontinuitet.kolonne.playbook", pbV, pbNaar),
+    felt("rolle", "ui.kontinuitet.kolonne.kontaktrolle", rolleF,
+      "ui.kontinuitet.kart.rollehjelp"),
+    el("div", { class: "skjema-bunn" }, knapp));
   bindSkjema(skjema, knapp, ctx, utfall, (idem) => {
     const felles = {
       kritikalitet: kritV.value,
@@ -158,7 +170,7 @@ function kartSkjema(tj, d, ctx, last) {
 }
 
 function kontaktSkjema(d, ctx, last) {
-  const skjema = el("form", { class: "kv-skjema" });
+  const skjema = el("form", { class: "kv-skjema kv-skjema-rutenett" });
   const utfall = el("p", { "aria-live": "polite" });
   const rolleF = el("input", { id: "kontakt-rolle", name: "rolle",
     type: "text", required: true, maxlength: 100 });
@@ -172,14 +184,15 @@ function kontaktSkjema(d, ctx, last) {
   const knapp = el("button", { type: "submit", class: "knapp primar",
     text: t("ui.kontinuitet.kontakter.legg_til") });
   skjema.append(
-    el("label", { for: "kontakt-rolle",
+    el("div", { class: "felt" }, el("label", { for: "kontakt-rolle",
       text: t("ui.kontinuitet.kolonne.rolle") }), rolleF,
-    el("p", { class: "muted", text: t("ui.kontinuitet.kontakter.rollehjelp") }),
-    el("label", { for: "kontakt-prioritet",
-      text: t("ui.kontinuitet.kolonne.prioritet") }), prioF,
-    el("label", { for: "kontakt-person",
-      text: t("ui.kontinuitet.kolonne.person") }), personV,
-    knapp);
+      el("p", { class: "muted",
+        text: t("ui.kontinuitet.kontakter.rollehjelp") })),
+    el("div", { class: "felt" }, el("label", { for: "kontakt-prioritet",
+      text: t("ui.kontinuitet.kolonne.prioritet") }), prioF),
+    el("div", { class: "felt" }, el("label", { for: "kontakt-person",
+      text: t("ui.kontinuitet.kolonne.person") }), personV),
+    el("div", { class: "skjema-bunn" }, knapp));
   bindSkjema(skjema, knapp, ctx, utfall,
     (idem) => opprettBeredskapskontakt(rolleF.value.trim(),
       Number(prioF.value), personV.value, idem),
@@ -294,17 +307,15 @@ function kartSeksjon(tjenester, d, ctx, last) {
       el("th", { scope: "row" },
         el("span", { text: `${tj.referent_type}: ${tj.referent_id}` })),
       el("td", { text: t(`ui.kontinuitet.kritikalitet.${tj.kritikalitet}`) }),
-      el("td", { text: t("ui.kontinuitet.ovelse.sekunder")
-        .replace("{n}", String(tj.rto_maal_s)) }),
-      el("td", { text: t("ui.kontinuitet.ovelse.sekunder")
-        .replace("{n}", String(tj.rpo_maal_s)) }),
+      el("td", { text: maalTekst(tj.rto_maal_s) }),
+      el("td", { text: maalTekst(tj.rpo_maal_s) }),
       el("td", {}, el("code", { title: tj.playbook_ref, text: pbNavn }),
         binding ? ` — ${binding}` : null),
       el("td", { text: tj.kontaktrolle }),
       el("td", {}, Tidspunkt(tj.oppdatert, {}))));
   }
   tabell.append(tbody);
-  s.append(tabell);
+  s.append(el("div", { class: "tabellrull" }, tabell));
   if (kanSkrive) {
     for (const tj of tjenester) {
       s.append(el("details", {},
@@ -378,7 +389,7 @@ function kontaktSeksjon(kontakter, naa, d, ctx, last) {
       kanSkrive ? el("td", {}, bekreftKnapp(k)) : null));
   }
   tabell.append(tbody);
-  s.append(tabell, utfall);
+  s.append(el("div", { class: "tabellrull" }, tabell), utfall);
   nytt();
   return s;
 
@@ -517,7 +528,7 @@ function apneSkjema(ctx, last) {
     alvorVelger.append(el("option", { value: a,
       text: t(`ui.kontinuitet.alvor.${a}`) }));
   }
-  const knapp = el("button", { type: "submit",
+  const knapp = el("button", { type: "submit", class: "knapp primar",
     text: t("ui.kontinuitet.skjema.apne") });
   skjema.append(
     // Hodet bærer en TEKSTNØKKEL, aldri fritekst: det som skjedde hører
@@ -609,7 +620,9 @@ export function visKontinuitet(hoved, ctx) {
   const hode = () => flateHode(t("ui.kontinuitet.tittel"),
     t("ui.kontinuitet.undertittel"));
   sett(hoved, ...hode());
-  const kropp = el("div", { class: "kpi-kort-liste" });
+  // ÉN KOLONNE: kartet har sju kolonner og skjemaene flere felt. I
+  // tre smale kort ved siden av hverandre rant tabellene ut av kortet.
+  const kropp = el("div", { class: "kpi-kort-liste en-kolonne" });
   hoved.append(kropp);
   // Katalogen og medlemslista er HJELPEDATA: faller en av dem, tegnes
   // flaten likevel — uten skjemaet som trengte den, og med bruker-id i

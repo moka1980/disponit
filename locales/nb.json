@@ -7141,5 +7141,6 @@
   "ui.kontinuitet.kontakter.rollehjelp": "For eksempel «driftsvakt» eller «daglig leder». Prioritet 1 varsles først.",
   "ui.kontinuitet.kontakter.opptatt": "Rollen har alt en kontakt med denne prioriteten. Velg en annen prioritet.",
   "ui.kontinuitet.kontakter.bekreft": "Bekreft nå",
-  "ui.kontinuitet.kontakter.bekreft_hvem": "Bekreft {navn} som {rolle}"
+  "ui.kontinuitet.kontakter.bekreft_hvem": "Bekreft {navn} som {rolle}",
+  "ui.kontinuitet.kart.minutter": "{n} min"
 }
