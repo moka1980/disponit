@@ -184,7 +184,7 @@ export const MODULSTATUS = {
   // modulen ser ut til å trenge. Ordet er `bygges` fordi manifestet
   // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
   29: "i_drift",    // m29_hendelse: aktiv, produksjon
-  32: "bygges",     // m32_skatt: under_utvikling, ikke_i_drift
+  32: "i_drift",    // m32_skatt: aktiv, produksjon
   28: "bygges",     // m28_transport: under_utvikling, ikke_i_drift
   40: "i_drift",    // m40_medarbeider: aktiv, produksjon
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert

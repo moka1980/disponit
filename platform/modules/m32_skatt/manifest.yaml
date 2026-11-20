@@ -36,8 +36,8 @@
 id: m32_skatt
 navn: Global lokaliserings- og skatteagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. IKKE «skatteregelmotor og godkjent
 # leverandør» — de finnes ikke.
 avhengigheter:
@@ -49,9 +49,25 @@ i18n_prefiks: skatt
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m32-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m32-suite-v1-20261120T004732Z.json
+    artefakt_sha256: a1367f91925a4cdb3a9fb53f93eb850d109316feac968857c796a1b0f534372a
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 21 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 20/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m32_fasit.py`:
