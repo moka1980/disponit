@@ -7163,5 +7163,9 @@
   "site.invitasjon.tekst": "Sign in to accept the invitation. You come straight back here and join the company with one click.",
   "site.invitasjon.kort_tittel": "Sign in and join",
   "site.invitasjon.kort_tekst": "Use the account you want in the company. The invitation can only be used once.",
-  "site.invitasjon.knapp": "Sign in"
+  "site.invitasjon.knapp": "Sign in",
+  "ui.firmavelger": "Switch company",
+  "ui.blimed.aapne_firma": "Open {firma}",
+  "ui.blimed.ferdig_undertittel_aapne": "Last step: open the company.",
+  "ui.blimed.ferdig_tekst_aapne": "You are now a member of {firma} as {roller}. Press below to enter. Later you switch company at the top of the page."
 }

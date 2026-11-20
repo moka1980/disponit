@@ -7163,5 +7163,9 @@
   "site.invitasjon.tekst": "Logg inn for å ta imot invitasjonen. Du kommer rett tilbake hit, og blir med i firmaet med ett trykk.",
   "site.invitasjon.kort_tittel": "Logg inn og bli med",
   "site.invitasjon.kort_tekst": "Bruk kontoen du vil ha i firmaet. Invitasjonen kan bare brukes én gang.",
-  "site.invitasjon.knapp": "Logg inn"
+  "site.invitasjon.knapp": "Logg inn",
+  "ui.firmavelger": "Bytt firma",
+  "ui.blimed.aapne_firma": "Åpne {firma}",
+  "ui.blimed.ferdig_undertittel_aapne": "Siste steg: åpne firmaet.",
+  "ui.blimed.ferdig_tekst_aapne": "Du er nå medlem av {firma} som {roller}. Trykk under for å gå inn. Senere bytter du firma øverst på siden."
 }
