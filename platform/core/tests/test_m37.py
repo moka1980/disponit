@@ -966,8 +966,16 @@ def test_kappløp_tjue_arbeidere_gir_noyaktig_en_claim_per_sak(migrator):
     for t in traader:
         t.join(timeout=60)
 
-    assert sorted(resultat) == sorted(saker), (
-        f"claimet {sorted(resultat)}, forventet {sorted(saker)}")
+    # KØEN ER PLATTFORMENS, IKKE TESTENS. `claim_neste_sak` er
+    # kryss-tenant, og en sak en ANNEN test har latt ligge i køen kan bli
+    # claimet av en av de tjue arbeiderne. Det er ikke denne testens sak —
+    # og heller ikke en feil. Målt 20.11.2026: kjørt etter hele suiten
+    # claimet kappløpet én fremmed sak (fra test_slett_policy), og porten
+    # falt på en likhet mot HELE køen. Påstanden er om VÅRE åtte saker:
+    # hver claimet, og ingen sak — vår eller fremmed — claimet to ganger.
+    egne = [r for r in resultat if r in set(saker)]
+    assert sorted(egne) == sorted(saker), (
+        f"claimet {sorted(egne)} av våre, forventet {sorted(saker)}")
     assert len(resultat) == len(set(resultat)), (
         f"en sak ble claimet to ganger: {resultat}")
 
