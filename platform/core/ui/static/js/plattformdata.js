@@ -127,7 +127,7 @@ export const MODULSTATUS = {
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
   46: "i_drift",    // m46_anbud: aktiv, produksjon
   51: "i_drift",    // m51_tilskudd: aktiv, produksjon
-  55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
+  55: "i_drift",    // m55_merkevare: aktiv, produksjon
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
   // Registrert ved fødselen sammen med grensene m47/m50/m52/m53/
   // m54-v1 — se docs/KLYNGE7-FUNDAMENT.md.
