@@ -326,10 +326,9 @@ er disse:
 - **Betaling.** Overgangen fra prøveperiode til betalt abonnement er ikke
   bygget.
 - **Kobling til regnskapssystem** (Tripletex, Fiken, PowerOffice) er utsatt.
-- **«Kom i gang» viser 42 av 57 moduler.** De som mangler, er
+- **«Kom i gang» viser 45 av 57 moduler.** De som mangler, er
   plattformens egne (policy, revisjonslogg, unntak, backup, selvtest o.l.),
-  som ikke har noe kunden skal sette opp, og noen få som settes opp fra
-  modulens egen side (e-post, WCAG-kontroll, rekruttering).
+  som ikke har noe kunden skal sette opp.
 
 Modulkatalogen i grensesnittet merker hver modul som **i drift**,
 **klargjort**, **bygges** eller **planlagt**, og merkingen er avlest fra
