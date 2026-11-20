@@ -7142,5 +7142,11 @@
   "ui.kontinuitet.kontakter.opptatt": "Rollen har alt en kontakt med denne prioriteten. Velg en annen prioritet.",
   "ui.kontinuitet.kontakter.bekreft": "Bekreft nå",
   "ui.kontinuitet.kontakter.bekreft_hvem": "Bekreft {navn} som {rolle}",
-  "ui.kontinuitet.kart.minutter": "{n} min"
+  "ui.kontinuitet.kart.minutter": "{n} min",
+  "site.invitasjon.kicker": "Invitasjon",
+  "site.invitasjon.tittel": "Du er invitert til {firma}",
+  "site.invitasjon.tekst": "Logg inn for å ta imot invitasjonen. Du kommer rett tilbake hit, og blir med i firmaet med ett trykk.",
+  "site.invitasjon.kort_tittel": "Logg inn og bli med",
+  "site.invitasjon.kort_tekst": "Bruk kontoen du vil ha i firmaet. Invitasjonen kan bare brukes én gang.",
+  "site.invitasjon.knapp": "Logg inn"
 }

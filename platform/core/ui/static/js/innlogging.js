@@ -239,7 +239,7 @@ function leverandornavn(id) {
   return t(`site.login.provider.${id}`, id);
 }
 
-function loginKort(providere, visning, tittel, tekst, knapp) {
+function loginKort(providere, visning, tittel, tekst, knapp, retursti) {
   const kort = el("article", { class: "kort site-login-card" },
     el("h2", { text: tittel }),
     el("p", { text: tekst }));
@@ -268,7 +268,7 @@ function loginKort(providere, visning, tittel, tekst, knapp) {
       form.append(
         el("input", { type: "hidden", name: "provider_id", value: p }),
         el("input", { type: "hidden", name: "retursti",
-          value: `/?visning=${visning}&sprak=${sprak()}` }),
+          value: retursti || `/?visning=${visning}&sprak=${sprak()}` }),
         el("button", { type: "submit", class: "knapp primar",
           text: alene ? knapp
             : t("site.login.med_provider")
@@ -435,6 +435,36 @@ function tjenesterSide() {
   ];
 }
 
+// INVITASJONSLENKEN LANDER HER når den inviterte ikke er logget inn — og
+// det er hun som regel ikke. Før dette (funnet av eier 20.11.2026) viste
+// lenken bare forsiden: ingenting sa at hun var invitert, og logget hun
+// inn fra forsiden, bar returstien verken firmaet eller invitasjonen. Hun
+// endte på oversikten, og lenken så ut til å ikke virke.
+//
+// Returstien er NØYAKTIG adressen hun kom fra. `trygg_retursti` beholder
+// query-strengen på en lokal sti, så `t` og `k` overlever innloggingen og
+// `blimed`-flaten tar over på den andre siden.
+export function lesInvitasjonslenke(sok) {
+  const q = new URLSearchParams(sok || "");
+  if (q.get("visning") !== "blimed") return null;
+  const tenant = (q.get("t") || "").trim();
+  const token = (q.get("k") || "").trim();
+  return tenant && token ? { tenant, token } : null;
+}
+
+function invitasjonsSide(provider, inv) {
+  const retur = `/?visning=blimed&t=${encodeURIComponent(inv.tenant)}`
+    + `&k=${encodeURIComponent(inv.token)}&sprak=${sprak()}`;
+  return [
+    sideIntroduksjon("site.invitasjon.kicker", "site.invitasjon.tittel",
+      "site.invitasjon.tekst", { "{firma}": inv.tenant }),
+    el("section", { class: "site-grid" },
+      loginKort(provider, "blimed",
+        t("site.invitasjon.kort_tittel"), t("site.invitasjon.kort_tekst"),
+        t("site.invitasjon.knapp"), retur)),
+  ];
+}
+
 function innloggingSide(provider) {
   return [
     sideIntroduksjon("site.login.kicker", "site.login.tittel", "site.login.tekst"),
@@ -551,10 +581,14 @@ export async function visInnlogging(opsjoner = {}) {
   // taperen: en flate som lover «Tilgjengelig» utenfor produksjon (Cursor P2).
   settProduksjonsmiljo(iProduksjon);
 
-  const side = lesSide();
+  // En invitasjonslenke vinner over `side=`: den som åpner den, skal se
+  // invitasjonen og ingenting annet.
+  const invitasjon = lesInvitasjonslenke(window.location.search);
+  const side = invitasjon ? "innlogging" : lesSide();
   document.documentElement.setAttribute("data-offentlig-side", side);
   settDokumenttittel(side);
-  const sideinnhold = side === "tjenester" ? tjenesterSide()
+  const sideinnhold = invitasjon ? invitasjonsSide(provider, invitasjon)
+    : side === "tjenester" ? tjenesterSide()
     : side === "produkt" ? produktSide()
       : side === "sikkerhet" ? sikkerhetSide()
         : side === "innlogging" ? innloggingSide(provider) : hjemSide();

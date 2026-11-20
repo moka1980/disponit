@@ -206,10 +206,15 @@ const BASISRUTER = [
   // tilgangen til firmaet hun alt jobbet i. 196 (firmavelgeren) fjernet
   // den utestengelsen, og dermed vernets forutsetning.
   //
-  // Igjen står en FUNKSJONELL begrensning: en ansatt i et annet firma har
-  // ikke `firma:opprett` og kan derfor ikke bli med. Ikke farlig, bare i
-  // veien — løftes i egen PR (nytt scope hos alle roller + rolleguiden).
-  { nokkel: "blimed", scope: "firma:opprett" },
+  // API-ET FIKK SITT EGET SCOPE, `firma:blimed`, HOS HVER ROLLE — men
+  // ruten her sto igjen på `firma:opprett` (funnet av eier 20.11.2026). En
+  // ansatt i et annet firma åpnet invitasjonslenken, ruten ble filtrert
+  // bort, og hun landet på oversikten uten et ord om hvorfor. Porten i
+  // `test_ui_kontrakt.py` binder nå scopet her til API-ets.
+  //
+  // `skjult`: ruten nås bare av lenken. Alle roller har scopet, og uten
+  // merket ville «Bli med i bedriften» stått i menyen til hver bruker.
+  { nokkel: "blimed", scope: "firma:blimed", skjult: true },
   // M-35 (089): kontinuitet er en BASISRUTE bak `kontinuitet:read` —
   // (Flyttet til venstremenyen 1/9 — se vedtaket over.)
   // i toppnavigasjonen, ikke bak et modulkort, fordi beredskapen er

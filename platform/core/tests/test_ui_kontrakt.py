@@ -264,3 +264,23 @@ def test_modulstatus_dekker_manifestene():
         modul_id = int(re.match(r"m(\d+)_", sti.parent.name).group(1))
         assert modul_id in ui, \
             f"{sti.parent.name} har manifest, men mangler i MODULSTATUS"
+
+
+def test_invitasjonsflaten_krever_samme_scope_som_innlosningen():
+    """Eiers funn 20.11.2026: API-et fikk `firma:blimed` hos hver rolle,
+    mens ruten i `sitekart.js` sto igjen på `firma:opprett`. En ansatt i
+    et annet firma åpnet invitasjonslenken og landet på oversikten.
+
+    MUTASJONEN SOM DREPER DENNE: sett ruten tilbake til `firma:opprett`.
+    """
+    import re
+    from pathlib import Path
+    from api.app import RUTESCOPE
+    js = (Path(__file__).resolve().parents[1]
+          / "ui/static/js/sitekart.js").read_text(encoding="utf-8")
+    m = re.search(r'\{ nokkel: "blimed", scope: "([a-z:]+)"(, skjult: true)? \}',
+                  js)
+    assert m, "fant ikke blimed-ruten i sitekart.js"
+    assert m.group(1) == RUTESCOPE[("POST", "/v1/invitasjoner/innloes")]
+    # Alle roller har scopet — uten `skjult` sto flaten i hver meny.
+    assert m.group(2), "blimed-ruten er ikke merket skjult"

@@ -7142,5 +7142,11 @@
   "ui.kontinuitet.kontakter.opptatt": "The role already has a contact with this priority. Choose another priority.",
   "ui.kontinuitet.kontakter.bekreft": "Confirm now",
   "ui.kontinuitet.kontakter.bekreft_hvem": "Confirm {navn} as {rolle}",
-  "ui.kontinuitet.kart.minutter": "{n} min"
+  "ui.kontinuitet.kart.minutter": "{n} min",
+  "site.invitasjon.kicker": "Invitation",
+  "site.invitasjon.tittel": "You are invited to {firma}",
+  "site.invitasjon.tekst": "Sign in to accept the invitation. You come straight back here and join the company with one click.",
+  "site.invitasjon.kort_tittel": "Sign in and join",
+  "site.invitasjon.kort_tekst": "Use the account you want in the company. The invitation can only be used once.",
+  "site.invitasjon.knapp": "Sign in"
 }
