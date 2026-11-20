@@ -8,7 +8,7 @@
 > byttet ligger i `/etc/disponit/staging.env.for-produksjon-<tid>`.
 
 **Status:** vedtatt 2026-11-20 av eier («2»: gjør denne serveren til
-produksjon). Forberedelsene er bygget; selve byttet er IKKE gjort.
+produksjon). Gjennomført samme dag — se under.
 **Erstatter:** miljøtabellen i `docs/DEPLOY.md` for denne verten («staging
 og produksjon er alltid separate maskiner»).
 
