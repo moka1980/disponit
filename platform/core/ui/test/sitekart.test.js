@@ -467,3 +467,18 @@ test("sitekart: hver rute i menyen har et navn på begge språk", () => {
     `ruter uten navn — de står med nøkkelen sin i menyen:\n${
       mangler.join("\n")}`);
 });
+
+test("Bli med: ruten følger API-ets scope, nås av lenken og står ikke i menyen", () => {
+  // Eiers funn 20.11.2026: API-et krevde `firma:blimed` (som hver rolle
+  // har), ruten krevde `firma:opprett` (som bare registranten har). En
+  // ansatt i et annet firma åpnet lenken og landet på oversikten.
+  const ruter = byggRuter({ scopes: ["firma:blimed", "decisions:read"] });
+  const blimed = ruter.find((r) => r.nokkel === "blimed");
+  assert.ok(blimed, "en vanlig ansatt når ikke invitasjonsflaten");
+  assert.equal(blimed.skjult, true);
+  assert.equal(hashForDypLenke("?visning=blimed&t=acme&k=x", "", ruter),
+    "#/blimed");
+  // Uten scopet finnes den ikke.
+  assert.equal(byggRuter({ scopes: ["decisions:read"] })
+    .some((r) => r.nokkel === "blimed"), false);
+});

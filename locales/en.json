@@ -7157,5 +7157,11 @@
   "ui.oppsett.godkjenner.venter_tekst_mangler": "It stays open until someone other than the author has approved it.",
   "ui.oppsett.godkjenner.apne": "Open Policy administration",
   "ui.oppsett.godkjenner.kopier": "Copy the link",
-  "ui.oppsett.godkjenner.kopiert": "Copied"
+  "ui.oppsett.godkjenner.kopiert": "Copied",
+  "site.invitasjon.kicker": "Invitation",
+  "site.invitasjon.tittel": "You are invited to {firma}",
+  "site.invitasjon.tekst": "Sign in to accept the invitation. You come straight back here and join the company with one click.",
+  "site.invitasjon.kort_tittel": "Sign in and join",
+  "site.invitasjon.kort_tekst": "Use the account you want in the company. The invitation can only be used once.",
+  "site.invitasjon.knapp": "Sign in"
 }

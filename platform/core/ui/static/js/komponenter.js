@@ -305,7 +305,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
   // bor i venstremenyen som selve inngangen (eiers vedtak 24/8). Ruten
   // finnes fortsatt — dyplenker og bokmerker virker som før.
   const nav = el("nav", { class: "skall-nav", "aria-label": t("app.navn") },
-    ruter.filter((r) => !r.modulflate).map((r) => {
+    ruter.filter((r) => !r.modulflate && !r.skjult).map((r) => {
       const attrs = { href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) };
       if (r.nokkel === aktiv) attrs["aria-current"] = "page";
       const a = el("a", attrs);
@@ -859,7 +859,7 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     // samme rute i to menyer på samme skjerm, og den ene av dem uten
     // området sitt. Samme skille som toppnavigasjonen har hatt siden
     // eiervedtaket 24/8: `!r.modulflate`.
-    if (r.modulflate || bunnknapper.has(r.nokkel)) continue;
+    if (r.modulflate || r.skjult || bunnknapper.has(r.nokkel)) continue;
     merliste.append(el("a", { class: "skall-bunn-mer-valg",
       href: `#/${r.nokkel}`, text: t(`ui.nav.${r.nokkel}`) }));
   }

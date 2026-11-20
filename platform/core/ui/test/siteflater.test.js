@@ -1134,3 +1134,50 @@ test("Innlogging: leverandørvalget er axe-rent", async () => {
   const brudd = await alvorligeBrudd(app);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+// ---------------------------------------------------------------------
+// Invitasjonslenken for den som IKKE er logget inn (eiers funn 20.11.2026)
+// ---------------------------------------------------------------------
+test("Invitasjonslenke uten økt: siden sier at hun er invitert, og returstien bærer invitasjonen", async () => {
+  const { lesInvitasjonslenke } = await import("../static/js/innlogging.js");
+  assert.equal(lesInvitasjonslenke("?visning=blimed&t=acme"), null);
+  assert.equal(lesInvitasjonslenke("?visning=oversikt&t=acme&k=x"), null);
+  assert.deepEqual(lesInvitasjonslenke("?visning=blimed&t=acme&k=a%2Bb"),
+    { tenant: "acme", token: "a+b" });
+
+  const forrige = window.location.href;
+  // Egen fetch: tidligere tester i fila bytter den globale, og uten en
+  // leverandør tegner kortet en feiltilstand i stedet for innloggingen.
+  const forrigeFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => (url.split("?")[0] === "/ui/oppsett.json"
+    ? { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", providere: ["google"] }) }
+    : { ok: false, status: 404, json: async () => ({ feil: "x" }) });
+  window.history.replaceState(null, "", "/?visning=blimed&t=acme&k=a%2Bb/c");
+  const app = nyttAppBrett();
+  try {
+    await visInnlogging();
+    await vent(() => app.querySelector('input[name="retursti"]'));
+    const tekst = app.textContent;
+    // Hun ser invitasjonen — ikke forsiden.
+    assert.ok(tekst.includes(
+      t("site.invitasjon.tittel").replace("{firma}", "acme")));
+    assert.equal(app.querySelectorAll("h1").length, 1);
+    const retur = app.querySelector('input[name="retursti"]').value;
+    const q = new URLSearchParams(retur.split("?")[1]);
+    // MUTASJONEN SOM DREPER DENNE: la returstien være `/?visning=blimed`
+    // uten `t` og `k` — da lander hun på en tom flate etter innlogging.
+    assert.equal(retur.split("?")[0], "/");
+    assert.equal(q.get("visning"), "blimed");
+    assert.equal(q.get("t"), "acme");
+    assert.equal(q.get("k"), "a+b/c");
+    // Returstien må overleve serverens `trygg_retursti`: lokal sti, ingen
+    // backslash, ingen kontrolltegn.
+    assert.ok(!/[\\\x00-\x1f]/.test(retur) && !retur.startsWith("//"));
+    const brudd = await alvorligeBrudd(app, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  } finally {
+    globalThis.fetch = forrigeFetch;
+    window.history.replaceState(null, "", forrige);
+  }
+});

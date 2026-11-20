@@ -7157,5 +7157,11 @@
   "ui.oppsett.godkjenner.venter_tekst_mangler": "Den blir stående til en annen person enn forfatteren har godkjent den.",
   "ui.oppsett.godkjenner.apne": "Åpne Policyadministrasjon",
   "ui.oppsett.godkjenner.kopier": "Kopier lenken",
-  "ui.oppsett.godkjenner.kopiert": "Kopiert"
+  "ui.oppsett.godkjenner.kopiert": "Kopiert",
+  "site.invitasjon.kicker": "Invitasjon",
+  "site.invitasjon.tittel": "Du er invitert til {firma}",
+  "site.invitasjon.tekst": "Logg inn for å ta imot invitasjonen. Du kommer rett tilbake hit, og blir med i firmaet med ett trykk.",
+  "site.invitasjon.kort_tittel": "Logg inn og bli med",
+  "site.invitasjon.kort_tekst": "Bruk kontoen du vil ha i firmaet. Invitasjonen kan bare brukes én gang.",
+  "site.invitasjon.knapp": "Logg inn"
 }
