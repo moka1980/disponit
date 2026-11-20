@@ -7155,5 +7155,7 @@
   "ui.oppsett.godkjenner.venter_tittel": "En policyendring venter på godkjenning",
   "ui.oppsett.godkjenner.venter_tekst": "Den som skal godkjenne, åpner Policyadministrasjon, leser endringen og attesterer.",
   "ui.oppsett.godkjenner.venter_tekst_mangler": "Den blir stående til en annen person enn forfatteren har godkjent den.",
-  "ui.oppsett.godkjenner.apne": "Åpne Policyadministrasjon"
+  "ui.oppsett.godkjenner.apne": "Åpne Policyadministrasjon",
+  "ui.oppsett.godkjenner.kopier": "Kopier lenken",
+  "ui.oppsett.godkjenner.kopiert": "Kopiert"
 }

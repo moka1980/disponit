@@ -278,10 +278,22 @@ function godkjenningDel(g, ctx) {
           // igjen. Derfor et felt som kan merkes og kopieres.
           const felt = el("input", { class: "felt-inp", readOnly: true,
             value: url, id: "godkjenner-lenke" });
+          // Kopiknappen finnes bare der nettleseren kan kopiere; feltet
+          // er uansett merket, så Ctrl+C virker.
+          let kopier = null;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            kopier = el("button", { class: "knapp", type: "button",
+              text: t("ui.oppsett.godkjenner.kopier") });
+            kopier.addEventListener("click", () => {
+              navigator.clipboard.writeText(url).then(() => {
+                kopier.textContent = t("ui.oppsett.godkjenner.kopiert");
+              }).catch(() => { felt.focus(); felt.select(); });
+            });
+          }
           sett(lenkeboks,
             el("label", { for: "godkjenner-lenke",
               text: t("ui.oppsett.godkjenner.lenke") }),
-            felt,
+            felt, kopier && el("div", { class: "knapperad" }, kopier),
             el("p", { class: "muted",
               text: t("ui.oppsett.godkjenner.lenke_hjelp")
                 .replace("{dato}", String(svar.utloper).slice(0, 10)) }));

@@ -7155,5 +7155,7 @@
   "ui.oppsett.godkjenner.venter_tittel": "A policy change is waiting for approval",
   "ui.oppsett.godkjenner.venter_tekst": "The approver opens Policy administration, reads the change and attests.",
   "ui.oppsett.godkjenner.venter_tekst_mangler": "It stays open until someone other than the author has approved it.",
-  "ui.oppsett.godkjenner.apne": "Open Policy administration"
+  "ui.oppsett.godkjenner.apne": "Open Policy administration",
+  "ui.oppsett.godkjenner.kopier": "Copy the link",
+  "ui.oppsett.godkjenner.kopiert": "Copied"
 }
