@@ -26,6 +26,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { lesbarTekst } from "../static/js/flater/epost.js";
 import {
   alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
+  hvemTekst, sporTekst, sporHvem,
   visKundeservice,
   funnFor, trengerMenneske,
 } from "../static/js/flater/kundeservice.js";
@@ -387,6 +388,157 @@ test("Kundeservice: ingen hardkodet tekst i flaten", async () => {
   } finally {
     settI18nForTest(NB, "nb");
   }
+});
+
+// --- 225: tildeling og spor (felles innboks) --------------------------------
+const KOLLEGA = "bid_kollega";
+
+function koMedTildeling() {
+  const k = JSON.parse(JSON.stringify(KOEN));
+  k.koe[0].tildelt = null;
+  k.koe[1].tildelt = { bruker_id: KOLLEGA, navn: "Kari Nordmann",
+                       tildelt_ts: "2026-09-02T08:00:00+00:00" };
+  return k;
+}
+
+async function apneForste(h) {
+  await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  await vent(() => h.querySelector(".hv-hvem") !== null
+    && h.querySelector(".hv-hvem").textContent !== "");
+}
+
+test("Tildeling: køen sier hvem som har saken, med ord", async () => {
+  assert.equal(hvemTekst({ tildelt: null }),
+               t("ui.kundeservice.tildelt.ledig"));
+  assert.equal(hvemTekst({ tildelt: { navn: "Kari Nordmann" } }),
+               "Kari Nordmann");
+  // Et medlem uten visningsnavn vises aldri som en rå id.
+  assert.equal(hvemTekst({ tildelt: { bruker_id: "bid_x", navn: null } }),
+               t("ui.kundeservice.tildelt.uten_navn"));
+
+  SVAR = { ...fullSvar(), "/v1/kundeservice": koMedTildeling() };
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+  const tekst = h.querySelector("table").textContent;
+  assert.ok(tekst.includes(t("ui.kundeservice.kolonne.hvem")));
+  assert.ok(tekst.includes(t("ui.kundeservice.tildelt.ledig")));
+  assert.ok(tekst.includes("Kari Nordmann"));
+  assert.ok(!tekst.includes(KOLLEGA), "en rå bruker-id sto i køen");
+  const brudd = await alvorligeBrudd(h);
+  assert.deepEqual(brudd, [], beskrivBrudd(brudd));
+});
+
+test("Tildeling: «Ta saken» sender meg, med nøkkel", async () => {
+  SVAR = { ...fullSvar(), "/v1/kundeservice": koMedTildeling() };
+  SISTE = null;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await apneForste(h);
+  assert.equal(h.querySelector(".hv-hvem").textContent,
+               t("ui.kundeservice.tildelt.ingen"));
+  // Ingen har saken: da finnes det ingenting å frigi.
+  const knapper = [...h.querySelectorAll(".hv-tildel button")]
+    .map((b) => b.textContent);
+  assert.deepEqual(knapper, [t("ui.kundeservice.tildelt.ta")]);
+  h.querySelector(".hv-tildel button").click();
+  await vent(() => SISTE !== null);
+  assert.equal(SISTE.sti, `/v1/kundeservice/henvendelse/${H1}/tildel`);
+  assert.deepEqual(SISTE.kropp, { bruker_id: "meg" });
+  assert.ok(SISTE.headers["Idempotency-Key"]);
+});
+
+test("Tildeling: gi til en kollega, og frigi", async () => {
+  const k = koMedTildeling();
+  k.koe[0].tildelt = k.koe[1].tildelt;
+  SVAR = { ...fullSvar(), "/v1/kundeservice": k,
+    "/v1/firma/medlemmer": { medlemmer: [
+      { bruker_id: KOLLEGA, navn: "Kari Nordmann" },
+      { bruker_id: "bid_ola", navn: "Ola Hansen" },
+      { bruker_id: "bid_anonym", navn: null }] } };
+  SISTE = null;
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await apneForste(h);
+  assert.equal(h.querySelector(".hv-hvem").textContent,
+    t("ui.kundeservice.tildelt.har").replace("{navn}", "Kari Nordmann"));
+
+  // Kollegalista hentes først når velgeren tas i bruk.
+  assert.ok(!KALL.some((c) => c.sti === "/v1/firma/medlemmer"));
+  const velg = h.querySelector(".hv-tildel-velg");
+  velg.dispatchEvent(new window.Event("focus"));
+  await vent(() => velg.options.length === 3);
+  // Et medlem uten navn kan ikke velges — det ville vært en rad uten ord.
+  assert.deepEqual([...velg.options].slice(1).map((o) => o.textContent),
+                   ["Kari Nordmann", "Ola Hansen"]);
+  velg.value = "bid_ola";
+  velg.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await vent(() => SISTE !== null);
+  assert.deepEqual(SISTE.kropp, { bruker_id: "bid_ola" });
+
+  // Flaten tegner seg på nytt etter lagringen; panelet står åpent.
+  const frigi = () => [...h.querySelectorAll(".hv-tildel button")].find(
+    (b) => b.textContent === t("ui.kundeservice.tildelt.frigi")
+      && !b.disabled);
+  assert.ok(await vent(() => !!frigi(), 400), "frigi-knappen kom ikke tilbake");
+  SISTE = null;
+  frigi().click();
+  await vent(() => SISTE !== null);
+  assert.deepEqual(SISTE.kropp, { bruker_id: null });
+});
+
+test("Tildeling: en lesende økt ser hvem, men får ingen knapper",
+  async () => {
+    SVAR = { ...fullSvar(), "/v1/kundeservice": koMedTildeling() };
+    const h = nyHoved();
+    visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold"]));
+    await apneForste(h);
+    assert.equal(h.querySelector(".hv-hvem").textContent,
+                 t("ui.kundeservice.tildelt.ingen"));
+    assert.equal(h.querySelectorAll(".hv-tildel button, .hv-tildel select")
+      .length, 0);
+  });
+
+test("Spor: hentes når det åpnes, og sier hva, hvem og når", async () => {
+  assert.equal(sporTekst({ handling: "henvendelse.tildelt",
+                           til: "Kari Nordmann" }), "Tildelt Kari Nordmann");
+  assert.equal(sporTekst({ handling: "henvendelse.lukket",
+                           utfall: "besvart" }), "Lukket (besvart)");
+  // En handling flaten ikke kjenner, vises som «Handling» — ikke som nøkkel.
+  assert.equal(sporTekst({ handling: "noe.nytt" }),
+               t("ui.kundeservice.spor.annet"));
+  assert.equal(sporHvem({ hvem: { type: "agent", navn: "epost" } }),
+               t("ui.kundeservice.spor.agent"));
+  assert.equal(sporHvem({ hvem: { type: "ukjent", navn: null } }),
+               t("ui.kundeservice.spor.ukjent"));
+
+  const sti = `/v1/kundeservice/henvendelse/${H1}/spor`;
+  SVAR = { ...fullSvar(), "/v1/kundeservice": koMedTildeling(), [sti]: {
+    avkortet: false, spor: [
+      { handling: "henvendelse.mottatt", naar: "2026-08-20T09:00:12+00:00",
+        hvem: { type: "agent", navn: "epost" }, etterfylt: false },
+      { handling: "henvendelse.tildelt", naar: "2026-08-20T09:05:00+00:00",
+        hvem: { type: "bruker", navn: "Ola Hansen" }, til: "Kari Nordmann",
+        etterfylt: false }] } };
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  await apneForste(h);
+  assert.ok(!KALL.some((c) => c.sti === sti), "sporet ble hentet uåpnet");
+  const boks = h.querySelector(".hv-spor-boks");
+  boks.open = true;
+  boks.dispatchEvent(new window.Event("toggle"));
+  await vent(() => h.querySelectorAll(".hv-spor li").length === 2);
+  const linjer = [...h.querySelectorAll(".hv-spor li")]
+    .map((li) => li.textContent);
+  assert.ok(linjer[0].includes("2026-08-20 09:00"));
+  assert.ok(linjer[0].includes(t("ui.kundeservice.spor.henvendelse.mottatt")));
+  assert.ok(linjer[0].includes(t("ui.kundeservice.spor.agent")));
+  assert.ok(linjer[1].includes("Tildelt Kari Nordmann"));
+  assert.ok(linjer[1].includes("Ola Hansen"));
+  const brudd = await alvorligeBrudd(h);
+  assert.deepEqual(brudd, [], beskrivBrudd(brudd));
 });
 
 test("Kundeservice: kilden bærer ingen sendevei", () => {

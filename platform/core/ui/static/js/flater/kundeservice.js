@@ -33,6 +33,7 @@ import { t } from "../i18n.js";
 import {
   UautorisertFeil, avgjorUtkast, hentJson, henvendelseTilUnntakskoe,
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
+  tildelHenvendelse, hentHenvendelsesspor, hentMedlemmer,
   hentFullmakter, hentStilleregler, nyIdempotensnokkel,
   settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
@@ -130,6 +131,34 @@ export function trengerMenneske(h) {
     || !STILLE.has(h.handlingstype);
 }
 
+// 225: hvem som har saken, som tekst. Et medlem uten visningsnavn får
+// «en kollega» — aldri en rå id.
+export function hvemTekst(h) {
+  if (!h.tildelt) return t("ui.kundeservice.tildelt.ledig");
+  return h.tildelt.navn || t("ui.kundeservice.tildelt.uten_navn");
+}
+
+// Én sporrad som setning: «Tildelt Kari Nordmann», «Lukket (besvart)».
+export function sporTekst(s) {
+  let tekst = t(`ui.kundeservice.spor.${s.handling}`,
+                t("ui.kundeservice.spor.annet"));
+  if (s.handling === "henvendelse.tildelt") {
+    tekst = tekst.replace("{til}",
+      s.til || t("ui.kundeservice.tildelt.uten_navn"));
+  }
+  if (s.utfall) {
+    tekst += ` (${t(`ui.kundeservice.utfall.${s.utfall}`, s.utfall)})`;
+  }
+  return tekst;
+}
+
+export function sporHvem(s) {
+  const h = s.hvem || {};
+  if (h.type === "agent") return t("ui.kundeservice.spor.agent");
+  if (h.type === "bruker" && h.navn) return h.navn;
+  return t("ui.kundeservice.spor.ukjent");
+}
+
 function korad(h, ctx, apneDetalj, medEmne) {
   const rad = el("tr", {});
   if (medEmne) {
@@ -166,6 +195,9 @@ function korad(h, ctx, apneDetalj, medEmne) {
 
   rad.append(el("td", { class: "celle-tekst",
                         text: klassifiseringTekst(h) }));
+  // 225: HVEM HAR SAKEN. «Ledig» er et ord, ikke en tom celle — en tom
+  // celle leses som «vet ikke».
+  rad.append(el("td", { class: "celle-tekst", text: hvemTekst(h) }));
   const utkastcelle = el("td", { class: "celle-tall",
     text: String(h.antall_utkast) });
   if (h.brukt_utkast) {
@@ -195,6 +227,7 @@ function koTabell(koe, ctx, apneDetalj, captionNokkel, medEmne) {
                text: t("ui.kundeservice.kolonne.mottatt") }),
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.klassifisering") }),
+    el("th", { scope: "col", text: t("ui.kundeservice.kolonne.hvem") }),
     el("th", { scope: "col", text: t("ui.kundeservice.kolonne.utkast") }),
     el("th", { scope: "col",
                text: t("ui.kundeservice.kolonne.handling") }))));
@@ -864,6 +897,103 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
   }
   const rutenett = el("div", { class: "hv-rutenett" }, melding);
   const hode = el("header", { class: "hv-hode" }, overskrift, emne, meta, ref);
+
+  // --- 225: HVEM HAR SAKEN, og hva som er gjort med den ---
+  // Én linje: hvem, og det ene man kan gjøre med det. Kollegalista hentes
+  // først når noen åpner «Gi til en kollega» — køen skal ikke koste et
+  // medlemsoppslag per rad.
+  const hvem = el("p", { class: "hv-hvem" });
+  const tildelrad = el("div", { class: "knapperad hv-tildel" });
+  const sporliste = el("ol", { class: "hv-spor" });
+  const spor = el("details", { class: "hv-flere hv-spor-boks" },
+    el("summary", { text: t("ui.kundeservice.spor.tittel") }),
+    el("p", { class: "muted", text: t("ui.kundeservice.spor.hjelp") }),
+    sporliste);
+  const lastSpor = async () => {
+    if (!gjeldende || !spor.open) return;
+    const hid = gjeldende.henvendelse_id;
+    try {
+      const d = await hentHenvendelsesspor(hid);
+      if (!fortsatt(hid)) return;
+      sett(sporliste, ...(d.spor || []).map((r) => el("li", {},
+        el("span", { class: "hv-spor-naar",
+          text: r.naar.slice(0, 16).replace("T", " ") }), " ",
+        el("strong", { text: sporTekst(r) }), " ",
+        el("span", { class: "muted", text: `— ${sporHvem(r)}` }))));
+      if (d.avkortet) {
+        sporliste.append(el("li", { class: "muted",
+          text: t("ui.kundeservice.spor.avkortet") }));
+      }
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(sporliste, el("li", { role: "alert",
+        text: t("ui.kundeservice.feil.generell") }));
+    }
+  };
+  spor.addEventListener("toggle", lastSpor);
+  const tildel = async (brukerId, kvittering) => {
+    const hid = gjeldende.henvendelse_id;
+    for (const k of tildelrad.querySelectorAll("button, select")) {
+      k.disabled = true;
+    }
+    try {
+      await tildelHenvendelse(hid, brukerId);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(utfall, el("span", { role: "alert",
+        text: t("ui.kundeservice.feil.tilstand") }));
+      tegnTildeling(gjeldende);
+      return;
+    }
+    meldLive(kvittering);
+    kvitter(kvittering);
+    await last();
+  };
+  const tegnTildeling = (h) => {
+    hvem.textContent = h.tildelt
+      ? t("ui.kundeservice.tildelt.har").replace("{navn}", hvemTekst(h))
+      : t("ui.kundeservice.tildelt.ingen");
+    sett(tildelrad);
+    if (!skriver) return;
+    const ta = el("button", { type: "button", class: "knapp liten primar",
+      text: t("ui.kundeservice.tildelt.ta") });
+    ta.addEventListener("click",
+      () => tildel("meg", t("ui.kundeservice.tildelt.tatt")));
+    tildelrad.append(ta);
+    const velg = el("select", { class: "hv-tildel-velg",
+      "aria-label": t("ui.kundeservice.tildelt.gi") });
+    velg.append(el("option", { value: "",
+      text: t("ui.kundeservice.tildelt.gi") }));
+    let lastet = false;
+    const lastKolleger = async () => {
+      if (lastet) return;
+      lastet = true;
+      try {
+        const d = await hentMedlemmer();
+        for (const m of d.medlemmer || []) {
+          if (!m.navn) continue;
+          velg.append(el("option", { value: m.bruker_id, text: m.navn }));
+        }
+      } catch (e) {
+        lastet = false;
+        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+      }
+    };
+    velg.addEventListener("focus", lastKolleger);
+    velg.addEventListener("pointerdown", lastKolleger);
+    velg.addEventListener("change", () => {
+      if (velg.value) tildel(velg.value, t("ui.kundeservice.tildelt.gitt"));
+    });
+    tildelrad.append(velg);
+    if (h.tildelt) {
+      const frigi = el("button", { type: "button", class: "knapp liten",
+        text: t("ui.kundeservice.tildelt.frigi") });
+      frigi.addEventListener("click",
+        () => tildel(null, t("ui.kundeservice.tildelt.frigitt")));
+      tildelrad.append(frigi);
+    }
+  };
+  hode.append(hvem, tildelrad, spor);
   if (skriver) {
     // DOMMEN ER ÉN LINJE UNDER HODET: prioritet · tema · handlingstype ·
     // lagre. Svaret er det man gjør oftest og står øverst til høyre;
@@ -968,6 +1098,9 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       sett(utfall);
       // 160: masken, aldri adressen — og adressens fravær som ord.
       sett(meta, ...metaBrikker(h));
+      tegnTildeling(h);
+      spor.open = false;
+      sett(sporliste);
       ref.textContent = `${t("ui.kundeservice.kolonne.referanse")}: `
         + kortref(h.ekstern_ref);
       ref.setAttribute("title", h.ekstern_ref);
@@ -1044,7 +1177,10 @@ export function visKundeservice(hoved, ctx) {
   // INGEN `aria-live` her: `meldLive` eier opplesningen, og to regioner
   // ville lest den samme setningen to ganger.
   const kvittering = el("p", { class: "muted" });
-  const kropp = el("div", { class: "kpi-kort-liste" });
+  // ÉN KOLONNE: køen er flatens arbeidsbord og trenger hele bredden —
+  // i tre kolonner ble tabellen klemt og detaljpanelet kuttet (målt på
+  // skjermbilde 20.11.2026).
+  const kropp = el("div", { class: "kpi-kort-liste en-kolonne" });
   hoved.append(kvittering, kropp);
   const kvitter = (tekst) => { kvittering.textContent = tekst; };
   // …OG DEN ÅPNE RADEN OGSÅ. Uten dette lukket detaljpanelet seg ved

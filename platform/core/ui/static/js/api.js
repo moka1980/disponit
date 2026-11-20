@@ -853,6 +853,14 @@ export const avgjorUtkast = (utkastId, status, idem) =>
 export const lukkHenvendelse = (id, utfall, idem) =>
   _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/lukk`,
          "POST", { utfall }, idem || nyIdempotensnokkel());
+// 225: hvem som har saken. `brukerId` er et medlems id, "meg" (ta saken
+// selv) eller null (frigi).
+export const tildelHenvendelse = (id, brukerId, idem) =>
+  _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/tildel`,
+         "POST", { bruker_id: brukerId }, idem || nyIdempotensnokkel());
+
+export const hentHenvendelsesspor = (id) =>
+  hentJson(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/spor`);
 // M-18 (103): onboardingregisteret. MALEN og LØPET bærer hver sin
 // SP-2-nøkkel — serveren utleder id-en av den, så en tapt respons + nytt
 // klikk gjenspiller i stedet for å starte et løp til. Et dobbelt startet
