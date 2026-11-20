@@ -619,6 +619,29 @@ export const lukkKontinuitetshendelse = (hendelseId, tekst, idem) =>
   _muter(`/v1/kontinuitet/hendelse/${encodeURIComponent(hendelseId)}/lukk`,
          "POST", { tekst }, idem || nyIdempotensnokkel());
 
+// ADR-008 (M-35): tjenestekartet og beredskapskontaktene. Playbooken
+// sendes som NAVN — serveren binder den til bytes i releasen
+// (`navn@sha256`). En klient som sendte hashen selv, ville kunne binde
+// kartet til en tekst ingen har godkjent.
+export const hentPlaybooks = () => hentJson("/v1/kontinuitet/playbooks");
+
+export const opprettKontinuitetstjeneste = (felt, idem) =>
+  _muter("/v1/kontinuitet/tjenester", "POST", felt,
+         idem || nyIdempotensnokkel());
+
+export const oppdaterKontinuitetstjeneste = (tjenesteId, felt, idem) =>
+  _muter(`/v1/kontinuitet/tjeneste/${encodeURIComponent(tjenesteId)}`,
+         "POST", felt, idem || nyIdempotensnokkel());
+
+export const opprettBeredskapskontakt = (rolle, prioritet, brukerId, idem) =>
+  _muter("/v1/kontinuitet/kontakter", "POST",
+         { rolle, prioritet, bruker_id: brukerId },
+         idem || nyIdempotensnokkel());
+
+export const bekreftBeredskapskontakt = (kontaktId, idem) =>
+  _muter(`/v1/kontinuitet/kontakt/${encodeURIComponent(kontaktId)}/bekreft`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
 // 094 (M-5): malregisterets fem skriveveier og utfyllingen.
 //
 // UTFYLLINGEN GÅR OGSÅ GJENNOM `_muter`, og det er et bevisst valg som

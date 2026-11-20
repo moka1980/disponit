@@ -1,0 +1,13 @@
+# Kontinuitetsplaybook (ADR-008). Se gjenopprett-fra-backup.yaml.
+navn: tjeneste-nede
+tittel: Tjenesten er nede
+naar: >-
+  Tjenesten svarer ikke eller svarer feil, uten tegn til at data er tapt.
+steg:
+  - Bekreft at feilen er reell, fra et annet nett enn ditt eget.
+  - Åpne en hendelse i kontinuitetsflaten og varsle kontaktrollen.
+  - Finn siste endring før feilen, og rull den tilbake hvis den er årsaken.
+  - Start tjenesten på nytt, og les loggen fra oppstarten.
+  - Si fra til dem som er berørt, med neste tidspunkt for oppdatering.
+  - Bekreft at tjenesten svarer, og hold øye med den i en time.
+  - Skriv etteranalysen i tidslinjen før hendelsen lukkes.

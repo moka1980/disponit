@@ -1,0 +1,16 @@
+# Kontinuitetsplaybook (ADR-008). Godkjenning er git-merge; tjenestekartet
+# binder filens BYTES (navn@sha256). En endring her gjør bindingene i
+# kartet «utdatert» til kunden har valgt playbooken på nytt.
+navn: gjenopprett-fra-backup
+tittel: Gjenopprett fra backup
+naar: >-
+  Data er tapt, ødelagt eller kryptert, og tjenesten må tilbake fra siste
+  gode sikkerhetskopi.
+steg:
+  - Stans skriving til den skadde tjenesten, så skaden ikke vokser.
+  - Åpne en hendelse i kontinuitetsflaten og varsle kontaktrollen.
+  - Finn siste sikkerhetskopi som er verifisert, og noter alderen på den.
+  - Gjenopprett til et isolert miljø først, og kontroller innholdet der.
+  - Gjenopprett til drift, og bekreft at tjenesten svarer.
+  - Gjør rede for hva som gikk tapt mellom sikkerhetskopien og hendelsen.
+  - Skriv etteranalysen i tidslinjen før hendelsen lukkes.

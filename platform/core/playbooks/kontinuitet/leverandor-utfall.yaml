@@ -1,0 +1,14 @@
+# Kontinuitetsplaybook (ADR-008). Se gjenopprett-fra-backup.yaml.
+navn: leverandor-utfall
+tittel: Utfall hos en leverandør
+naar: >-
+  En ekstern tjeneste dere er avhengige av er nede, og dere kan ikke rette
+  feilen selv.
+steg:
+  - Bekreft utfallet på leverandørens statusside eller hos kundestøtten.
+  - Åpne en hendelse i kontinuitetsflaten og varsle kontaktrollen.
+  - Gå over til den manuelle rutinen eller reserveløsningen for tjenesten.
+  - Si fra til dem som er berørt, med neste tidspunkt for oppdatering.
+  - Før logg over det som gjøres manuelt, så det kan føres inn etterpå.
+  - Når leverandøren er tilbake, før inn det manuelle og kontroller summen.
+  - Skriv etteranalysen i tidslinjen før hendelsen lukkes.
