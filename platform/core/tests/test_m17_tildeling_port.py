@@ -197,9 +197,17 @@ def test_sporet_er_append_only_og_tenantbundet(migrator):
         migrator.execute("SET LOCAL ROLE disponit_kundeservice_eier")
     migrator.rollback()
     # En annen tenant ser ikke raden.
-    _sett_kontekst(migrator, "t-225-annen")
-    n = migrator.execute(
-        "SELECT count(*) FROM m17_sporet(%s,%s,%s)",
-        ("t-225-annen", hid, 50)).fetchone()[0]
-    migrator.rollback()
-    assert n == 0
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        _sett_kontekst(c, TENANT)
+        egne = c.execute("SELECT count(*) FROM m17_sporet(%s,%s,%s)",
+                         (TENANT, hid, 50)).fetchone()[0]
+        c.rollback()
+        _sett_kontekst(c, "t-225-annen")
+        andres = c.execute("SELECT count(*) FROM m17_sporet(%s,%s,%s)",
+                           ("t-225-annen", hid, 50)).fetchone()[0]
+        c.rollback()
+    finally:
+        c.close()
+    assert egne == 1 and andres == 0
