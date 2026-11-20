@@ -102,7 +102,7 @@ export const MODULSTATUS = {
   // AKTØREN på `kampanje.send`, ikke en manglende verifikator. Det gjør
   // tilbakeholdelsen sterkere — modulen finnes for å sende, og v1
   // sender null.
-  41: "i_drift",    // m41_betaling: aktiv, produksjon
+  41: "bygges",      // m41_betaling: under_utvikling, ikke_i_drift
   19: "i_drift",    // m19_adresse: aktiv, produksjon
   39: "i_drift",    // m39_lonnsgrunnlag: aktiv, produksjon
   44: "i_drift",    // m44_kampanje: aktiv, produksjon — alle seks punkter ja
@@ -125,7 +125,7 @@ export const MODULSTATUS = {
   // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
   48: "i_drift",    // m48_motpart: aktiv, produksjon
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
-  46: "i_drift",    // m46_anbud: aktiv, produksjon
+  46: "bygges",      // m46_anbud: under_utvikling, ikke_i_drift
   51: "i_drift",    // m51_tilskudd: aktiv, produksjon
   55: "i_drift",    // m55_merkevare: aktiv, produksjon
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
@@ -156,7 +156,7 @@ export const MODULSTATUS = {
   // for at de blir MÅLT.
   //
   // Flippes av en modulaksept, aldri av en byggemilepæl.
-  15: "i_drift",    // m15_likviditet: aktiv, produksjon
+  15: "bygges",      // m15_likviditet: under_utvikling, ikke_i_drift
   33: "i_drift",    // m33_prognose: aktiv, produksjon
   36: "i_drift",    // m36_optimalisator: aktiv, produksjon
   // KLYNGE 9 — YTRINGENE. Registrert med grensene, før koden.
