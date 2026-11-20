@@ -1,0 +1,12 @@
+# INTERVALL, ikke klokkeslett: jobben leser sju små filer og ett register,
+# og sikter mot «ofte nok til at ti døgns margin aldri brukes opp».
+[Unit]
+Description=Disponit modultoken-rotasjon, to ganger i døgnet
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=12h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

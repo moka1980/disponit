@@ -116,6 +116,10 @@ Oppgraderingsutløser: **første modul som trenger 7B-modell i staging-test
 
 ## Miljøer
 
+> **ADR-009 (20.11.2026):** eier har vedtatt at `disponit-srv` skal bli
+> produksjon. Til byttet er gjort, gjelder tabellen under. Rekkefølgen og
+> klarsjekken står i `docs/beslutninger/ADR-009-denne-verten-blir-produksjon.md`.
+
 | Miljø | Hvor | Formål | Data |
 |---|---|---|---|
 | **Lokalt** | Utviklers maskin / Claude Code | Kode + enhetstester | Syntetisk |
