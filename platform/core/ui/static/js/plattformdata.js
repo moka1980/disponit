@@ -196,7 +196,7 @@ export const MODULSTATUS = {
   // m35-v1-grensen. Flippes av en M-35-aksept, aldri av en
   // byggemilepæl — og aldri av at plattformens backup er verifisert:
   // en verifisert backup er noe modulen MÅLER, ikke noe den er.
-  35: "bygges",
+  35: "i_drift",    // m35_kontinuitet: aktiv, produksjon
   37: "i_drift",    // m37_unntak: aktiv, produksjon — rollback drillet i lease-form
                     // 17/9 (m37-rollback-v1); de fem andre punktene ja siden aug.
   10: "i_drift",    // m10_backup: aktiv, produksjon

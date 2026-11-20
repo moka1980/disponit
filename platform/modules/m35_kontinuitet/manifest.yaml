@@ -30,8 +30,8 @@
 id: m35_kontinuitet
 navn: Krise- og kontinuitetsagent
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
 # derfor ærlig oppgir ingen: M-35 BESTILLER gjennom policyporten
 # (`kontinuitet.ovelse` er en bestillingstype, hver øvelse policyvurderes
@@ -50,9 +50,25 @@ i18n_prefiks: kontinuitet
 # på staging. «Et manifest skal aldri lese sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m35-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m35-suite-v1-20261119T234930Z.json
+    artefakt_sha256: 529c69d00b91d59e341a709a0bfb41b2b311b8f14862911cf336d5fae7182ed7
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 40 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
     status: ja
