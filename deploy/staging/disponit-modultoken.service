@@ -1,0 +1,14 @@
+# Fornyer arbeidermodulenes tokener før de utløper (se
+# roter-modultokener.sh). Kjører som root: tokenfilene er rot-eide, og
+# arbeiderne må startes på nytt etter et bytte. Feiler uniten, står den i
+# `systemctl --failed` — det er varselet.
+[Unit]
+Description=Disponit modultoken-rotasjon
+After=network-online.target disponit-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/disponit/aktiv/deploy/staging/roter-modultokener.sh
+
+[Install]
+WantedBy=multi-user.target

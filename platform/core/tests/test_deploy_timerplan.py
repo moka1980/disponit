@@ -34,7 +34,7 @@ INTERVALLTIMERE (`OnUnitActiveSec=`), og det er et bevisst skille:
     er allerede spredt av sin egen oppstart, og `RandomizedDelaySec`
     på en femminutters jobb ville vært støy, ikke spredning.
 
-Alle elleve intervalltimerne i treet er derfor unntatt — og porten
+Alle tolv intervalltimerne i treet er derfor unntatt — og porten
 teller dem, så et unntak som vokser stille blir synlig.
 
 MERK at `RandomizedDelaySec` IKKE er det som skiller de to gruppene:
@@ -170,6 +170,7 @@ def test_intervalltimerne_er_et_navngitt_unntak():
         "disponit-evidensreaper.timer",
         "disponit-helse.timer",
         "disponit-m57-utsending.timer",
+        "disponit-modultoken.timer",
         "disponit-plan.timer",
         "disponit-rydd-pending.timer",
         "disponit-selvtest.timer",
@@ -264,3 +265,38 @@ def test_oppstartsbygen_er_dokumentert_og_ikke_bare_akseptert():
         "avveiningen rundt Persistent staar ikke skrevet noe sted")
     for ord_ in ("advisory", "Persistent"):
         assert ord_ in tekst, ord_
+
+
+def test_modultokenene_fornyes_av_en_timer_som_faktisk_kaller_rotasjonen():
+    """DEFINERT, TESTET — OG ALDRI KALT (funnet 20.11.2026).
+
+    `/v1/modul/token/roter` har stått siden 035, og tokenene lever i 30
+    døgn. Ingenting kalte ruten. Tokenene fra 17.9 utløp 17.10, og alle
+    sju arbeiderne feilet i hver runde til noen tilfeldigvis leste
+    journalen.
+
+    Porten binder kjeden: timeren finnes, uniten kjører skriptet, og
+    skriptet kaller nettopp rotasjonsruten med margin UNDER tokenets
+    levetid.
+
+    MUTASJONEN SOM DREPER DENNE: sett MIN_DOGN over TOKEN_DAGER, eller
+    pek uniten på et annet skript.
+    """
+    unit = (TIMERKATALOG / "disponit-modultoken.service").read_text(
+        encoding="utf-8")
+    skript = (TIMERKATALOG / "roter-modultokener.sh").read_text(
+        encoding="utf-8")
+    assert ("ExecStart=/bin/bash /opt/disponit/aktiv/deploy/staging/"
+            "roter-modultokener.sh") in unit
+    assert '"$API/v1/modul/token/roter"' in skript
+    margin = int(re.search(r'MIN_DOGN="\$\{MIN_DOGN:-(\d+)\}"',
+                           skript).group(1))
+    kilde = (ROT / "platform/core/api/modulonboarding.py").read_text(
+        encoding="utf-8")
+    dager = int(re.search(r"^TOKEN_DAGER = (\d+)$", kilde, re.M).group(1))
+    # Margin under levetiden, og minst en uke: en vert som er nede i
+    # noen døgn skal ikke komme tilbake til utløpte tokener.
+    assert 7 <= margin < dager
+    # Et utløpt token kan ikke rotere seg selv — da skal uniten FEILE,
+    # ikke rapportere «ok».
+    assert "feil=1; continue" in skript and 'exit "$feil"' in skript

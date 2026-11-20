@@ -69,6 +69,21 @@ utkast-policy; M-14, M-17, M-23, M-26, M-44 og WCAG-revisjonen mangler
 produksjons-deployment; M-57 har en, men arbeideren har ikke token for
 den. `demo-a` er ikke i bruk og slutter å binde.
 
+## Gjort 20.11.2026 (steg 2 og 3)
+
+Alle sju arbeidermodulene har nå en `claiming` deployment i `produksjon`
+og et modultoken for den (`deploy/staging/modul-til-produksjon.sh`). De
+gamle tokenfilene står ved siden av som `DISPONIT_MODULTOKEN.staging-<tid>`.
+Klarsjekken har én blokkering igjen: `wcagvakt` på utkast-policy (steg 1,
+menneskets).
+
+**Funnet underveis:** staging-tokenene utløp 17.10.2026, og alle sju
+arbeiderne hadde feilet i hver runde siden. Ingenting kalte
+`/v1/modul/token/roter`. Køen var tom for ekte firmaer i hele perioden, så
+ingen bestilling gikk tapt. Rettet med `disponit-modultoken.timer`
+(`roter-modultokener.sh`, installeres med `modultoken-oppsett.sh`): tokener
+med ti døgn eller mindre igjen roteres, og et utløpt token feller uniten.
+
 ## Det dommen ikke gjør
 
 - Den skiller ikke staging og produksjon. Etter byttet finnes det ingen
