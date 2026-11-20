@@ -1,0 +1,68 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m10-fasit-v1",
+  "maalt": {
+    "jobb": [
+      {
+        "linje": {
+          "hendelse": "backupstatus",
+          "skrevet": 1
+        },
+        "returkode": 0
+      },
+      {
+        "linje": {
+          "hendelse": "backupstatus",
+          "skrevet": 0
+        },
+        "returkode": 0
+      },
+      {
+        "linje": {
+          "hendelse": "backupstatus",
+          "mangler": true,
+          "skrevet": 0,
+          "sti": "/tmp/tmpmfignvfj/finnes-ikke.json"
+        },
+        "returkode": 0
+      }
+    ],
+    "lesedor_egne_tall": true,
+    "nye_revisjonsrader": 0,
+    "rader": 1,
+    "skrivedor_execute": [
+      "disponit_driftstatus"
+    ],
+    "tabellskrivere": [
+      "disponit_m37_claimer:INSERT"
+    ],
+    "uteblitt_etter_fersk": 0,
+    "uteblitt_fersk_fordeling": {
+      "a": 0,
+      "b": 0,
+      "c": 0,
+      "status_avvik": 0
+    },
+    "uteblitt_fordeling": {
+      "a": 1,
+      "b": 1,
+      "c": 0,
+      "status_avvik": 0
+    },
+    "uteblitt_forste": 2,
+    "uteblitt_samme_dogn": 0
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "modul": "m10_backup",
+    "runde": "1fdd6cd6",
+    "tenanter": {
+      "p": "t-m10fasit-p-1fdd6cd6",
+      "q": "t-m10fasit-q-1fdd6cd6"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:50.516019+00:00"
+}

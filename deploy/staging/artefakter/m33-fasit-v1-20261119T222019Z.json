@@ -1,0 +1,77 @@
+{
+  "bestatt": true,
+  "krav_id": "m33-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "lag_prognose": 4,
+      "registrer_maaling": 3,
+      "registrer_modell": 4,
+      "sett_krav": 2
+    },
+    "evidens_totalt": 13,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "prognose_uten_maaling"
+        ],
+        "merke": "umaalt",
+        "subjekt_id": "fd3cdcbb-1150-4989-8578-dfe3cd9dc660:1",
+        "ventet": "prognose_uten_maaling"
+      },
+      {
+        "fikk": [
+          "prognose_paa_ukjent_datakvalitet"
+        ],
+        "merke": "ukjent",
+        "subjekt_id": "fd3cdcbb-1150-4989-8578-dfe3cd9dc660",
+        "ventet": "prognose_paa_ukjent_datakvalitet"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "5c4d752f-c4f5-4cec-b11a-f00366c77542:1",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "aa3f91a1-e02e-414c-af42-04d069115ce7:1",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "slaar_ikke_naiv_baseline"
+        ],
+        "merke": "baseline",
+        "subjekt_id": "b1-cf40c6b1",
+        "ventet": "slaar_ikke_naiv_baseline"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 5,
+    "sveip1_nye": 7,
+    "sveip1_tenanter": 2,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 6
+  },
+  "oppsett": {
+    "bevisrot_sha256": "81d9b2ce6e224d8ac56c0f5076b45c912ec5ab9d017d622b34f3f4ae59c43560",
+    "evidenskilde": "m33_prognose",
+    "modul": "m33_prognose",
+    "riggmodul": "m33_fasit",
+    "runde": "cf40c6b1",
+    "sett_sha256": "7365e0275c023c4e609fb0be7f7f0788495c3e3903ddb986ba32b888030c86a9",
+    "tenanter": [
+      "t-m33fasit-a-cf40c6b1",
+      "t-m33fasit-b-cf40c6b1"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T22:20:19.971985+00:00"
+}

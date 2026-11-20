@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m31-fasit-v1",
+  "maalt": {
+    "cli_returkoder": [
+      0,
+      0
+    ],
+    "dommer": [
+      true,
+      false
+    ],
+    "drift_hasher": {
+      "1": "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c",
+      "2": "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8"
+    },
+    "eksempler": 24,
+    "hendelser": {
+      "kjoring_registrert": 2,
+      "krav_satt": 2,
+      "sett_registrert": 1
+    },
+    "hendelser_totalt": 5,
+    "hendelser_uten_aktor": 0,
+    "hendelser_ventet": {
+      "kjoring_registrert": 2,
+      "krav_satt": 2,
+      "sett_registrert": 1
+    },
+    "portutfall": [
+      "byttet",
+      "nektet",
+      "byttet",
+      "nektet",
+      "nektet"
+    ],
+    "portutfall_ventet": [
+      "byttet",
+      "nektet",
+      "byttet",
+      "nektet",
+      "nektet"
+    ],
+    "registrert_hash_lik_fil": true,
+    "runtime_skriverett": [],
+    "sett_hasher": {
+      "1": "5bb55d377f4c7587ff204959d16229d02e9dba5a8463110484911d8fd2fed32c",
+      "2": "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8"
+    }
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "d64c66a7d1c9e3e485fb086bde767a23d0d42c7b049d1f5cfc05b02bc267476c",
+    "modul": "m31_modellstyring",
+    "modul_i_registeret": "m31f-ccf7b86c",
+    "runde": "ccf7b86c",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:31:26.582857+00:00"
+}

@@ -101,9 +101,15 @@ def _sk(conn, tenant: str):
     felles.sett_kontekst(conn, tenant, AKTOR, "m29-fasit")
 
 
-def _hendelse(rt, tenant: str, regel: str, kv: int, nr: int) -> str:
+def _hendelse(rt, tenant: str, regel: str, kv: int, nr: int,
+              dogn_siden: int = 0) -> str:
+    """`dogn_siden` flytter SIGNALENE: en hendelse kan ikke være oppdaget
+    før signalene sine (`sikkerhetshendelse_oppdaget_etter_signalet`), så
+    den som skal eldes må ha signaler som er minst like gamle — suitens
+    `naar=_naa(days=-10)`."""
     hid = str(uuid.uuid4())
-    naa = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30)
+    naa = dt.datetime.now(dt.timezone.utc) - dt.timedelta(
+        days=dogn_siden, minutes=30)
     _sk(rt, tenant)
     rt.execute("SELECT * FROM m29_korreler(%s,%s,%s,%s,%s,%s,%s,%s)",
                (tenant, hid, regel, kv,
@@ -155,7 +161,9 @@ def forbered(rt, runde: str, mg=None) -> dict:
             rigg["playbook"][tkey] = pb
         for nr, (merke, _f, tkey) in enumerate(SETT, start=1):
             t = rigg[tkey]
-            s[merke] = _hendelse(rt, t, regel[tkey], kv[tkey], nr)
+            s[merke] = _hendelse(rt, t, regel[tkey], kv[tkey], nr,
+                                 dogn_siden=10 if merke == "over_frist"
+                                 else 0)
             if merke in MED_FORSLAG:
                 _forslag(rt, t, s[merke], rigg["playbook"][tkey])
         a = rigg["a"]

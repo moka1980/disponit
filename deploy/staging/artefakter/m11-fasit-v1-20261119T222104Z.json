@@ -1,0 +1,136 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m11-fasit-v1",
+  "maalt": {
+    "gjenspill_ny": 0,
+    "gjenspill_urort": true,
+    "nye_revisjonsrader": 0,
+    "rodvarsel_fordeling": {
+      "a": 2,
+      "b": 2,
+      "c": 0,
+      "status_avvik": 0
+    },
+    "rundeavvik": 0,
+    "runder": [
+      {
+        "fikk": [
+          "gronn",
+          0,
+          3
+        ],
+        "merke": "gronn",
+        "ny": 1,
+        "ventet": [
+          "gronn",
+          0,
+          3
+        ]
+      },
+      {
+        "fikk": [
+          "rod",
+          2,
+          2
+        ],
+        "merke": "rod",
+        "ny": 1,
+        "ventet": [
+          "rod",
+          2,
+          2
+        ]
+      },
+      {
+        "fikk": [
+          "ikke_konfigurert",
+          0,
+          2
+        ],
+        "merke": "ukonf",
+        "ny": 1,
+        "ventet": [
+          "ikke_konfigurert",
+          0,
+          2
+        ]
+      },
+      {
+        "fikk": [
+          "gronn",
+          0,
+          2
+        ],
+        "merke": "blandet",
+        "ny": 1,
+        "ventet": [
+          "gronn",
+          0,
+          2
+        ]
+      },
+      {
+        "fikk": [
+          "rod",
+          0,
+          2
+        ],
+        "merke": "rod_igjen",
+        "ny": 1,
+        "ventet": [
+          "rod",
+          0,
+          2
+        ]
+      },
+      {
+        "fikk": [
+          "rod",
+          2,
+          2
+        ],
+        "merke": "rod_annen",
+        "ny": 1,
+        "ventet": [
+          "rod",
+          2,
+          2
+        ]
+      }
+    ],
+    "skrivedor_execute": [
+      "disponit_selvtest"
+    ],
+    "tabellskrivere": [
+      "disponit_m37_claimer:INSERT"
+    ],
+    "uteblitt_etter_fersk": 0,
+    "uteblitt_fersk_fordeling": {
+      "a": 0,
+      "b": 0,
+      "c": 0,
+      "status_avvik": 0
+    },
+    "uteblitt_fordeling": {
+      "a": 1,
+      "b": 1,
+      "c": 0,
+      "status_avvik": 0
+    },
+    "uteblitt_forste": 2,
+    "uteblitt_samme_dogn": 0
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "modul": "m11_selvtest",
+    "runde": "1a5d59c5",
+    "tenanter": {
+      "p": "t-m11fasit-p-1a5d59c5",
+      "q": "t-m11fasit-q-1a5d59c5"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:04.083739+00:00"
+}

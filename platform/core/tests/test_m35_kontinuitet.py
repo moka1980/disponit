@@ -897,9 +897,13 @@ def test_port7e_alle_syv_dorene_eies_av_claimeren(migrator):
 # ---------------------------------------------------------------------------
 
 def test_manifestet_er_gyldig_og_aerlig():
-    """Manifestet validerer, sier under_utvikling/ikke_i_drift, bærer de
-    REELLE avhengighetene, og INGEN sjekklistepunkter er flippet uten
-    måling."""
+    """Manifestet validerer og bærer de REELLE avhengighetene — og INGEN
+    sjekklistepunkter er flippet uten måling.
+
+    FLIPPET ER AVLESNINGEN AV AKSEPTEN (m12-formen): `aktiv` og
+    `produksjon` står HVIS OG BARE HVIS alle seks punktene er `ja`, og
+    hvert `ja` peker på et artefakt. Porten måler sammenhengen, ikke et
+    øyeblikksbilde."""
     import yaml
 
     from manifestskjema import valider_manifest
@@ -907,13 +911,19 @@ def test_manifestet_er_gyldig_og_aerlig():
                        .read_text(encoding="utf-8"))
     assert valider_manifest(m) == []
     assert m["id"] == "m35_kontinuitet" == MODULROT.name
-    assert m["status"] == "under_utvikling"
-    assert m["driftstilstand"] == "ikke_i_drift"
     assert m["avhengigheter"] == ["m01_policy", "m02_revisjonslogg"]
     assert m["i18n_prefiks"] == "kontinuitet"
     for punkt, innhold in m["staging_sjekkliste"].items():
-        assert innhold["status"] == "nei", \
-            f"{punkt} er flippet uten at noen måling finnes"
+        if innhold["status"] == "ja":
+            assert innhold.get("artefakt") and innhold.get("krav_id"), \
+                f"{punkt} er flippet uten at noen måling finnes"
+    alle_ja = all(p["status"] == "ja"
+                  for p in m["staging_sjekkliste"].values())
+    if alle_ja:
+        assert (m["status"], m["driftstilstand"]) == ("aktiv", "produksjon")
+    else:
+        assert (m["status"], m["driftstilstand"]) == ("under_utvikling",
+                                                      "ikke_i_drift")
 
 
 def test_scopene_er_registrert_begge_veier():

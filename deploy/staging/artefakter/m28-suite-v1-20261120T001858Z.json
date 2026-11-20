@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m28-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 20,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m28_transport.py"
+    ],
+    "bevisrot_sha256": "ae43f9ddfd7cdaf138a824c422a0b446d1be621ad0bdc546b991801cfe11ca26",
+    "commit": "35d5d336c9433d60967c9abcbdd8ac1671b711ca",
+    "modul": "m28_transport",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-20T00:18:58.788492+00:00"
+}

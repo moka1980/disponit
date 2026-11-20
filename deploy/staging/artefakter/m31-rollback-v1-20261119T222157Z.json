@@ -1,0 +1,39 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m31-rollback-v1",
+  "maalt": {
+    "forgjenger": {
+      "antall": 24,
+      "hash": "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8",
+      "perfekt": 24,
+      "tomt": 0
+    },
+    "hash_lik_drift": true,
+    "kandidat": {
+      "antall": 24,
+      "hash": "d399e2a98d4dd82419cb959c8f89629f5a36700c7d8da31680ca5d4a660e5ac8",
+      "perfekt": 24,
+      "tomt": 0
+    },
+    "port_for_og_etter": [
+      "nektet",
+      "byttet"
+    ],
+    "scoring_skiller": true,
+    "svar_like": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "558e5597875d2b49033c6f1b76c20f5456f3cc9dcb34c9df50dca916af2dbbb9",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "05695d9e269f70651b99a796cba584acef59245c957960244af4b71193ece609",
+    "modul": "m31_modellstyring",
+    "modul_forgjenger": "47fa8ffab4ccc756731731d4e4c62650010bb55ad0765c92ff5335fab102781a",
+    "modul_kandidat": "47fa8ffab4ccc756731731d4e4c62650010bb55ad0765c92ff5335fab102781a",
+    "runde": "980219e5",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:56.978748+00:00"
+}

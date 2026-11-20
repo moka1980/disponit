@@ -1,0 +1,95 @@
+{
+  "bestatt": true,
+  "krav_id": "m55-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "bevaringskopi_registrert": 5,
+      "forvekslingsvurdering_gjort": 4,
+      "merkevare_registrert": 7,
+      "merkevarefunn_registrert": 5,
+      "merkevarekrav_satt": 3
+    },
+    "evidens_totalt": 24,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "merkevare_uten_funn"
+        ],
+        "merke": "uten_funn",
+        "subjekt_id": "1a3dc067-9ef1-4adf-ae93-9ba6f66b7a79",
+        "ventet": "merkevare_uten_funn"
+      },
+      {
+        "fikk": [
+          "funn_uten_vurdering"
+        ],
+        "merke": "uvurdert",
+        "subjekt_id": "b3bd594d-79da-4e66-aae8-a377c2c05c5e",
+        "ventet": "funn_uten_vurdering"
+      },
+      {
+        "fikk": [
+          "forveksling_ikke_henvist"
+        ],
+        "merke": "forveksling",
+        "subjekt_id": "6826ae64-01c6-431e-8e0a-86c871d23516",
+        "ventet": "forveksling_ikke_henvist"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "b255666c-ed6d-42ae-abe7-30c81a7ca5b3",
+        "ventet": null
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "1e8270d9-6c5f-408f-b220-72ce0f03ef0a",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "ingen_terskler"
+        ],
+        "merke": "ingen_terskel",
+        "subjekt_id": "8836796a-2cfe-417a-bae9-0d3465965830",
+        "ventet": "ingen_terskler"
+      },
+      {
+        "fikk": [
+          "vurdering_med_utdatert_terskel"
+        ],
+        "merke": "utdatert",
+        "subjekt_id": "562b0c7f-6a05-49d8-8146-076d2a01cef0",
+        "ventet": "vurdering_med_utdatert_terskel"
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 7,
+    "sveip1_nye": 6,
+    "sveip1_tenanter": 4,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "a4d5179edac784c8b7bf4451baff4a0080456cc92ed5ab834a29e89f52a71efd",
+    "evidenskilde": "m55_merkevare",
+    "modul": "m55_merkevare",
+    "riggmodul": "m55_fasit",
+    "runde": "b0adc3a4",
+    "sett_sha256": "c4dd6336da4e9e12b74358ff31a055a8b35678a93c80f9f98930420bb0b4b210",
+    "tenanter": [
+      "t-m55fasit-a-b0adc3a4",
+      "t-m55fasit-b-b0adc3a4",
+      "t-m55fasit-c-b0adc3a4"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T22:59:48.100845+00:00"
+}

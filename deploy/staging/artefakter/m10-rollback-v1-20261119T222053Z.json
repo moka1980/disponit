@@ -1,0 +1,35 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m10-rollback-v1",
+  "maalt": {
+    "forgjenger": {
+      "returkode": 0,
+      "skrevet": 1
+    },
+    "gjenspill_over_rulling": 0,
+    "kandidat": {
+      "returkode": 0,
+      "skrevet": 1
+    },
+    "kandidat_gjenspill": {
+      "returkode": 0,
+      "skrevet": 0
+    },
+    "lesedor_baerer_begge": true,
+    "svar_like": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "forgjenger": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "kjerne_forgjenger": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "kjerne_kandidat": "091a874d501e655352b165838420fa9e03d0c4fcf84bbd2625e81ecd95694ded",
+    "modul": "m10_backup",
+    "modul_forgjenger": "14f8f059df1222fa28637573f4f4d26729085f1c628187f5ab349b7b5b752a70",
+    "modul_kandidat": "14f8f059df1222fa28637573f4f4d26729085f1c628187f5ab349b7b5b752a70",
+    "runde": "e39ce7fe",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:53.701150+00:00"
+}

@@ -1,0 +1,76 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m38-fasit-v1",
+  "maalt": {
+    "cache_lesinger": 50,
+    "cache_ny_versjon_valideringer": 1,
+    "cache_ulike_svar": 1,
+    "cache_valideringer": 1,
+    "claim_endrede_tabeller_oppdrag": [
+      "oppdrag"
+    ],
+    "claim_endrede_tabeller_sak": [
+      "unntak",
+      "unntak_historikk"
+    ],
+    "nye_revisjonsrader_cache": 0,
+    "nye_revisjonsrader_claim": 0,
+    "oppdrag_alle": true,
+    "oppdrag_rekkefolge": [
+      "d1",
+      "e1",
+      "d2",
+      "d3",
+      "d4",
+      "d5",
+      "d6"
+    ],
+    "oppdrag_ventet_to": [
+      "d1",
+      "e1"
+    ],
+    "prioritet_forst": true,
+    "revisjonsrader_totalt_endret": 28,
+    "sak_rekkefolge": [
+      "a1",
+      "b1",
+      "c1",
+      "a2",
+      "c2",
+      "a3",
+      "a4",
+      "a5",
+      "a6"
+    ],
+    "sak_ventet": [
+      "a1",
+      "b1",
+      "c1",
+      "a2",
+      "c2",
+      "a3",
+      "a4",
+      "a5",
+      "a6"
+    ]
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "c6643ddf90fa3f9cc0b187939c702f0bc10e63c95eb55f3d5ce81b6d56332d15",
+    "modul": "m38_ruter",
+    "runde": "40e6617f",
+    "tenanter": {
+      "a": "t-m38fasit-a-40e6617f",
+      "b": "t-m38fasit-b-40e6617f",
+      "c": "t-m38fasit-c-40e6617f",
+      "d": "t-m38fasit-d-40e6617f",
+      "e": "t-m38fasit-e-40e6617f",
+      "f": "t-m38fasit-f-40e6617f",
+      "g": "t-m38fasit-g-40e6617f",
+      "p": "t-m38fasit-p-40e6617f"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-20T01:48:20.266560+00:00"
+}

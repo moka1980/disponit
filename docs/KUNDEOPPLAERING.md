@@ -1,6 +1,6 @@
 # Opplæring: slik bruker kunden disponit i dag
 
-Skrevet 18.9.2026, oppdatert 19.11.2026. Dekker de **45 modulene som er sertifisert og i
+Skrevet 18.9.2026, oppdatert 20.11.2026. Dekker de **57 modulene som er sertifisert og i
 drift**. Gjelder det som faktisk virker nå, ikke det som er planlagt.
 
 ---
@@ -161,6 +161,18 @@ strengt — det er hele poenget med modulen.
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
 | **Rekruttering / ATS (M-57)** | Søknader, kandidater og rangering | Avgjør ikke hvem som ansettes. |
+| **Backup (M-10)** | At siste backup faktisk er gjenopprettet og verifisert. Administratorene varsles når det har gått 30 timer uten en verifisering. | Tar ikke backupen selv og retter ingenting. Tallene kommer fra den faktiske gjenopprettingen. |
+| **Selvtest (M-11)** | Plattformens egne prober hver time: API, database, e-postoppsett og tidsstyrte jobber. Varsler ved rød probe, og når selvtesten selv har vært stille i tre timer. | Varsler aldri om noe som ikke er satt opp, og reparerer ingenting. |
+| **Transport (M-28)** | Åpne transportplaner over fristen, og kolli som er målt uten å ha fått en plan | Bestiller ikke transport og ombooker ingenting. Fareklassen oppgis av et menneske. |
+| **Sikkerhetshendelser (M-29)** | Hendelser over alvorsterskelen som ingen har foreslått et inngrep for, og åpne hendelser over fristen | Kjører ingen kommandoer og isolerer ingenting selv. Et inngrep er et forslag fra en godkjent playbook. |
+| **Modellstyring (M-31)** | At et modellbytte ikke skjer uten en bestått evaluering mot golden-settet og kravet som gjelder | Velger ikke modell og senker ingen terskel. En kjøring kan ikke erklære seg selv bestått. |
+| **Skatt og avgift (M-32)** | Store vurderinger som har stått ukontrollert over fristen | Innberetter ingenting. Satsene kommer fra landpakker som bare endres i en ny versjon av plattformen. |
+| **Bemanningsprognose (M-33)** | Prognoser ingen har målt etter at horisonten gikk ut, modeller som ikke slår den enkle basislinjen, og prognoser laget på data med ukjent kvalitet | Gir aldri et tall uten intervall, og endrer ikke en avgitt prognose. |
+| **Krise og kontinuitet (M-35)** | Tjenestekartet, beredskapskontaktene og tidslinjen for hver hendelse | Lukker ikke en hendelse uten etteranalyse, og tidslinjen kan ikke redigeres i etterkant. |
+| **Kø og ruting (M-38)** | At én kundes kø ikke sulter en annens enkeltsak | Endrer ikke prioritet: hastesaker går fortsatt først. Den skriver ingenting selv. |
+| **Merkevare (M-55)** | Funn ingen har vurdert, forvekslinger over deres egen terskel som ikke er henvist videre, og merker ingen har sett etter | Overvåker ikke nettet selv og anklager ingen. Likheten regnes, men terskelen er deres. |
+| **Avtaler og frister (M-21)** | Plikter som nærmer seg fristen, varslet til eieren 30, 7 og 1 døgn før | Lukker aldri en frist av seg selv. En plikt lukkes av en kvittering, eller faller bort med en skreven begrunnelse. |
+| **Lisenser og SaaS (M-22)** | Lisenser som nærmer seg beslutningsdatoen (fornyelsen minus oppsigelsesfristen), varslet til eieren 60, 30 og 7 døgn før | Sier ikke opp og fornyer ingenting. Den varsler mens valget fortsatt er deres. |
 | **Optimalisator (M-36)** | Rangeringer der det øverste forslaget hviler bare på korrelasjon, rangeringer ingen har målt effekten av, og en porteføljestopp som blir stående | Iverksetter ingenting. Anslaget på hvert tiltak er et menneskes, og hvert forslag sier om det hviler på korrelasjon, eksperiment eller regel. |
 | **Bærekraft / ESG (M-45)** | Åpne rapportperioder der standarden har fått en nyere versjon, og perioder der for mye av utslippet hviler på estimater | Sender ingen rapport og skriver ingen påstand uten kilde. Hvert tall sier om det er målt eller anslått. |
 | **Telefoni (M-43)** | Samtaler som aldri ble avsluttet, eskaleringer ingen tok, og transkriberte linjer med lav sikkerhet som ingen har rettet | Tar ikke opp uten hjemmel og forutgående varsling, og agenten sier alltid at den er automatisert før den snakker. Eskalerer bare etter kundens egne regler. |
@@ -231,7 +243,19 @@ i enhver opplæringsøkt.
 | Dokumentmaler | «Opprett malfamilie» → «Publiser versjonen» | En familie, en versjon med tekst og felt, og publisering før den kan fylles ut |
 | Møter | «Lagre krav» → «Registrer møte» | Referatfrist, aksjonsfrist og sikkerhetsterskel |
 | Telefoni | «Lagre krav» → «Registrer regel» | Sikkerhetsterskel, identifikasjonsfrist, eskaleringsfrist og samtaletak, så eskaleringsreglene |
-| Optimalisator | Ingen oppsettsknapp i flaten ennå | Grenser, modell og tiltak registreres foreløpig gjennom API-et. Flaten viser rangeringen og lar dere vurdere tiltak, måle effekt og lukke funn. Modulen rulles ut til kunder når oppsettsskjemaene er på plass. |
+| Backup | Ingen oppsett | Kjører av seg selv. Siden «Drift» viser siste verifiserte backup. |
+| Selvtest | Ingen oppsett | Kjører av seg selv hver time. Siden «Drift» viser siste runde. |
+| Transport | «Lagre grensene» → «Registrer kolliet» → «Ny plan» | Vektgrenser og frist, så kolliene og planene |
+| Sikkerhetshendelser | «Lagre grensene» → regel og playbook → «Korreler» → «Foreslå inngrep» | Korrelasjonsvindu, alvorsterskel, frist og signaltak; så reglene som gir poeng og playbookene et inngrep kan foreslås fra |
+| Modellstyring | Ingen oppsett i flaten | Golden-sett og krav registreres av plattformdrift. Flaten viser gjeldende krav og siste kjøringer. |
+| Skatt og avgift | «Lagre grensene» → «Beregn» | Selgerland, kontrollgrense og kontrollfrist |
+| Bemanningsprognose | «Lagre grensene» → «Ny modellversjon» → «Ny prognose» | Horisont, grunnlag, målefrist og domsgrunnlag; så modellen og prognosen |
+| Krise og kontinuitet | «Åpne hendelse» | Tjenestekartet og beredskapskontaktene registreres foreløpig av plattformdrift. Dere åpner hendelser, fører tidslinjen og lukker med etteranalyse. |
+| Kø og ruting | Ingen oppsett | Virker i bakgrunnen for alle moduler med kø. |
+| Merkevare | «Lagre terskler» → «Lagre merke» → «Lagre bevaringskopi» → «Lagre funn» | Forvekslingsterskel og frister, så merkene deres og funnene med bevaringskopi |
+| Avtaler og frister | «Registrer plikt» | Hva plikten er, hvem som eier den, hvor den kommer fra (avtale, paragraf) og fristen |
+| Lisenser og SaaS | «Registrer lisens» | Leverandør, produkt, eier, fornyelsesdato og oppsigelsesfrist |
+| Optimalisator | «Lagre grensene» → «Ny modellversjon» → «Nytt tiltaksforslag» → «Ny rangering» | Horisont, målefrist og hvor mange tiltak en rangering tar med; så modellen, tiltakene (med et menneskes anslag) og selve rangeringen |
 | Bærekraft / ESG | «Lagre krav» → «Registrer kilde» → «Åpne periode» | Estimatterskel og -frist, kildedokumentene og standarden perioden rapporterer etter |
 | E-post | «Koble til M365» | En postboks. Kobles den til med kun lesetilgang, kan man ikke svare herfra. |
 

@@ -1,0 +1,34 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m11-ytelse-v1",
+  "maalt": {
+    "feilede": 0,
+    "kjoringer": [
+      {
+        "linje": "{\"hendelse\": \"selvtestkjoring\", \"kjoring_id\": \"418cd612-2915-4808-ae09-7abffa984817\", \"ny\": 1, \"rode\": [], \"statuser\": {\"api_live\": \"gronn\", \"api_ready\": \"gronn\", \"db_drift\": \"gronn\", \"smtp_oppsett\": \"gronn\", \"ollama\": \"ikke_konfigurert\", \"timer_disponit-backup\": \"gronn\", \"timer_disponit-varselsender\": \"gronn\", \"timer_disponit-helse\": \"gronn\", \"timer_disponit-evidensreaper\": \"gronn\", \"timer_dispon",
+        "returkode": 0,
+        "sekunder": 1.24
+      },
+      {
+        "linje": "{\"hendelse\": \"selvtestkjoring\", \"kjoring_id\": \"f7f2f0d3-8e6c-4b29-a314-af212476790d\", \"ny\": 1, \"rode\": [], \"statuser\": {\"api_live\": \"gronn\", \"api_ready\": \"gronn\", \"db_drift\": \"gronn\", \"smtp_oppsett\": \"gronn\", \"ollama\": \"ikke_konfigurert\", \"timer_disponit-backup\": \"gronn\", \"timer_disponit-varselsender\": \"gronn\", \"timer_disponit-helse\": \"gronn\", \"timer_disponit-evidensreaper\": \"gronn\", \"timer_dispon",
+        "returkode": 0,
+        "sekunder": 1.154
+      },
+      {
+        "linje": "{\"hendelse\": \"selvtestkjoring\", \"kjoring_id\": \"9a534c0c-97d3-4fc7-84be-561566c4d943\", \"ny\": 1, \"rode\": [], \"statuser\": {\"api_live\": \"gronn\", \"api_ready\": \"gronn\", \"db_drift\": \"gronn\", \"smtp_oppsett\": \"gronn\", \"ollama\": \"ikke_konfigurert\", \"timer_disponit-backup\": \"gronn\", \"timer_disponit-varselsender\": \"gronn\", \"timer_disponit-helse\": \"gronn\", \"timer_disponit-evidensreaper\": \"gronn\", \"timer_dispon",
+        "returkode": 0,
+        "sekunder": 0.722
+      }
+    ],
+    "maks_sekunder": 1.24
+  },
+  "oppsett": {
+    "base": "disponit",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "modul": "m11_selvtest",
+    "runder": 3,
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:33:33.665468+00:00"
+}

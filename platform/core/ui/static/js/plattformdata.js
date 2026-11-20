@@ -57,8 +57,8 @@ export const MODULSTATUS = {
   // ordet her er avlesningen av DET, ikke av flaten. Se manifestets
   // hode for hva en ærligere avlesning krever.
   16: "i_drift",    // m16_nokkeltall: aktiv, produksjon
-  21: "bygges",     // m21_avtalefrist: under_utvikling, ikke_i_drift
-  22: "bygges",     // m22_lisens: under_utvikling, ikke_i_drift
+  21: "i_drift",    // m21_avtalefrist: aktiv, produksjon
+  22: "i_drift",    // m22_lisens: aktiv, produksjon
   30: "i_drift",    // m30_personvern: aktiv, produksjon
   34: "i_drift",    // m34_compliance: aktiv, produksjon
   // KLYNGE 3 «kundens livsløp og pengene» (101-105) — registrert 2/9
@@ -127,7 +127,7 @@ export const MODULSTATUS = {
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
   46: "i_drift",    // m46_anbud: aktiv, produksjon
   51: "i_drift",    // m51_tilskudd: aktiv, produksjon
-  55: "bygges",     // m55_merkevare: under_utvikling, ikke_i_drift
+  55: "i_drift",    // m55_merkevare: aktiv, produksjon
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
   // Registrert ved fødselen sammen med grensene m47/m50/m52/m53/
   // m54-v1 — se docs/KLYNGE7-FUNDAMENT.md.
@@ -157,7 +157,7 @@ export const MODULSTATUS = {
   //
   // Flippes av en modulaksept, aldri av en byggemilepæl.
   15: "i_drift",    // m15_likviditet: aktiv, produksjon
-  33: "bygges",     // m33_prognose: under_utvikling, ikke_i_drift
+  33: "i_drift",    // m33_prognose: aktiv, produksjon
   36: "i_drift",    // m36_optimalisator: aktiv, produksjon
   // KLYNGE 9 — YTRINGENE. Registrert med grensene, før koden.
   //
@@ -183,27 +183,27 @@ export const MODULSTATUS = {
   // Alle fire vaktsetningene holder tilbake nøyaktig den fullmakten
   // modulen ser ut til å trenge. Ordet er `bygges` fordi manifestet
   // finnes; ingen har kode ennå, og ingen flippes av en byggemilepæl.
-  29: "bygges",     // m29_hendelse: under_utvikling, ikke_i_drift
-  32: "bygges",     // m32_skatt: under_utvikling, ikke_i_drift
-  28: "bygges",     // m28_transport: under_utvikling, ikke_i_drift
+  29: "i_drift",    // m29_hendelse: aktiv, produksjon
+  32: "i_drift",    // m32_skatt: aktiv, produksjon
+  28: "i_drift",    // m28_transport: aktiv, produksjon
   40: "i_drift",    // m40_medarbeider: aktiv, produksjon
   // m31_modellstyring: under_utvikling, ikke_i_drift — registrert
   // 31/8 sammen med golden-sett-porten (086). Flippes av en
   // M-31-aksept, aldri av en byggemilepæl.
-  31: "bygges",
+  31: "i_drift",    // m31_modellstyring: aktiv, produksjon
   // m35_kontinuitet: under_utvikling, ikke_i_drift — registrert 31/8
   // sammen med kontinuitetsregisteret (089), øvelseslogikken og
   // m35-v1-grensen. Flippes av en M-35-aksept, aldri av en
   // byggemilepæl — og aldri av at plattformens backup er verifisert:
   // en verifisert backup er noe modulen MÅLER, ikke noe den er.
-  35: "bygges",
+  35: "i_drift",    // m35_kontinuitet: aktiv, produksjon
   37: "i_drift",    // m37_unntak: aktiv, produksjon — rollback drillet i lease-form
                     // 17/9 (m37-rollback-v1); de fem andre punktene ja siden aug.
-  10: "bygges",     // m10_backup: under_utvikling, ikke_i_drift
-  11: "bygges",     // m11_selvtest: under_utvikling, ikke_i_drift
+  10: "i_drift",    // m10_backup: aktiv, produksjon
+  11: "i_drift",    // m11_selvtest: aktiv, produksjon
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
-  38: "bygges",
+  38: "i_drift",    // m38_ruter: aktiv, produksjon
   // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
   // flippedrillen 22/8, aksepthendelsen i basen) og flippet SAMMEN med
   // m02 — konsistensregelen som holdt den igjen er nå oppfylt begge

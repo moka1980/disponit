@@ -1,0 +1,68 @@
+{
+  "bestatt": true,
+  "krav_id": "m32-fasit-v1",
+  "maalt": {
+    "avviksliste": [],
+    "evidens_delte_input_hash": 0,
+    "evidens_per_handling": {
+      "beregn": 4,
+      "sett_krav": 4
+    },
+    "evidens_totalt": 8,
+    "evidens_uten_aktor": 0,
+    "funnavvik": 0,
+    "funnavvik_etter_andre": 0,
+    "per_subjekt": [
+      {
+        "fikk": [
+          "stor_vurdering_ukontrollert"
+        ],
+        "merke": "stor",
+        "subjekt_id": "ba992d3b-0092-4df7-93f0-07a19bea7061",
+        "ventet": "stor_vurdering_ukontrollert"
+      },
+      {
+        "fikk": [],
+        "merke": "ok",
+        "subjekt_id": "7afda73b-a82d-4d10-8bd9-60261a754298",
+        "ventet": null
+      },
+      {
+        "fikk": [
+          "stor_vurdering_ukontrollert"
+        ],
+        "merke": "stor_b",
+        "subjekt_id": "97f27d9f-bea7-4f14-a155-0feb90b22205",
+        "ventet": "stor_vurdering_ukontrollert"
+      },
+      {
+        "fikk": [],
+        "merke": "ren",
+        "subjekt_id": "99664e9c-de9e-4ffc-856d-15383f40cf15",
+        "ventet": null
+      }
+    ],
+    "rent_funn_for_kontroll": 1,
+    "subjekter": 4,
+    "sveip1_nye": 3,
+    "sveip1_tenanter": 4,
+    "sveip2_lukkede": 1,
+    "sveip2_nye": 0,
+    "sveip2_oppdaterte": 3
+  },
+  "oppsett": {
+    "bevisrot_sha256": "ba29e94cda786537dce4c81963b004a817c6d80c1d4b3c18c778eb14539d3506",
+    "evidenskilde": "m32_skatt",
+    "modul": "m32_skatt",
+    "riggmodul": "m32_fasit",
+    "runde": "ef31bf16",
+    "sett_sha256": "99610b7e4334904a0e8424d5f6eb8cef7efaaeb98c9f7cf4c9573e00d90879d4",
+    "tenanter": [
+      "t-m32fasit-a-ef31bf16",
+      "t-m32fasit-b-ef31bf16",
+      "t-m32fasit-c-ef31bf16"
+    ],
+    "vert": "disponit.com"
+  },
+  "ts": "2026-11-19T23:00:04.269799+00:00"
+}

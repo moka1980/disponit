@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m21-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 23,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m21_pliktregister.py"
+    ],
+    "bevisrot_sha256": "e69096bc2a6a96a43f0d9c21d5339a5f53482943c18f7070df25fa3d16ad6e41",
+    "commit": "a79718b8046ea3ca99f9b843b5e08508c4fecea5",
+    "modul": "m21_avtalefrist",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:05:39.642673+00:00"
+}
