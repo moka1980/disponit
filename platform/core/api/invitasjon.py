@@ -20,25 +20,20 @@ TRE RUTER:
   innholdet — hvem som blir gitt tilgang til firmaet er
   sikkerhetsinformasjon, og `sikkerhet`-rollen bør se ventende
   invitasjoner.
-* POST /v1/invitasjoner/innloes  (`firma:opprett`) — den inviterte blir
+* POST /v1/invitasjoner/innloes  (`firma:blimed`) — den inviterte blir
   medlem.
 
-HVORFOR INNLØSNINGEN BRUKER REGISTRANTENS SCOPE
+INNLØSNINGEN HAR SITT EGET SCOPE, OG HVER ROLLE HAR DET
 Autoriteten er TOKENET, ikke scopet — sesjonen beviser bare hvem hun er, og
-CSRF at det er hennes egen nettleser som ber. Ideelt sett hadde ruten stått
-uten scopekrav, som `/v1/sesjon`, men `_autentiser` er bygget for ett
-påkrevd scope og avviser `None`.
+CSRF at det er hennes egen nettleser som ber. Scopet finnes fordi
+`_autentiser` er bygget for ett påkrevd scope og avviser `None`.
 
-KRAVET VAR ET VERN, OG ER DET IKKE LENGER. Da dette ble skrevet låste to
-medlemskap en bruker ute av BEGGE firmaene (`firma_ikke_valgt`), så en
-ansatt i firma A som innløste en invitasjon til firma B mistet tilgangen
-til firmaet hun alt jobbet i, i samme klikk. 196 (firmavelgeren) fjernet
-den utestengelsen — og dermed vernets forutsetning.
-
-DET SOM STÅR IGJEN ER EN FUNKSJONELL BEGRENSNING: en ansatt i et annet
-firma har ikke `firma:opprett`, og kan derfor ikke innløse en invitasjon.
-Ikke farlig, bare i veien. Å løfte det krever et nytt scope hos ALLE roller
-og i rolleguiden — egen PR, ikke et påheng her.
+Ruten krevde lenge `firma:opprett`, registrantens scope. 200 innførte
+`firma:blimed` hos alle roller og i rutetabellen, men DØRA HER sto igjen
+med det gamle kravet: den som alt var medlem av et firma, fikk
+`scope_mangler` på «Bli med» (funnet i drift 20.11.2026, da eieren ville
+invitere en godkjenner som alt var ansatt i et annet firma). Rutetabellen
+og døra må kreve det samme; `test_invitasjon_http_port` holder dem sammen.
 
 TENANTEN STÅR I LENKEN, og det er ikke en lekkasje: den inviterte skal jo
 inn dit. Den autoriserer ingenting alene — døra krever tokenet, og feil
@@ -146,7 +141,7 @@ def liste_endepunkt(tjeneste, request):
 
 
 def innloes_endepunkt(tjeneste, request):
-    """POST /v1/invitasjoner/innloes — `firma:opprett` (se modulens topp)."""
+    """POST /v1/invitasjoner/innloes — `firma:blimed` (se modulens topp)."""
     from .app import _rid
     from .policyadmin_http import (_browserkontekst, _feil, _kropp,
                                    _med_conn, _ok_lagret)
@@ -161,7 +156,7 @@ def innloes_endepunkt(tjeneste, request):
         # `_browserkontekst` gjør resten: autentiserer, håndhever CSRF, og
         # gir oss bruker-id-en fra SESJONEN, aldri fra kroppen.
         kontekst, bid = _browserkontekst(tjeneste, request, conn, rid,
-                                        "firma:opprett")
+                                        "firma:blimed")
         k = _kropp(request)
 
         tenant = k.get("tenant")

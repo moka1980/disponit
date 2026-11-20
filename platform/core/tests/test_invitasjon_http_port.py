@@ -174,12 +174,8 @@ def test_kollegaen_blir_medlem_med_registrantens_scope(miljo, migrator,
 
     # Den inviterte er REGISTRANT: ett scope, og det er ikke `firma:inviter`.
     #
-    # BINDINGEN SOM MÅ UTVIDES MED FIRMAVELGEREN: ruten krever
-    # `firma:opprett`, som bare registranten har. I dag er det riktig —
-    # en bruker med to medlemskap kan ikke logge inn før velgeren finnes
-    # (192), så hver inviterte ER registrant. Den dagen velgeren kommer,
-    # vil en ansatt i firma A ikke kunne innløse en invitasjon til firma B,
-    # og scopet må utvides. Denne porten er stedet å oppdage det.
+    # Registranten har `firma:blimed` som alle andre (200). At en ansatt i
+    # et annet firma også slipper inn, står i testen under.
     migrator.execute("SELECT registrant_medlemskap(%s)", (ny,))
     migrator.commit()
     nc, ncsrf = _okt(migrator, REG, ny, ["registrant"])
@@ -193,6 +189,44 @@ def test_kollegaen_blir_medlem_med_registrantens_scope(miljo, migrator,
     assert migrator.execute(
         "SELECT roller FROM brukermedlemskap WHERE tenant=%s AND bruker_id=%s",
         (t, ny)).fetchone()[0] == ["leser", "godkjenner"]
+
+
+@pg
+def test_en_ansatt_i_et_annet_firma_kan_innlose(miljo, migrator, klient):
+    """Funnet i drift 20.11.2026: den inviterte godkjenneren var alt medlem
+    av et annet firma, og «Bli med» svarte 403 `scope_mangler` — døra krevde
+    fortsatt registrantens `firma:opprett`, mens rutetabellen sa
+    `firma:blimed`."""
+    a, b = _t(), _t()
+    _firma(migrator, a)
+    _firma(migrator, b)
+    admin, ansatt = _identitet(migrator, "a"), _identitet(migrator, "e")
+    ac, acsrf = _okt(migrator, b, admin, ["admin"])
+    token = _kall(klient, "/v1/invitasjoner", ac, acsrf,
+                  {"roller": ["policyforvalter"]}).json()["token"]
+
+    # Hun står innlogget i firma A som vanlig leser — ingen registrant.
+    ec, ecsrf = _okt(migrator, a, ansatt, ["leser"])
+    r = _kall(klient, "/v1/invitasjoner/innloes", ec, ecsrf,
+              {"tenant": b, "token": token})
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["roller"] == ["policyforvalter"]
+
+    _sett_kontekst(migrator, b)
+    rad = migrator.execute(
+        "SELECT roller, aktiv FROM brukermedlemskap WHERE tenant=%s AND"
+        " bruker_id=%s", (b, ansatt)).fetchone()
+    migrator.commit()
+    assert rad is not None and list(rad[0]) == ["policyforvalter"] and rad[1]
+
+
+def test_dora_og_rutetabellen_krever_samme_scope():
+    import inspect
+
+    from api import app, invitasjon
+    scope = app.RUTESCOPE[("POST", "/v1/invitasjoner/innloes")]
+    assert scope == "firma:blimed"
+    assert f'"{scope}")' in inspect.getsource(invitasjon.innloes_endepunkt)
 
 
 @pg
