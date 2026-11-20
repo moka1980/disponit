@@ -313,23 +313,23 @@ def _kjor_arbeidervakt(tmp_path, feil_per_unit, inaktive=()):
     kat = tmp_path / "etc"
     for navn in ("m14", "wcag"):
         (kat / navn).mkdir(parents=True)
-        (kat / navn / "DISPONIT_MODULTOKEN").write_text("mtk_x.y")
+        (kat / navn / "DISPONIT_MODULTOKEN").write_text("mtk_x.y", encoding="utf-8")
     binkat = tmp_path / "bin"
     binkat.mkdir()
     (binkat / "systemctl").write_text(
         "#!/bin/bash\ncase \" $INAKTIVE \" in *\" $2 \"*) echo inactive;"
-        " exit 3;; esac\necho active\n")
+        " exit 3;; esac\necho active\n", encoding="utf-8")
     (binkat / "journalctl").write_text(
         "#!/bin/bash\nn=$(cat \"$TELLEKAT/$2\" 2>/dev/null || echo 0)\n"
         "for i in $(seq 1 $n); do echo '{\"hendelse\": \"runde_feilet\","
         " \"feiltype\": \"RuntimeError\"}'; done\n"
-        "echo '{\"hendelse\": \"arbeider_oppe\"}'\n")
+        "echo '{\"hendelse\": \"arbeider_oppe\"}'\n", encoding="utf-8")
     for f in binkat.iterdir():
         f.chmod(0o755)
     tell = tmp_path / "tell"
     tell.mkdir()
     for unit, n in feil_per_unit.items():
-        (tell / unit).write_text(str(n))
+        (tell / unit).write_text(str(n), encoding="utf-8")
     miljo = dict(os.environ, PATH=f"{binkat}:{os.environ['PATH']}",
                  ARBEIDERVAKT_KATALOG=str(kat), ARBEIDERVAKT_TEST="1",
                  TELLEKAT=str(tell), INAKTIVE=" ".join(inaktive))
