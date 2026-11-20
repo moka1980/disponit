@@ -163,6 +163,7 @@ def test_intervalltimerne_er_et_navngitt_unntak():
             f"{navn} har OnUnitActiveSec uten OnBootSec — den ville"
             " ikke kjørt før første manuelle start")
     assert sorted(intervall) == [
+        "disponit-arbeidervakt.timer",
         "disponit-artefaktrydding.timer",
         "disponit-backupstatus.timer",
         "disponit-domenerevalidering.timer",
@@ -300,3 +301,88 @@ def test_modultokenene_fornyes_av_en_timer_som_faktisk_kaller_rotasjonen():
     # Et utløpt token kan ikke rotere seg selv — da skal uniten FEILE,
     # ikke rapportere «ok».
     assert "feil=1; continue" in skript and 'exit "$feil"' in skript
+
+
+def _kjor_arbeidervakt(tmp_path, feil_per_unit, inaktive=()):
+    """Kjører vakten mot en falsk vert: `systemctl` og `journalctl` i PATH
+    svarer fra testen, så det er SKRIPTET som måles, ikke en kopi av det."""
+    import os
+    import subprocess
+
+    kat = tmp_path / "etc"
+    for navn in ("m14", "wcag"):
+        (kat / navn).mkdir(parents=True)
+        (kat / navn / "DISPONIT_MODULTOKEN").write_text("mtk_x.y")
+    binkat = tmp_path / "bin"
+    binkat.mkdir()
+    (binkat / "systemctl").write_text(
+        "#!/bin/bash\ncase \" $INAKTIVE \" in *\" $2 \"*) echo inactive;"
+        " exit 3;; esac\necho active\n")
+    (binkat / "journalctl").write_text(
+        "#!/bin/bash\nn=$(cat \"$TELLEKAT/$2\" 2>/dev/null || echo 0)\n"
+        "for i in $(seq 1 $n); do echo '{\"hendelse\": \"runde_feilet\","
+        " \"feiltype\": \"RuntimeError\"}'; done\n"
+        "echo '{\"hendelse\": \"arbeider_oppe\"}'\n")
+    for f in binkat.iterdir():
+        f.chmod(0o755)
+    tell = tmp_path / "tell"
+    tell.mkdir()
+    for unit, n in feil_per_unit.items():
+        (tell / unit).write_text(str(n))
+    miljo = dict(os.environ, PATH=f"{binkat}:{os.environ['PATH']}",
+                 ARBEIDERVAKT_KATALOG=str(kat), ARBEIDERVAKT_TEST="1",
+                 TELLEKAT=str(tell), INAKTIVE=" ".join(inaktive))
+    return subprocess.run(
+        ["bash", str(TIMERKATALOG / "arbeidervakt.sh")], env=miljo,
+        capture_output=True, text=True, timeout=30)
+
+
+def test_arbeidervakten_ser_en_arbeider_som_feiler_i_hver_runde(tmp_path):
+    """EN MÅNED UTEN AT NOE SÅ DET (funnet 20.11.2026): alle sju arbeiderne
+    logget `runde_feilet` hvert tiende sekund, tjenestene sto «active», og
+    `systemctl --failed` var tom.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `feil=1` i terskelgrenen, eller
+    tell noe annet enn `runde_feilet`.
+    """
+    # Frisk vert — og en utrulling gir én eller to feil uten at det er alarm.
+    r = _kjor_arbeidervakt(tmp_path / "a", {"disponit-m14": 2})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ok   disponit-m14: 2 feilede" in r.stdout
+    assert "ok   disponit-wcag-audit: 0 feilede" in r.stdout
+
+    # Feiler i hver runde: seksti på ti minutter.
+    r = _kjor_arbeidervakt(tmp_path / "b", {"disponit-wcag-audit": 60})
+    assert r.returncode == 1, r.stdout
+    assert "FEIL disponit-wcag-audit: 60 feilede runder" in r.stdout
+    assert "ok   disponit-m14" in r.stdout, "en syk arbeider skjulte en frisk"
+
+    # En tjeneste som er stoppet er heller ikke «alt bra».
+    r = _kjor_arbeidervakt(tmp_path / "c", {}, inaktive=["disponit-m14"])
+    assert r.returncode == 1, r.stdout
+    assert "FEIL disponit-m14: tjenesten er «inactive»" in r.stdout
+
+
+def test_arbeidervakten_er_ikke_gronn_naar_den_ikke_fant_noe(tmp_path):
+    """En vakt som ikke fant noen å vokte har ikke målt noe — og et grønt
+    svar da er det samme som blindheten den ble laget for å fjerne."""
+    import os
+    import subprocess
+
+    (tmp_path / "tom").mkdir()
+    r = subprocess.run(
+        ["bash", str(TIMERKATALOG / "arbeidervakt.sh")],
+        env=dict(os.environ, ARBEIDERVAKT_KATALOG=str(tmp_path / "tom"),
+                 ARBEIDERVAKT_TEST="1"),
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "fant ingen arbeidere" in r.stdout
+
+
+def test_arbeidervakten_kjores_av_en_timer_og_installeres():
+    unit = (TIMERKATALOG / "disponit-arbeidervakt.service").read_text(
+        encoding="utf-8")
+    assert ("ExecStart=/bin/bash /opt/disponit/aktiv/deploy/staging/"
+            "arbeidervakt.sh") in unit
+    oppsett = (TIMERKATALOG / "modultoken-oppsett.sh").read_text(
+        encoding="utf-8")
+    assert "systemctl enable --now disponit-arbeidervakt.timer" in oppsett

@@ -61,6 +61,13 @@ UNIT_UNNTAK: dict[str, str] = {
     "disponit-modultoken.timer":
         "installeres sammen med disponit-modultoken.service av"
         " modultoken-oppsett.sh",
+    "disponit-arbeidervakt.service":
+        "vokter arbeiderunitene over og installeres sammen med"
+        " rotasjonen, av modultoken-oppsett.sh; uniten peker på"
+        " skriptet i aktiv release",
+    "disponit-arbeidervakt.timer":
+        "installeres sammen med disponit-arbeidervakt.service av"
+        " modultoken-oppsett.sh",
 }
 
 #: `LoadCredential`-navn `opp.sh` med VILJE ikke skriver, og hvorfor.
