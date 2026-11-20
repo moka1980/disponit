@@ -116,9 +116,13 @@ Oppgraderingsutløser: **første modul som trenger 7B-modell i staging-test
 
 ## Miljøer
 
-> **ADR-009 (20.11.2026):** eier har vedtatt at `disponit-srv` skal bli
-> produksjon. Til byttet er gjort, gjelder tabellen under. Rekkefølgen og
-> klarsjekken står i `docs/beslutninger/ADR-009-denne-verten-blir-produksjon.md`.
+> **ADR-009 (20.11.2026): `disponit-srv` er produksjon.** Eier vedtok det,
+> klarsjekken var grønn, og byttet ble gjort samme dag: vertsrollen
+> `/etc/disponit/vertsrolle` og `DISPONIT_MILJO` sier `produksjon`. Tabellen
+> under beskriver den opprinnelige topologien; for `disponit-srv` gjelder
+> `docs/beslutninger/ADR-009-denne-verten-blir-produksjon.md`, som også har
+> angreveien. Det finnes ingen egen staging-vert nå — `onecom` er
+> sekundær-staging.
 
 | Miljø | Hvor | Formål | Data |
 |---|---|---|---|

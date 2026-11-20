@@ -25,7 +25,7 @@ import { KATALOG_ANTALL } from "./katalog.js";
 // vår egen testserver» er ekte, men det bor i manifestet og i registerets
 // `i_drift`-liste — ikke i det kunden leser.
 export const MODULSTATUS = {
-  1: "klargjort",   // m01_policy: status aktiv, driftstilstand staging
+  1: "i_drift",     // m01_policy: aktiv, produksjon (ADR-009, 2026-11-20)
   2: "i_drift",     // m02_revisjonslogg: aktiv, produksjon (akseptert
                     // 2026-08-23, innholdsadressert @ 2aaca01 — grensen
                     // m02-aksept-v1, alle punkter bundet)

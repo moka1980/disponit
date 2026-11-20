@@ -59,7 +59,15 @@ status: aktiv                  # aktiv | inaktiv | under_utvikling
 # og leses av flaten via `/ui/oppsett.json` — ikke i dette manifestet. De to
 # leddene er uavhengige med vilje: en produksjonsutrulling som fortsatt kjørte
 # verten i staging-modus skulle heller ikke gitt noe løfte.
-driftstilstand: staging        # ikke_i_drift | staging | produksjon
+#
+# 2026-11-20: VERTEN ER PRODUKSJON (ADR-009). Eier vedtok at `disponit-srv`
+# selv blir produksjon. Klarsjekken (`deploy/staging/produksjonsklar.sh`) var
+# grønn, vertsrollen `/etc/disponit/vertsrolle` sier `produksjon`,
+# `DISPONIT_MILJO=produksjon`, og `/ui/oppsett.json` melder det samme. Begge
+# leddene over er dermed sanne samtidig, og feltet følger verten — den
+# regelen avsnittene over setter. Avsnittene står som historikk for HVORFOR
+# feltet sto på `staging` fram til i dag.
+driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
 # AKTIVERT 2026-08-05, etter at PR #13 var merget (main fd16f55).
 #
 # Grunnlaget er MASKINVERIFISERT, ikke et flagg noen satte: alle punktene i

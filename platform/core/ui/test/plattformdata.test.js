@@ -29,7 +29,8 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // aktiv/produksjon. Denne testen og `MODULSTATUS` er to sider av samme
   // påstand og må flytte seg sammen — ellers er den ene bare en kopi av
   // den andre uten portverdi.
-  assert.equal(modulStatus(1), "klargjort");
+  // M-1 gikk til `i_drift` 2026-11-20: verten selv ble produksjon (ADR-009).
+  assert.equal(modulStatus(1), "i_drift");
   assert.equal(modulStatus(2), "i_drift");
   // 6: i_drift 17/9 — alle seks punkter ja; fasit og suite målt på nytt
   // etter 210 (slettesynk) mot fersk base på verten.
@@ -92,7 +93,8 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // aktiv/produksjon i samme endring.
     // M-19 fra 2026-09-17 (natt): første modul på de GENERISKE
     // sveipprodusentene for feilinjisering, ytelse og rollback.
-    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+    // M-1 fra 2026-11-20: verten selv ble produksjon (ADR-009).
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
      22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57],
     "i_drift-settet fulgte ikke manifestenes driftstilstand");
@@ -108,10 +110,12 @@ test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
     assert.equal(erTilgjengeligFor(status, false), false,
       `${status} loves uten produksjonsmiljø`);
   }
-  // Slik plattformen faktisk står: M-1 kjører på staging, altså `klargjort`.
-  // Da faller løftet på det FØRSTE leddet alene, uansett hva verten sier.
+  // Slik plattformen faktisk står fra 2026-11-20 (ADR-009): M-1 er i drift,
+  // og løftet følger da ALENE av hva verten sier om miljøet.
   settProduksjonsmiljo(true);
-  assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
+  assert.equal(erTilgjengelig(1), true, "M-1 er i drift i produksjon");
+  settProduksjonsmiljo(false);
+  assert.equal(erTilgjengelig(1), false, "M-1 loves uten produksjonsmiljø");
   for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
     settProduksjonsmiljo(verdi);
     assert.equal(produksjonsmiljo(), false,
@@ -304,14 +308,14 @@ test("modulerFraIder: kundens tildeling, ikke plattformkatalogen", () => {
 });
 
 test("tenantTelling: teller kundens moduler, ikke plattformens", () => {
-  // En tenant med M-1 (klargjort) og M-2 (i_drift etter akseptflippen
-  // 2026-08-23): én i drift, én under arbeid — og resten av katalogen er
-  // planlagt for kunden. Tildelingen er ID-er fra den autentiserte veien,
+  // En tenant med M-1 og M-2, begge i drift (M-1 fra 2026-11-20, ADR-009):
+  // to i drift, ingen under arbeid — og resten av katalogen er planlagt
+  // for kunden. Tildelingen er ID-er fra den autentiserte veien,
   // ikke et oppslag i klientpakken. Tellingen følger MODULSTATUS: `iDrift`
   // er utrulling hos kunder.
   const telling = tenantTelling(modulerFraIder([1, 2]));
-  assert.equal(telling.iDrift, 1);
-  assert.equal(telling.underArbeid, 1);
+  assert.equal(telling.iDrift, 2);
+  assert.equal(telling.underArbeid, 0);
   assert.equal(telling.planlagt, telling.totalt - 2);
   const ukjent = tenantTelling([]);
   assert.equal(ukjent.iDrift, 0);
