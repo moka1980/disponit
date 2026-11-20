@@ -1,0 +1,121 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m35-fasit-v1",
+  "maalt": {
+    "dorkall": 14,
+    "evidens_avvik": 0,
+    "evidens_delte_input_hash": 0,
+    "evidens_per_tenant": {
+      "a": {
+        "hendelse.etteranalyse": 1,
+        "hendelse.lukket": 1,
+        "hendelse.observasjon": 1,
+        "hendelse.opprettet": 2,
+        "hendelse.tiltak": 1,
+        "kontakt.bekreftet": 1,
+        "kontakt.opprettet": 1,
+        "tjeneste.oppdatert": 1,
+        "tjeneste.opprettet": 2
+      },
+      "b": {
+        "hendelse.opprettet": 1,
+        "kontakt.opprettet": 1,
+        "tjeneste.opprettet": 1
+      }
+    },
+    "evidens_totalt": 14,
+    "evidens_uten_aktor": 0,
+    "evidens_ventet": {
+      "a": {
+        "hendelse.etteranalyse": 1,
+        "hendelse.lukket": 1,
+        "hendelse.observasjon": 1,
+        "hendelse.opprettet": 2,
+        "hendelse.tiltak": 1,
+        "kontakt.bekreftet": 1,
+        "kontakt.opprettet": 1,
+        "tjeneste.oppdatert": 1,
+        "tjeneste.opprettet": 2
+      },
+      "b": {
+        "hendelse.opprettet": 1,
+        "kontakt.opprettet": 1,
+        "tjeneste.opprettet": 1
+      }
+    },
+    "gjenspill_feilet": 0,
+    "gjenspill_urort": true,
+    "per_tenant": [
+      {
+        "fikk": {
+          "bekreftet": 1,
+          "hendelser": 2,
+          "kontakter": 1,
+          "lukket": 1,
+          "poster": {
+            "etteranalyse": 1,
+            "lukket": 1,
+            "observasjon": 1,
+            "opprettet": 2,
+            "tiltak": 1
+          },
+          "tjenester": 2
+        },
+        "tenant": "a",
+        "ventet": {
+          "bekreftet": 1,
+          "hendelser": 2,
+          "kontakter": 1,
+          "lukket": 1,
+          "poster": {
+            "etteranalyse": 1,
+            "lukket": 1,
+            "observasjon": 1,
+            "opprettet": 2,
+            "tiltak": 1
+          },
+          "tjenester": 2
+        }
+      },
+      {
+        "fikk": {
+          "bekreftet": 0,
+          "hendelser": 1,
+          "kontakter": 1,
+          "lukket": 0,
+          "poster": {
+            "opprettet": 1
+          },
+          "tjenester": 1
+        },
+        "tenant": "b",
+        "ventet": {
+          "bekreftet": 0,
+          "hendelser": 1,
+          "kontakter": 1,
+          "lukket": 0,
+          "poster": {
+            "opprettet": 1
+          },
+          "tjenester": 1
+        }
+      }
+    ],
+    "tenanter": 2,
+    "tilstandsavvik": 0,
+    "utfylling_lik_fasit": true
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "131d4b5f82b06b582282ae49861dd5313af689dd8948a0f839400906a347fc3b",
+    "modul": "m35_kontinuitet",
+    "runde": "6d47124d",
+    "tenanter": {
+      "a": "t-m35fasit-a-6d47124d",
+      "b": "t-m35fasit-b-6d47124d"
+    },
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:16.755448+00:00"
+}

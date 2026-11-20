@@ -52,50 +52,74 @@ staging_sjekkliste:
   tester_gronne_pa_staging:
     status: nei
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet (m02-suite-formen). v1-portene
-      (test_m35_kontinuitet.py: append-only tidslinje, lukking uten
-      etteranalyse, SP-1 kryss-tenant, SP-2-replay, statusfilens
-      fravær/foreldelse, skjemaavvisning, begge DDL-kjøringer) kjører i
-      CI, men det er ikke denne portens måling.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
-    status: nei
-    notat: >-
-      KREVER: et syntetisk tjenestekart med fasit-funn målt både lokalt
-      og på staging, med begge datasett-identitetene bundet
-      (wcag-kontroll-v2-formen). Kartet bygges når arbeider-/plan-
-      koblingen (PR-B) kjører øvelsen av seg selv; ingen måling finnes.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
+    status: ja
+    krav_id: m35-fasit-v1
+    bevismaalinger:
+      - maalt.tilstandsavvik
+      - maalt.dorkall
+      - maalt.utfylling_lik_fasit
+      - maalt.gjenspill_urort
+    artefakt: deploy/staging/artefakter/m35-fasit-v1-20261119T222116Z.json
+    artefakt_sha256: 9a2276425255584768ac00b8a5efaad7a656914820a99560e748619a32d069d1
+    notat: |-
+      tilstandsavvik = 0;
+      dorkall = 14;
+      utfylling_lik_fasit = true;
+      gjenspill_urort = true.
   revisjonslogg_korrekt:
-    status: nei
-    notat: >-
-      M-35s skrivevei til evidenskjeden er bestillingsveiens (m01/m02) —
-      modulen selv skriver aldri revisjonslogg direkte. Hendelsens
-      tidslinje er modulens EGEN append-only evidens og er noe annet
-      enn revisjonsloggen; punktet flippes når PR-B har målt kjeden
-      bestilling → oppdrag → artefakt ende til ende.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
+    status: ja
+    krav_id: m35-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_avvik
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m35-fasit-v1-20261119T222116Z.json
+    artefakt_sha256: 9a2276425255584768ac00b8a5efaad7a656914820a99560e748619a32d069d1
+    notat: |-
+      evidens_avvik = 0;
+      evidens_totalt = 14;
+      evidens_uten_aktor = 0;
+      evidens_delte_input_hash = 0.
   feilinjisering_til_unntakskø:
-    status: nei
-    notat: >-
-      KREVER: arbeider og kø å injisere feil i — de kommer med PR-B.
-      Feilveiene (statusfil fraværende/foreldet, /live nede, referent
-      borte, kontaktrolle udekket) er ALT målt som røde funn i
-      øvelseslogikken, men et rødt funn i en CLI-rapport er ikke det
-      samme som en unntakskø-føring, og porten måler det siste.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
+    status: ja
+    krav_id: m35-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m35-feilinjisering-v1-20261119T222117Z.json
+    artefakt_sha256: 46ca8a0352e2a048c51f9d156c48799a867a00e73d5b933ea41fe6dd85b0da95
+    notat: |-
+      brudd = [{"avvist": true, "brudd": "lukk_uten_etteranalyse", "sqlstate": "23000", "urort": true}, {"avvist": true, "b…;
+      injiserte = 6.
   ytelse_bestatt:
-    status: nei
-    notat: >-
-      KREVER: pinnet ytelsesgrense i KRAVGRENSER og en målt kjøring mot
-      den. m35-v1 bærer invariantparene, de to ja-punktene og de tre
-      MÅLINGENE (restore-proxy, backupalder, øvelsesalder) — men de
-      måler beredskapen, ikke øvelsens eget tidsforbruk. Et
-      ytelsestall pinnes når PR-B gir øvelsen en arbeidsprofil, FØR
-      målingen kjøres.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
+    status: ja
+    krav_id: m35-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.feilede
+      - maalt.riktige
+    artefakt: deploy/staging/artefakter/m35-ytelse-v1-20261119T222117Z.json
+    artefakt_sha256: 11a516213eb9583c1632d22e9d70dfe5ded2dbd983f715a0757a520584cb78e1
+    notat: |-
+      p95_ms = 1.875;
+      feilede = 0;
+      riktige = 200.
   rollback_testet:
-    status: nei
-    notat: >-
-      M-35 har ingen egen release å rulle tilbake ennå — v1 skipper med
-      kjernen (089 er en migrasjon i kjernens kjede). Punktet får
-      mening når modulen får release/arbeider (PR-B) og drilles da på
-      rollback-m56-formen. Merk ærligheten: at MODULEN ikke er
-      rollback-drillet er noe helt annet enn at PLATTFORMEN har en
-      verifisert backup — det siste er nettopp det m35-v1 måler.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-002 klasse C.
+    status: ja
+    krav_id: m35-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.kandidat_baerer_riggen
+    artefakt: deploy/staging/artefakter/m35-rollback-v1-20261120T010210Z.json
+    artefakt_sha256: 2810ff38a36059cca43cc63c20677c7b7fff041a488c3164d0e4140a4e25d7c2
+    notat: |-
+      svar_like = true;
+      kandidat_baerer_riggen = true.
