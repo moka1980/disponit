@@ -42,8 +42,8 @@
 id: m28_transport
 navn: Logistikk- og transportagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. IKKE «WMS, transportører og
 # carrier-connectors» — de finnes ikke.
 avhengigheter:
@@ -56,31 +56,137 @@ i18n_prefiks: transport
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m28-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m28-suite-v1-20261120T001858Z.json
+    artefakt_sha256: b42f6cb2ec74c34902f881a3b8f5797b60d07f416659e2653751cf3a05510c69
     notat: >-
-      KREVER: modulen bygget, og suitekjøring på staging med modulens
-      andel pinnet og stagingidentitet bundet. Ingen kode finnes.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 20 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # MÅLT 20/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
+    # Settet er `m28_fasit.py`:
+    #
+    # M-28s fasitsett: fem subjekter i to tenanter med KJENT dom.
+    #
+    # Transportregisteret har ni funntyper. Fire er utelukket av datamodellen,
+    # `krav_mangler` har ingen skriver, `land_uten_pakke` krever at en
+    # plattformdom (landpakken) utløper, og `tungt_kolli_ukontrollert` kan
+    # aldri stå alene på subjektet sitt (se `UNAABARE`). De to andre rigges:
+    #
+    #   tenant a (forslagsfrist 1 døgn)
+    #     1. `apent_forslag_over_frist` — en åpen plan, eldet ti døgn
+    #                                     (subjektet er planen)
+    #     2. `kolli_uten_forslag`       — et kolli, eldet ti døgn, uten plan
+    #                                     (subjektet er kolliet)
+    #     3. (ren)                      — som 1; planen FORKASTES mellom
+    #                                     kjøringene
+    #     4. (ok)                       — en fersk plan, innenfor fristen
+    #   tenant b (forslagsfrist 2 døgn)
+    #     5. `kolli_uten_forslag`       — samme regel
+    #
+    # ALDEREN SETTES SOM MIGRATOR, testsuitens vei: `foreslatt_ts` og
+    # `registrert` har DEFAULT now() og ingen dørparameter, og
+    # `test_m28_transport.py` flytter dem med en vanlig UPDATE (M-12/M-40-
+    # presedensen). Ingen vakt skrus av — tabellene har ingen på disse feltene.
+    # Adressen skrives også som migrator, som i suiten: M-19s dører er ikke
+    # M-28s.
+    status: ja
+    krav_id: m28-fasit-v1
+    bevismaalinger:
+      - maalt.funnavvik
+      - maalt.subjekter
+      - maalt.sveip1_nye
+      - maalt.sveip2_nye
+    artefakt: deploy/staging/artefakter/m28-fasit-v1-20261119T225953Z.json
+    artefakt_sha256: 60731158810c02a839b482672064e741816970669f93aabf45d10de831dc6e30
     notat: >-
-      KREVER: et kolli med fareklasse og en adresse i et land uten
-      komplett landpakke, slik at porten kan måle at forslaget
-      stopper.
+      Runde 47413fdd: 5 subjekter, 0 funnavvik. Det rene subjektet fikk funn
+      i første sveip og ble rettet mellom kjøringene; andre sveip lukket det
+      (0 avvik etter andre sveip).
   revisjonslogg_korrekt:
-    status: nei
+    # SAMME KJØRING, ANNEN AKSE: hver dør skrev sin hendelse i
+    # evidenskjeden med aktør og egen `input_hash`. Delt artefakt er
+    # lovlig her fordi hendelsene er PRODUSERT av nettopp de dørene
+    # fasiten kjørte.
+    status: ja
+    krav_id: m28-fasit-v1
+    bevismaalinger:
+      - maalt.evidens_totalt
+      - maalt.evidens_uten_aktor
+      - maalt.evidens_delte_input_hash
+    artefakt: deploy/staging/artefakter/m28-fasit-v1-20261119T225953Z.json
+    artefakt_sha256: 60731158810c02a839b482672064e741816970669f93aabf45d10de831dc6e30
     notat: >-
-      KREVER: at hvert forslag kan spores til adresseversjonen og
-      kolliet det hviler på — og til MENNESKET som oppga fareklassen.
+      11 hendelser i kjeden (foresla: 3, forkast: 1, registrer_kolli: 5,
+      sett_krav: 2), 0 uten aktør, 0 som deler input_hash med en annen.
   feilinjisering_til_unntakskø:
-    status: nei
+    # MÅLT 18/9 med den GENERISKE sveipprodusenten. Feilen kommer
+    # UTENFRA: kjøringen får runtime-tilkoblingen, som ikke har EXECUTE
+    # på sveipedøra. Injeksjonen har egen positiv kontroll — basen
+    # bekrefter at rollen faktisk mangler EXECUTE — og målingen rigger
+    # sitt eget register først, siden et tomt register står stille
+    # uansett hva kjøringen gjorde.
+    status: ja
+    krav_id: m28-feilinjisering-v1
+    bevismaalinger:
+      - maalt.injisert_feilet
+      - maalt.registeret_urort
+      - maalt.alarm_etter_andre
+      - maalt.apne_etter
+      - maalt.injeksjonsrolle_har_execute
+    artefakt: deploy/staging/artefakter/m28-feilinjisering-v1-20261119T225955Z.json
+    artefakt_sha256: 272693f7c96f565cff61cd7ba08d7b244c9dcac4b6e6fb59f9f5e395e6c908ea
     notat: >-
-      KREVER: at et forsøk på å frigi samme kolli to ganger gir et
-      funn og ikke to frigivelser.
+      Frisk kjøring først (feilet=false), så to injiserte: begge rene
+      feilutfall, alarm på den ANDRE og ikke den første. Registeret sto
+      urørt — 9 åpne og 1 lukkede over 5 tenanter, talt per funntype.
   ytelse_bestatt:
-    status: nei
+    # MÅLT 18/9: veggklokke rundt modulens egen `kjor()`, ikke rundt
+    # SQL-funksjonen alene — advisory-låsen, kontraktvalideringen og
+    # committen er en del av kostnaden.
+    status: ja
+    krav_id: m28-ytelse-v1
+    bevismaalinger:
+      - maalt.sekunder
+      - maalt.tenanter
+      - maalt.sekunder_per_tenant
+    artefakt: deploy/staging/artefakter/m28-ytelse-v1-20261119T225954Z.json
+    artefakt_sha256: d623af5e581977b2a3cb2df9ebf3fb72597fc62b5099c090164f2f62885a58ff
     notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+      Tre kjøringer (0,0147 / 0,0143 / 0,0147 s) over 3 tenanter; den
+      DÅRLIGSTE er dommen. 0,0147 s mot taket på 60 — 0,0049 s per tenant.
   rollback_testet:
-    status: nei
+    # MÅLT 18/9 med KJERNEFORMEN: modulen har ingen egen release og
+    # ruller med kjernen, så drillen måler REGISTERETS tilstand over en
+    # rulling av kjernebytene. Avbruddet kommer utenfra: ACCESS EXCLUSIVE
+    # på funntabellen, sveipen blokkerer, prosessen drepes med SIGKILL
+    # midt i skrivingen.
+    status: ja
+    krav_id: m28-rollback-v1
+    bevismaalinger:
+      - maalt.inflight_funn
+      - maalt.arbeidernokkel_fri
+      - maalt.rullbakk_funn
+      - maalt.dubletter
+      - maalt.kandidat_nye
+      - maalt.release_digest_bundet
+    artefakt: deploy/staging/artefakter/m28-rollback-v1-20261119T225958Z.json
+    artefakt_sha256: a8a7600da5c33b1382d3e31914e8ee3aba164aa0d143d8e708fccb6a1bf97fbf
     notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen.
+      Drillet 77a7b249 ← forgjenger 5f57464a (ulike kjernedigester). Riggen
+      hadde 0 funnrader før drillen, og den drepte kjøringen la ingen til.
+      Forgjengerens bytes skrev de 4 funnene uten dubletter, og de drillede
+      bytene fant 0 nye.

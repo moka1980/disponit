@@ -1,0 +1,66 @@
+{
+  "bestatt": true,
+  "krav_id": "m28-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 9,
+    "apne_for": 9,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 1,
+    "lukkede_for": 1,
+    "per_type_etter": {
+      "apent_forslag_over_frist": [
+        4,
+        1
+      ],
+      "kolli_uten_forslag": [
+        4,
+        0
+      ],
+      "tungt_kolli_ukontrollert": [
+        1,
+        0
+      ]
+    },
+    "per_type_for": {
+      "apent_forslag_over_frist": [
+        4,
+        1
+      ],
+      "kolli_uten_forslag": [
+        4,
+        0
+      ],
+      "tungt_kolli_ukontrollert": [
+        1,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 5
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "transportfunn",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m28_sveip_transport(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_transport_eier",
+    "modul": "m28_transport",
+    "riggmodul": "m28_fasit",
+    "riggtenanter": [
+      "t-m28fasit-a-e66251a4",
+      "t-m28fasit-b-e66251a4"
+    ],
+    "runde": "e66251a4",
+    "sveipedor": "m28_sveip_transport(int)",
+    "tenantkilde": [
+      "transportkrav"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:59:55.086600+00:00"
+}

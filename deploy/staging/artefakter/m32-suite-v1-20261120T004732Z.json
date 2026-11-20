@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m32-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 21,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m32_skatt.py"
+    ],
+    "bevisrot_sha256": "e9ba9e1a97425da71fdb2d9934273e149ba2d8b8b38551066e760b810e1d5cb1",
+    "commit": "35d5d336c9433d60967c9abcbdd8ac1671b711ca",
+    "modul": "m32_skatt",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-20T00:47:32.242490+00:00"
+}

@@ -1,0 +1,50 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m31-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "avvist": true,
+        "brudd": "bytte_uten_bestatt_kjoring",
+        "sqlstate": "22023",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "kjoring_mot_ukjent_sett",
+        "sqlstate": "22023",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "delvis_kjoring",
+        "sqlstate": "22023",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "sett_immutabilitet",
+        "sqlstate": "23505",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "hash_avvik_for_modellkall",
+        "feiltype": "hash-avvik: settet på disk (21838a712552…) er ikke registrert for m31fb-1998556a — registrer det (eller finn riktig fil) før kjøring; ingen modellkall er gjort",
+        "modellkall": 0,
+        "sqlstate": null,
+        "urort": true
+      }
+    ],
+    "injiserte": 5
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "558e5597875d2b49033c6f1b76c20f5456f3cc9dcb34c9df50dca916af2dbbb9",
+    "modul": "m31_modellstyring",
+    "runde": "1998556a",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:56.041232+00:00"
+}

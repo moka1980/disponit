@@ -25,8 +25,8 @@
 id: m38_ruter
 navn: Kapasitets-, kø- og modellruter
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i registerets forstand (m16-begrunnelsen):
 # v1-krokene bor i KJERNENS egne veier — claim-funksjonene er
 # m37-kjernens (085), cachen er policyveiens (policyregister). En
@@ -47,43 +47,92 @@ i18n_prefiks: m38
 # måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m38-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m38-suite-v1-20261120T020403Z.json
+    artefakt_sha256: 3c1e20f607038dba20f770b1bbe452f6a6f27e386a29e6d347ce1d024ec3b5e9
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet (m02-suite-formen). Fairness- og
-      cacheportene kjører i CI, men det er ikke denne portens måling,
-      og ingen m38-grense finnes i KRAVGRENSER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 151 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
-    notat: >-
-      KREVER: syntetisk kølast med fasit-fordeling (hvem claimet i
-      hvilken rekkefølge) målt lokalt og på staging med begge
-      datasett-identitetene bundet. Ingen slik måling finnes.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
+    status: ja
+    krav_id: m38-fasit-v1
+    bevismaalinger:
+      - maalt.sak_rekkefolge
+      - maalt.oppdrag_rekkefolge
+      - maalt.prioritet_forst
+      - maalt.cache_valideringer
+    artefakt: deploy/staging/artefakter/m38-fasit-v1-20261120T014820Z.json
+    artefakt_sha256: 5874fc5fe41b75b3aee46768fd3a24a2d050b8c963db35e70b65eeff8a04d1dc
+    notat: |-
+      sak_rekkefolge = ["a1", "b1", "c1", "a2", "c2", "a3", "a4", "a5", "a6"];
+      oppdrag_rekkefolge = ["d1", "e1", "d2", "d3", "d4", "d5", "d6"];
+      prioritet_forst = true;
+      cache_valideringer = 1.
   revisjonslogg_korrekt:
-    status: nei
-    notat: >-
-      M-38 v1 SKRIVER ingenting eget — fairness endrer rekkefølgen i
-      eksisterende claims (som selv er auditert), cachen skriver aldri.
-      Hva punktet skal bety for en rekkefølge-/memoiseringsmodul er en
-      skjema-/arkitektavklaring; står nei i stedet for å låne en
-      tolkning.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
+    status: ja
+    krav_id: m38-fasit-v1
+    bevismaalinger:
+      - maalt.claim_endrede_tabeller_sak
+      - maalt.claim_endrede_tabeller_oppdrag
+      - maalt.nye_revisjonsrader_claim
+      - maalt.nye_revisjonsrader_cache
+    artefakt: deploy/staging/artefakter/m38-fasit-v1-20261120T014820Z.json
+    artefakt_sha256: 5874fc5fe41b75b3aee46768fd3a24a2d050b8c963db35e70b65eeff8a04d1dc
+    notat: |-
+      claim_endrede_tabeller_sak = ["unntak", "unntak_historikk"];
+      claim_endrede_tabeller_oppdrag = ["oppdrag"];
+      nye_revisjonsrader_claim = 0;
+      nye_revisjonsrader_cache = 0.
   feilinjisering_til_unntakskø:
-    status: nei
-    notat: >-
-      M-38 v1 har ingen egen kø eller arbeider å injisere feil i —
-      krokene bor i kjernens claim- og lesevei. Krever samme avklaring
-      som punktet over.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
+    status: ja
+    krav_id: m38-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.injiserte
+    artefakt: deploy/staging/artefakter/m38-feilinjisering-v1-20261120T014820Z.json
+    artefakt_sha256: 8a63912b2ff910ef53018e21ed317ccea383e307ad94d7fe6d72665e671883bb
+    notat: |-
+      brudd = [{"avvist": true, "brudd": "ugyldig_claim_id", "feiltype": "claim_neste_sak: ugyldig claim_id-format\nCONTEXT…;
+      injiserte = 4.
   ytelse_bestatt:
-    status: nei
-    notat: >-
-      KREVER: pinnet ytelsesgrense (rangeringskostnaden under kølast +
-      cache-treffraten) og en målt kjøring mot den. Planens egen dom:
-      ingen indeks og ingen påstand uten staging-måling. Ingen
-      m38-grense er registrert; ingen måling finnes.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
+    status: ja
+    krav_id: m38-ytelse-v1
+    bevismaalinger:
+      - maalt.p95_ms
+      - maalt.feilede
+      - maalt.treffrate
+    artefakt: deploy/staging/artefakter/m38-ytelse-v1-20261120T014835Z.json
+    artefakt_sha256: b88b8ba8842f1d9205357bcee960148fb3824c5cbc967ecc3e983b59ae1c26ad
+    notat: |-
+      p95_ms = 80.13;
+      feilede = 0;
+      treffrate = 0.995.
   rollback_testet:
-    status: nei
-    notat: >-
-      M-38 v1 har ingen egen release å rulle tilbake — koden skipper
-      med kjernen (085 er en migrasjon i kjernens kjede, cachen en
-      kjernefil). Om kjernens rollback-evidens kan bæres hit uten å
-      bli en lånt konklusjon er samme arkitektdom som m16-punktet.
+    # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
+    status: ja
+    krav_id: m38-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.kandidat_lik_fasit
+    artefakt: deploy/staging/artefakter/m38-rollback-v1-20261120T014822Z.json
+    artefakt_sha256: b5da697648dcad25b87a21d12aae9999e827d04476dc9a56e3897d45e8de172a
+    notat: |-
+      svar_like = true;
+      kandidat_lik_fasit = true.

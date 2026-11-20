@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m22-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 32,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5556
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m22_lisens.py"
+    ],
+    "bevisrot_sha256": "7a24ddf8f8684b4ff9aeb50df8ab61a03df540b71d60a3b6d0f4169aac268a50",
+    "commit": "a79718b8046ea3ca99f9b843b5e08508c4fecea5",
+    "modul": "m22_lisens",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:02.681321+00:00"
+}

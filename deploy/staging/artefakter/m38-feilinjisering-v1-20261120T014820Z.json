@@ -1,0 +1,47 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m38-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "avvist": true,
+        "brudd": "ugyldig_claim_id",
+        "feiltype": "claim_neste_sak: ugyldig claim_id-format\nCONTEXT:  PL/pgSQL function public.claim_neste_sak(text,integer) line 6 at RAISE",
+        "sqlstate": "P0001",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "statement_timeout",
+        "feiltype": "canceling statement due to statement timeout\nCONTEXT:  PL/pgSQL function public.claim_neste_sak(text,integer) line 4 at statement block",
+        "sqlstate": "57014",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "execute_trukket",
+        "feiltype": "permission denied for function claim_neste_sak",
+        "sqlstate": "42501",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "korrupt_innhold_etter_treff",
+        "feiltype": "PolicyKorrupt: innholds_hash stemmer ikke: lagret 8ca7fd0156dd…, faktisk 6e932cefa27f…",
+        "sqlstate": null,
+        "treff_for": true,
+        "urort": true
+      }
+    ],
+    "injiserte": 4
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "c6643ddf90fa3f9cc0b187939c702f0bc10e63c95eb55f3d5ce81b6d56332d15",
+    "modul": "m38_ruter",
+    "runde": "817d70cb",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-20T01:48:20.894258+00:00"
+}

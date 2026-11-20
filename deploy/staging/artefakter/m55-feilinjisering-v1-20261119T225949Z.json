@@ -1,0 +1,91 @@
+{
+  "bestatt": true,
+  "krav_id": "m55-feilinjisering-v1",
+  "maalt": {
+    "alarm_etter_andre": true,
+    "alarm_etter_forste": false,
+    "apne_etter": 12,
+    "apne_for": 12,
+    "frisk_feilet": false,
+    "injeksjonsrolle_har_execute": false,
+    "injisert_feilet": 2,
+    "injiserte_kjoringer": 2,
+    "lukkede_etter": 2,
+    "lukkede_for": 2,
+    "per_type_etter": {
+      "forveksling_ikke_henvist": [
+        2,
+        0
+      ],
+      "funn_eldre_enn_frist": [
+        1,
+        0
+      ],
+      "funn_uten_vurdering": [
+        3,
+        1
+      ],
+      "ingen_terskler": [
+        2,
+        0
+      ],
+      "merkevare_uten_funn": [
+        2,
+        1
+      ],
+      "vurdering_med_utdatert_terskel": [
+        2,
+        0
+      ]
+    },
+    "per_type_for": {
+      "forveksling_ikke_henvist": [
+        2,
+        0
+      ],
+      "funn_eldre_enn_frist": [
+        1,
+        0
+      ],
+      "funn_uten_vurdering": [
+        3,
+        1
+      ],
+      "ingen_terskler": [
+        2,
+        0
+      ],
+      "merkevare_uten_funn": [
+        2,
+        1
+      ],
+      "vurdering_med_utdatert_terskel": [
+        2,
+        0
+      ]
+    },
+    "registeret_urort": true,
+    "tenanter": 7
+  },
+  "oppsett": {
+    "bevisrot_sha256": "5a4ccbf65777a72f5ef821411bc4dab265627b4201cb0bbfb16c8cd7af38cd21",
+    "funntabell": "merkevarevarsel",
+    "injeksjon": "tilkobling som disponit — uten EXECUTE på m55_sveip_merkevare(int)",
+    "injeksjonsrolle": "disponit",
+    "maalerolle": "disponit_merkevare_eier",
+    "modul": "m55_merkevare",
+    "riggmodul": "m55_fasit",
+    "riggtenanter": [
+      "t-m55fasit-a-1a44a61f",
+      "t-m55fasit-b-1a44a61f",
+      "t-m55fasit-c-1a44a61f"
+    ],
+    "runde": "1a44a61f",
+    "sveipedor": "m55_sveip_merkevare(int)",
+    "tenantkilde": [
+      "merkevare"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:59:49.564852+00:00"
+}

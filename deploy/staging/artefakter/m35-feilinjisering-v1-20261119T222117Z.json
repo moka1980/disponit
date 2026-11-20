@@ -1,0 +1,54 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m35-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "avvist": true,
+        "brudd": "lukk_uten_etteranalyse",
+        "sqlstate": "23000",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "post_paa_lukket_hendelse",
+        "sqlstate": "P0002",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "materiell_idempotenskonflikt",
+        "sqlstate": "23505",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "dor_uten_tenantkontekst",
+        "sqlstate": "42501",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "dorens_egen_posttype",
+        "sqlstate": "22023",
+        "urort": true
+      },
+      {
+        "avvist": true,
+        "brudd": "endre_tidslinjen",
+        "sqlstate": "42501",
+        "urort": true
+      }
+    ],
+    "injiserte": 6
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "131d4b5f82b06b582282ae49861dd5313af689dd8948a0f839400906a347fc3b",
+    "modul": "m35_kontinuitet",
+    "runde": "1a2243e2",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:21:17.147785+00:00"
+}

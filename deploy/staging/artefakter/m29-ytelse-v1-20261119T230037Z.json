@@ -1,0 +1,42 @@
+{
+  "bestatt": true,
+  "krav_id": "m29-ytelse-v1",
+  "maalt": {
+    "feilet": false,
+    "kjoringer": [
+      0.0273,
+      0.0191,
+      0.0192
+    ],
+    "per_kjoring": [
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      },
+      {
+        "lukkede": 0,
+        "nye": 0,
+        "oppdaterte": 13,
+        "tenanter": 9
+      }
+    ],
+    "sekunder": 0.0273,
+    "sekunder_per_tenant": 0.003,
+    "tenanter": 9
+  },
+  "oppsett": {
+    "bevisrot_sha256": "7b1b8435450c63741b0aec5683b327b0f5c0be269ef11cca36e29f980cbfc817",
+    "modul": "m29_hendelse",
+    "sveip": "hendelsessveip",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T23:00:37.774786+00:00"
+}

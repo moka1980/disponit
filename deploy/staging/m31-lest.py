@@ -404,6 +404,24 @@ def ytelse(modell_url: str, modellnavn: str, digest: str) -> Path:
     a, m = k["a"], k["m"]
     t._sett(a, m, SETT_ID, 2, hash2, antall=len(eksempler))
     a.commit()
+    # OPPVARMING, MÅLT OG FØRT. Første måling 19.11.2026 traff en KALD
+    # modell: lastingen tok over senderens tidsgrense, og det første
+    # eksemplet ble en modellfeil (23 av 24 besto ellers). Punktet måler
+    # evalueringens ytelse, ikke modellasting — så modellen lastes med ett
+    # eksplisitt kall først, og tiden det tok står i artefaktet.
+    import time
+    import urllib.request
+    t0 = time.monotonic()
+    foresp = urllib.request.Request(
+        modell_url.rstrip("/") + "/api/generate",
+        data=json.dumps({"model": modellnavn, "prompt": "ok",
+                         "stream": False,
+                         "options": {"num_predict": 1}}).encode(),
+        headers={"content-type": "application/json"})
+    with urllib.request.urlopen(foresp, timeout=600) as svar:
+        svar.read()
+    oppvarming_ms = int((time.monotonic() - t0) * 1000)
+    _log(f"modellen er lastet ({oppvarming_ms} ms)")
     with tempfile.TemporaryDirectory() as d:
         sti = Path(d) / "sett.json"
         shutil.copy(SETTFIL[2], sti)
@@ -422,6 +440,7 @@ def ytelse(modell_url: str, modellnavn: str, digest: str) -> Path:
                        "artifact_digest": digest},
            "maalt": {"cli_returkode": kode, "eksempler": rad[0],
                      "bestatt": rad[1], "modellfeil": rad[2],
+                     "oppvarming_ms": oppvarming_ms,
                      "p50_ms": rad[3], "p95_ms": rad[4],
                      "varighet_s": float(rad[5]), "modellnavn": rad[6]}}
     _log(f"{rad}")

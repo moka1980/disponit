@@ -1,0 +1,54 @@
+{
+  "bestatt": true,
+  "feil": [],
+  "krav_id": "m10-feilinjisering-v1",
+  "maalt": {
+    "brudd": [
+      {
+        "brudd": "rapport_mangler_felt",
+        "grunn": "ugyldig rapport: feltet tabeller mangler",
+        "nye_rader": 0,
+        "returkode": 1
+      },
+      {
+        "brudd": "rapport_feil_type",
+        "grunn": "ugyldig rapport: feltet tabeller har feil type",
+        "nye_rader": 0,
+        "returkode": 1
+      },
+      {
+        "brudd": "check_brudd_i_basen",
+        "grunn": "avvist av basen: CheckViolation",
+        "nye_rader": 0,
+        "returkode": 1
+      },
+      {
+        "brudd": "skrivedor_execute_trukket",
+        "grunn": "avvist av basen: InsufficientPrivilege",
+        "nye_rader": 0,
+        "returkode": 1
+      }
+    ],
+    "forpass": {
+      "brudd": "forpass_execute_trukket",
+      "forpass_feil": 1,
+      "forpass_feil_etter": 0,
+      "ordinaer_sendt": true,
+      "returkode": 2,
+      "returkode_etter": 0
+    },
+    "frisk_etterpa": {
+      "nye_rader": 1,
+      "returkode": 0,
+      "skrevet": 1
+    }
+  },
+  "oppsett": {
+    "base": "disponit_test@55432",
+    "bevisrot_sha256": "64d368c1dc7244e3714becc89cc1527643ffaa010651ebdde7ae4875e6f93515",
+    "modul": "m10_backup",
+    "runde": "e625092b",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:20:52.356039+00:00"
+}

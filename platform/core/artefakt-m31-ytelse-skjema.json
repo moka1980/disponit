@@ -79,6 +79,7 @@
         "eksempler",
         "modellfeil",
         "modellnavn",
+        "oppvarming_ms",
         "p50_ms",
         "p95_ms",
         "varighet_s"
@@ -107,6 +108,9 @@
         },
         "modellnavn": {
           "type": "string"
+        },
+        "oppvarming_ms": {
+          "type": "integer"
         }
       }
     }

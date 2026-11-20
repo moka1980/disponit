@@ -1,0 +1,24 @@
+{
+  "bestatt": true,
+  "krav_id": "m35-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 40,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m35_kontinuitet.py"
+    ],
+    "bevisrot_sha256": "ed196cda993fc299c8a6e3af38a1dd74464b59371d4511ee45b598c58b821820",
+    "commit": "c543fbd7172ebfe174c91b855f8106bd04e172c0",
+    "modul": "m35_kontinuitet",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T23:49:30.748921+00:00"
+}

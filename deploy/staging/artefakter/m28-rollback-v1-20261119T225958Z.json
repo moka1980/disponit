@@ -1,0 +1,61 @@
+{
+  "bestatt": true,
+  "etterkontroll": {
+    "aktiv_urort": true,
+    "kandidat_feilet": false
+  },
+  "identiteter": {
+    "avbrutt_fil": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf/platform/drift/transportsveip.py",
+    "avbrutt_pid": 604994,
+    "kandidat_fil": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf/platform/drift/transportsveip.py",
+    "kandidat_pid": 605224,
+    "rullback_fil": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19/platform/drift/transportsveip.py",
+    "rullback_pid": 605130
+  },
+  "krav_id": "m28-rollback-v1",
+  "maalt": {
+    "arbeidernokkel_fri": true,
+    "dubletter": 0,
+    "for_apne": 0,
+    "for_rader": 0,
+    "inflight_backend_avsluttet": true,
+    "inflight_backend_levde_etter_drap": true,
+    "inflight_blokkerte_paa_laas": true,
+    "inflight_drept": true,
+    "inflight_funn": 0,
+    "inflight_returkode": -9,
+    "kandidat_apne": 4,
+    "kandidat_bytes_er_drillede": true,
+    "kandidat_nye": 0,
+    "modul_digest_likt": true,
+    "release_digest_bundet": true,
+    "rullback_bytes_er_forgjengerens": true,
+    "rullbakk_funn": 4,
+    "rullbakk_rader": 4
+  },
+  "oppsett": {
+    "arbeidernokkel": 733509184,
+    "avbrutt_backend_pid": 605029,
+    "bevisrot_sha256": "c5b4c6307641087a931e4332a358349aa6ccce495dbbbea5c5093b9054646d5b",
+    "drillet_digest": "eb434e45c78e29e37f2155d77515bb89f83e8a6843fc232fb2acc68dd27d6ec3",
+    "drillet_katalog": "/opt/disponit/releases/77a7b2497b93feaa12f6232136c3a0f3aa5656bf",
+    "drillet_kjernedigest": "09e2a6e8842c5de744793b1c44429cb0ed0646e8bca28fe297f0998054aaf4d0",
+    "drillet_release": "77a7b2497b93feaa12f6232136c3a0f3aa5656bf",
+    "forgjenger_digest": "eb434e45c78e29e37f2155d77515bb89f83e8a6843fc232fb2acc68dd27d6ec3",
+    "forgjenger_katalog": "/opt/disponit/releases/5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "forgjenger_kjernedigest": "a108dd30aa421ec24decb148fbddebda1ecee652a95b5a7a38a2cdcbf0ef273b",
+    "forgjenger_release": "5f57464a806877be8a7aa2d3d6597ea9a15b1d19",
+    "form": "kjerne: sveipen ruller med kjernen — avbruddet tas utenfra med ACCESS EXCLUSIVE + SIGKILL, ekte base, underprosess per release-katalog",
+    "funntabell": "transportfunn",
+    "maalerolle": "disponit_transport_eier",
+    "miljo": "staging",
+    "modul": "m28_transport",
+    "runde": "4e3df663",
+    "tenanter": [
+      "t-m28fasit-a-4e3df663",
+      "t-m28fasit-b-4e3df663"
+    ],
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-19T22:59:58.292139+00:00"
+}

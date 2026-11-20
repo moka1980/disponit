@@ -29,8 +29,8 @@
 id: m10_backup
 navn: Backup- og gjenopprettingsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: dørene eies av `disponit_m37_claimer`
 # (051-formen), og den uteblitte verifiseringen varsles gjennom
 # varselveien fra 035.
@@ -43,35 +43,90 @@ i18n_prefiks: backup
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 19/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m10-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m10-suite-v1-20261119T225156Z.json
+    artefakt_sha256: 2397381ff65317638ce4ad08f8d2abd445353f868fcb1241cf364292348c4fb6
     notat: >-
-      KREVER: suitekjøring på staging med modulens andel pinnet og
-      stagingidentitet bundet. Portene finnes og er grønne lokalt
-      (test_m10_backupinnsyn.py), men andelen er ikke pinnet.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 21 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
-    status: nei
-    notat: >-
-      KREVER: en verifiseringsrapport med KJENT fasit, kjørt likt
-      lokalt og på staging.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m10-fasit-v1
+    bevismaalinger:
+      - maalt.uteblitt_forste
+      - maalt.uteblitt_samme_dogn
+      - maalt.uteblitt_etter_fersk
+      - maalt.uteblitt_fordeling
+    artefakt: deploy/staging/artefakter/m10-fasit-v1-20261119T222050Z.json
+    artefakt_sha256: 7f36dadca02e4d50be0f6c6efde3c555d8fd85961c281fb7c2947491eb52797c
+    notat: |-
+      uteblitt_forste = 2;
+      uteblitt_samme_dogn = 0;
+      uteblitt_etter_fersk = 0;
+      uteblitt_fordeling = {"a": 1, "b": 1, "c": 0, "status_avvik": 0}.
   revisjonslogg_korrekt:
-    status: nei
-    notat: >-
-      KREVER: at hver verifisering står med sine egne tall —
-      tabellantall og dumpstørrelse fra restoren, ikke fra skriptet
-      som ba om den.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m10-fasit-v1
+    bevismaalinger:
+      - maalt.nye_revisjonsrader
+      - maalt.skrivedor_execute
+      - maalt.tabellskrivere
+    artefakt: deploy/staging/artefakter/m10-fasit-v1-20261119T222050Z.json
+    artefakt_sha256: 7f36dadca02e4d50be0f6c6efde3c555d8fd85961c281fb7c2947491eb52797c
+    notat: |-
+      nye_revisjonsrader = 0;
+      skrivedor_execute = ["disponit_driftstatus"];
+      tabellskrivere = ["disponit_m37_claimer:INSERT"].
   feilinjisering_til_unntakskø:
-    status: nei
-    notat: >-
-      KREVER: at en uteblitt verifisering varsles ÉN gang per døgn, og
-      at en feil i sveipen gjør STØY, ikke stillhet. En backup ingen
-      har verifisert ser lik ut som en som virker.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m10-feilinjisering-v1
+    bevismaalinger:
+      - maalt.brudd
+      - maalt.frisk_etterpa
+      - maalt.forpass
+    artefakt: deploy/staging/artefakter/m10-feilinjisering-v1-20261119T222052Z.json
+    artefakt_sha256: c3b36852771c0438856bb9dceb50ba1dad12ba463911b7675e84aa42f6e9e02e
+    notat: |-
+      brudd = [{"brudd": "rapport_mangler_felt", "grunn": "ugyldig rapport: feltet tabeller mangler", "nye_rader": 0, "retu…;
+      frisk_etterpa = {"nye_rader": 1, "returkode": 0, "skrevet": 1};
+      forpass = {"brudd": "forpass_execute_trukket", "forpass_feil": 1, "forpass_feil_etter": 0, "ordinaer_sendt": true, "ret….
   ytelse_bestatt:
-    status: nei
-    notat: >-
-      KREVER: pinnet grense for sveipekostnaden og en målt kjøring.
+    # MÅLT 2026-11-19 på disponit-srv (disponit), ADR-004 klasse F.
+    status: ja
+    krav_id: m10-ytelse-v1
+    bevismaalinger:
+      - maalt.maks_sekunder
+      - maalt.feilede
+    artefakt: deploy/staging/artefakter/m10-ytelse-v1-20261119T223329Z.json
+    artefakt_sha256: 72e278766180c260304810de2948057601c1e98872e2cb132fa30f5c973e2062
+    notat: |-
+      maks_sekunder = 0.629;
+      feilede = 0.
   rollback_testet:
-    status: nei
-    notat: >-
-      KREVER: en release å rulle tilbake. Modulen har ingen — og merk
-      ironien: dette er modulen som MÅLER at gjenoppretting virker,
-      uten selv å ha vært gjennom en.
+    # MÅLT 2026-11-19 på disponit-srv (disponit_test@55432), ADR-004 klasse F.
+    status: ja
+    krav_id: m10-rollback-v1
+    bevismaalinger:
+      - maalt.svar_like
+      - maalt.gjenspill_over_rulling
+    artefakt: deploy/staging/artefakter/m10-rollback-v1-20261119T222053Z.json
+    artefakt_sha256: b517538ec65ff294dd87e4a1d84a23888249bb1cced389c8abad7ce0b5c9b53c
+    notat: |-
+      svar_like = true;
+      gjenspill_over_rulling = 0.
