@@ -936,10 +936,10 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "m34_compliance", "m35_kontinuitet",
                          "m36_optimalisator", "m37_unntak", "m38_ruter",
                          "m39_lonnsgrunnlag", "m40_medarbeider",
-                         "m42_kontovakt", "m43_telefoni", "m44_kampanje",
-                         "m45_esg", "m47_myndighetsrapport", "m48_motpart",
-                         "m49_sanksjon", "m50_postjournal", "m51_tilskudd",
-                         "m52_tollkode", "m53_hms", "m54_ehf",
+                         "m41_betaling", "m42_kontovakt", "m43_telefoni",
+                         "m44_kampanje", "m45_esg", "m47_myndighetsrapport",
+                         "m48_motpart", "m49_sanksjon", "m50_postjournal",
+                         "m51_tilskudd", "m52_tollkode", "m53_hms", "m54_ehf",
                          "m55_merkevare", "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
                           "m03_datakvalitet", "m04_dataforvalter",
@@ -956,11 +956,11 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                           "m34_compliance", "m35_kontinuitet",
                           "m36_optimalisator", "m37_unntak", "m38_ruter",
                           "m39_lonnsgrunnlag", "m40_medarbeider",
-                          "m42_kontovakt", "m43_telefoni", "m44_kampanje",
-                          "m45_esg", "m47_myndighetsrapport", "m48_motpart",
-                          "m49_sanksjon", "m50_postjournal", "m51_tilskudd",
-                          "m52_tollkode", "m53_hms", "m54_ehf",
-                          "m55_merkevare", "m57_ats", "wcag_audit"], (
+                          "m41_betaling", "m42_kontovakt", "m43_telefoni",
+                          "m44_kampanje", "m45_esg", "m47_myndighetsrapport",
+                          "m48_motpart", "m49_sanksjon", "m50_postjournal",
+                          "m51_tilskudd", "m52_tollkode", "m53_hms",
+                          "m54_ehf", "m55_merkevare", "m57_ats", "wcag_audit"], (
         f"registeret er uenig med det som faktisk kjører: {st.i_drift}")
     assert st.feil == [], st.feil
 
