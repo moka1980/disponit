@@ -1,0 +1,26 @@
+{
+  "bestatt": true,
+  "krav_id": "m38-suite-v1",
+  "maalt": {
+    "andel_exitkode": 0,
+    "andel_feilet": 0,
+    "andel_hoppet": 0,
+    "andel_tester": 151,
+    "suite_exitkode": 0,
+    "tester_feilet": 0,
+    "tester_hoppet": 0,
+    "tester_totalt": 5557
+  },
+  "oppsett": {
+    "andel_filer": [
+      "platform/core/tests/test_m37.py",
+      "platform/core/tests/test_pr013_policyadmin_flyt.py",
+      "platform/core/tests/test_slett_policy.py"
+    ],
+    "bevisrot_sha256": "281618566ecd2ff0b62122083d1efec65c5f4108e54e6e8e26b52d9cd268f0aa",
+    "commit": "7c00a1d0870575ffaddd834e5035a3cdbee61f86",
+    "modul": "m38_ruter",
+    "vert": "cloud-server-10605510"
+  },
+  "ts": "2026-11-20T02:04:03.817443+00:00"
+}

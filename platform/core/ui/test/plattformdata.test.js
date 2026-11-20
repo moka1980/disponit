@@ -37,9 +37,9 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // 35: i_drift 20/11 — alle seks punkter ja etter ADR-002 klasse C
   // (evidenstriggerne i 219, kjent dørsekvens, rulling over 224).
   assert.equal(modulStatus(35), "i_drift");
-  // 38 flippet planlagt → bygges 31/8: manifestet (m38_ruter) er
-  // avlesningens kilde, og fairness/cachen er levert (#314/#316).
-  assert.equal(modulStatus(38), "bygges");
+  // 38: i_drift 20/11 — alle seks punkter ja etter ADR-005 klasse G.
+  // Med den er alle 57 modulene i drift; ingen står lenger som `bygges`.
+  assert.equal(modulStatus(38), "i_drift");
   // EN MODUL SOM IKKE FINNES I KATALOGEN I DET HELE TATT — det er
   // dette testens navn faktisk påstår, og det som ikke flytter seg.
   //
@@ -93,8 +93,8 @@ test("MODULSTATUS: ingen modul lover drift uten at manifestet gjør det", () => 
     // M-19 fra 2026-09-17 (natt): første modul på de GENERISKE
     // sveipprodusentene for feilinjisering, ytelse og rollback.
     [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-     22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 39, 40,
-     41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57],
+     22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+     40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57],
     "i_drift-settet fulgte ikke manifestenes driftstilstand");
 });
 
@@ -112,7 +112,6 @@ test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
   // Da faller løftet på det FØRSTE leddet alene, uansett hva verten sier.
   settProduksjonsmiljo(true);
   assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
-  assert.equal(erTilgjengelig(38), false, "M-38 bygges, uansett miljø");
   for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
     settProduksjonsmiljo(verdi);
     assert.equal(produksjonsmiljo(), false,

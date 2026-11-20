@@ -203,7 +203,7 @@ export const MODULSTATUS = {
   11: "i_drift",    // m11_selvtest: aktiv, produksjon
   // m38_ruter: under_utvikling, ikke_i_drift — etterregistrert 31/8
   // (fairness 085/#314 + policycachen #316 levert; aksept gjenstår).
-  38: "bygges",
+  38: "i_drift",    // m38_ruter: aktiv, produksjon
   // m56_wcag_audit: akseptert 2026-08-23 på wcag-r23 (r21-runden +
   // flippedrillen 22/8, aksepthendelsen i basen) og flippet SAMMEN med
   // m02 — konsistensregelen som holdt den igjen er nå oppfylt begge

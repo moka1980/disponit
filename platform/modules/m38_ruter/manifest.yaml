@@ -25,8 +25,8 @@
 id: m38_ruter
 navn: Kapasitets-, kø- og modellruter
 versjon: 0.1.0
-status: under_utvikling        # aktiv | inaktiv | under_utvikling
-driftstilstand: ikke_i_drift   # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # INGEN avhengigheter i registerets forstand (m16-begrunnelsen):
 # v1-krokene bor i KJERNENS egne veier — claim-funksjonene er
 # m37-kjernens (085), cachen er policyveiens (policyregister). En
@@ -47,9 +47,25 @@ i18n_prefiks: m38
 # måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m38-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m38-suite-v1-20261120T020403Z.json
+    artefakt_sha256: 3c1e20f607038dba20f770b1bbe452f6a6f27e386a29e6d347ce1d024ec3b5e9
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 151 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 2026-11-20 på disponit-srv (disponit_test@55432), ADR-005 klasse G.
     status: ja
