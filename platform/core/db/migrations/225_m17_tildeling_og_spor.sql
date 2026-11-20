@@ -49,6 +49,10 @@ CREATE TABLE henvendelsestildeling (
     CONSTRAINT henvendelsestildeling_pk PRIMARY KEY (tenant, henvendelse_id),
     CONSTRAINT henvendelsestildeling_fk FOREIGN KEY (tenant, henvendelse_id)
         REFERENCES henvendelse (tenant, henvendelse_id)
+        -- Tildelingen er TILSTAND, ikke historikk: forsvinner henvendelsen
+        -- (retensjonen), har ingen saken lenger. Sporet har ingen FK og
+        -- blir stående — det bærer ikke innhold.
+        ON DELETE CASCADE
 );
 
 ALTER TABLE henvendelsesspor ENABLE ROW LEVEL SECURITY;
