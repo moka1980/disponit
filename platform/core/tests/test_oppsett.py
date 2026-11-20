@@ -66,6 +66,55 @@ def test_adapterne_peker_pa_ekte_lesedorer():
         assert f'"{scope}"' in inspect.getsource(modul), (apimodul, scope)
 
 
+def test_registrene_peker_pa_ekte_lesedorer_og_riktig_scope():
+    """Registermodulene telles i svaret fra modulens egen lesedør. Nøkkelen
+    funksjonen leser MÅ finnes i døra, og scopet må være rutens — ellers
+    viser oversikten «ingenting registrert» om et fullt register."""
+    from api import oppsett
+    from api.app import RUTESCOPE
+    alle = [a[0] for a in oppsett.ADAPTERE] + [r[0] for r in oppsett.REGISTRE]
+    assert len(alle) == len(set(alle)), "en modul står i begge listene"
+    nokler = {5: ["familier"], 12: ["objekter", "funn"], 21: ["plikter"],
+              22: ["lisenser"], 30: ["saker", "apne_funn"],
+              34: ["kontroller", "apne_funn"],
+              35: ["tjenester", "kontakter"]}
+    assert sorted(nokler) == sorted(r[0] for r in oppsett.REGISTRE)
+    for nr, apimodul, scope, _tell in oppsett.REGISTRE:
+        modul = importlib.import_module(f"api.{apimodul}")
+        dor = inspect.getsource(modul.svar_for)
+        for n in nokler[nr]:
+            assert f'"{n}"' in dor, (apimodul, n)
+        assert RUTESCOPE[("GET", f"/v1/{apimodul}")] == scope, apimodul
+
+
+def test_registertellingen():
+    from api import oppsett
+    tell = {nr: f for nr, _a, _s, f in oppsett.REGISTRE}
+    assert tell[12]({"objekter": [], "funn": []}) == (False, 0)
+    assert tell[12]({"objekter": [{}], "funn": [{}, {}]}) == (True, 2)
+    assert tell[22]({"lisenser": []}) == (False, None)
+    assert tell[30]({"saker": [{"apne_funn": ["a"]}, {"apne_funn": []}]}) \
+        == (None, 1)
+    assert tell[34]({"kontroller": [{"apne_funn": ["a", "b"]}]}) == (True, 2)
+    # Beredskap: tjenestekart uten kontakter er ikke klart.
+    assert tell[35]({"tjenester": [{}], "kontakter": []}) == (False, None)
+    assert tell[35]({"tjenester": [{}], "kontakter": [{}]}) == (True, None)
+
+
+def test_tomt_register_merkes_saa_flaten_sier_det_riktige(monkeypatch):
+    from api import oppsett
+    monkeypatch.setattr(oppsett, "les_modul", lambda *a: {
+        "tilgjengelig": True, "klar": True, "apne_funn": 0})
+    monkeypatch.setattr(oppsett, "les_register", lambda *a: {
+        "tilgjengelig": True, "klar": False, "apne_funn": None})
+    svar = oppsett.svar_for(None, "t", {"decisions:read", "okonomi:read"},
+                            [22, 14, 12])
+    # 12 krever security:read — økten har det ikke. Sortert på nummer.
+    assert [m["modul"] for m in svar["moduler"]] == [14, 22]
+    assert svar["moduler"][1]["mangler"] == "register"
+    assert "mangler" not in svar["moduler"][0]
+
+
 def test_ruten_har_lesescope():
     from api.app import RUTESCOPE
     assert RUTESCOPE[("GET", "/v1/oppsett")] == "decisions:read"

@@ -7167,5 +7167,7 @@
   "ui.firmavelger": "Bytt firma",
   "ui.blimed.aapne_firma": "Åpne {firma}",
   "ui.blimed.ferdig_undertittel_aapne": "Siste steg: åpne firmaet.",
-  "ui.blimed.ferdig_tekst_aapne": "Du er nå medlem av {firma} som {roller}. Trykk under for å gå inn. Senere bytter du firma øverst på siden."
+  "ui.blimed.ferdig_tekst_aapne": "Du er nå medlem av {firma} som {roller}. Trykk under for å gå inn. Senere bytter du firma øverst på siden.",
+  "ui.oppsett.mangler_register": "Ingenting er registrert ennå. Modulen har ikke noe å følge med på før det første er lagt inn.",
+  "ui.oppsett.registrer": "Legg inn det første"
 }

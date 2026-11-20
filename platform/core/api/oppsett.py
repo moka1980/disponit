@@ -60,6 +60,51 @@ ADAPTERE: tuple[tuple[int, str, str, str | None], ...] = (
 )
 
 
+def _funn_i_rader(rader) -> int:
+    return sum(len(r.get("apne_funn") or ()) for r in rader or ())
+
+
+# REGISTERMODULENE har ingen grenser å sette: de følger med på det kunden
+# har LAGT INN (tilganger, avtaler, lisenser, kontroller …). «Klar» betyr
+# derfor at det første er registrert — et tomt register måler ingenting,
+# akkurat som en modul uten grenser. Radene leses gjennom modulens egen
+# `svar_for`, som for adapterne over; funksjonen her bare teller i svaret.
+#
+# (modulnummer, api-modul, lesescope, svar -> (klar | None, åpne funn | None))
+REGISTRE: tuple[tuple[int, str, str, object], ...] = (
+    (5, "dokumentmal", "decisions:read",
+     lambda s: (bool(s.get("familier")), None)),
+    (12, "tilgang", "security:read",
+     lambda s: (bool(s.get("objekter")), len(s.get("funn") or ()))),
+    (21, "plikt", "decisions:read",
+     lambda s: (bool(s.get("plikter")), None)),
+    (22, "lisens", "decisions:read",
+     lambda s: (bool(s.get("lisenser")), None)),
+    # Innsynssaker kommer UTENFRA; det finnes ikke noe å sette opp på
+    # forhånd, så «klar» er ukjent og raden sier bare antall åpne funn.
+    (30, "personvern", "security:read",
+     lambda s: (None, _funn_i_rader(s.get("saker")))),
+    (34, "compliance", "security:read",
+     lambda s: (bool(s.get("kontroller")),
+                _funn_i_rader(s.get("kontroller")))),
+    # Beredskap trenger BEGGE: et tjenestekart uten kontakter varsler ingen.
+    (35, "kontinuitet", "kontinuitet:read",
+     lambda s: (bool(s.get("tjenester")) and bool(s.get("kontakter")),
+                None)),
+)
+
+
+def les_register(conn, tenant: str, apimodul: str, tell) -> dict:
+    """Én registermoduls status, i eget savepoint — som `les_modul`."""
+    modul = importlib.import_module(f"{__package__}.{apimodul}")
+    try:
+        with conn.transaction():
+            svar = modul.svar_for(conn, tenant)
+    except psycopg.Error:
+        return {"tilgjengelig": False, "klar": None, "apne_funn": None}
+    klar, funn = tell(svar)
+    return {"tilgjengelig": True, "klar": klar, "apne_funn": funn}
+
 # Anbefalte grenser = skjemaets egne DEFAULT-verdier i modulens
 # migrasjon — tallene modulens forfatter valgte. De skrives aldri av seg
 # selv: kunden ser dem og trykker «Bruk», og skrivingen går gjennom
@@ -219,6 +264,15 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
             sti, kropp = ANBEFALT[nr]
             rad["anbefalt"] = {"sti": sti, "kropp": dict(kropp)}
         moduler.append(rad)
+    for nr, apimodul, scope, tell in REGISTRE:
+        if nr not in tildelt or scope not in scopes:
+            continue
+        rad = {"modul": nr, **les_register(conn, tenant, apimodul, tell)}
+        if rad["klar"] is False:
+            # Flaten sier «ingenting registrert», ikke «mangler grensene».
+            rad["mangler"] = "register"
+        moduler.append(rad)
+    moduler.sort(key=lambda m: m["modul"])
     svar = {"moduler": moduler}
     if POLICYSCOPE in scopes:
         svar["automatikk"] = automatikk(conn, tenant, tildelt)

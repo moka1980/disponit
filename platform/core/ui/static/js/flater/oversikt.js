@@ -386,10 +386,15 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
           feil);
       } else {
         kort.append(
-          el("p", { class: "muted", text: t("ui.oppsett.mangler_krav") }),
+          // Et tomt REGISTER er noe annet enn manglende grenser: kunden
+          // skal legge inn det første, ikke velge et tall.
+          el("p", { class: "muted", text: t(m.mangler === "register"
+            ? "ui.oppsett.mangler_register" : "ui.oppsett.mangler_krav") }),
           el("a", { class: "knapp primar", href: hash(m),
-            text: t("ui.oppsett.sett_opp"),
-            "aria-label": `${t("ui.oppsett.sett_opp")}: ${navn(m)}` }));
+            text: t(m.mangler === "register"
+              ? "ui.oppsett.registrer" : "ui.oppsett.sett_opp"),
+            "aria-label": `${t(m.mangler === "register"
+              ? "ui.oppsett.registrer" : "ui.oppsett.sett_opp")}: ${navn(m)}` }));
       }
       ul.append(kort);
     }
