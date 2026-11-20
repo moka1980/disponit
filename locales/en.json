@@ -7142,5 +7142,18 @@
   "ui.kontinuitet.kontakter.opptatt": "The role already has a contact with this priority. Choose another priority.",
   "ui.kontinuitet.kontakter.bekreft": "Confirm now",
   "ui.kontinuitet.kontakter.bekreft_hvem": "Confirm {navn} as {rolle}",
-  "ui.kontinuitet.kart.minutter": "{n} min"
+  "ui.kontinuitet.kart.minutter": "{n} min",
+  "ui.oppsett.godkjenner.mangler_tittel": "Add an approver",
+  "ui.oppsett.godkjenner.mangler_tekst": "A change to the policy must be approved by someone other than its author. The company has only one person who can approve, so no change gets through until there are two of you.",
+  "ui.oppsett.godkjenner.inviter": "Invite an approver",
+  "ui.oppsett.godkjenner.ny_lenke": "Create a new link",
+  "ui.oppsett.godkjenner.invitasjon_ute": "An invitation has been created but not used yet.",
+  "ui.oppsett.godkjenner.lenke": "Send this link to the person who will approve",
+  "ui.oppsett.godkjenner.lenke_hjelp": "The link is shown only now, works once and expires {dato}. The person opens it, signs in and can then approve under Policy administration.",
+  "ui.oppsett.godkjenner.feil": "The invitation was not created. Try again.",
+  "ui.oppsett.godkjenner.be_admin": "Ask the company administrator to invite an approver.",
+  "ui.oppsett.godkjenner.venter_tittel": "A policy change is waiting for approval",
+  "ui.oppsett.godkjenner.venter_tekst": "The approver opens Policy administration, reads the change and attests.",
+  "ui.oppsett.godkjenner.venter_tekst_mangler": "It stays open until someone other than the author has approved it.",
+  "ui.oppsett.godkjenner.apne": "Open Policy administration"
 }

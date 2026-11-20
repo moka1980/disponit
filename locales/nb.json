@@ -7142,5 +7142,18 @@
   "ui.kontinuitet.kontakter.opptatt": "Rollen har alt en kontakt med denne prioriteten. Velg en annen prioritet.",
   "ui.kontinuitet.kontakter.bekreft": "Bekreft nå",
   "ui.kontinuitet.kontakter.bekreft_hvem": "Bekreft {navn} som {rolle}",
-  "ui.kontinuitet.kart.minutter": "{n} min"
+  "ui.kontinuitet.kart.minutter": "{n} min",
+  "ui.oppsett.godkjenner.mangler_tittel": "Legg til en godkjenner",
+  "ui.oppsett.godkjenner.mangler_tekst": "En endring i policyen må godkjennes av en annen enn den som skrev den. Firmaet har bare én person som kan godkjenne, så ingen endring kommer gjennom før dere er to.",
+  "ui.oppsett.godkjenner.inviter": "Inviter en godkjenner",
+  "ui.oppsett.godkjenner.ny_lenke": "Lag en ny lenke",
+  "ui.oppsett.godkjenner.invitasjon_ute": "En invitasjon er laget, men ikke brukt ennå.",
+  "ui.oppsett.godkjenner.lenke": "Send denne lenken til den som skal godkjenne",
+  "ui.oppsett.godkjenner.lenke_hjelp": "Lenken vises bare nå, virker én gang og utløper {dato}. Personen åpner den, logger inn og kan deretter godkjenne under Policyadministrasjon.",
+  "ui.oppsett.godkjenner.feil": "Invitasjonen ble ikke laget. Prøv igjen.",
+  "ui.oppsett.godkjenner.be_admin": "Be administratoren i firmaet om å invitere en godkjenner.",
+  "ui.oppsett.godkjenner.venter_tittel": "En policyendring venter på godkjenning",
+  "ui.oppsett.godkjenner.venter_tekst": "Den som skal godkjenne, åpner Policyadministrasjon, leser endringen og attesterer.",
+  "ui.oppsett.godkjenner.venter_tekst_mangler": "Den blir stående til en annen person enn forfatteren har godkjent den.",
+  "ui.oppsett.godkjenner.apne": "Åpne Policyadministrasjon"
 }
