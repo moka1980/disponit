@@ -34,10 +34,9 @@ test("modulStatus: ukjent modul er planlagt, ikke udefinert", () => {
   // 6: i_drift 17/9 — alle seks punkter ja; fasit og suite målt på nytt
   // etter 210 (slettesynk) mot fersk base på verten.
   assert.equal(modulStatus(6), "i_drift");
-  // 35 flippet planlagt → bygges 31/8: manifestet (m35_kontinuitet) er
-  // avlesningens kilde — 089-registeret, øvelseslogikken og
-  // m35-v1-grensen er v1; aksepten krever en målt øvelse (PR-B).
-  assert.equal(modulStatus(35), "bygges");
+  // 35: i_drift 20/11 — alle seks punkter ja etter ADR-002 klasse C
+  // (evidenstriggerne i 219, kjent dørsekvens, rulling over 224).
+  assert.equal(modulStatus(35), "i_drift");
   // 38 flippet planlagt → bygges 31/8: manifestet (m38_ruter) er
   // avlesningens kilde, og fairness/cachen er levert (#314/#316).
   assert.equal(modulStatus(38), "bygges");
@@ -113,7 +112,7 @@ test("erTilgjengelig: løftet krever BÅDE drift og produksjonsmiljø", () => {
   // Da faller løftet på det FØRSTE leddet alene, uansett hva verten sier.
   settProduksjonsmiljo(true);
   assert.equal(erTilgjengelig(1), false, "M-1 er klargjort, ikke i drift");
-  assert.equal(erTilgjengelig(35), false, "M-35 bygges, uansett miljø");
+  assert.equal(erTilgjengelig(38), false, "M-38 bygges, uansett miljø");
   for (const verdi of [undefined, null, "produksjon", "produksjonn", 1, {}]) {
     settProduksjonsmiljo(verdi);
     assert.equal(produksjonsmiljo(), false,
