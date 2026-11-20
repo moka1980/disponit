@@ -37,9 +37,16 @@ def _get(klient, tok, sti):
     return klient.get(sti, headers={"authorization": f"Bearer {tok}"})
 
 
-def _ny(migrator):
-    key_id, dek = _nokkel(migrator, TENANT)
-    return str(_ta_imot(migrator, TENANT, key_id, dek))
+def _ny(_migrator=None, **kw):
+    """Inntaket går gjennom RUNTIME-rollen (`DSN`), som i de andre
+    M-17-portene: migratoren har ikke EXECUTE på dørene."""
+    from db.pg import koble
+    c = koble(DSN)
+    try:
+        key_id, dek = _nokkel(c, TENANT)
+        return str(_ta_imot(c, TENANT, key_id, dek, **kw))
+    finally:
+        c.close()
 
 
 def _koerad(klient, tok, hid):
@@ -152,10 +159,9 @@ def test_en_lukket_henvendelse_kan_ikke_tildeles(
 def test_sporet_peker_paa_loggposten_og_baerer_ikke_innholdet(
         migrator, miljo, klient, token):
     tok, _ = token(rolle="bestiller", scopes=SKRIV)
-    key_id, dek = _nokkel(migrator, TENANT)
     hemmelig = "Fortrolig-" + secrets.token_hex(6)
-    hid = str(_ta_imot(migrator, TENANT, key_id, dek, emne=hemmelig,
-                       tekst=hemmelig, avsender=f"{hemmelig}@x.example"))
+    hid = _ny(emne=hemmelig, tekst=hemmelig,
+              avsender=f"{hemmelig}@x.example")
     r = _get(klient, tok, f"/v1/kundeservice/henvendelse/{hid}/spor")
     assert r.status_code == 200, r.text
     assert hemmelig.lower() not in r.text.lower()
