@@ -135,6 +135,47 @@ def automatikk(conn, tenant: str, tildelt: set[int]) -> list[dict] | None:
             for h, nr in AUTOMATISKE if nr in tildelt]
 
 
+#: Scopet som attesterer en policyaktivering (fire øyne, PR-013).
+ATTESTSCOPE = "policy:activate"
+
+
+def godkjenning(conn, tenant: str) -> dict | None:
+    """Kan firmaet få en policyendring gjennom fire øyne?
+
+    En endring må godkjennes av en ANNEN enn den som skrev den. Et firma
+    med én person som kan godkjenne, kommer derfor aldri gjennom — og det
+    eneste det ser, er en runde som blir stående åpen. Svaret her lar
+    dashbordet si det i klartekst og tilby invitasjonen der.
+
+    -> {kan_godkjenne, apen_runde, invitasjon_ute}, eller None når
+    registeret ikke lar seg lese (blokken tegnes da uten delen).
+    """
+    from .autorisasjon import ROLLE_TIL_SCOPES
+    attestroller = {r for r, sc in ROLLE_TIL_SCOPES.items()
+                    if ATTESTSCOPE in sc}
+    try:
+        with conn.transaction():
+            medlemmer = conn.execute(
+                "SELECT roller FROM brukermedlemskap WHERE tenant=%s"
+                " AND aktiv", (tenant,)).fetchall()
+            apen = conn.execute(
+                "SELECT count(*) FROM aktiveringsrunde WHERE tenant=%s"
+                " AND status='apen' AND utloper > now()",
+                (tenant,)).fetchone()[0]
+            inv = conn.execute(
+                "SELECT roller FROM invitasjon_liste(%s)"
+                " WHERE brukt_ts IS NULL AND utloper > now()",
+                (tenant,)).fetchall()
+    except psycopg.Error:
+        return None
+    return {
+        "kan_godkjenne": sum(1 for (r,) in medlemmer
+                             if attestroller & set(r or ())),
+        "apen_runde": apen > 0,
+        "invitasjon_ute": any(attestroller & set(r or ()) for (r,) in inv),
+    }
+
+
 def les_modul(conn, tenant: str, apimodul: str, klarflagg: str | None) -> dict:
     """Én moduls status, i eget savepoint. Kaster aldri psycopg-feil videre."""
     modul = importlib.import_module(f"{__package__}.{apimodul}")
@@ -169,6 +210,7 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
     svar = {"moduler": moduler}
     if POLICYSCOPE in scopes:
         svar["automatikk"] = automatikk(conn, tenant, tildelt)
+        svar["godkjenning"] = godkjenning(conn, tenant)
     return svar
 
 

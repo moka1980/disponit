@@ -251,10 +251,13 @@ def test_automatikk_uten_en_aktiv_policy_er_ukjent():
 def test_automatikk_vises_bare_med_policy_read(monkeypatch):
     from api import oppsett
     monkeypatch.setattr(oppsett, "automatikk", lambda *a: [])
+    monkeypatch.setattr(oppsett, "godkjenning", lambda *a: {"x": 1})
     monkeypatch.setattr(oppsett, "les_modul", lambda *a: {
         "tilgjengelig": True, "klar": True, "apne_funn": 0})
-    assert "automatikk" not in oppsett.svar_for(
-        None, "t", {"decisions:read"}, [23])
+    uten = oppsett.svar_for(None, "t", {"decisions:read"}, [23])
+    assert "automatikk" not in uten and "godkjenning" not in uten
+    assert oppsett.svar_for(None, "t", {"decisions:read", "policy:read"},
+                            [23])["godkjenning"] == {"x": 1}
     assert oppsett.svar_for(None, "t", {"decisions:read", "policy:read"},
                             [23])["automatikk"] == []
 
@@ -273,3 +276,61 @@ def test_hver_automatiske_handling_har_bestillingstype_og_utloser():
         assert bt.eiermodul.startswith(f"m{nr}_"), (handling, bt.eiermodul)
         assert any(f'"{handling}"' in k and 'AKTOR = "agent:' in k
                    for k in kilder.values()), handling
+
+
+def test_attestrollene_er_de_som_faktisk_kan_aktivere():
+    """Dashbordet inviterer en `policyforvalter` når firmaet mangler en
+    godkjenner. Rollen `godkjenner` behandler UNNTAK og kan ikke attestere
+    en policy — en invitasjon med den rollen ville gitt kunden en kollega
+    som fortsatt ikke kan godkjenne.
+
+    MUTASJONEN SOM DREPER DENNE: bytt rollen i `oversikt.js` til
+    «godkjenner».
+    """
+    from pathlib import Path
+    from api import oppsett
+    from api.autorisasjon import ROLLE_TIL_SCOPES
+    assert oppsett.ATTESTSCOPE in ROLLE_TIL_SCOPES["policyforvalter"]
+    assert oppsett.ATTESTSCOPE not in ROLLE_TIL_SCOPES["godkjenner"]
+    js = (Path(__file__).resolve().parents[1]
+          / "ui/static/js/flater/oversikt.js").read_text(encoding="utf-8")
+    assert 'opprettInvitasjon({ roller: ["policyforvalter"] }' in js
+
+
+@pg
+def test_godkjenning_teller_dem_som_kan_attestere_og_ser_invitasjonen(
+        migrator, klient, monkeypatch):
+    """Ende til ende: en ny policyforvalter øker tallet med én, en ren
+    leser gjør det ikke, og en ubrukt invitasjon med attestrolle sees."""
+    import secrets
+    from .test_m27_lager import _C_SESJON
+    from .test_m14_faktura import _browserokt
+    from .test_m37 import _sett_kontekst
+    _tildel(monkeypatch, [27])
+
+    def les(cookie):
+        r = klient.get("/v1/oppsett", cookies={_C_SESJON(): cookie})
+        assert r.status_code == 200, r.text
+        return r.json()["godkjenning"]
+
+    cookie = _okt(migrator, ["admin", "policyforvalter"])
+    for1 = les(cookie)
+    assert for1 is not None and for1["kan_godkjenne"] >= 1
+    _okt(migrator, ["leser"])
+    assert les(cookie)["kan_godkjenne"] == for1["kan_godkjenne"]
+    _okt(migrator, ["policyforvalter"])
+    assert les(cookie)["kan_godkjenne"] == for1["kan_godkjenne"] + 1
+
+    # En leser har `policy:read` og får delen — men ikke knappen: den
+    # krever `firma:inviter`, og dashbordet ber henne spørre administratoren.
+    leser = _okt(migrator, ["leser"])
+    assert les(leser)["kan_godkjenne"] == for1["kan_godkjenne"] + 1
+
+    _sett_kontekst(migrator, TENANT)
+    migrator.execute(
+        "INSERT INTO firmainvitasjon (token_hash, tenant, roller,"
+        " opprettet_av, utloper) VALUES (%s,%s,%s,'test',"
+        " now() + interval '1 day')",
+        (secrets.token_hex(32), TENANT, ["policyforvalter"]))
+    migrator.commit()
+    assert les(cookie)["invitasjon_ute"] is True

@@ -503,6 +503,12 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
 .oppsett-anbefalt dd { margin: 0; font-weight: 600; white-space: nowrap; }
 .oppsett-feil { margin: 0; color: var(--danger); font-size: var(--fs-sm); }
 .oppsett-feil:empty { display: none; }
+/* Invitasjonslenken: etikett over, feltet i full bredde — en lenke som er
+   kuttet i feltet kan ikke kontrolleres før den sendes. */
+.oppsett-lenke:not(:empty) { display: grid; gap: var(--sp-2);
+  margin-top: var(--sp-2); }
+.oppsett-lenke .felt-inp { max-width: none; width: 100%; }
+.oppsett-godkjenning h4 { margin: var(--sp-3) 0 0; font-size: var(--fs-md, 1rem); }
 .oppsett-auto .brikke.paa { border-color: var(--auto); }
 .oppsett-auto .brikke.paa > span:last-child { color: var(--auto); font-weight: 600; }
 .oppsett-auto-tekst { margin: 0; font-size: var(--fs-sm); }
