@@ -63,7 +63,7 @@ i18n_prefiks: betaling
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # MÅLT 18/9 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
     # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
     status: ja
     krav_id: m41-suite-v1
@@ -76,10 +76,10 @@ staging_sjekkliste:
       - maalt.tester_totalt
       - maalt.tester_hoppet
       - maalt.suite_exitkode
-    artefakt: deploy/staging/artefakter/m41-suite-v1-20260918T062023Z.json
-    artefakt_sha256: f14fdc97b1a8994871a44c1b0cf8bab77bad0070300cef2409fc3c0195c8d211
+    artefakt: deploy/staging/artefakter/m41-suite-v1-20261120T075021Z.json
+    artefakt_sha256: 812df8b574d4978e1f47da74fd59ec4fbe1693ff46aee7c42cb0f2b1cce8d441
     notat: >-
-      5518 tester, 0 feilet, 0 hoppet; modulens andel 30 tester,
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 30 tester,
       0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
       så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
