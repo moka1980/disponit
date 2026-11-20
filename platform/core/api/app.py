@@ -1342,6 +1342,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.lukk_endepunkt(tjeneste, request)
 
+    # 225: hvem som har saken, og sporet for én henvendelse.
+    def kundeservice_tildel(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.tildel_endepunkt(tjeneste, request)
+
+    def kundeservice_spor(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.sporet_endepunkt(tjeneste, request)
+
     # 103 (M-18): onboardingregisteret. To leseveier (løpene og ett løps
     # steg) og seks skriveveier — alle menneskelige handlinger i flaten,
     # bak `bestilling:opprett` + CSRF + Idempotency-Key.
@@ -3837,6 +3846,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_utkast, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk",
               kundeservice_lukk, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/tildel",
+              kundeservice_tildel, methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
+              kundeservice_spor, methods=["GET"]),
         Route("/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
               kundeservice_utkastdom, methods=["POST"]),
         # 103 (M-18): kolleksjonsruten FØRST. STIENE STÅR PÅ ÉN LINJE —
@@ -5391,6 +5404,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk"):
         "bestilling:opprett",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/tildel"):
+        "bestilling:opprett",
+    ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor"):
+        "decisions:read",
     ("POST", "/v1/kundeservice/utkast/{utkast_id:uuid}/dom"):
         "bestilling:opprett",
     # 103 (M-18): onboardingregisteret. LESINGEN bærer `decisions:read` —
