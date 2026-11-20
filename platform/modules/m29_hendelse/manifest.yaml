@@ -35,8 +35,8 @@
 id: m29_hendelse
 navn: Sikkerhets- og hendelsesagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter. IKKE «SIEM, EDR, IdP og aktivaregister»
 # — de finnes ikke, og en avhengighet til noe som ikke finnes er en
 # løgn manifestet ikke skal bære.
@@ -49,9 +49,25 @@ i18n_prefiks: hendelse
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    status: nei
+    # MÅLT 20/11 PÅ disponit-srv med den generiske suiteprodusenten: fersk
+    # base fra utsjekket, hele suiten og modulens egen andel hver for seg.
+    status: ja
+    krav_id: m29-suite-v1
+    bevismaalinger:
+      - maalt.andel_feilet
+      - maalt.andel_tester
+      - maalt.andel_hoppet
+      - maalt.andel_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m29-suite-v1-20261120T003316Z.json
+    artefakt_sha256: 8f9afc871afbfdaa356e6f8e7fe74bcfb581f3b58c6ceeec0d183f6e74f8f57a
     notat: >-
-      SUITEN KJØRER.
+      5557 tester, 0 feilet, 0 hoppet; modulens andel 28 tester,
+      0 feilet, 0 hoppet. Bevisroten dekker produsenten OG andelen,
+      så en endret testfil felles av porten.
   syntetisk_datasett_likt_lokalt:
     # MÅLT 20/11 PÅ disponit.com med den GENERISKE fasitprodusenten.
     # Settet er `m29_fasit.py`:
