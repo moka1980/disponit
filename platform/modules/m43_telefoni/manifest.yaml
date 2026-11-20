@@ -30,8 +30,8 @@
 id: m43_telefoni
 navn: Tale- og telefoniagent
 versjon: 0.1.0
-status: aktiv
-driftstilstand: produksjon
+status: under_utvikling
+driftstilstand: ikke_i_drift
 avhengigheter:
   - m01_policy
   - m02_revisjonslogg

@@ -30,8 +30,8 @@ versjon: 0.1.0
 # 17/9-2026: alle seks punkter ja (fasit, suite, bevisrunde, ytelse og
 # flippedrillen `m17-rollback-v1`). Flippet aktiv/produksjon samme dag som
 # M-37 fikk sitt rollback-punkt (avhengigheten registeret krever aktiv).
-status: aktiv
-driftstilstand: produksjon
+status: under_utvikling
+driftstilstand: ikke_i_drift
 # REELLE, MÅLTE avhengigheter: klassifiseringen er en modellkjøring som
 # går gjennom policyporten (m01), hver henvendelse og hvert utkast
 # bokføres (m02), og det som ikke kan avgjøres går til M-37s kø.
@@ -44,36 +44,9 @@ i18n_prefiks: kundeservice
 
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # NOTATET VAR UTDATERT VED FØDSELEN: «Ingen kode finnes». Modulen har
-    # migrasjonene 102/160–164/203–206, femten HTTP-ruter, en sveip med
-    # egen rolle og timer, en regelrunde i planrunden, en arbeider
-    # (`disponit-m17.service`) og 76 egne tester i ti filer.
-    #
-    # SAMME TRE FORUTSETNINGER SOM M-23 (15/9): fullt utsjekk (ikke det
-    # beskårne release-treet), fersk base per kjøring, og arbeider-,
-    # sveipe- og planrollens egne DSN-er satt — uten dem hopper andelen,
-    # og porten krever null hoppede.
-    status: ja
-    krav_id: m17-suite-v1
-    bevismaalinger:
-      - maalt.tester_totalt
-      - maalt.tester_feilet
-      - maalt.tester_hoppet
-      - maalt.suite_exitkode
-      - maalt.m17_tester
-      - maalt.m17_feilet
-      - maalt.m17_hoppet
-      - maalt.m17_exitkode
-    artefakt: deploy/staging/artefakter/m17-suite-v1-20260916T141547Z.json
-    artefakt_sha256: d31ee79b4f1abf9f7623a57c577de7e73242afbe2200e2e98a6b4e7035ec662a
+    status: nei
     notat: >-
-      5429 av 5429 tester KJØRT på disponit-srv fra et fullt
-      utsjekk av 04fba400 mot en fersk testbase, null feilet, null
-      hoppet, exit 0. M-17s egen andel er PINNET
-      (`manifestskjema.M17_SUITE_ANDEL`: ti filer modulen eier i sin
-      helhet) og målt for seg: 76 av 76 kjørt, null feilet,
-      NULL HOPPET — hele andelen er `skipif(not DSN)`, og fasitporten
-      krever i tillegg sveiperollens og planarbeiderens egne DSN-er.
+      SUITEN KJØRER.
   syntetisk_datasett_likt_lokalt:
     # SETTET FINNES: `deploy/staging/m17_fasit.py` — 21 henvendelser over
     # to tenanter, én MED stilleregler og én UTEN, med en henvendelse på

@@ -69,7 +69,7 @@ export const MODULSTATUS = {
   // den. Ordet er `bygges` fordi manifestet finnes; ingen har kode
   // ennå, og ingen flippes av en byggemilepæl.
   13: "i_drift",    // m13_avstemming: aktiv, produksjon
-  17: "i_drift",    // m17_kundeservice: aktiv, produksjon — alle seks punkter ja
+  17: "bygges",      // m17_kundeservice: under_utvikling, ikke_i_drift
                     // 17/9 (flippet sammen med M-37)
   18: "i_drift",    // m18_onboarding: aktiv, produksjon
   23: "i_drift",    // m23_fordring: aktiv, produksjon — alle seks punkter ja
@@ -170,7 +170,7 @@ export const MODULSTATUS = {
   // Flippes av en modulaksept, aldri av en byggemilepæl.
   7: "i_drift",    // m07_moteoperasjon: aktiv, produksjon
   20: "i_drift",    // m20_innhold: aktiv, produksjon
-  43: "i_drift",    // m43_telefoni: aktiv, produksjon
+  43: "bygges",      // m43_telefoni: under_utvikling, ikke_i_drift
   45: "i_drift",    // m45_esg: aktiv, produksjon
   // KLYNGE 10 — HANDLINGENE. Registrert med grensene, før koden.
   //
