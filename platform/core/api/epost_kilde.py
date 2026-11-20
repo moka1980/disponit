@@ -622,6 +622,25 @@ def _leseauth_epost(tjeneste, request, conn, rid: str):
     return auth.tenant, bid
 
 
+def kilder_for(conn, tenant: str) -> list[dict]:
+    """Tenantens e-postkilder. LESEDØREN — brukt av `GET /v1/epost/kilder`
+    og av dashbordets «Kom i gang» (`oppsett.py`), så de to ikke kan vise
+    hver sin sannhet om hvorvidt e-posten er koblet til."""
+    rader = conn.execute(
+        "SELECT kilde_id, leverandor, postboks, status,"
+        " sist_hentet_ts, opprettet, scope FROM epost_kilde"
+        " WHERE tenant=%s ORDER BY opprettet, kilde_id",
+        (tenant,)).fetchall()
+    return [
+        {"kilde_id": str(r[0]), "leverandor": r[1], "postboks": r[2],
+         "status": r[3],
+         "sist_hentet_ts": r[4].isoformat() if r[4] else None,
+         "opprettet": r[5].isoformat(),
+         # Samtykkets egne ord, som ja/nei: en kilde koblet før
+         # vedtaket kan lese, ikke svare — og flaten skal si det.
+         "kan_svare": kan_svare(r[6])} for r in rader]
+
+
 def liste_endepunkt(tjeneste, request: Request) -> Response:
     from .app import _rid
     from .policyadmin_http import _med_conn, _ok
@@ -632,19 +651,7 @@ def liste_endepunkt(tjeneste, request: Request) -> Response:
 
     def kjor(conn):
         tenant, _bid = _leseauth_epost(tjeneste, request, conn, rid)
-        rader = conn.execute(
-            "SELECT kilde_id, leverandor, postboks, status,"
-            " sist_hentet_ts, opprettet, scope FROM epost_kilde"
-            " WHERE tenant=%s ORDER BY opprettet, kilde_id",
-            (tenant,)).fetchall()
-        return _ok({"kilder": [
-            {"kilde_id": str(r[0]), "leverandor": r[1], "postboks": r[2],
-             "status": r[3],
-             "sist_hentet_ts": r[4].isoformat() if r[4] else None,
-             "opprettet": r[5].isoformat(),
-             # Samtykkets egne ord, som ja/nei: en kilde koblet før
-             # vedtaket kan lese, ikke svare — og flaten skal si det.
-             "kan_svare": kan_svare(r[6])} for r in rader]}, rid)
+        return _ok({"kilder": kilder_for(conn, tenant)}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 

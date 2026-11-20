@@ -90,6 +90,47 @@ test("Mangler krav: ett kort per modul, knappen går rett til modulen", async ()
   assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
 });
 
+test("Tomt register: kortet ber om det første, ikke om grenser", async () => {
+  // Registermodulene (lisenser, tilganger, kontroller …) har ingen grenser
+  // å sette. «Mangler grensene sine» ville sendt kunden på leting etter et
+  // skjema som ikke finnes.
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 22, tilgjengelig: true, klar: false, apne_funn: null,
+      mangler: "register" },
+    { modul: 27, tilgjengelig: true, klar: false, apne_funn: 0 }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx());
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden), "blokken ble aldri vist");
+  const kort = [...blokk.querySelectorAll(".oppsett-kort")];
+  assert.equal(kort.length, 2);
+  const lisens = kort.find((k) =>
+    k.querySelector("h3").textContent === t("ui.nav.lisens"));
+  assert.ok(lisens, "lisenskortet mangler");
+  assert.ok(lisens.textContent.includes(t("ui.oppsett.mangler_register")));
+  assert.ok(!lisens.textContent.includes(t("ui.oppsett.mangler_krav")));
+  const lenke = lisens.querySelector("a.knapp.primar");
+  assert.equal(lenke.textContent, t("ui.oppsett.registrer"));
+  assert.equal(lenke.getAttribute("href"), "#/lisens");
+  const lager = kort.find((k) => k !== lisens);
+  assert.ok(lager.textContent.includes(t("ui.oppsett.mangler_krav")));
+});
+
+test("Manglende tilkobling: kortet sier «Koble til»", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 56, tilgjengelig: true, klar: false, apne_funn: null,
+      mangler: "tilkobling" }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx(["decisions:read"]));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden), "blokken ble aldri vist");
+  const kort = blokk.querySelector(".oppsett-kort");
+  assert.ok(kort.textContent.includes(t("ui.oppsett.mangler_tilkobling")));
+  const lenke = kort.querySelector("a.knapp.primar");
+  assert.equal(lenke.textContent, t("ui.oppsett.koble_til"));
+  assert.equal(lenke.getAttribute("href"), "#/wcagkontroll");
+});
+
 test("Alt satt opp: ingen kort, egen tittel", async () => {
   SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
     { modul: 27, tilgjengelig: true, klar: true, apne_funn: 0 }] } };

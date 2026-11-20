@@ -7167,5 +7167,9 @@
   "ui.firmavelger": "Switch company",
   "ui.blimed.aapne_firma": "Open {firma}",
   "ui.blimed.ferdig_undertittel_aapne": "Last step: open the company.",
-  "ui.blimed.ferdig_tekst_aapne": "You are now a member of {firma} as {roller}. Press below to enter. Later you switch company at the top of the page."
+  "ui.blimed.ferdig_tekst_aapne": "You are now a member of {firma} as {roller}. Press below to enter. Later you switch company at the top of the page.",
+  "ui.oppsett.mangler_register": "Nothing has been registered yet. The module has nothing to watch until the first entry is added.",
+  "ui.oppsett.registrer": "Add the first one",
+  "ui.oppsett.mangler_tilkobling": "Not connected yet. The module has nothing to work with until the connection is made.",
+  "ui.oppsett.koble_til": "Connect"
 }
