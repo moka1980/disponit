@@ -1,0 +1,12 @@
+# Arbeidervakten — kjøres av disponit-arbeidervakt.timer. Se
+# deploy/staging/arbeidervakt.sh for hva den måler og hvorfor.
+[Unit]
+Description=Disponit arbeidervakt (arbeidere som feiler i hver runde)
+After=network-online.target disponit-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/disponit/aktiv/deploy/staging/arbeidervakt.sh
+
+[Install]
+WantedBy=multi-user.target
