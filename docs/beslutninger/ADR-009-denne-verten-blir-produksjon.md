@@ -1,5 +1,12 @@
 # ADR-009: Denne verten blir produksjon
 
+> **Gjennomført 20.11.2026.** Klarsjekken var grønn (wcagvakt-policyen ble
+> aktivert med fire øyne samme dag), vertsrollen og `DISPONIT_MILJO` ble satt
+> til `produksjon`, release `0d29c86` ble rullet ut på nytt, og
+> `/ui/oppsett.json` melder `produksjon`. Alle sju arbeiderne henter oppdrag
+> med produksjonstokener. M-01 står `aktiv/produksjon`. Miljøfila fra før
+> byttet ligger i `/etc/disponit/staging.env.for-produksjon-<tid>`.
+
 **Status:** vedtatt 2026-11-20 av eier («2»: gjør denne serveren til
 produksjon). Forberedelsene er bygget; selve byttet er IKKE gjort.
 **Erstatter:** miljøtabellen i `docs/DEPLOY.md` for denne verten («staging

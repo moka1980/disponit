@@ -864,8 +864,9 @@ def test_rollbackselen_teller_alle_forespoersler_i_av_vinduet():
 # To akser: godkjent (`status`) og utrullet (`driftstilstand`)
 # ===========================================================================
 
-def test_m01_er_godkjent_og_kjorer_pa_staging(m01):
-    """Arkitektbeslutningen 2026-08-05, pinnet på begge akser.
+def test_m01_er_godkjent_og_kjorer_i_produksjon(m01):
+    """Arkitektbeslutningen 2026-08-05, pinnet på begge akser — og flyttet
+    til `produksjon` 2026-11-20 (ADR-009).
 
     Begge feltene leses EKSPLISITT. Å utlede det ene av det andre ville
     gjort testen blind for nettopp den forvekslingen feltet ble innført for
@@ -874,23 +875,22 @@ def test_m01_er_godkjent_og_kjorer_pa_staging(m01):
     `driftstilstand` er en påstand om HVILKEN MASKIN koden står på, ikke om
     hvor moden den er — derfor er den bundet til `docs/DEPLOY.md`, som er
     autoriteten på miljøtopologien. Testen leser den bindingen, så en
-    oppgradering av feltet uten en tilsvarende endring i topologien ryker
-    her og ikke hos en kunde.
+    endring av feltet uten en tilsvarende endring i topologien ryker her og
+    ikke hos en kunde.
     """
     assert m01["status"] == "aktiv"
-    assert m01["driftstilstand"] == "staging", (
-        "m01 kjører — disponit-api.service er installert og aktiv, migrasjon"
-        " 19, og policymotoren avgjør ekte forespørsler — men den MASKINEN er"
-        " staging: docs/DEPLOY.md utpeker one.com Cloud Server S som"
-        " staging-serveren og reserverer produksjon for en egen VPS med"
-        " kunder og ekte data. `produksjon` her ville sagt til registeret,"
-        " i_drift-lista og kunde-KPI-ene at det finnes en kundeutrulling som"
-        " ikke eksisterer.")
+    assert m01["driftstilstand"] == "produksjon", (
+        "m01 kjører på disponit-srv, og eier har vedtatt at den verten ER"
+        " produksjon (ADR-009): vertsrollen og DISPONIT_MILJO sier"
+        " `produksjon`. `staging` her ville holdt forsiden på «Kommer» for en"
+        " policymotor som binder kundenes beslutninger i dag.")
     deploy = (REPOROT / "docs/DEPLOY.md").read_text(encoding="utf-8")
-    assert "Cloud Server S er staging-serveren vår nå" in deploy, (
-        "DEPLOY.md utpeker ikke lenger Cloud Server S som staging — da må"
+    assert "`disponit-srv` er produksjon" in deploy, (
+        "DEPLOY.md utpeker ikke lenger disponit-srv som produksjon — da må"
         " driftstilstanden i m01 vurderes på nytt mot den nye topologien,"
         " ikke stå igjen som en gjetning")
+    assert (REPOROT / "docs/beslutninger"
+            / "ADR-009-denne-verten-blir-produksjon.md").is_file()
 
 
 def test_registeret_skiller_godkjent_fra_utrullet(m01):

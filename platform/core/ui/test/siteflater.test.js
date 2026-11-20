@@ -312,8 +312,13 @@ test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", asy
     // I produksjon er det FØRSTE leddet (`MODULSTATUS === "i_drift"`) alene
     // avgjørende, så forventningen leses ut av statusen per tilbudspunkt.
     const iDrift = TILBUD.filter((post) => erTilgjengeligFor(modulStatus(post.id), true));
-    assert.ok(iDrift.length > 0 && iDrift.length < TILBUD.length,
-      "testen forutsetter DELVIS utrulling — ellers måler den ikke delvis-formen");
+    // Fra 2026-11-20 (ADR-009) er HVERT tilbudspunkt i drift. Testen måler
+    // derfor den formen tellingen gir, ikke en antatt delvis-form; den rene
+    // funksjonen `heroTekstNokkelFor` pinner alle tre formene for seg.
+    assert.ok(iDrift.length > 0,
+      "testen forutsetter at noe er i drift — ellers måler den ikke løftet");
+    const heroNokkel = iDrift.length >= TILBUD.length
+      ? "site.hero.tekst" : "site.hero.tekst_delvis";
     assert.deepEqual(
       [...app.querySelectorAll(".site-feature .site-badge")]
         .map((b) => [b.className, b.textContent]),
@@ -323,9 +328,9 @@ test("Landing: oppsett.json miljo=produksjon styrer brikker og statuslinje", asy
       "produksjonsmiljøet nådde ikke brikkene — flaten sier «Kommer» om en " +
       "modul som er i drift hos kunder");
     assert.equal(app.querySelector(".site-driftstatus div p").textContent,
-      t("site.hero.tekst_delvis"),
-      "statuslinja motsier brikkene: noen områder er merket «Tilgjengelig», " +
-      "men teksten sier at alt fortsatt bygges");
+      t(heroNokkel),
+      "statuslinja motsier brikkene: områder er merket «Tilgjengelig», " +
+      "men teksten sier noe annet om utrullingen");
     // Tilbudsbeskrivelsen står utenfor `site.hero.tekst_*` fordi den ikke er
     // en funksjon av utrullingen. Da må den også OVERLEVE begge tilstandene i
     // flaten, ikke bare i locale-porten (Cursor P2).
@@ -777,9 +782,8 @@ test("Kundeadmin: modulstatus og policyhandling rendres uten alvorlige brudd", a
 
 test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => {
   // Kunden er tildelt M-1 og M-2. Da skal M-37 og M-38 IKKE stå på flaten.
-  // M-2 er i drift etter akseptflippen 2026-08-23; M-1 kjører på staging.
-  // «Aktive moduler» er derfor 1 og «under arbeid» 1 — kundens to, ikke
-  // katalogens.
+  // Begge er i drift (M-1 fra 2026-11-20, ADR-009). «Aktive moduler» er
+  // derfor 2 og «under arbeid» 0 — kundens to, ikke katalogens.
   const h = nyHoved();
   visKundeadmin(h, ctx({ tenant: "Beta", moduler: [1, 2] }));
   assert.ok(h.textContent.includes(t("site.modul.m1.navn")));
@@ -789,8 +793,8 @@ test("Kundeadmin: modulkort og KPI-er følger tenantens tildeling", async () => 
   assert.ok(!h.textContent.includes(t("site.modul.m38.navn")),
     "M-38 vises for en tenant som ikke har den");
   const kpi = [...h.querySelectorAll(".site-kpi strong")].map((n) => n.textContent);
-  assert.equal(kpi[0], "1");
-  assert.equal(kpi[1], "1");
+  assert.equal(kpi[0], "2");
+  assert.equal(kpi[1], "0");
 });
 
 test("Kundeadmin: ukjent tenant sier «vet ikke», viser ikke katalogen", async () => {

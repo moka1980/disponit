@@ -461,8 +461,9 @@ test("AppShell: fem soner etter §2.3, og statuslinja lover ikke drift", async (
   const telling = plattformTelling();
   assert.ok(status.includes(`${telling.iDrift} av ${telling.totalt}`),
     `statuslinja sier «${status}», registeret sier ${telling.iDrift}/${telling.totalt}`);
-  assert.ok(telling.iDrift < telling.totalt,
-    "forutsetningen for denne testen er borte — hele katalogen er i drift");
+  // Fra 2026-11-20 (ADR-009) er hele katalogen i drift. Linja skal da si
+  // nettopp det — og fortsatt lese tallet fra registeret, ikke fra en tekst.
+  assert.ok(telling.iDrift <= telling.totalt && telling.totalt > 0);
   assert.ok(status.includes("3"), "varseltallet vises ikke");
 });
 
