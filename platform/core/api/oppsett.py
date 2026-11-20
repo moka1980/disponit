@@ -94,6 +94,36 @@ REGISTRE: tuple[tuple[int, str, str, object], ...] = (
 )
 
 
+# TRE MODULER MED ET FØRSTE STEG SOM IKKE ER ET REGISTER I `svar_for`:
+# e-post må KOBLES TIL en postboks, WCAG-kontrollen trenger et BEKREFTET
+# domene, og rekrutteringen en stillingsprofil. Hver leses gjennom modulens
+# egen lesedør (samme funksjon som modulens GET-rute kaller).
+#
+# (modulnummer, api-modul, lesedør, lesescope, hva som mangler, rader -> klar)
+FORSTESTEG: tuple[tuple[int, str, str, str, str, object], ...] = (
+    (6, "epost_kilde", "kilder_for", "epost:read", "tilkobling",
+     lambda rader: any(r.get("status") == "aktiv" for r in rader)),
+    # `gyldig` er basens avgjørelse (DOMENE_GYLDIG_SQL) — `status` alene
+    # lyver med vilje når revalideringen har vært borte.
+    (56, "domener", "domener_for", "decisions:read", "tilkobling",
+     lambda rader: any(r.get("gyldig") for r in rader)),
+    (57, "rekruttering", "stillingsprofiler_for", "decisions:read",
+     "register", lambda rader: bool(rader)),
+)
+
+
+def les_forstesteg(conn, tenant: str, apimodul: str, dor: str, klar) -> dict:
+    """Ett førstesteg, i eget savepoint — som `les_modul`."""
+    modul = importlib.import_module(f"{__package__}.{apimodul}")
+    try:
+        with conn.transaction():
+            rader = getattr(modul, dor)(conn, tenant)
+    except psycopg.Error:
+        return {"tilgjengelig": False, "klar": None, "apne_funn": None}
+    return {"tilgjengelig": True, "klar": bool(klar(rader)),
+            "apne_funn": None}
+
+
 def les_register(conn, tenant: str, apimodul: str, tell) -> dict:
     """Én registermoduls status, i eget savepoint — som `les_modul`."""
     modul = importlib.import_module(f"{__package__}.{apimodul}")
@@ -271,6 +301,14 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
         if rad["klar"] is False:
             # Flaten sier «ingenting registrert», ikke «mangler grensene».
             rad["mangler"] = "register"
+        moduler.append(rad)
+    for nr, apimodul, dor, scope, mangler, klar in FORSTESTEG:
+        if nr not in tildelt or scope not in scopes:
+            continue
+        rad = {"modul": nr,
+               **les_forstesteg(conn, tenant, apimodul, dor, klar)}
+        if rad["klar"] is False:
+            rad["mangler"] = mangler
         moduler.append(rad)
     moduler.sort(key=lambda m: m["modul"])
     svar = {"moduler": moduler}

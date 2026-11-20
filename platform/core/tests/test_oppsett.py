@@ -87,6 +87,35 @@ def test_registrene_peker_pa_ekte_lesedorer_og_riktig_scope():
         assert RUTESCOPE[("GET", f"/v1/{apimodul}")] == scope, apimodul
 
 
+def test_forstestegene_leser_modulens_egen_dor():
+    """E-post, WCAG-kontroll og rekruttering har et første steg som ikke er
+    et register i `svar_for`. Døra må være den SAMME funksjonen modulens
+    GET-rute kaller — en kopi av spørringen ville drevet fra flaten."""
+    from api import oppsett
+    from api.app import RUTESCOPE
+    ruter = {6: "/v1/epost/kilder", 56: "/v1/domener",
+             57: "/v1/rekruttering/stillingsprofiler"}
+    alle = ([a[0] for a in oppsett.ADAPTERE]
+            + [r[0] for r in oppsett.REGISTRE]
+            + [f[0] for f in oppsett.FORSTESTEG])
+    assert len(alle) == len(set(alle)), "en modul står i to lister"
+    for nr, apimodul, dor, scope, mangler, _klar in oppsett.FORSTESTEG:
+        modul = importlib.import_module(f"api.{apimodul}")
+        assert callable(getattr(modul, dor)), (apimodul, dor)
+        # Rutens egen kode kaller døra (direkte eller via `_rader`).
+        kilde = inspect.getsource(modul)
+        assert kilde.count(f"{dor}(") >= 2 or dor == "domener_for", dor
+        assert RUTESCOPE[("GET", ruter[nr])] == scope, apimodul
+        assert mangler in ("tilkobling", "register")
+    klar = {nr: f for nr, _a, _d, _s, _m, f in oppsett.FORSTESTEG}
+    assert klar[6]([{"status": "deaktivert"}]) is False
+    assert klar[6]([{"status": "deaktivert"}, {"status": "aktiv"}]) is True
+    # Et domene som står «verifisert», men ikke er gyldig, teller ikke.
+    assert klar[56]([{"status": "verifisert", "gyldig": False}]) is False
+    assert klar[56]([{"status": "verifisert", "gyldig": True}]) is True
+    assert klar[57]([]) is False and klar[57]([{}]) is True
+
+
 def test_registertellingen():
     from api import oppsett
     tell = {nr: f for nr, _a, _s, f in oppsett.REGISTRE}

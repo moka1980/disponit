@@ -122,6 +122,13 @@ function ruteForModul(ctx) {
   return kart;
 }
 
+// Hva et kort sier når modulen ikke er klar, etter HVA som mangler.
+// Serveren sender `mangler`; uten feltet er det grensene (den eldste formen).
+const MANGLERTEKST = { register: "ui.oppsett.mangler_register",
+  tilkobling: "ui.oppsett.mangler_tilkobling" };
+const MANGLERKNAPP = { register: "ui.oppsett.registrer",
+  tilkobling: "ui.oppsett.koble_til" };
+
 function funnTekst(n) {
   if (n == null) return t("ui.oppsett.funn_ukjent");
   if (n === 0) return t("ui.oppsett.ingen_funn");
@@ -386,15 +393,15 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
           feil);
       } else {
         kort.append(
-          // Et tomt REGISTER er noe annet enn manglende grenser: kunden
-          // skal legge inn det første, ikke velge et tall.
-          el("p", { class: "muted", text: t(m.mangler === "register"
-            ? "ui.oppsett.mangler_register" : "ui.oppsett.mangler_krav") }),
+          // Et tomt REGISTER eller en manglende TILKOBLING er noe annet enn
+          // manglende grenser: kunden skal legge inn det første eller koble
+          // til, ikke velge et tall.
+          el("p", { class: "muted", text: t(MANGLERTEKST[m.mangler]
+            || "ui.oppsett.mangler_krav") }),
           el("a", { class: "knapp primar", href: hash(m),
-            text: t(m.mangler === "register"
-              ? "ui.oppsett.registrer" : "ui.oppsett.sett_opp"),
-            "aria-label": `${t(m.mangler === "register"
-              ? "ui.oppsett.registrer" : "ui.oppsett.sett_opp")}: ${navn(m)}` }));
+            text: t(MANGLERKNAPP[m.mangler] || "ui.oppsett.sett_opp"),
+            "aria-label": `${t(MANGLERKNAPP[m.mangler]
+              || "ui.oppsett.sett_opp")}: ${navn(m)}` }));
       }
       ul.append(kort);
     }

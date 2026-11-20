@@ -109,6 +109,12 @@ def _rader(conn, tenant: str) -> list[dict]:
     return ut
 
 
+def domener_for(conn, tenant: str) -> list[dict]:
+    """LESEDØREN for andre flater (dashbordets «Kom i gang»): samme rader,
+    og samme `gyldig`-avgjørelse, som `GET /v1/domener`."""
+    return _rader(conn, tenant)
+
+
 def liste_endepunkt(tjeneste, request: Request) -> Response:
     """GET /v1/domener — tenantens egne domener med status.
 

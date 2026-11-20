@@ -116,6 +116,21 @@ test("Tomt register: kortet ber om det første, ikke om grenser", async () => {
   assert.ok(lager.textContent.includes(t("ui.oppsett.mangler_krav")));
 });
 
+test("Manglende tilkobling: kortet sier «Koble til»", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 56, tilgjengelig: true, klar: false, apne_funn: null,
+      mangler: "tilkobling" }] } };
+  const h = nyHoved();
+  visOversikt(h, ctx(["decisions:read"]));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden), "blokken ble aldri vist");
+  const kort = blokk.querySelector(".oppsett-kort");
+  assert.ok(kort.textContent.includes(t("ui.oppsett.mangler_tilkobling")));
+  const lenke = kort.querySelector("a.knapp.primar");
+  assert.equal(lenke.textContent, t("ui.oppsett.koble_til"));
+  assert.equal(lenke.getAttribute("href"), "#/wcagkontroll");
+});
+
 test("Alt satt opp: ingen kort, egen tittel", async () => {
   SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
     { modul: 27, tilgjengelig: true, klar: true, apne_funn: 0 }] } };
