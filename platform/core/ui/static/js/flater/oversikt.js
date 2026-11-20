@@ -16,7 +16,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { hentJson, brukAnbefalteGrenser, nyIdempotensnokkel, UautorisertFeil,
-         IngenTilgangFeil } from "../api.js";
+         IngenTilgangFeil, opprettInvitasjon } from "../api.js";
 import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
          BeslutningBadge, KategoriTag } from "../komponenter.js";
 import { flateHode } from "./felles.js";
@@ -239,9 +239,104 @@ function automatikkDel(liste, ctx) {
   return ut;
 }
 
+// FIRE ØYNE, SAGT DER KUNDEN STÅR. En policyendring må godkjennes av en
+// annen enn den som skrev den. Har firmaet bare én som kan godkjenne, blir
+// runden stående åpen — og før dette sa ingenting hvorfor, eller hvor en
+// godkjenner legges til. Invitasjonen lages HER, med rollen som faktisk kan
+// godkjenne (policyforvalter), så ingen må vite at den heter det.
+function godkjenningDel(g, ctx) {
+  if (!g) return [];
+  const mangler = g.kan_godkjenne < 2;
+  if (!mangler && !g.apen_runde) return [];
+  const kort = el("div", { class: "kort oppsett-kort oppsett-godkjenning" });
+  if (mangler) {
+    kort.append(
+      el("h3", { text: t("ui.oppsett.godkjenner.mangler_tittel") }),
+      el("p", { class: "muted",
+        text: t("ui.oppsett.godkjenner.mangler_tekst") }));
+    if (g.invitasjon_ute) {
+      kort.append(el("p", { text: t("ui.oppsett.godkjenner.invitasjon_ute") }));
+    }
+    if ((ctx.scopes || []).includes("firma:inviter")) {
+      const knapp = el("button", { class: "knapp primar", type: "button",
+        text: t(g.invitasjon_ute ? "ui.oppsett.godkjenner.ny_lenke"
+          : "ui.oppsett.godkjenner.inviter") });
+      const feil = el("p", { class: "oppsett-feil", role: "alert" });
+      const lenkeboks = el("div", { class: "oppsett-lenke" });
+      // Stabil over nye klikk til opprettelsen lykkes: et tapt svar skal
+      // gi SAMME invitasjon, ikke to.
+      let idem = nyIdempotensnokkel();
+      knapp.addEventListener("click", () => {
+        knapp.disabled = true;
+        feil.textContent = "";
+        opprettInvitasjon({ roller: ["policyforvalter"] }, idem).then((svar) => {
+          idem = nyIdempotensnokkel();
+          const url = `${window.location.origin}/?visning=blimed`
+            + `&t=${encodeURIComponent(svar.tenant)}`
+            + `&k=${encodeURIComponent(svar.token)}`;
+          // LENKEN VISES ÉN GANG — tokenet lagres ikke og kan ikke hentes
+          // igjen. Derfor et felt som kan merkes og kopieres.
+          const felt = el("input", { class: "felt-inp", readOnly: true,
+            value: url, id: "godkjenner-lenke" });
+          // Kopiknappen finnes bare der nettleseren kan kopiere; feltet
+          // er uansett merket, så Ctrl+C virker.
+          let kopier = null;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            kopier = el("button", { class: "knapp", type: "button",
+              text: t("ui.oppsett.godkjenner.kopier") });
+            kopier.addEventListener("click", () => {
+              navigator.clipboard.writeText(url).then(() => {
+                kopier.textContent = t("ui.oppsett.godkjenner.kopiert");
+              }).catch(() => { felt.focus(); felt.select(); });
+            });
+          }
+          sett(lenkeboks,
+            el("label", { for: "godkjenner-lenke",
+              text: t("ui.oppsett.godkjenner.lenke") }),
+            felt, kopier && el("div", { class: "knapperad" }, kopier),
+            el("p", { class: "muted",
+              text: t("ui.oppsett.godkjenner.lenke_hjelp")
+                .replace("{dato}", String(svar.utloper).slice(0, 10)) }));
+          felt.focus();
+          felt.select();
+          knapp.disabled = false;
+          knapp.textContent = t("ui.oppsett.godkjenner.ny_lenke");
+        }).catch((e) => {
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+          knapp.disabled = false;
+          feil.textContent = t("ui.oppsett.godkjenner.feil");
+        });
+      });
+      kort.append(el("div", { class: "knapperad" }, knapp), feil, lenkeboks);
+    } else {
+      kort.append(el("p", { text: t("ui.oppsett.godkjenner.be_admin") }));
+    }
+  }
+  if (g.apen_runde) {
+    kort.append(
+      el(mangler ? "h4" : "h3",
+        { text: t("ui.oppsett.godkjenner.venter_tittel") }),
+      el("p", { class: "muted", text: t(mangler
+        ? "ui.oppsett.godkjenner.venter_tekst_mangler"
+        : "ui.oppsett.godkjenner.venter_tekst") }));
+    if (kanForvaltePolicy(ctx)) {
+      kort.append(el("div", { class: "knapperad" },
+        el("a", { class: mangler ? "knapp" : "knapp primar",
+          href: "#/policyadmin",
+          text: t("ui.oppsett.godkjenner.apne") })));
+    }
+  }
+  return [kort];
+}
+
 function oppsettInnhold(d, ruter, ctx, paaLagret) {
   const moduler = (d.moduler || []).filter((m) => ruter.has(m.modul));
-  if (!moduler.length) return null;
+  const godkjenn = godkjenningDel(d.godkjenning, ctx);
+  // Uten moduler OG uten noe å gjøre for godkjenningen er blokken tom.
+  if (!moduler.length && !godkjenn.length) return null;
+  if (!moduler.length) {
+    return { tittel: t("ui.oppsett.tittel"), noder: godkjenn };
+  }
   const mangler = moduler.filter((m) => m.tilgjengelig && m.klar === false);
   const klare = moduler.filter((m) => m.tilgjengelig && m.klar !== false);
   const borte = moduler.filter((m) => !m.tilgjengelig);
@@ -255,6 +350,7 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
       .replace("{klare}", String(ferdig)).replace("{totalt}", String(totalt)) })),
   el("progress", { class: "oppsett-fremdrift", max: String(totalt),
     value: String(ferdig), "aria-label": t("ui.oppsett.fremdrift") })];
+  ut.push(...godkjenn);
 
   if (mangler.length) {
     const ul = el("ul", { class: "oppsett-flis" });
@@ -325,8 +421,8 @@ function oppsettInnhold(d, ruter, ctx, paaLagret) {
       rad);
   }
   if (d.automatikk !== undefined) ut.push(...automatikkDel(d.automatikk, ctx));
-  return { tittel: mangler.length ? t("ui.oppsett.tittel")
-    : t("ui.oppsett.tittel_klar"), noder: ut };
+  return { tittel: (mangler.length || godkjenn.length)
+    ? t("ui.oppsett.tittel") : t("ui.oppsett.tittel_klar"), noder: ut };
 }
 
 function oppsettBlokk(ctx) {

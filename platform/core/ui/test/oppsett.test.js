@@ -228,3 +228,104 @@ test("Går av seg selv: uten aktiv policy sies det rett ut; uten felt ingen seks
   assert.ok(await vent(() => !b2.hidden));
   assert.equal(b2.textContent.includes(t("ui.oppsett.auto.tittel")), false);
 });
+
+// ---------------------------------------------------------------------
+// Fire øyne: godkjenneren legges til DER kunden står
+// ---------------------------------------------------------------------
+const ADMIN = [...OKONOMI, "policy:read", "policy:write", "policy:activate",
+  "firma:inviter"];
+
+test("Én som kan godkjenne: kortet sier hvorfor, og invitasjonen lages på stedet", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR,
+    automatikk: [], godkjenning: { kan_godkjenne: 1, apen_runde: true,
+      invitasjon_ute: false } } };
+  const forrige = globalThis.fetch;
+  const kall = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    if (opts.method === "POST" && url.startsWith("/v1/invitasjoner")) {
+      kall.push(JSON.parse(opts.body));
+      return { ok: true, status: 200, json: async () => ({
+        tenant: "acme", token: "hemmelig+token",
+        utloper: "2026-11-27T10:00:00+00:00" }) };
+    }
+    return forrige(url, opts);
+  };
+  try {
+    const h = nyHoved();
+    visOversikt(h, ctx(ADMIN));
+    const blokk = h.querySelector(".dash-oppsett");
+    assert.ok(await vent(() => blokk.querySelector(".oppsett-godkjenning")));
+    // Med noe å gjøre heter blokken «Kom i gang», selv om modulene er klare.
+    assert.equal(blokk.querySelector("h2").textContent, t("ui.oppsett.tittel"));
+    const kort = blokk.querySelector(".oppsett-godkjenning");
+    assert.ok(kort.textContent.includes(
+      t("ui.oppsett.godkjenner.mangler_tekst")));
+    // Runden som venter står i SAMME kort, med veien til den.
+    assert.ok(kort.textContent.includes(
+      t("ui.oppsett.godkjenner.venter_tittel")));
+    assert.ok(kort.querySelector('a[href="#/policyadmin"]'));
+
+    const knapp = [...kort.querySelectorAll("button")].find(
+      (b) => b.textContent === t("ui.oppsett.godkjenner.inviter"));
+    knapp.click();
+    assert.ok(await vent(() => kort.querySelector("#godkjenner-lenke")));
+    // Rollen er den som KAN attestere — ikke «godkjenner», som bare
+    // behandler unntak.
+    assert.deepEqual(kall, [{ roller: ["policyforvalter"] }]);
+    const lenke = kort.querySelector("#godkjenner-lenke").value;
+    assert.ok(lenke.includes("visning=blimed"));
+    assert.ok(lenke.includes("t=acme"));
+    assert.ok(lenke.includes("k=hemmelig%2Btoken"), "tokenet er ikke URL-kodet");
+    assert.ok(kort.querySelector('label[for="godkjenner-lenke"]'));
+    assert.ok(kort.textContent.includes("2026-11-27"));
+    assert.equal((await alvorligeBrudd(h, { fragment: true })).length, 0);
+  } finally { globalThis.fetch = forrige; }
+});
+
+test("Uten invitasjonsrett: kortet sier hvem som kan, og har ingen knapp som feiler", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR,
+    automatikk: [], godkjenning: { kan_godkjenne: 1, apen_runde: false,
+      invitasjon_ute: true } } };
+  const h = nyHoved();
+  visOversikt(h, ctx([...OKONOMI, "policy:read"]));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => blokk.querySelector(".oppsett-godkjenning")));
+  const kort = blokk.querySelector(".oppsett-godkjenning");
+  assert.equal(kort.querySelectorAll("button").length, 0);
+  assert.ok(kort.textContent.includes(t("ui.oppsett.godkjenner.be_admin")));
+  assert.ok(kort.textContent.includes(
+    t("ui.oppsett.godkjenner.invitasjon_ute")));
+});
+
+test("To som kan godkjenne og ingen runde: ingen godkjenningsdel", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: KLAR,
+    automatikk: [], godkjenning: { kan_godkjenne: 2, apen_runde: false,
+      invitasjon_ute: false } } };
+  const h = nyHoved();
+  visOversikt(h, ctx(ADMIN));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden));
+  assert.equal(blokk.querySelector(".oppsett-godkjenning"), null);
+  assert.equal(blokk.querySelector("h2").textContent,
+    t("ui.oppsett.tittel_klar"));
+
+  // …men en runde som venter vises, med knappen som hovedhandling.
+  SVAR["/v1/oppsett"].godkjenning.apen_runde = true;
+  const h2 = nyHoved();
+  visOversikt(h2, ctx(ADMIN));
+  const b2 = h2.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => b2.querySelector(".oppsett-godkjenning")));
+  const a = b2.querySelector('.oppsett-godkjenning a[href="#/policyadmin"]');
+  assert.ok(a.classList.contains("primar"));
+});
+
+test("Ingen moduler, men en godkjenner mangler: blokken vises likevel", async () => {
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [],
+    godkjenning: { kan_godkjenne: 1, apen_runde: false,
+      invitasjon_ute: false } } };
+  const h = nyHoved();
+  visOversikt(h, ctx(ADMIN));
+  const blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden));
+  assert.ok(blokk.querySelector(".oppsett-godkjenning"));
+});
