@@ -150,14 +150,14 @@ def test_sesjonen_sier_hvilken_leverandor_byttet_skal_gjennom(migrator):
     guid = "9188040d-6c67-4c5b-b112-36a304b66dad"
     migrator.execute(
         "INSERT INTO oidc_provider (provider_id, issuer, discovery_url,"
-        " client_id, client_secret_ref, tillatte_algoritmer) VALUES"
-        " (%s,%s,%s,'cid','ref','{RS256}')",
+        " client_id, client_secret_ref, tillatte_algoritmer, aktiv) VALUES"
+        " (%s,%s,%s,'cid','ref','{RS256}',true)",
         (eksakt, f"https://{merke}.eks.test",
          f"https://{merke}.eks.test/.well-known"))
     migrator.execute(
         "INSERT INTO oidc_provider (provider_id, issuer, discovery_url,"
-        " client_id, client_secret_ref, tillatte_algoritmer, issuer_mal)"
-        " VALUES (%s,%s,%s,'cid','ref','{RS256}',%s)",
+        " client_id, client_secret_ref, tillatte_algoritmer, issuer_mal,"
+        " aktiv) VALUES (%s,%s,%s,'cid','ref','{RS256}',%s,true)",
         (mal, f"https://{merke}.mal.test/common/v2.0",
          f"https://{merke}.mal.test/.well-known",
          f"https://{merke}.mal.test/{{tenantid}}/v2.0"))
