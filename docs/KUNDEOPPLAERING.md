@@ -250,7 +250,7 @@ i enhver opplæringsøkt.
 | Modellstyring | Ingen oppsett i flaten | Golden-sett og krav registreres av plattformdrift. Flaten viser gjeldende krav og siste kjøringer. |
 | Skatt og avgift | «Lagre grensene» → «Beregn» | Selgerland, kontrollgrense og kontrollfrist |
 | Bemanningsprognose | «Lagre grensene» → «Ny modellversjon» → «Ny prognose» | Horisont, grunnlag, målefrist og domsgrunnlag; så modellen og prognosen |
-| Krise og kontinuitet | «Åpne hendelse» | Tjenestekartet og beredskapskontaktene registreres foreløpig av plattformdrift. Dere åpner hendelser, fører tidslinjen og lukker med etteranalyse. |
+| Krise og kontinuitet | «Legg til i kartet» | Før opp tjenestene dere ikke kan være uten, med mål for hvor fort de skal tilbake og hvilken playbook som gjelder. Legg så til beredskapskontaktene og trykk «Bekreft nå» på hver. Deretter åpner dere hendelser, fører tidslinjen og lukker med etteranalyse. |
 | Kø og ruting | Ingen oppsett | Virker i bakgrunnen for alle moduler med kø. |
 | Merkevare | «Lagre terskler» → «Lagre merke» → «Lagre bevaringskopi» → «Lagre funn» | Forvekslingsterskel og frister, så merkene deres og funnene med bevaringskopi |
 | Avtaler og frister | «Registrer plikt» | Hva plikten er, hvem som eier den, hvor den kommer fra (avtale, paragraf) og fristen |

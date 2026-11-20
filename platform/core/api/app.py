@@ -1126,6 +1126,28 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kontinuitet as kontinuitetsmodul
         return kontinuitetsmodul.lukk_endepunkt(tjeneste, request)
 
+    # ADR-008 (M-35): veien inn til tjenestekartet og kontaktene. Dørene
+    # har stått siden 089; disse fem rutene er det første som kaller dem.
+    def kontinuitet_playbooks(request: Request) -> Response:
+        from . import kontinuitet_kart
+        return kontinuitet_kart.playbooks(tjeneste, request)
+
+    def kontinuitet_tjenester(request: Request) -> Response:
+        from . import kontinuitet_kart
+        return kontinuitet_kart.tjenester_endepunkt(tjeneste, request)
+
+    def kontinuitet_tjeneste(request: Request) -> Response:
+        from . import kontinuitet_kart
+        return kontinuitet_kart.tjeneste_endepunkt(tjeneste, request)
+
+    def kontinuitet_kontakter(request: Request) -> Response:
+        from . import kontinuitet_kart
+        return kontinuitet_kart.kontakter_endepunkt(tjeneste, request)
+
+    def kontinuitet_bekreft(request: Request) -> Response:
+        from . import kontinuitet_kart
+        return kontinuitet_kart.bekreft_endepunkt(tjeneste, request)
+
     # 094 (M-5): malregisteret. Leseveien er hele registeret i én
     # transaksjon; de fire skrivende POST-ene gjør hver nøyaktig ett kall
     # mot en mal_eier-eid dør i 094. Append-only, låste klausuler og
@@ -3697,6 +3719,16 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kontinuitet_post, methods=["POST"]),
         Route("/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk",
               kontinuitet_lukk, methods=["POST"]),
+        Route("/v1/kontinuitet/playbooks", kontinuitet_playbooks,
+              methods=["GET"]),
+        Route("/v1/kontinuitet/tjenester", kontinuitet_tjenester,
+              methods=["POST"]),
+        Route("/v1/kontinuitet/tjeneste/{tjeneste_id:str}",
+              kontinuitet_tjeneste, methods=["POST"]),
+        Route("/v1/kontinuitet/kontakter", kontinuitet_kontakter,
+              methods=["POST"]),
+        Route("/v1/kontinuitet/kontakt/{kontakt_id:str}/bekreft",
+              kontinuitet_bekreft, methods=["POST"]),
         Route("/v1/dokumentmal", dokumentmal, methods=["GET"]),
         Route("/v1/dokumentmal/familier", dokumentmal_familier,
               methods=["POST"]),
@@ -5184,6 +5216,15 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/post"):
         "kontinuitet:write",
     ("POST", "/v1/kontinuitet/hendelse/{hendelse_id:str}/lukk"):
+        "kontinuitet:write",
+    # ADR-008 (M-35): katalogen leses med lesescopet; kartet og
+    # kontaktene skrives med samme scope som hendelsene.
+    ("GET",  "/v1/kontinuitet/playbooks"):   "kontinuitet:read",
+    ("POST", "/v1/kontinuitet/tjenester"):   "kontinuitet:write",
+    ("POST", "/v1/kontinuitet/tjeneste/{tjeneste_id:str}"):
+        "kontinuitet:write",
+    ("POST", "/v1/kontinuitet/kontakter"):   "kontinuitet:write",
+    ("POST", "/v1/kontinuitet/kontakt/{kontakt_id:str}/bekreft"):
         "kontinuitet:write",
     # 094 (M-5): malregisteret. INGEN nye scopes — M-5 generaliserer
     # 079_utsendingstekst, og 079s to ruter står alt her med

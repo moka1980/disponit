@@ -733,6 +733,8 @@ h3 { font-size: var(--fs-h3); font-weight: 700; margin: var(--sp-3) 0 var(--sp-2
    bredere enn plassen (WCAG 1.4.10 ved 320 px). */
 .kpi-kort-liste{display:grid;gap:var(--sp-4);
   grid-template-columns:repeat(auto-fit,minmax(min(20rem,100%),1fr))}
+/* Flater med brede tabeller og skjemaer (M-35): kortene under hverandre. */
+.kpi-kort-liste.en-kolonne{grid-template-columns:minmax(0,1fr)}
 .kpi-kort{border:1px solid var(--line);border-radius:var(--radius);
   padding:var(--sp-4) var(--sp-5);background:var(--card);min-width:0}
 .kpi-kort > h2:first-child,.kpi-kort > h3:first-child{margin-top:0}

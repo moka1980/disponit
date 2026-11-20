@@ -1,0 +1,14 @@
+# Kontinuitetsplaybook (ADR-008). Se gjenopprett-fra-backup.yaml.
+navn: mistanke-om-innbrudd
+tittel: Mistanke om innbrudd
+naar: >-
+  Noe tyder på at uvedkommende har hatt tilgang til tjenesten eller til en
+  konto som styrer den.
+steg:
+  - Ikke slett noe. Logger og filer er bevis.
+  - Åpne en hendelse i kontinuitetsflaten og varsle kontaktrollen.
+  - Steng tilgangen til kontoene det gjelder, og bytt nøklene deres.
+  - Skill den berørte tjenesten fra resten av nettet hvis det lar seg gjøre.
+  - Finn ut hva som kan være lest eller endret, og i hvilket tidsrom.
+  - Vurder meldeplikt til Datatilsynet innen 72 timer hvis persondata er berørt.
+  - Skriv etteranalysen i tidslinjen før hendelsen lukkes.
