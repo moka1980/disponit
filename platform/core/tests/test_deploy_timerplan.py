@@ -168,6 +168,7 @@ def test_intervalltimerne_er_et_navngitt_unntak():
         "disponit-backupstatus.timer",
         "disponit-domenerevalidering.timer",
         "disponit-domeneverifisering.timer",
+        "disponit-driftsvarsel.timer",
         "disponit-evidensreaper.timer",
         "disponit-helse.timer",
         "disponit-m57-utsending.timer",
@@ -386,3 +387,94 @@ def test_arbeidervakten_kjores_av_en_timer_og_installeres():
     oppsett = (TIMERKATALOG / "modultoken-oppsett.sh").read_text(
         encoding="utf-8")
     assert "systemctl enable --now disponit-arbeidervakt.timer" in oppsett
+
+
+def _driftsvarsel():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "driftsvarsel", TIMERKATALOG / "driftsvarsel.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_driftsvarselet_sender_ved_ny_feil_paaminner_og_friskmelder(tmp_path):
+    """En feilet unit ingen ser, er en feil ingen retter: prod var nede i
+    fire uker i oktober, og arbeiderne døde i en måned. Dette er leddet som
+    gjør `systemctl --failed` til en e-post.
+
+    MUTASJONEN SOM DREPER DENNE: la `avgjor` svare None for nye units, eller
+    skriv tilstanden før sendingen lyktes.
+    """
+    dv = _driftsvarsel()
+    fil = tmp_path / "tilstand.json"
+    sendt, feilet, klokke = [], [], [1000.0]
+
+    def kjor(send_feiler=False):
+        def send(til, emne, tekst):
+            if send_feiler:
+                raise OSError("smtp nede")
+            sendt.append((til, emne, tekst))
+        return dv.kjor(fil, feilede=lambda: list(feilet), send=send,
+                       til="eier@example.test", naa=lambda: klokke[0],
+                       vert="verten", detaljer=lambda u: "siste linje")
+
+    # Frisk vert: stille.
+    assert kjor() == 0 and sendt == []
+
+    # Ny feil: én e-post, med unitnavnet og de siste logglinjene.
+    feilet.append("disponit-arbeidervakt.service")
+    assert kjor() == 0 and len(sendt) == 1
+    til, emne, tekst = sendt[0]
+    assert til == "eier@example.test" and "FEIL" in emne and "verten" in emne
+    assert "disponit-arbeidervakt.service" in tekst and "siste linje" in tekst
+
+    # Samme feil fem minutter senere: stille — ikke én e-post per kjøring.
+    klokke[0] += 300
+    assert kjor() == 0 and len(sendt) == 1
+
+    # En NY unit feiler i tillegg: ny e-post med begge.
+    feilet.append("disponit-backup.service")
+    assert kjor() == 0 and len(sendt) == 2
+    assert "disponit-backup.service" in sendt[1][2]
+
+    # Et døgn uten endring: påminnelse.
+    klokke[0] += dv.PAAMINN_S
+    assert kjor() == 0 and len(sendt) == 3
+    assert "FORTSATT FEIL" in sendt[2][1]
+
+    # Alt friskt: friskmelding, og deretter stille igjen.
+    feilet.clear()
+    assert kjor() == 0 and len(sendt) == 4
+    assert "i orden igjen" in sendt[3][1]
+    assert kjor() == 0 and len(sendt) == 4
+
+    # En sending som feiler, prøves igjen: tilstanden er IKKE skrevet.
+    feilet.append("disponit-api.service")
+    assert kjor(send_feiler=True) == 1 and len(sendt) == 4
+    assert kjor() == 0 and len(sendt) == 5
+    assert "disponit-api.service" in sendt[4][2]
+
+
+def test_driftsvarselet_er_blindt_og_sier_det(tmp_path, monkeypatch):
+    """Uten mottaker, SMTP-oppsett eller svar fra systemd har vakten ikke
+    målt noe. Da er svaret exit 2 — aldri et stille 0."""
+    dv = _driftsvarsel()
+    fil = tmp_path / "tilstand.json"
+    for k in ("VERT", "PORT", "BRUKER", "PASSORD", "AVSENDER"):
+        monkeypatch.delenv(f"DISPONIT_SMTP_{k}", raising=False)
+    monkeypatch.delenv("DISPONIT_DRIFTSVARSEL_TIL", raising=False)
+    assert dv.kjor(fil, feilede=lambda: []) == 2
+    assert dv.kjor(fil, feilede=lambda: [], til="x@example.test") == 2
+    assert dv.kjor(fil, feilede=lambda: None, til="x@example.test",
+                   send=lambda *a: None) == 2
+    # Oss selv varsler vi ikke om, og mottakeren står aldri i repoet.
+    assert dv.SELV == "disponit-driftsvarsel.service"
+    for navn in ("driftsvarsel.py", "driftsvarsel-oppsett.sh",
+                 "disponit-driftsvarsel.service"):
+        assert "@gmail" not in (TIMERKATALOG / navn).read_text(
+            encoding="utf-8")
+    unit = (TIMERKATALOG / "disponit-driftsvarsel.service").read_text(
+        encoding="utf-8")
+    assert ("ExecStart=/usr/bin/python3 /opt/disponit/aktiv/deploy/staging/"
+            "driftsvarsel.py") in unit

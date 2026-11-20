@@ -1,0 +1,9 @@
+[Unit]
+Description=Disponit driftsvarsel, hvert femte minutt
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

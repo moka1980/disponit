@@ -65,6 +65,12 @@ UNIT_UNNTAK: dict[str, str] = {
         "vokter arbeiderunitene over og installeres sammen med"
         " rotasjonen, av modultoken-oppsett.sh; uniten peker på"
         " skriptet i aktiv release",
+    "disponit-driftsvarsel.service":
+        "trenger mottakeradressen, som står på verten og aldri i repoet;"
+        " installeres av driftsvarsel-oppsett.sh",
+    "disponit-driftsvarsel.timer":
+        "installeres sammen med disponit-driftsvarsel.service av"
+        " driftsvarsel-oppsett.sh",
     "disponit-arbeidervakt.timer":
         "installeres sammen med disponit-arbeidervakt.service av"
         " modultoken-oppsett.sh",

@@ -1,0 +1,26 @@
+# Driftsvarsel — kjøres av disponit-driftsvarsel.timer. Se
+# deploy/staging/driftsvarsel.py for hva den sender og når.
+[Unit]
+Description=Disponit driftsvarsel (e-post når en tjeneste står som feilet)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=disponit-helse
+Group=disponit-helse
+# Journalen leses for å legge de siste linjene ved i e-posten.
+SupplementaryGroups=systemd-journal
+StateDirectory=disponit-driftsvarsel
+# Samme SMTP-oppsett som varselsenderen; mottakeren står i egen fil på
+# verten og aldri i repoet.
+EnvironmentFile=/etc/disponit/varsel/smtp.env
+EnvironmentFile=/etc/disponit/driftsvarsel/konfig
+ExecStart=/usr/bin/python3 /opt/disponit/aktiv/deploy/staging/driftsvarsel.py
+TimeoutStartSec=2min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
