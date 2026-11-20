@@ -54,8 +54,13 @@ def test_adapterne_peker_pa_ekte_lesedorer():
     assert len(nr) == len(set(nr))
     for _nr, apimodul, scope, klarflagg in oppsett.ADAPTERE:
         modul = importlib.import_module(f"api.{apimodul}")
-        kilde = inspect.getsource(modul.svar_for)
-        assert '"sammendrag"' in kilde and '"apne_funn"' in kilde, apimodul
+        dor = inspect.getsource(modul.svar_for)
+        assert '"sammendrag"' in dor, apimodul
+        # Feltene kan stå i selve døra eller i radbyggeren den kaller
+        # (`_bilderad`, formen de nyere modulene bruker) — men de MÅ stå i
+        # modulen, ellers viser oversikten «ukjent» for alltid.
+        kilde = dor if '"apne_funn"' in dor else inspect.getsource(modul)
+        assert '"apne_funn": r[' in kilde or '"apne_funn"' in dor, apimodul
         if klarflagg:
             assert f'"{klarflagg}"' in kilde, (apimodul, klarflagg)
         assert f'"{scope}"' in inspect.getsource(modul), (apimodul, scope)
