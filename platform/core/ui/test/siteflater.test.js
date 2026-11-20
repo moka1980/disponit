@@ -1146,6 +1146,13 @@ test("Invitasjonslenke uten økt: siden sier at hun er invitert, og returstien b
     { tenant: "acme", token: "a+b" });
 
   const forrige = window.location.href;
+  // Egen fetch: tidligere tester i fila bytter den globale, og uten en
+  // leverandør tegner kortet en feiltilstand i stedet for innloggingen.
+  const forrigeFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => (url.split("?")[0] === "/ui/oppsett.json"
+    ? { ok: true, status: 200,
+        json: async () => ({ provider_id: "google", providere: ["google"] }) }
+    : { ok: false, status: 404, json: async () => ({ feil: "x" }) });
   window.history.replaceState(null, "", "/?visning=blimed&t=acme&k=a%2Bb/c");
   const app = nyttAppBrett();
   try {
@@ -1170,6 +1177,7 @@ test("Invitasjonslenke uten økt: siden sier at hun er invitert, og returstien b
     const brudd = await alvorligeBrudd(app, { fragment: true });
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   } finally {
+    globalThis.fetch = forrigeFetch;
     window.history.replaceState(null, "", forrige);
   }
 });
