@@ -384,7 +384,11 @@ def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
     # kommentarene i opp.sh omtaler `skriv_cred api DISPONIT_MILJO` med navn,
     # og en test som traff omtalen ville målt rekkefølgen på en kommentar.
     skriving = materialisering.start()
-    gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "staging" ]')
+    # ADR-009: gaten sammenligner med VERTSROLLEN, ikke med en konstant.
+    # Rollen leses fra en egen rot-eid fil og er `staging` når fila mangler.
+    assert 'VERTSROLLE=staging\nif [ -e "$VERTSROLLEFIL" ]' in opp, \
+        "vertsrollen har ikke staging som standard"
+    gate = opp.index('[ "${DISPONIT_MILJO:-staging}" = "$VERTSROLLE" ]')
     assert gate < opp.index("HERFRA MUTERES SYSTEMET"), \
         "miljøporten står etter første mutasjon — da er systemet alt endret"
     assert gate < skriving
@@ -397,11 +401,20 @@ def test_utrullingen_leverer_faktisk_DISPONIT_MILJO_til_api_prosessen():
     # at det finnes en andre sjekk, men at miljøfila ikke leses igjen mellom
     # den og skrivingen: godkjenningen og skrivingen må stå på samme variabel.
     lesing = opp.rindex('. "$MILJOFIL"')
-    andre_gate = opp.index('[ "${DISPONIT_MILJO:-staging}" != "staging" ]')
+    andre_gate = opp.index(
+        '[ "${DISPONIT_MILJO:-staging}" != "$VERTSROLLE" ]')
     assert lesing < andre_gate < skriving, \
         "gaten står ikke mellom den autoritative lesingen og skrivingen"
     assert '. "$MILJOFIL"' not in opp[andre_gate:skriving], \
         "miljøfila leses på nytt mellom gaten og skrivingen — vinduet er åpent"
+    # …vertsrollen settes ÉN gang, før begge gatene, og aldri igjen: ble
+    # den lest på nytt mellom dem, kunne de to gatene godkjent ulike roller.
+    assert len(re.findall(r"^\s*VERTSROLLE=", opp, re.M)) == 2
+    assert opp.rindex("VERTSROLLE=") < gate
+    # …og klarsjekken står FØR første mutasjon, bare for produksjonsverten.
+    klar = opp.index('bash "$KILDE/deploy/staging/produksjonsklar.sh"')
+    assert gate < klar < opp.index("HERFRA MUTERES SYSTEMET")
+    assert 'if [ "$VERTSROLLE" = "produksjon" ]; then' in opp[gate:klar]
 
 
 def test_credential_veien_tolker_ikke_miljoverdien(tmp_path, monkeypatch):

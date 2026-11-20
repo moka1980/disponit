@@ -18,6 +18,23 @@ set -euo pipefail
 
 ROT=/opt/disponit
 MILJOFIL=/etc/disponit/staging.env
+# ADR-009: VERTSROLLEN. Hva maskinen ER, står i en egen rot-eid fil — ikke i
+# miljøfila. Mangler fila, er verten staging. Miljøportene under krever at
+# `DISPONIT_MILJO` i miljøfila sier det SAMME som vertsrollen: to uavhengige
+# fakta må være enige før API-et får kjøre i produksjonsmodus, så verken en
+# redigert miljøfil eller en konfigurasjonsstyring som ruller ut feil verdi
+# kan bytte modus alene.
+VERTSROLLEFIL=/etc/disponit/vertsrolle
+VERTSROLLE=staging
+if [ -e "$VERTSROLLEFIL" ]; then
+  VERTSROLLE="$(cat "$VERTSROLLEFIL")"
+  case "$VERTSROLLE" in
+    staging|produksjon) ;;
+    *) echo "AVBRUTT: $VERTSROLLEFIL skal inneholde nøyaktig 'staging' eller"
+       echo "'produksjon' (uten blanktegn). Systemet er urørt."
+       exit 1 ;;
+  esac
+fi
 LAAS=/var/lock/disponit-deploy.lock
 
 # --- Deploylås: fail-fast, aldri kø (v2 §4) --------------------------------
@@ -839,8 +856,9 @@ fi
 # første mutasjon, så en slik miljøfil stopper utrullingen i stedet for å bli
 # skrevet inn i en credential. Uspesifisert er greit — da gjelder `staging`.
 if ! ( set -a; . "$MILJOFIL"; set +a
-       [ "${DISPONIT_MILJO:-staging}" = "staging" ] ); then
-  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke 'staging'."
+       [ "${DISPONIT_MILJO:-staging}" = "$VERTSROLLE" ] ); then
+  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke '$VERTSROLLE', som er"
+  echo "vertsrollen ($VERTSROLLEFIL; uten fila er verten staging)."
   echo "opp.sh er staging-løypa: den ruller ut på maskinen docs/DEPLOY.md"
   echo "utpeker som staging-serveren, mens produksjon er en EGEN VPS med"
   echo "kunder og ekte data. En annen verdi her ville fått policyregisteret"
@@ -849,6 +867,19 @@ if ! ( set -a; . "$MILJOFIL"; set +a
   echo "maskin uten kundedata. Fjern linjen, eller sett den til 'staging'."
   echo "Systemet er urørt; forrige release kjører som før."
   exit 1
+fi
+# ADR-009: KLARSJEKKEN. Er verten produksjon, må registeret tåle det FØR
+# første mutasjon: hvert firma i bruk på en produksjonspolicy, og hver modul
+# som tar bestillinger med en claiming-deployment og et gyldig modultoken i
+# miljøet produksjon. API-et starter fint uten — og svarer 503 på hver
+# bestilling. Utrullingen ville rapportert suksess.
+if [ "$VERTSROLLE" = "produksjon" ]; then
+  if ! bash "$KILDE/deploy/staging/produksjonsklar.sh"; then
+    echo "AVBRUTT: verten er erklært som produksjon, men registeret er ikke"
+    echo "klart (linjene over). Systemet er urørt; forrige release kjører"
+    echo "som før."
+    exit 1
+  fi
 fi
 # CHECKSUM-PORTEN: kjørt historikk er byte-identisk (#172).
 # 23/8: en kommentarlinje i en KJØRT migrasjon ble oppdaget av kjøreren i
@@ -1099,14 +1130,14 @@ set -a; . "$MILJOFIL"; set +a
 # feilkonfigurert miljøfil stoppe utrullingen mens systemet BEVISELIG er
 # urørt. Denne er den som garanterer at det godkjente og det skrevne er det
 # samme. Begge trengs, og de måler ikke det samme.
-if [ "${DISPONIT_MILJO:-staging}" != "staging" ]; then
-  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke 'staging'."
+if [ "${DISPONIT_MILJO:-staging}" != "$VERTSROLLE" ]; then
+  echo "AVBRUTT: DISPONIT_MILJO i $MILJOFIL er ikke '$VERTSROLLE' (vertsrollen)."
   echo "Verdien endret seg mellom miljøporten og materialiseringen av"
   echo "credentials — miljøfila er byttet eller redigert mens utrullingen"
   echo "kjørte. Verdien er IKKE skrevet: ingen credential er materialisert,"
   echo "ingen unit er aktivert, og ingen tjeneste er startet på nytt."
   echo "Unix-identitetene i steg 3 er opprettet (idempotent) — kjør opp.sh"
-  echo "på nytt når $MILJOFIL står stille og sier 'staging'."
+  echo "på nytt når $MILJOFIL står stille og sier '$VERTSROLLE'."
   exit 1
 fi
 # Cursor P2-2 (#178, runde 4): SAMME RE-GATE PÅ MIGRASJONS-DSN-ENE.
