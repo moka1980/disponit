@@ -47,8 +47,8 @@
 id: m15_likviditet
 navn: Likviditets- og kostnadsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, MÅLTE avhengigheter: de fire registrene prognosen leser, og
 # policymotoren som eier enhver utførelse modulen selv ikke gjør.
 avhengigheter:
