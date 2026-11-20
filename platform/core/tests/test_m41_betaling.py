@@ -522,11 +522,17 @@ def test_invariant_betalingsmiddel_lagret_i_klartekst(migrator):
              " || kilde_ref"),
             ("revisjonslogg", "coalesce(handling,'')"
                               " || coalesce(begrunnelse::text,'')")):
-        treff = migrator.execute(
-            f"SELECT count(*) FROM public.{kilde}"
-            f" WHERE tenant=%s AND ({uttrykk}) LIKE %s",
-            (tenant, "%5678%")).fetchone()[0]
-        assert treff == 0, kilde
+        # ÅTTE SIFRE AV NUMMERET, i de tre skrivemåtene — ikke fire. Søket
+        # «%5678%» traff en sjelden gang den heksadesimale HASHEN (64
+        # tilfeldige tegn), og suiten ble rød uten at noe nummer var lagret
+        # (målt 19.11.2026). Åtte sammenhengende sifre treffer ikke en hash
+        # ved et uhell, og finner fortsatt et nummer som er lagret.
+        for moenster in ("%12345678%", "%1234 5678%", "%1234-5678%"):
+            treff = migrator.execute(
+                f"SELECT count(*) FROM public.{kilde}"
+                f" WHERE tenant=%s AND ({uttrykk}) LIKE %s",
+                (tenant, moenster)).fetchone()[0]
+            assert treff == 0, (kilde, moenster)
     migrator.rollback()
 
 

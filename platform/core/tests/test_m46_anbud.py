@@ -134,7 +134,10 @@ def _krav(c, tenant, aid, *, nummer=None, tekst="ISO 9001",
           kravtype="sertifisering", absolutt=True, kid=None,
           aktor="u-test"):
     kid = kid or uuid.uuid4()
-    nummer = nummer or ("K" + secrets.token_hex(2))
+    # Seks byte, ikke to: med 65 536 mulige numre kolliderte to krav i
+    # samme tenant en sjelden gang, og suiten ble rød uten grunn
+    # (målt 19.11.2026).
+    nummer = nummer or ("K" + secrets.token_hex(6))
     _sett_kontekst(c, tenant)
     c.execute("SELECT m46_registrer_krav(%s,%s,%s,%s,%s,%s,%s,%s)",
               (tenant, kid, aid, nummer, tekst, kravtype, absolutt,
