@@ -270,13 +270,22 @@ ingenting her».
 
 1. **Registrer firmaet** på forsiden. Utvidelsene velges her, og for et
    enkeltpersonforetak kan de ikke utvides etterpå.
-2. **Sett kravet i hver modul dere skal bruke.** Dette er det eneste
+2. **Åpne Oversikt og følg «Kom i gang».** Lista viser hver modul dere
+   har, om kravet er satt, og hvor mange funn som står åpne. For flere
+   moduler står et forslag til grenser som godtas med ett klikk.
+3. **Legg til en godkjenner.** En policyendring må godkjennes av en ANNEN
+   enn den som skrev den. Er dere bare én som kan godkjenne, står
+   «Legg til en godkjenner» øverst i «Kom i gang»: trykk **Inviter en
+   godkjenner**, kopier lenken og send den til en kollega. Kollegaen åpner
+   lenken, logger inn, trykker **Bli med** og deretter knappen **Åpne** med firmanavnet.
+   Lenken virker én gang.
+4. **Sett kravet i hver modul dere skal bruke.** Dette er det eneste
    steget som krever at noen tenker. Tallene er deres egne, ikke bransjens.
-3. **Legg inn grunndataene** — varer, leverandører, prosjekter, ansatte,
+5. **Legg inn grunndataene** — varer, leverandører, prosjekter, ansatte,
    alt etter hvilke moduler dere bruker.
-4. **Vent én natt.** Første sveip gir det første bildet, og det pleier å
+6. **Vent én natt.** Første sveip gir det første bildet, og det pleier å
    være ubehagelig ærlig. Det er meningen.
-5. **Behandle funnene, og se at de lukker seg selv** når årsaken er borte.
+7. **Behandle funnene, og se at de lukker seg selv** når årsaken er borte.
 
 ---
 
@@ -295,6 +304,15 @@ døgnet. Funnet lukkes neste natt.
 **«Det kom 40 funn første natt.»** Det er riktig. Første sveip ser
 etterslepet som har bygget seg opp, ikke bare det som skjedde i går.
 
+**«Jeg ble med i firmaet, men ser det ikke.»** Du står fortsatt i det
+firmaet du var innlogget i. Har du flere firmaer, står en nedtrekksliste
+øverst ved siden av Disponit-merket: velg firmaet der.
+
+**«Endringen i policyen blir stående og vente.»** Den som skrev endringen,
+kan ikke godkjenne den selv. En kollega med rollen policyforvalter må åpne
+Policyadministrasjon og trykke **Attester og aktiver**. Oversikten sier
+fra når en endring venter.
+
 **«Kan den ikke bare bestille varen selv?»** Ikke i dag, og ikke uten en
 fullmakt noen har gitt bevisst. Det er en beslutning, ikke en oppgave.
 
@@ -302,9 +320,14 @@ fullmakt noen har gitt bevisst. Det er en beslutning, ikke en oppgave.
 
 ## 9. Hva som ennå ikke er der
 
-28 av 57 moduler er ikke sertifisert ennå. **En modul som ikke står i
-tabellen over, er ikke i drift** — uansett hva katalogen på nettsiden
-lover om den.
+Alle 57 modulene er sertifisert og i drift (20.11.2026). Det som mangler,
+er disse:
+
+- **Betaling.** Overgangen fra prøveperiode til betalt abonnement er ikke
+  bygget.
+- **Kobling til regnskapssystem** (Tripletex, Fiken, PowerOffice) er utsatt.
+- **«Kom i gang» viser 35 av 57 moduler.** Resten settes opp fra modulens
+  egen side.
 
 Modulkatalogen i grensesnittet merker hver modul som **i drift**,
 **klargjort**, **bygges** eller **planlagt**, og merkingen er avlest fra
