@@ -125,7 +125,7 @@ export const MODULSTATUS = {
   // Alle fem flippes av en modulaksept, aldri av en byggemilepæl.
   48: "i_drift",    // m48_motpart: aktiv, produksjon
   49: "i_drift",    // m49_sanksjon: aktiv, produksjon
-  46: "bygges",      // m46_anbud: under_utvikling, ikke_i_drift
+  46: "i_drift",    // m46_anbud: aktiv, produksjon
   51: "i_drift",    // m51_tilskudd: aktiv, produksjon
   55: "i_drift",    // m55_merkevare: aktiv, produksjon
   // KLYNGE 7 (121-125): «de fem der regelen er myndighetens».
