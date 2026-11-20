@@ -439,12 +439,8 @@ test("Kontinuitet: kontakter velges blant medlemmene og bekreftes på raden",
     const { kall, tilbake } = medKall(
       (sti) => (sti === "/v1/kontinuitet/kontakter" ? 409 : 200));
     try {
-      knapper[0].click();
-      await vent(() => kall.length === 1);
-      assert.equal(kall[0].sti,
-        `/v1/kontinuitet/kontakt/${FULLT.kontakter[0].kontakt_id}/bekreft`);
-
-      await vent(() => h.querySelector("#kontakt-rolle"));
+      // Skjemaet FØRST: et avvist forsøk tegner ikke flaten på nytt,
+      // så meldingen står. Bekreftelsen etterpå laster flaten om igjen.
       skriv(h.querySelector("#kontakt-rolle"), "driftsvakt");
       skriv(h.querySelector("#kontakt-prioritet"), "1");
       send(h.querySelector("#kontakt-rolle").form);
@@ -452,9 +448,13 @@ test("Kontinuitet: kontakter velges blant medlemmene og bekreftes på raden",
         t("ui.kontinuitet.kontakter.opptatt")));
       // Plassen er tatt: svaret sier HVA som er galt, ikke «prøv igjen».
       assert.ok(h.textContent.includes(t("ui.kontinuitet.kontakter.opptatt")));
-      const sist = kall[kall.length - 1];
-      assert.deepEqual(sist.kropp,
+      assert.deepEqual(kall[0].kropp,
         { rolle: "driftsvakt", prioritet: 1, bruker_id: "bruker-1" });
+
+      knapper[0].click();
+      await vent(() => kall.length === 2);
+      assert.equal(kall[1].sti,
+        `/v1/kontinuitet/kontakt/${FULLT.kontakter[0].kontakt_id}/bekreft`);
     } finally { tilbake(); }
   });
 
