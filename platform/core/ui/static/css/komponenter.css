@@ -285,6 +285,10 @@ th[aria-sort="descending"] .sort-knapp::after { content: " ▼"; }
   background: var(--card); color: var(--ink); cursor: pointer;
 }
 
+/* Firmavelger (skallet) — står der tenantbrikken ellers står. */
+.skall-topp .firmavelger { max-width: 14rem; min-width: 0;
+  text-overflow: ellipsis; }
+
 /* Nøkkel/verdi-liste (detaljpanel) */
 .kv, .kv-liste { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr;
   gap: var(--sp-2) var(--sp-4); margin: 0; }
@@ -1109,6 +1113,7 @@ a.skall-bruker:hover .skall-bruker-navn { text-decoration: underline; }
     row-gap: 0; padding-bottom: var(--sp-2); }
   /* Tenanten får sin egen, lille linje under merket i stedet for å bli
      klemt til én bokstav mellom merket og kontrollene. */
+  .skall-topp .firmavelger { order: 4; flex: 0 1 auto; max-width: 100%; }
   .skall-topp .skall-tenant { order: 4; flex: 0 0 100%; border: 0; padding: 0;
     font-size: var(--fs-xs); margin-top: calc(-1 * var(--sp-1)); }
   .skall > .skall-kropp { margin-top: var(--sp-4); }

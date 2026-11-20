@@ -1120,3 +1120,27 @@ test("Mobilreglene gir navigasjonen sin EGEN rad", () => {
       `base.css styler .${klasse}, som ikke finnes i skallet lenger`);
   }
 });
+
+
+test("AppShell: firmavelgeren vises bare for den som har flere firmaer", () => {
+  const velg = (o) => AppShell({ tenant: "wcagvakt", ruter: [], sprak: "nb",
+    ...o }).rot.querySelector("select.firmavelger");
+  assert.equal(velg({}), null);
+  assert.equal(velg({ firmaer: ["wcagvakt"], providerId: "google" }), null);
+  // Uten kjent leverandør kan byttet ikke startes — da tegnes ingen velger.
+  assert.equal(velg({ firmaer: ["disponit", "wcagvakt"] }), null);
+
+  const byttet = [];
+  const skall = AppShell({ tenant: "wcagvakt", ruter: [], sprak: "nb",
+    firmaer: ["disponit", "wcagvakt"], providerId: "google",
+    paaFirma: (f, p) => byttet.push([f, p]) });
+  const v = skall.rot.querySelector("select.firmavelger");
+  assert.ok(v, "ingen firmavelger");
+  assert.equal(v.getAttribute("aria-label"), t("ui.firmavelger"));
+  assert.equal(v.value, "wcagvakt", "viser ikke firmaet hun står i");
+  assert.equal(skall.rot.querySelector(".skall-tenant"), null,
+               "firmaet står to ganger");
+  v.value = "disponit";
+  v.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.deepEqual(byttet, [["disponit", "google"]]);
+});

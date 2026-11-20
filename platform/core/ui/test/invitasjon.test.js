@@ -95,6 +95,31 @@ test("Invitasjon: ryddingen kaster aldri, selv om nettleseren nekter", () => {
 // Bli med-flaten.
 // ---------------------------------------------------------------------------
 
+test("Bli med: med kjent leverandør er siste steg ETT klikk inn i firmaet",
+     async () => {
+  // Funnet i drift 20.11.2026: den inviterte var alt innlogget i et annet
+  // firma, «/»-lenken lot henne stå der, og ingenting viste det nye firmaet.
+  SVAR = { "/v1/invitasjoner/innloes": { tenant: "fjordlys-as",
+    roller: ["policyforvalter"] } };
+  const h = nyHoved("?visning=blimed&t=fjordlys-as&k=hemmelig123");
+  visBliMed(h, { scopes: ["firma:blimed"], providerId: "google" });
+  h.querySelector("button").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true }));
+  await vent(() => h.textContent.includes(t("ui.blimed.ferdig_tittel")));
+
+  assert.ok(!/[{}]/.test(h.textContent), "en plassholder sto uerstattet");
+  const form = h.querySelector("form");
+  assert.ok(form, "ingen vei inn i det nye firmaet");
+  assert.equal(form.getAttribute("action"), "/v1/oidc/start");
+  assert.equal(form.getAttribute("method"), "post");
+  const felt = Object.fromEntries([...form.querySelectorAll("input")]
+    .map((i) => [i.name, i.value]));
+  assert.deepEqual(felt, { provider_id: "google", firma: "fjordlys-as",
+                           retursti: "/" });
+  assert.equal(form.querySelector("button[type=submit]").textContent,
+               t("ui.blimed.aapne_firma").replace("{firma}", "fjordlys-as"));
+});
+
 test("Bli med: hele veien, og hun får vite at hun må logge inn på nytt",
      async () => {
   SVAR = { "/v1/invitasjoner/innloes": { tenant: "fjordlys-as",

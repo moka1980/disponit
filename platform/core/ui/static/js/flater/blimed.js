@@ -22,7 +22,7 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { innloesInvitasjon, ApiFeil, UautorisertFeil } from "../api.js";
-import { meldLive } from "../komponenter.js";
+import { meldLive, firmabytteSkjema } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
 export function lesInvitasjon(sok) {
@@ -84,14 +84,29 @@ export function visBliMed(hoved, ctx = {}) {
       // først, og kallet feiler, har hun mistet lenken uten å ha blitt
       // medlem, og ingenting å prøve på nytt med.
       ryddAdressen();
+      // SISTE STEG ER ETT KLIKK INN I DET NYE FIRMAET. Før sto det en lenke
+      // til «/», og den som alt var innlogget i et annet firma ble stående
+      // DER — uten noe som viste at hun var blitt medlem (funnet i drift
+      // 20.11.2026). Knappen starter innloggingsrunden med firmaet satt.
+      // Uten kjent leverandør faller vi tilbake til lenken.
+      let videre;
+      if (ctx.providerId) {
+        videre = firmabytteSkjema(svar.tenant, ctx.providerId, "/");
+        videre.append(el("button", { type: "submit", class: "knapp primar",
+          text: t("ui.blimed.aapne_firma").replace("{firma}", svar.tenant) }));
+      } else {
+        videre = el("a", { class: "knapp primar", href: "/",
+                           text: t("ui.blimed.logg_inn_paa_nytt") });
+      }
       sett(hoved, ...flateHode(t("ui.blimed.ferdig_tittel"),
-                               t("ui.blimed.ferdig_undertittel")),
-           el("p", { text: t("ui.blimed.ferdig_tekst")
+                               t(ctx.providerId
+                                 ? "ui.blimed.ferdig_undertittel_aapne"
+                                 : "ui.blimed.ferdig_undertittel")),
+           el("p", { text: t(ctx.providerId ? "ui.blimed.ferdig_tekst_aapne"
+                                            : "ui.blimed.ferdig_tekst")
              .replace("{firma}", svar.tenant)
              .replace("{roller}", (svar.roller || []).join(", ")) }),
-           el("p", { class: "knapperad" },
-             el("a", { class: "knapp primar", href: "/",
-                       text: t("ui.blimed.logg_inn_paa_nytt") })));
+           el("div", { class: "knapperad" }, videre));
       meldLive(t("ui.blimed.ferdig_tittel"));
     } catch (f) {
       if (f instanceof UautorisertFeil) visFeil("ui.blimed.feil.okt");

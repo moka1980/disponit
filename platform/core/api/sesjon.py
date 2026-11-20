@@ -717,9 +717,46 @@ def sesjon_hvem(tjeneste, request: Request) -> Response:
              # leses fra det RLS-frie speilet (189) — den samme kilden
              # innloggingen bruker, så de to ikke kan komme i utakt.
              "firmaer": _firmaene_hennes(conn, bid),
+             # Bytteren starter en ny innloggingsrunde, og den må gå til
+             # SAMME leverandør som identiteten kom fra: feil leverandør
+             # ville logget henne inn som en annen person.
+             "provider_id": _leverandoren_hennes(conn, bid),
              "utloper": utloper, "request_id": rid}, 200, {"x-request-id": rid})
     finally:
         tjeneste.pool.gi_tilbake(conn)
+
+
+def _leverandoren_hennes(conn, bid: str) -> str | None:
+    """Leverandøren identiteten ble utstedt av, eller None.
+
+    Skallet hadde `firmaer` fra 196, men ingen bytter: uten å vite hvilken
+    leverandør runden skal til, kunne den ikke startes (funnet i drift
+    20.11.2026 — en invitert godkjenner ble stående i sitt gamle firma).
+    None betyr «tegn uten bytter», aldri en gjetning.
+    """
+    import psycopg
+
+    try:
+        rad = conn.execute("SELECT issuer FROM brukeridentitet WHERE"
+                           " bruker_id=%s", (bid,)).fetchone()
+        if rad is None:
+            return None
+        treff = []
+        for pid, issuer, mal in conn.execute(
+                "SELECT provider_id, issuer, issuer_mal FROM oidc_provider"
+                " WHERE aktiv ORDER BY provider_id").fetchall():
+            if issuer == rad[0]:
+                treff.append(pid)
+            elif mal:
+                try:
+                    if oidc._issuermonster(mal).match(rad[0] or ""):
+                        treff.append(pid)
+                except oidc.OidcFeil:
+                    continue
+        return treff[0] if len(treff) == 1 else None
+    except psycopg.Error:
+        conn.rollback()
+        return None
 
 
 def _firmaene_hennes(conn, bid: str) -> list[str]:

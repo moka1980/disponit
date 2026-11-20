@@ -216,10 +216,52 @@ export function visStatus(container, tilstand) {
   sett(container, byggStatus(tilstand));
 }
 
+// --- Firmabytte -------------------------------------------------------------
+// Øktens firma er uforanderlig (sesjon.py, 196), så et bytte er en NY
+// innloggingsrunde med `firma` satt — et vanlig skjema mot `/v1/oidc/start`,
+// samme dør som forsiden bruker. Leverandøren kommer fra `/v1/sesjon`: det er
+// den identiteten ble utstedt av, og runden må gå dit for at hun skal komme
+// tilbake som seg selv.
+export function firmabytteSkjema(firma, providerId, retursti = "/") {
+  return el("form", { class: "firmabytte-form", method: "post",
+    action: "/v1/oidc/start" },
+    el("input", { type: "hidden", name: "provider_id", value: providerId }),
+    el("input", { type: "hidden", name: "firma", value: firma }),
+    el("input", { type: "hidden", name: "retursti", value: retursti }));
+}
+
+export function byttFirma(firma, providerId, retursti = "/") {
+  const form = firmabytteSkjema(firma, providerId, retursti);
+  form.hidden = true;
+  document.body.append(form);
+  form.submit();
+}
+
 // --- AppShell (topplinje + global nav + main-landemerke) -------------------
 export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
                           brukerId, epost, roller, moduler, varsler, oppdatert,
+                          firmaer, providerId, paaFirma,
                           paaSprak, paaLoggUt } = {}) {
+  // FIRMAVELGEREN vises bare for den som HAR mer enn ett firma, og bare når
+  // vi vet hvilken leverandør byttet skal gjennom. Den erstatter da
+  // tenantbrikken: «hvor er jeg» og «hvor kan jeg gå» er samme kontroll.
+  const andre = Array.isArray(firmaer) ? firmaer.filter(Boolean) : [];
+  let firmavelger = null;
+  if (andre.length > 1 && providerId && andre.includes(tenant)) {
+    firmavelger = el("select", { class: "sprakvelger firmavelger",
+      "aria-label": t("ui.firmavelger") });
+    for (const f of andre) {
+      const opt = el("option", { value: f, text: f });
+      if (f === tenant) opt.setAttribute("selected", "");
+      firmavelger.append(opt);
+    }
+    firmavelger.addEventListener("change", () => {
+      const valgt = firmavelger.value;
+      if (valgt === tenant) return;
+      (paaFirma || byttFirma)(valgt, providerId);
+    });
+  }
+
   // Språkvelger. `lang` per valg (Codex P2): «English» og «Norsk» er hver på
   // sitt språk, og uten attributtet arver de skallets `lang` — en skjermleser
   // ville lest det ene med feil uttale, uansett hvilket språk siden står i.
@@ -329,9 +371,9 @@ export function AppShell({ tenant, ruter, aktiv, sprak: valgtSprak,
     // Sammenligningen er lokalefri (`toLowerCase` uten språk) og trimmet:
     // det er en visningsheuristikk, ikke en autorisasjonsavgjørelse, og
     // ingenting går tapt om den bommer — tenanten står uansett i profilen.
-    (tenant && tenant.trim().toLowerCase()
+    firmavelger || ((tenant && tenant.trim().toLowerCase()
       !== t("app.navn", "Disponit").trim().toLowerCase())
-      ? el("span", { class: "skall-tenant", text: tenant }) : null,
+      ? el("span", { class: "skall-tenant", text: tenant }) : null),
     nav,
     el("div", { class: "skall-hoyre" }, brukerBrikke, velger, loggUt));
 

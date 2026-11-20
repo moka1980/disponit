@@ -303,6 +303,7 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     tenant: sesjon.tenant, sprak: sprak(), aktiv: "oversikt", ruter: tilgjengeligeRuter,
     brukerId: sesjon.bruker_id, epost: sesjon.epost, roller: sesjon.roller,
     moduler: tildelteModuler,
+    firmaer: sesjon.firmaer, providerId: sesjon.provider_id,
     paaSprak: byttSprak, paaLoggUt: bekreftLoggUt,
   });
   sett(app, skall.rot);
@@ -343,6 +344,7 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
 
   const ctx = {
     sprak: sprak(), scopes: sesjon.scopes || [], tenant: sesjon.tenant,
+    providerId: sesjon.provider_id || null,
     // ØKTENS EGEN IDENTITET (eiervedtak 1/9). Den sto før BARE i skallet,
     // som fikk den som egne parametre — så da profilkortet flyttet til
     // Admin, hadde flaten ingen kilde til den i det hele tatt og ville

@@ -139,6 +139,55 @@ def test_sesjonen_sier_hvilke_firmaer_hun_har(migrator):
 
 
 @pg
+def test_sesjonen_sier_hvilken_leverandor_byttet_skal_gjennom(migrator):
+    """Uten leverandøren kan skallet ikke starte byttet. Funnet i drift
+    20.11.2026: `firmaer` hadde stått i svaret siden 196, men ingen bytter
+    ble tegnet, og en invitert godkjenner ble stående i sitt gamle firma."""
+    from api.sesjon import _leverandoren_hennes
+
+    merke = secrets.token_hex(4)
+    eksakt, mal = f"p-eks-{merke}", f"p-mal-{merke}"
+    guid = "9188040d-6c67-4c5b-b112-36a304b66dad"
+    migrator.execute(
+        "INSERT INTO oidc_provider (provider_id, issuer, discovery_url,"
+        " client_id, client_secret_ref, tillatte_algoritmer, aktiv) VALUES"
+        " (%s,%s,%s,'cid','ref','{RS256}',true)",
+        (eksakt, f"https://{merke}.eks.test",
+         f"https://{merke}.eks.test/.well-known"))
+    migrator.execute(
+        "INSERT INTO oidc_provider (provider_id, issuer, discovery_url,"
+        " client_id, client_secret_ref, tillatte_algoritmer, issuer_mal,"
+        " aktiv) VALUES (%s,%s,%s,'cid','ref','{RS256}',%s,true)",
+        (mal, f"https://{merke}.mal.test/common/v2.0",
+         f"https://{merke}.mal.test/.well-known",
+         f"https://{merke}.mal.test/{{tenantid}}/v2.0"))
+    migrator.commit()
+
+    def ident(issuer):
+        _sett_kontekst(migrator, "t-velg-oppsett")
+        bid = migrator.execute(
+            "INSERT INTO brukeridentitet (issuer, sub) VALUES (%s,%s)"
+            " RETURNING bruker_id", (issuer, secrets.token_hex(6))
+        ).fetchone()[0]
+        migrator.commit()
+        return bid
+
+    try:
+        assert _leverandoren_hennes(
+            migrator, ident(f"https://{merke}.eks.test")) == eksakt
+        assert _leverandoren_hennes(
+            migrator, ident(f"https://{merke}.mal.test/{guid}/v2.0")) == mal
+        # En ukjent utsteder gir INGEN gjetning — skallet tegner uten bytter.
+        assert _leverandoren_hennes(
+            migrator, ident(f"https://{merke}.ukjent.test")) is None
+    finally:
+        migrator.rollback()
+        migrator.execute("DELETE FROM oidc_provider WHERE"
+                         " provider_id IN (%s,%s)", (eksakt, mal))
+        migrator.commit()
+
+
+@pg
 def test_reserverte_kontekster_er_ikke_firmaer(migrator):
     """`_registrering` er et sted å stå mens hun registrerer, ikke et firma.
     Sto den i lista, ville bytteren tilbudt henne å «bytte til» en
