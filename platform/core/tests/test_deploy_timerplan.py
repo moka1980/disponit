@@ -163,10 +163,12 @@ def test_intervalltimerne_er_et_navngitt_unntak():
             f"{navn} har OnUnitActiveSec uten OnBootSec — den ville"
             " ikke kjørt før første manuelle start")
     assert sorted(intervall) == [
+        "disponit-arbeidervakt.timer",
         "disponit-artefaktrydding.timer",
         "disponit-backupstatus.timer",
         "disponit-domenerevalidering.timer",
         "disponit-domeneverifisering.timer",
+        "disponit-driftsvarsel.timer",
         "disponit-evidensreaper.timer",
         "disponit-helse.timer",
         "disponit-m57-utsending.timer",
@@ -300,3 +302,180 @@ def test_modultokenene_fornyes_av_en_timer_som_faktisk_kaller_rotasjonen():
     # Et utløpt token kan ikke rotere seg selv — da skal uniten FEILE,
     # ikke rapportere «ok».
     assert "feil=1; continue" in skript and 'exit "$feil"' in skript
+
+
+def _kjor_arbeidervakt(tmp_path, feil_per_unit, inaktive=()):
+    """Kjører vakten mot en falsk vert: `systemctl` og `journalctl` i PATH
+    svarer fra testen, så det er SKRIPTET som måles, ikke en kopi av det."""
+    import os
+    import subprocess
+
+    kat = tmp_path / "etc"
+    for navn in ("m14", "wcag"):
+        (kat / navn).mkdir(parents=True)
+        (kat / navn / "DISPONIT_MODULTOKEN").write_text("mtk_x.y", encoding="utf-8")
+    binkat = tmp_path / "bin"
+    binkat.mkdir()
+    falsk_systemctl = (
+        "#!/bin/bash\ncase \" $INAKTIVE \" in *\" $2 \"*) echo inactive;"
+        " exit 3;; esac\necho active\n")
+    (binkat / "systemctl").write_text(falsk_systemctl, encoding="utf-8")
+    (binkat / "journalctl").write_text(
+        "#!/bin/bash\nn=$(cat \"$TELLEKAT/$2\" 2>/dev/null || echo 0)\n"
+        "for i in $(seq 1 $n); do echo '{\"hendelse\": \"runde_feilet\","
+        " \"feiltype\": \"RuntimeError\"}'; done\n"
+        "echo '{\"hendelse\": \"arbeider_oppe\"}'\n", encoding="utf-8")
+    for f in binkat.iterdir():
+        f.chmod(0o755)
+    tell = tmp_path / "tell"
+    tell.mkdir()
+    for unit, n in feil_per_unit.items():
+        (tell / unit).write_text(str(n), encoding="utf-8")
+    miljo = dict(os.environ, PATH=f"{binkat}:{os.environ['PATH']}",
+                 ARBEIDERVAKT_KATALOG=str(kat), ARBEIDERVAKT_TEST="1",
+                 TELLEKAT=str(tell), INAKTIVE=" ".join(inaktive))
+    return subprocess.run(
+        ["bash", str(TIMERKATALOG / "arbeidervakt.sh")], env=miljo,
+        capture_output=True, text=True, timeout=30)
+
+
+def test_arbeidervakten_ser_en_arbeider_som_feiler_i_hver_runde(tmp_path):
+    """EN MÅNED UTEN AT NOE SÅ DET (funnet 20.11.2026): alle sju arbeiderne
+    logget `runde_feilet` hvert tiende sekund, tjenestene sto «active», og
+    `systemctl --failed` var tom.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `feil=1` i terskelgrenen, eller
+    tell noe annet enn `runde_feilet`.
+    """
+    # Frisk vert — og en utrulling gir én eller to feil uten at det er alarm.
+    r = _kjor_arbeidervakt(tmp_path / "a", {"disponit-m14": 2})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ok   disponit-m14: 2 feilede" in r.stdout
+    assert "ok   disponit-wcag-audit: 0 feilede" in r.stdout
+
+    # Feiler i hver runde: seksti på ti minutter.
+    r = _kjor_arbeidervakt(tmp_path / "b", {"disponit-wcag-audit": 60})
+    assert r.returncode == 1, r.stdout
+    assert "FEIL disponit-wcag-audit: 60 feilede runder" in r.stdout
+    assert "ok   disponit-m14" in r.stdout, "en syk arbeider skjulte en frisk"
+
+    # En tjeneste som er stoppet er heller ikke «alt bra».
+    r = _kjor_arbeidervakt(tmp_path / "c", {}, inaktive=["disponit-m14"])
+    assert r.returncode == 1, r.stdout
+    assert "FEIL disponit-m14: tjenesten er «inactive»" in r.stdout
+
+
+def test_arbeidervakten_er_ikke_gronn_naar_den_ikke_fant_noe(tmp_path):
+    """En vakt som ikke fant noen å vokte har ikke målt noe — og et grønt
+    svar da er det samme som blindheten den ble laget for å fjerne."""
+    import os
+    import subprocess
+
+    (tmp_path / "tom").mkdir()
+    r = subprocess.run(
+        ["bash", str(TIMERKATALOG / "arbeidervakt.sh")],
+        env=dict(os.environ, ARBEIDERVAKT_KATALOG=str(tmp_path / "tom"),
+                 ARBEIDERVAKT_TEST="1"),
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "fant ingen arbeidere" in r.stdout
+
+
+def test_arbeidervakten_kjores_av_en_timer_og_installeres():
+    unit = (TIMERKATALOG / "disponit-arbeidervakt.service").read_text(
+        encoding="utf-8")
+    assert ("ExecStart=/bin/bash /opt/disponit/aktiv/deploy/staging/"
+            "arbeidervakt.sh") in unit
+    oppsett = (TIMERKATALOG / "modultoken-oppsett.sh").read_text(
+        encoding="utf-8")
+    assert "systemctl enable --now disponit-arbeidervakt.timer" in oppsett
+
+
+def _driftsvarsel():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "driftsvarsel", TIMERKATALOG / "driftsvarsel.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_driftsvarselet_sender_ved_ny_feil_paaminner_og_friskmelder(tmp_path):
+    """En feilet unit ingen ser, er en feil ingen retter: prod var nede i
+    fire uker i oktober, og arbeiderne døde i en måned. Dette er leddet som
+    gjør `systemctl --failed` til en e-post.
+
+    MUTASJONEN SOM DREPER DENNE: la `avgjor` svare None for nye units, eller
+    skriv tilstanden før sendingen lyktes.
+    """
+    dv = _driftsvarsel()
+    fil = tmp_path / "tilstand.json"
+    sendt, feilet, klokke = [], [], [1000.0]
+
+    def kjor(send_feiler=False):
+        def send(til, emne, tekst):
+            if send_feiler:
+                raise OSError("smtp nede")
+            sendt.append((til, emne, tekst))
+        return dv.kjor(fil, feilede=lambda: list(feilet), send=send,
+                       til="eier@example.test", naa=lambda: klokke[0],
+                       vert="verten", detaljer=lambda u: "siste linje")
+
+    # Frisk vert: stille.
+    assert kjor() == 0 and sendt == []
+
+    # Ny feil: én e-post, med unitnavnet og de siste logglinjene.
+    feilet.append("disponit-arbeidervakt.service")
+    assert kjor() == 0 and len(sendt) == 1
+    til, emne, tekst = sendt[0]
+    assert til == "eier@example.test" and "FEIL" in emne and "verten" in emne
+    assert "disponit-arbeidervakt.service" in tekst and "siste linje" in tekst
+
+    # Samme feil fem minutter senere: stille — ikke én e-post per kjøring.
+    klokke[0] += 300
+    assert kjor() == 0 and len(sendt) == 1
+
+    # En NY unit feiler i tillegg: ny e-post med begge.
+    feilet.append("disponit-backup.service")
+    assert kjor() == 0 and len(sendt) == 2
+    assert "disponit-backup.service" in sendt[1][2]
+
+    # Et døgn uten endring: påminnelse.
+    klokke[0] += dv.PAAMINN_S
+    assert kjor() == 0 and len(sendt) == 3
+    assert "FORTSATT FEIL" in sendt[2][1]
+
+    # Alt friskt: friskmelding, og deretter stille igjen.
+    feilet.clear()
+    assert kjor() == 0 and len(sendt) == 4
+    assert "i orden igjen" in sendt[3][1]
+    assert kjor() == 0 and len(sendt) == 4
+
+    # En sending som feiler, prøves igjen: tilstanden er IKKE skrevet.
+    feilet.append("disponit-api.service")
+    assert kjor(send_feiler=True) == 1 and len(sendt) == 4
+    assert kjor() == 0 and len(sendt) == 5
+    assert "disponit-api.service" in sendt[4][2]
+
+
+def test_driftsvarselet_er_blindt_og_sier_det(tmp_path, monkeypatch):
+    """Uten mottaker, SMTP-oppsett eller svar fra systemd har vakten ikke
+    målt noe. Da er svaret exit 2 — aldri et stille 0."""
+    dv = _driftsvarsel()
+    fil = tmp_path / "tilstand.json"
+    for k in ("VERT", "PORT", "BRUKER", "PASSORD", "AVSENDER"):
+        monkeypatch.delenv(f"DISPONIT_SMTP_{k}", raising=False)
+    monkeypatch.delenv("DISPONIT_DRIFTSVARSEL_TIL", raising=False)
+    assert dv.kjor(fil, feilede=lambda: []) == 2
+    assert dv.kjor(fil, feilede=lambda: [], til="x@example.test") == 2
+    assert dv.kjor(fil, feilede=lambda: None, til="x@example.test",
+                   send=lambda *a: None) == 2
+    # Oss selv varsler vi ikke om, og mottakeren står aldri i repoet.
+    assert dv.SELV == "disponit-driftsvarsel.service"
+    for navn in ("driftsvarsel.py", "driftsvarsel-oppsett.sh",
+                 "disponit-driftsvarsel.service"):
+        assert "@gmail" not in (TIMERKATALOG / navn).read_text(
+            encoding="utf-8")
+    unit = (TIMERKATALOG / "disponit-driftsvarsel.service").read_text(
+        encoding="utf-8")
+    assert ("ExecStart=/usr/bin/python3 /opt/disponit/aktiv/deploy/staging/"
+            "driftsvarsel.py") in unit

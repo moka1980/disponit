@@ -1,0 +1,9 @@
+[Unit]
+Description=Disponit arbeidervakt, hvert femte minutt
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
