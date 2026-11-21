@@ -7,7 +7,7 @@ import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t, velgSprak } from "../static/js/i18n.js";
 import { REGISTRERING_AAPEN, visInnlogging } from "../static/js/innlogging.js";
 import { AppShell } from "../static/js/komponenter.js";
-import { visKundeadmin } from "../static/js/flater/kundeadmin.js";
+import { visKundeadmin, godkjenningsregelDel } from "../static/js/flater/kundeadmin.js";
 import { visAdmin } from "../static/js/flater/admin.js";
 import { TILBUD, erTilgjengelig, erTilgjengeligFor, modulStatus, produksjonsmiljo,
   settProduksjonsmiljo } from "../static/js/plattformdata.js";
@@ -1218,3 +1218,102 @@ test("Invitasjonslenke uten økt: siden sier at hun er invitert, og returstien b
     window.history.replaceState(null, "", forrige);
   }
 });
+
+
+// --- 227 (ADR-010): fire øyne er firmaets valg ------------------------------
+function medRegel(regel, post) {
+  const ekte = globalThis.fetch;
+  const kall = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    const sti = String(url).split("?")[0];
+    if (sti === "/v1/firma/godkjenningsregel") {
+      if (opts.method === "POST") {
+        kall.push(JSON.parse(opts.body));
+        return { ok: true, status: 200, json: async () => post };
+      }
+      return { ok: true, status: 200, json: async () => regel };
+    }
+    return ekte(url, opts);
+  };
+  return { kall, rydd: () => { globalThis.fetch = ekte; } };
+}
+
+async function ventPaa(pred, n = 200) {
+  for (let i = 0; i < n; i++) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  return pred();
+}
+
+test("Godkjenningsregel: kortet sier hva som gjelder og tilbyr endringen",
+  async () => {
+    const forvalter = { scopes: ["policy:read", "policy:activate"] };
+    // ÉN PERSON gjelder: da kan det strammes av én alene.
+    let r = medRegel({ uavhengig_godkjenning: false, forslag_om_en: false,
+                       forslag_er_mitt: false },
+                     { uavhengig_godkjenning: true, forslag_om_en: false,
+                       forslag_er_mitt: false, utfall: "satt" });
+    try {
+      const kort = godkjenningsregelDel(forvalter);
+      document.body.append(kort);
+      await ventPaa(() => kort.querySelector("button"));
+      assert.ok(kort.textContent.includes(t("ui.gkregel.en")));
+      const knapp = kort.querySelector("button");
+      assert.equal(knapp.textContent, t("ui.gkregel.krev_to"));
+      knapp.click();
+      await ventPaa(() => r.kall.length === 1
+        && kort.textContent.includes(t("ui.gkregel.to")));
+      assert.deepEqual(r.kall, [{ uavhengig_godkjenning: true }]);
+      assert.ok(kort.textContent.includes(t("ui.gkregel.utfall.satt")));
+      kort.remove();
+    } finally { r.rydd(); }
+
+    // TO PERSONER gjelder: å gå til én er et FORSLAG, og det sies.
+    r = medRegel({ uavhengig_godkjenning: true, forslag_om_en: false,
+                   forslag_er_mitt: false },
+                 { uavhengig_godkjenning: true, forslag_om_en: true,
+                   forslag_er_mitt: true, utfall: "foreslatt" });
+    try {
+      const kort = godkjenningsregelDel(forvalter);
+      document.body.append(kort);
+      await ventPaa(() => kort.querySelector("button"));
+      assert.ok(kort.textContent.includes(t("ui.gkregel.en_hjelp")));
+      kort.querySelector("button").click();
+      await ventPaa(() => kort.textContent.includes(
+        t("ui.gkregel.mitt_forslag")));
+      assert.deepEqual(r.kall, [{ uavhengig_godkjenning: false }]);
+      // Den som foreslo, kan trekke — ikke bekrefte.
+      assert.deepEqual([...kort.querySelectorAll("button")]
+        .map((b) => b.textContent), [t("ui.gkregel.trekk")]);
+      kort.remove();
+    } finally { r.rydd(); }
+
+    // EN KOLLEGAS FORSLAG: bekreft eller avslå.
+    r = medRegel({ uavhengig_godkjenning: true, forslag_om_en: true,
+                   forslag_er_mitt: false }, {});
+    try {
+      const kort = godkjenningsregelDel(forvalter);
+      document.body.append(kort);
+      await ventPaa(() => kort.querySelectorAll("button").length === 2);
+      assert.ok(kort.textContent.includes(t("ui.gkregel.andres_forslag")));
+      assert.deepEqual([...kort.querySelectorAll("button")]
+        .map((b) => b.textContent),
+        [t("ui.gkregel.bekreft"), t("ui.gkregel.avslaa")]);
+      const brudd = await alvorligeBrudd(kort);
+      assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+      kort.remove();
+    } finally { r.rydd(); }
+
+    // EN LESER ser regelen, men får ingen knapper; uten lesescope: ingenting.
+    r = medRegel({ uavhengig_godkjenning: true, forslag_om_en: false,
+                   forslag_er_mitt: false }, {});
+    try {
+      const kort = godkjenningsregelDel({ scopes: ["policy:read"] });
+      document.body.append(kort);
+      await ventPaa(() => kort.textContent.includes(t("ui.gkregel.to")));
+      assert.equal(kort.querySelectorAll("button").length, 0);
+      kort.remove();
+      assert.equal(godkjenningsregelDel({ scopes: [] }).hidden, true);
+    } finally { r.rydd(); }
+  });

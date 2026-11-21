@@ -126,14 +126,42 @@ test("Registrering: hele veien, og hun får VITE at hun må logge inn på nytt",
   const kall = KALL.filter((k) => k.metode === "POST");
   assert.equal(kall.length, 1);
   // FULLMAKTEN ER MED (207): kundesvaret er forhåndsvalgt.
+  // …og GODKJENNINGSREGELEN (227): av som standard — et lite firma skal
+  // ikke stoppes av en kollega det ikke har.
   assert.deepEqual(kall[0].kropp, { navn: "Fjordlys Elektro AS",
     orgnummer: "923609016", bransje: "tjenestebedrift",
-    fullmakter: ["kundeservice-svar"] });
+    fullmakter: ["kundeservice-svar"], uavhengig_godkjenning: false });
   // Skjemaet er BORTE: ingenting å klikke to ganger på.
   assert.equal(h.querySelector("form"), null);
 
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Registrering: to godkjennere er et VALG, og sendes når det er krysset av",
+     async () => {
+  SVAR = { "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
+    navn: "Fjordlys Elektro AS", prove_utloper: "2026-10-12",
+    bransje: "tjenestebedrift" } };
+  const h = nyHoved();
+  visFirmaregistrering(h, ctx());
+  const boks = h.querySelector("#firmareg-to");
+  assert.ok(boks, "valget finnes ikke i skjemaet");
+  assert.equal(boks.checked, false, "to godkjennere er forhåndsvalgt");
+  assert.ok(h.textContent.includes(t("ui.firmareg.to_godkjennere")));
+  assert.ok(h.textContent.includes(t("ui.firmareg.to_godkjennere_hjelp")));
+  boks.checked = true;
+  fyll(h);
+  await vent(() => KALL.some((k) => k.metode === "POST"));
+  const kall = KALL.find((k) => k.metode === "POST");
+  assert.equal(kall.kropp.uavhengig_godkjenning, true);
+  // Valget er en del av handlingen: annen nøkkel enn uten.
+  assert.notEqual(kall.idem,
+    idempotensnokkelFor("Fjordlys Elektro AS", "923609016",
+                        "tjenestebedrift", null, ["kundeservice-svar"]));
+  assert.equal(kall.idem,
+    idempotensnokkelFor("Fjordlys Elektro AS", "923609016",
+                        "tjenestebedrift", null, ["kundeservice-svar"], true));
 });
 
 test("Registrering: nøkkelen er STABIL for samme innhold", () => {
