@@ -411,6 +411,8 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm17_tildel(text,uuid,text,text)',                     'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_tildelingene(text)',                              'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_sporet(text,uuid,integer)',                       'disponit_kundeservice_eier'),
+    -- 226: måltall for køen.
+    ('FUNCTION', 'm17_maaltall(text,integer)',                          'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_funnkandidater(text,date,integer,integer)',       'disponit_kundeservice_eier'),
     ('FUNCTION', 'm17_sveip_henvendelser(integer,integer,integer)',     'disponit_kundeservice_eier'),
     -- 160 (M-17, ARC B): adressen på henvendelsen, inntak med adresse.

@@ -7204,5 +7204,12 @@
   "ui.kundeservice.spor.svar.bestilt": "Sending bestilt",
   "ui.kundeservice.spor.svar.sendt": "Svar sendt",
   "ui.kundeservice.utfall.besvart": "besvart",
-  "ui.kundeservice.utfall.ikke_aktuell": "ikke aktuell"
+  "ui.kundeservice.utfall.ikke_aktuell": "ikke aktuell",
+  "ui.kundeservice.maal.min": "{m} min",
+  "ui.kundeservice.maal.timer": "{t} t {m} min",
+  "ui.kundeservice.maal.dogn": "{d} døgn {t} t",
+  "ui.kundeservice.maal.volum": "Siste {dogn} døgn: {mottatt} henvendelser inn, {besvart} besvart.",
+  "ui.kundeservice.maal.svartid": "Typisk svartid: {tid}.",
+  "ui.kundeservice.maal.ingen_besvart": "Ingen er besvart i perioden ennå.",
+  "ui.kundeservice.maal.eldste": "Den eldste åpne saken er {dogn} døgn gammel."
 }

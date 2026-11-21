@@ -7204,5 +7204,12 @@
   "ui.kundeservice.spor.svar.bestilt": "Sending ordered",
   "ui.kundeservice.spor.svar.sendt": "Reply sent",
   "ui.kundeservice.utfall.besvart": "answered",
-  "ui.kundeservice.utfall.ikke_aktuell": "not relevant"
+  "ui.kundeservice.utfall.ikke_aktuell": "not relevant",
+  "ui.kundeservice.maal.min": "{m} min",
+  "ui.kundeservice.maal.timer": "{t} h {m} min",
+  "ui.kundeservice.maal.dogn": "{d} days {t} h",
+  "ui.kundeservice.maal.volum": "Last {dogn} days: {mottatt} enquiries in, {besvart} answered.",
+  "ui.kundeservice.maal.svartid": "Typical response time: {tid}.",
+  "ui.kundeservice.maal.ingen_besvart": "None has been answered in the period yet.",
+  "ui.kundeservice.maal.eldste": "The oldest open case is {dogn} days old."
 }

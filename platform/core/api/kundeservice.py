@@ -278,6 +278,11 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
     # svaret» i flaten mens planrunden stille bestilte ingenting — målt på
     # wcagvakt 16/9.
     svar_fullmakt = _policy_har_svar(conn, tenant)
+    # 226: MÅLTALLENE — svartid og volum for de siste 30 døgnene. Tallene
+    # gjelder ALT i vinduet, ikke det køen viser. Medianen er `None` når
+    # ingenting er besvart; flaten sier det med ord, ikke med «0 min».
+    mt = conn.execute("SELECT * FROM m17_maaltall(%s,%s)",
+                      (tenant, MAALTALL_DOGN)).fetchone()
     return {
         "sammendrag": {
             "apne": s[0], "uklassifiserte": s[1], "i_unntakskoe": s[2],
@@ -286,6 +291,10 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
             # LISTEN ER AVKORTET, OG FLATEN SKAL KUNNE SI DET.
             "vist": len(koe),
             "svar_fullmakt": svar_fullmakt},
+        "maaltall": {
+            "dogn": mt[0], "mottatt": mt[1], "besvart": mt[2],
+            "ikke_aktuelle": mt[3], "median_svartid_min": mt[4],
+            "apne": mt[5], "eldste_apne_dogn": mt[6]},
         "koe": koe,
         # RADEN FINNES FØR PROFILEN GJØR DET. `m17_avsenderprofilen`
         # LEFT JOIN-er mot `firma` og faller tilbake på firmanavnet, så
@@ -298,6 +307,9 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
         "avsenderprofil": None if a is None else {
             "avsender_navn": a[0], "svar_til": a[1], "signatur": a[2],
             "oppdatert": a[3].isoformat() if a[3] else None}}
+
+
+MAALTALL_DOGN = 30
 
 
 def _medlemsnavn(conn, tenant: str) -> dict:
