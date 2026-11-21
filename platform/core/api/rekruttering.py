@@ -1298,6 +1298,38 @@ def evaluering_avbryt_endepunkt(tjeneste, request):
     return _med_conn(tjeneste, rid, kjor)
 
 
+def stillingsprofiler_for(conn, tenant: str) -> list[dict]:
+    """Kundens stillingsprofiler, siste versjon av hver. LESEDØREN — brukt
+    av `GET /v1/rekruttering/stillingsprofiler` og av dashbordets «Kom i
+    gang» (`oppsett.py`)."""
+    profiler = []
+    for pid, versjon, navn, opprettet, av_ in conn.execute(
+            "SELECT s.profil_id, s.versjon, s.navn, s.opprettet,"
+            "       s.opprettet_av"
+            "  FROM stillingsprofil s"
+            " WHERE s.tenant=%s"
+            # 074: slett = skjuling — raden forlater listen (og
+            # dermed Ny bestilling), historikken består i basen.
+            "   AND s.skjult_ts IS NULL"
+            "   AND s.versjon = (SELECT max(i.versjon)"
+            "                      FROM stillingsprofil i"
+            "                     WHERE i.tenant=s.tenant"
+            "                       AND i.profil_id=s.profil_id)"
+            " ORDER BY s.opprettet DESC", (tenant,)).fetchall():
+        krav = [{"kravnavn": kn, "vekt": v}
+                for kn, v in conn.execute(
+                    "SELECT kravnavn, vekt FROM stillingsprofil_krav"
+                    " WHERE tenant=%s AND profil_id=%s AND versjon=%s"
+                    " ORDER BY rekkefolge",
+                    (tenant, pid, versjon)).fetchall()]
+        profiler.append({
+            "profil_id": str(pid), "versjon": versjon, "navn": navn,
+            "opprettet": opprettet.isoformat(),
+            "opprettet_av": av_, "krav": krav,
+        })
+    return profiler
+
+
 def stillingsprofiler_endepunkt(tjeneste, request):
     """GET /v1/rekruttering/stillingsprofiler — kundens kravlister (#189).
 
@@ -1315,31 +1347,7 @@ def stillingsprofiler_endepunkt(tjeneste, request):
 
     def kjor(conn):
         tenant, _bid = _leseauth_beslutninger(tjeneste, request, conn, rid)
-        profiler = []
-        for pid, versjon, navn, opprettet, av_ in conn.execute(
-                "SELECT s.profil_id, s.versjon, s.navn, s.opprettet,"
-                "       s.opprettet_av"
-                "  FROM stillingsprofil s"
-                " WHERE s.tenant=%s"
-                # 074: slett = skjuling — raden forlater listen (og
-                # dermed Ny bestilling), historikken består i basen.
-                "   AND s.skjult_ts IS NULL"
-                "   AND s.versjon = (SELECT max(i.versjon)"
-                "                      FROM stillingsprofil i"
-                "                     WHERE i.tenant=s.tenant"
-                "                       AND i.profil_id=s.profil_id)"
-                " ORDER BY s.opprettet DESC", (tenant,)).fetchall():
-            krav = [{"kravnavn": kn, "vekt": v}
-                    for kn, v in conn.execute(
-                        "SELECT kravnavn, vekt FROM stillingsprofil_krav"
-                        " WHERE tenant=%s AND profil_id=%s AND versjon=%s"
-                        " ORDER BY rekkefolge",
-                        (tenant, pid, versjon)).fetchall()]
-            profiler.append({
-                "profil_id": str(pid), "versjon": versjon, "navn": navn,
-                "opprettet": opprettet.isoformat(),
-                "opprettet_av": av_, "krav": krav,
-            })
+        profiler = stillingsprofiler_for(conn, tenant)
         return _ok({"profiler": profiler}, rid)
 
     return _med_conn(tjeneste, rid, kjor)

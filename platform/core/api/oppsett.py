@@ -22,20 +22,31 @@ import psycopg
 # `None` som klar-flagg: modulen har ingen egen «krav satt»-tilstand i
 # sammendraget, og da sier oversikten bare antall åpne funn.
 ADAPTERE: tuple[tuple[int, str, str, str | None], ...] = (
+    (7, "moteoperasjon", "security:read", "har_krav"),
     (13, "avstemming", "okonomi:read", None),
     (14, "faktura", "okonomi:read", "har_terskel"),
+    (15, "likviditet", "okonomi:read", "har_krav"),
     (17, "kundeservice", "decisions:read", None),
     (18, "onboarding", "decisions:read", None),
     (19, "adresse", "okonomi:read", "har_krav"),
+    (20, "innhold", "security:read", "har_krav"),
     (23, "fordring", "okonomi:read", "har_purreplan"),
     (24, "leverandor", "okonomi:read", "har_terskel"),
     (25, "prosjekt", "okonomi:read", "har_terskel"),
     (26, "prisbok", "okonomi:read", "har_terskel"),
     (27, "lager", "okonomi:read", "har_terskel"),
+    (28, "transport", "okonomi:read", "har_krav"),
+    (29, "hendelse", "security:read", None),
+    (32, "skatt", "okonomi:read", "har_krav"),
+    (33, "prognose", "okonomi:read", "har_krav"),
+    (36, "optimalisator", "okonomi:read", "har_krav"),
     (39, "lonn", "okonomi:read", "har_terskel"),
+    (40, "medarbeider", "okonomi:read", "har_krav"),
     (41, "betaling", "okonomi:read", "har_terskel"),
     (42, "kontovakt", "okonomi:read", "har_terskel"),
+    (43, "telefoni", "security:read", "har_krav"),
     (44, "kampanje", "okonomi:read", None),
+    (45, "esg", "security:read", "har_krav"),
     (46, "anbud", "okonomi:read", "har_profil"),
     (47, "myndighetsrapport", "okonomi:read", "har_krav"),
     (48, "motpart", "okonomi:read", "har_krav"),
@@ -43,10 +54,86 @@ ADAPTERE: tuple[tuple[int, str, str, str | None], ...] = (
     (50, "postjournal", "okonomi:read", "har_krav"),
     (51, "tilskudd", "okonomi:read", "har_krav"),
     (52, "tollkode", "okonomi:read", "har_krav"),
+    (53, "hms", "security:read", "har_krav"),
     (54, "ehf", "okonomi:read", "har_krav"),
     (55, "merkevare", "okonomi:read", "har_krav"),
 )
 
+
+def _funn_i_rader(rader) -> int:
+    return sum(len(r.get("apne_funn") or ()) for r in rader or ())
+
+
+# REGISTERMODULENE har ingen grenser å sette: de følger med på det kunden
+# har LAGT INN (tilganger, avtaler, lisenser, kontroller …). «Klar» betyr
+# derfor at det første er registrert — et tomt register måler ingenting,
+# akkurat som en modul uten grenser. Radene leses gjennom modulens egen
+# `svar_for`, som for adapterne over; funksjonen her bare teller i svaret.
+#
+# (modulnummer, api-modul, lesescope, svar -> (klar | None, åpne funn | None))
+REGISTRE: tuple[tuple[int, str, str, object], ...] = (
+    (5, "dokumentmal", "decisions:read",
+     lambda s: (bool(s.get("familier")), None)),
+    (12, "tilgang", "security:read",
+     lambda s: (bool(s.get("objekter")), len(s.get("funn") or ()))),
+    (21, "plikt", "decisions:read",
+     lambda s: (bool(s.get("plikter")), None)),
+    (22, "lisens", "decisions:read",
+     lambda s: (bool(s.get("lisenser")), None)),
+    # Innsynssaker kommer UTENFRA; det finnes ikke noe å sette opp på
+    # forhånd, så «klar» er ukjent og raden sier bare antall åpne funn.
+    (30, "personvern", "security:read",
+     lambda s: (None, _funn_i_rader(s.get("saker")))),
+    (34, "compliance", "security:read",
+     lambda s: (bool(s.get("kontroller")),
+                _funn_i_rader(s.get("kontroller")))),
+    # Beredskap trenger BEGGE: et tjenestekart uten kontakter varsler ingen.
+    (35, "kontinuitet", "kontinuitet:read",
+     lambda s: (bool(s.get("tjenester")) and bool(s.get("kontakter")),
+                None)),
+)
+
+
+# TRE MODULER MED ET FØRSTE STEG SOM IKKE ER ET REGISTER I `svar_for`:
+# e-post må KOBLES TIL en postboks, WCAG-kontrollen trenger et BEKREFTET
+# domene, og rekrutteringen en stillingsprofil. Hver leses gjennom modulens
+# egen lesedør (samme funksjon som modulens GET-rute kaller).
+#
+# (modulnummer, api-modul, lesedør, lesescope, hva som mangler, rader -> klar)
+FORSTESTEG: tuple[tuple[int, str, str, str, str, object], ...] = (
+    (6, "epost_kilde", "kilder_for", "epost:read", "tilkobling",
+     lambda rader: any(r.get("status") == "aktiv" for r in rader)),
+    # `gyldig` er basens avgjørelse (DOMENE_GYLDIG_SQL) — `status` alene
+    # lyver med vilje når revalideringen har vært borte.
+    (56, "domener", "domener_for", "decisions:read", "tilkobling",
+     lambda rader: any(r.get("gyldig") for r in rader)),
+    (57, "rekruttering", "stillingsprofiler_for", "decisions:read",
+     "register", lambda rader: bool(rader)),
+)
+
+
+def les_forstesteg(conn, tenant: str, apimodul: str, dor: str, klar) -> dict:
+    """Ett førstesteg, i eget savepoint — som `les_modul`."""
+    modul = importlib.import_module(f"{__package__}.{apimodul}")
+    try:
+        with conn.transaction():
+            rader = getattr(modul, dor)(conn, tenant)
+    except psycopg.Error:
+        return {"tilgjengelig": False, "klar": None, "apne_funn": None}
+    return {"tilgjengelig": True, "klar": bool(klar(rader)),
+            "apne_funn": None}
+
+
+def les_register(conn, tenant: str, apimodul: str, tell) -> dict:
+    """Én registermoduls status, i eget savepoint — som `les_modul`."""
+    modul = importlib.import_module(f"{__package__}.{apimodul}")
+    try:
+        with conn.transaction():
+            svar = modul.svar_for(conn, tenant)
+    except psycopg.Error:
+        return {"tilgjengelig": False, "klar": None, "apne_funn": None}
+    klar, funn = tell(svar)
+    return {"tilgjengelig": True, "klar": klar, "apne_funn": funn}
 
 # Anbefalte grenser = skjemaets egne DEFAULT-verdier i modulens
 # migrasjon — tallene modulens forfatter valgte. De skrives aldri av seg
@@ -207,6 +294,23 @@ def svar_for(conn, tenant: str, scopes, tildelte) -> dict:
             sti, kropp = ANBEFALT[nr]
             rad["anbefalt"] = {"sti": sti, "kropp": dict(kropp)}
         moduler.append(rad)
+    for nr, apimodul, scope, tell in REGISTRE:
+        if nr not in tildelt or scope not in scopes:
+            continue
+        rad = {"modul": nr, **les_register(conn, tenant, apimodul, tell)}
+        if rad["klar"] is False:
+            # Flaten sier «ingenting registrert», ikke «mangler grensene».
+            rad["mangler"] = "register"
+        moduler.append(rad)
+    for nr, apimodul, dor, scope, mangler, klar in FORSTESTEG:
+        if nr not in tildelt or scope not in scopes:
+            continue
+        rad = {"modul": nr,
+               **les_forstesteg(conn, tenant, apimodul, dor, klar)}
+        if rad["klar"] is False:
+            rad["mangler"] = mangler
+        moduler.append(rad)
+    moduler.sort(key=lambda m: m["modul"])
     svar = {"moduler": moduler}
     if POLICYSCOPE in scopes:
         svar["automatikk"] = automatikk(conn, tenant, tildelt)
