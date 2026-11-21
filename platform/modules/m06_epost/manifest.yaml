@@ -23,8 +23,8 @@
 id: m06_epost
 navn: E-postoperasjonsagent
 versjon: 0.1.0
-status: under_utvikling
-driftstilstand: ikke_i_drift
+status: aktiv
+driftstilstand: produksjon
 # REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
 # derfor ærlig oppgir ingen: M-6 BESTILLER gjennom policyporten
 # (`epost.behandling` er en bestillingstype, hver kjøring policyvurderes
@@ -43,11 +43,27 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # 21/11: innhenteren er endret for felles postboks (/users/<adresse>
-    # for kilder med delescopet), og bevisroten dekker den.
-    status: nei
+    # KJØRT PÅ NYTT 21/11 etter felles postboks: bevisroten dekker
+    # innhenteren, så det forrige artefaktet (17/9) målte en annen
+    # innhenter. Fersk base fra utsjekket på verten, hele suiten.
+    status: ja
+    krav_id: m6-suite-v1
+    bevismaalinger:
+      - maalt.m6_feilet
+      - maalt.m6_tester
+      - maalt.m6_hoppet
+      - maalt.m6_exitkode
+      - maalt.tester_feilet
+      - maalt.tester_totalt
+      - maalt.tester_hoppet
+      - maalt.suite_exitkode
+    artefakt: deploy/staging/artefakter/m6-suite-v1-20261121T100727Z.json
+    artefakt_sha256: 53cc6a87f0c8388704a88e6fc0cf8009314ebd805a7b951ef35c5aa3a7f40339
     notat: >-
-      Suiten kjøres på nytt etter endringen i innhenteren 21/11.
+      5605 tester, 0 feilet, 0 hoppet; modulens egen andel
+      86 tester i elleve filer, 0 feilet, 0 hoppet. Kjørt på
+      disponit-srv 21/11 mot fersk base fra utsjekket (samme rigg som
+      CI bygger), som administrator.
   syntetisk_datasett_likt_lokalt:
     # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
     # og alt annet er produktets eget: tokenutpakking, delta-paging (to
