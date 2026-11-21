@@ -26,7 +26,7 @@ import { settI18nForTest, t } from "../static/js/i18n.js";
 import { lesbarTekst } from "../static/js/flater/epost.js";
 import {
   alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
-  hvemTekst, sporTekst, sporHvem,
+  hvemTekst, sporTekst, sporHvem, svartidTekst,
   visKundeservice,
   funnFor, trengerMenneske,
 } from "../static/js/flater/kundeservice.js";
@@ -539,6 +539,45 @@ test("Spor: hentes når det åpnes, og sier hva, hvem og når", async () => {
   assert.ok(linjer[1].includes("Ola Hansen"));
   const brudd = await alvorligeBrudd(h);
   assert.deepEqual(brudd, [], beskrivBrudd(brudd));
+});
+
+test("Måltall: svartid og volum, i ord", async () => {
+  assert.equal(svartidTekst(null), null);
+  assert.equal(svartidTekst(0), "0 min");
+  assert.equal(svartidTekst(59), "59 min");
+  assert.equal(svartidTekst(190), "3 t 10 min");
+  assert.equal(svartidTekst(1440 + 125), "1 døgn 2 t");
+
+  const med = (mt) => ({ ...fullSvar(),
+    "/v1/kundeservice": { ...KOEN, maaltall: mt } });
+  SVAR = med({ dogn: 30, mottatt: 42, besvart: 38, ikke_aktuelle: 2,
+               median_svartid_min: 190, apne: 4, eldste_apne_dogn: 6 });
+  let h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelector(".ks-maaltall") !== null);
+  let tekst = h.querySelector(".ks-maaltall").textContent;
+  assert.ok(tekst.includes("Siste 30 døgn: 42 henvendelser inn, 38 besvart."));
+  assert.ok(tekst.includes("Typisk svartid: 3 t 10 min."));
+  assert.ok(tekst.includes("6 døgn gammel"));
+
+  // INGENTING BESVART ER ET ORD, ikke «0 min» — null minutter ville vært
+  // en påstand om en svartid ingen har målt.
+  SVAR = med({ dogn: 30, mottatt: 3, besvart: 0, ikke_aktuelle: 0,
+               median_svartid_min: null, apne: 3, eldste_apne_dogn: 0 });
+  h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelector(".ks-maaltall") !== null);
+  tekst = h.querySelector(".ks-maaltall").textContent;
+  assert.ok(tekst.includes(t("ui.kundeservice.maal.ingen_besvart")));
+  assert.ok(!tekst.includes("0 min"));
+  assert.ok(!tekst.includes("døgn gammel"));
+
+  // En eldre server uten feltet: flaten tegner som før.
+  SVAR = fullSvar();
+  h = nyHoved();
+  visKundeservice(h, ctx());
+  await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+  assert.equal(h.querySelector(".ks-maaltall"), null);
 });
 
 test("Kundeservice: kilden bærer ingen sendevei", () => {
