@@ -305,9 +305,9 @@ def test_etterfyllingen_treffer_firmaer_som_finnes():
         assert _regel(c, tenant) == (True, False, None)
     finally:
         c.close()
-    sql = (Path(__file__).resolve().parents[1] / "db" / "migrations"
-           / "228_godkjenningsvalg_etterfylles.sql").read_text(
-               encoding="utf-8")
+    fil = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+           / "228_godkjenningsvalg_etterfylles.sql")
+    sql = fil.read_text(encoding="utf-8")
     m = koble(MIGRATOR_DSN)
     try:
         m.execute(sql)
