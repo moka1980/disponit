@@ -190,6 +190,15 @@
   color: var(--ink); }
 .ks-stille-gruppe > .tablewrap { margin-top: var(--sp-2); }
 .hv-flere { display: grid; gap: var(--sp-3); }
+/* 229: de to veiene inn til e-post — Microsoft 365 og vanlig Gmail. */
+.epost-kobling { display: grid; gap: var(--sp-4); margin-top: var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  align-items: start; }
+.epost-kobling > .kort > h2 { margin-top: 0; font-size: var(--fs-lg); }
+.epost-kobling .kv-skjema { display: grid; gap: var(--sp-3); }
+.epost-gmail-steg { margin: 0 0 var(--sp-3); padding-left: var(--sp-5);
+  display: grid; gap: var(--sp-1); }
+
 /* 225: hvem som har saken, og sporet. */
 .hv-hvem { margin: var(--sp-2) 0 0; font-weight: 600; }
 .hv-tildel { align-items: center; flex-wrap: wrap; }

@@ -341,6 +341,10 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # bestilling, ingen policyport her: dette er inntak, ikke handling.
     from plan.epost import kjor_en_runde as epostrunde
     epost = epostrunde(tjeneste, conn)
+    # M-6 over IMAP (229, ADR-011): vanlig Gmail med app-passord — egen
+    # modul med egne kandidatdører, så Microsoft-veien står urørt.
+    from plan.epost_imap import kjor_en_runde as imaprunde
+    epost_imap = imaprunde(tjeneste, conn)
     # M-17 (204): stille avsendere — ETTER innhentingen og broen, så
     # rundens nye henvendelser klassifiseres i samme runde. Én definer,
     # to tall; regelen eies av basen.
@@ -350,6 +354,7 @@ def kjor_en_runde(tjeneste, conn) -> dict:
            "resultater": resultater, "klassifisering": klassifisering,
            "purring": purring, "kampanje": kampanje, "svar": svar,
            "bokforing": bokforing, "tilbud": tilbud, "epost": epost,
+           "epost_imap": epost_imap,
            "stilleregler": stille}
     if forfalte or pausete:
         print(json.dumps({"hendelse": "plan_runde", **res},
