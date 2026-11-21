@@ -223,5 +223,6 @@
   "222_m29_kravevidens.sql": "69ca10d7b2da4e3aafc1296b661fcd7aa8d5cd996ab5f456727b196af1c7ee39",
   "223_m32_kravevidens.sql": "6d8543985e6a19ed46a5f5482776f14b5c511e4cf9e06e509873faff616da631",
   "224_m33_kravevidens.sql": "0a8aa54e50ea7b2d1bde3343a55a4bf6fd2e630ea3562d6be66ac17e602cd177",
-  "225_m17_tildeling_og_spor.sql": "4775f260ae2b26057f2d4630ecf5ef49c7962406e2cd197cb67d5df0cfe5cf08"
+  "225_m17_tildeling_og_spor.sql": "4775f260ae2b26057f2d4630ecf5ef49c7962406e2cd197cb67d5df0cfe5cf08",
+  "227_valgfri_uavhengig_godkjenning.sql": "8662e1d1eb03b8aa04ca79d566af34fca20be2beada3049201d5f1793c0b7468"
 }

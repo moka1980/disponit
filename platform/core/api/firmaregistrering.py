@@ -186,6 +186,14 @@ def registrer_firma(tjeneste, request):
                 isinstance(x, str) and x in FULLMAKTER for x in fullmakter):
             return _feil("request_feilformet", rid, 400, detalj="fullmakter")
         fullmakter = sorted(set(fullmakter))
+        # GODKJENNINGSREGELEN (227, ADR-010): krever firmaet at en ANNEN
+        # enn forfatteren godkjenner en policyendring? Den som registrerer
+        # velger. Utelatt felt = nei: et lite firma skal ikke stoppes av en
+        # kollega det ikke har — og regelen kan strammes når som helst.
+        uavhengig = k.get("uavhengig_godkjenning", False)
+        if not isinstance(uavhengig, bool):
+            return _feil("request_feilformet", rid, 400,
+                         detalj="uavhengig_godkjenning")
         # …OG DE MÅ PASSE BRANSJEN: kundesvaret trenger DLP-vitnet, som bare
         # tjenestebedrift-malen har. Et valg malen ikke bærer er 400 med
         # navnet — ikke en policy som validerer og stille mangler det.
@@ -260,13 +268,18 @@ def registrer_firma(tjeneste, request):
         from db import kryptering
         kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
         _aktiver_bransjemal(conn, tenant, bransje, fullmakter)
+        # FØRSTE VALG av godkjenningsregelen: døra lar registranten sette
+        # den alene nettopp fordi den aldri er valgt før.
+        conn.execute("SELECT firma_sett_godkjenningsregel(%s,%s,%s)",
+                     (tenant, uavhengig, bid))
         conn.commit()
 
         sett_kontekst(conn, kontekst, f"bruker:{bid}", rid)
         return _ok_lagret(conn, {"tenant": tenant, "navn": navn,
                                  "prove_utloper": frist.isoformat(),
                                  "bransje": bransje,
-                                 "fullmakter": fullmakter}, rid)
+                                 "fullmakter": fullmakter,
+                                 "uavhengig_godkjenning": uavhengig}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
 
@@ -530,3 +543,65 @@ def sett_fullmakter_endepunkt(tjeneste, request):
 
 
 BRANSJE_FOR_POLICY_ID: dict[str, str] = _bransje_for_policy_id()
+
+
+# ---------------------------------------------------------------------------
+# 227 (ADR-010): fire øyne er firmaets valg.
+# ---------------------------------------------------------------------------
+
+def godkjenningsregel_for(conn, tenant: str, bid: str | None = None) -> dict:
+    """Regelen, og om et forslag om å fjerne den venter på en annen."""
+    rad = conn.execute("SELECT uavhengig, valgt, forslag_av, forslag_ts"
+                       "  FROM firma_godkjenningsregel(%s)",
+                       (tenant,)).fetchone()
+    uavhengig, _valgt, forslag_av, forslag_ts = rad
+    return {
+        "uavhengig_godkjenning": bool(uavhengig),
+        # HVEM som foreslo sendes ikke ut — bare om det var kalleren selv:
+        # da kan hun ikke bekrefte, og flaten skal si det.
+        "forslag_om_en": forslag_av is not None,
+        "forslag_er_mitt": forslag_av is not None and forslag_av == bid,
+        "forslag_ts": forslag_ts.isoformat() if forslag_ts else None}
+
+
+def godkjenningsregel_endepunkt(tjeneste, request):
+    """GET /v1/firma/godkjenningsregel (policy:read)."""
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        bid = auth.token_id.split("sesjon:", 1)[-1]
+        svar = godkjenningsregel_for(conn, auth.tenant, bid)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "policy:read", _fn)
+
+
+def sett_godkjenningsregel_endepunkt(tjeneste, request):
+    """POST /v1/firma/godkjenningsregel (policy:activate, idem).
+
+    Kropp: {"uavhengig_godkjenning": true|false}. STRENGERE settes av én
+    person. SVAKERE krever to: første kall FORESLÅR, et kall fra en ANNEN
+    innen sju døgn BEKREFTER. Regelen håndheves i døra
+    (`firma_sett_godkjenningsregel`), ikke her.
+    """
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _feil, _kropp,
+                                   _krev_idem, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "policy:activate")
+        _krev_idem(request, rid)
+        valg = _kropp(request).get("uavhengig_godkjenning")
+        if not isinstance(valg, bool):
+            return _feil("request_feilformet", rid, 400,
+                         detalj="uavhengig_godkjenning")
+        utfall = conn.execute(
+            "SELECT firma_sett_godkjenningsregel(%s,%s,%s)",
+            (tenant, valg, bid)).fetchone()[0]
+        svar = godkjenningsregel_for(conn, tenant, bid)
+        svar["utfall"] = utfall
+        return _ok_lagret(conn, svar, rid)
+
+    return _med_conn(tjeneste, rid, kjor)
