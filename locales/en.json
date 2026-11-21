@@ -7207,7 +7207,7 @@
   "ui.kundeservice.utfall.ikke_aktuell": "not relevant",
   "site.felles.kicker": "For companies on Microsoft 365",
   "site.felles.tittel": "The shared inbox, with order in who replies",
-  "site.felles.ingress": "post@, support@ or orders@ — the inbox several people share. Disponit reads it, sorts the enquiries and suggests replies. Nothing is sent until one of you has approved it.",
+  "site.felles.ingress": "post@, support@ or orders@ — the inbox several people share. Disponit brings it into one queue, sets aside what is only for information, and keeps track of who replies. Nothing is sent until one of you has approved it.",
   "site.felles.ko_tittel": "One queue, and you see who has the case",
   "site.felles.ko_tekst": "Take the case yourself or give it to a colleague. The queue shows who has what, so nobody answers the same thing twice.",
   "site.felles.fullmakt_tittel": "Authority you set yourselves",

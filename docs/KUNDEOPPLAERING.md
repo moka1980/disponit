@@ -140,7 +140,7 @@ strengt — det er hele poenget med modulen.
 
 | Modul | Passer på | Gjør IKKE |
 |---|---|---|
-| **Kundeservice (M-17)** | Henvendelser som står uklassifisert eller ubesvart for lenge | Svarer ikke. Den foreslår et svar som **utkast**. |
+| **Kundeservice (M-17)** | Henvendelser som står uklassifisert eller ubesvart for lenge | Svarer ikke av seg selv, og skriver ikke svaret: et menneske skriver **utkastet**, og plattformen sender det når det er godkjent. |
 | **E-post (M-6)** | Henter inn e-post fra Microsoft 365 hvert femte minutt og kobler den til kundeservice. Sletting i Outlook speiles hit. | Sender ingenting av seg selv. Et svar må godkjennes av et menneske, og går bare ut hvis postboksen er koblet til med skrivetilgang. |
 | **Onboarding (M-18)** | Løp som har stoppet opp, steg som er forbi fristen, og løp uten en aktiv eier | Provisjonerer ingenting. Den holder oversikten, ikke spaden. |
 | **Adressevalidering (M-19)** | Adresser ingen har kontrollert, kontroller som er utløpt, avviste adresser, og kontroller gjort med en metode kravet ikke godtar | Slår ingenting opp eksternt. Kundens adresse forlater aldri huset. |
