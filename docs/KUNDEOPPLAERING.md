@@ -283,6 +283,13 @@ står under **Kundeservice**.
   hver linje med hvem og når. Sporet kan ikke endres eller slettes, og det
   inneholder ikke kundens tekst.
 
+**Svarmaler.** Under **Kundeservice → Svarmaler** lager dere firmaets
+egne formuleringer for det dere svarer ofte på: gi malen et navn, velg
+gjerne et tema, og skriv teksten. Når noen åpner en sak, står «Start fra en
+mal» over tekstfeltet; maler med sakens tema står øverst. Malen fylles inn
+og kan endres fritt — og legges til under det som alt er skrevet, den
+skriver aldri over. Plattformen skriver ikke svaret for dere.
+
 **Koble til en felles postboks.** Under **E-post**: skriv adressen til
 postboksen (post@, kundeservice@ eller ordre@) og trykk **Koble til
 Microsoft 365**. Logg inn hos Microsoft som en person som har tilgang til

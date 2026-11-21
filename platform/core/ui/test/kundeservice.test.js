@@ -200,10 +200,13 @@ test("Kundeservice: listen bærer ALDRI kundeteksten", async () => {
   // det INGEN innholdskall gjort — og teksten finnes ikke på skjermen.
   // Ved tegning hentes køen og (204) regellisten for stille avsendere;
   // den bærer domener og hasher, aldri kundetekst. Settet er PINNET, så
-  // et tredje kall ved tegning må begrunnes her.
-  await vent(() => KALL.length >= 2);
+  // et nytt kall ved tegning må begrunnes her.
+  // 230: svarmalene hentes også — de er FIRMAETS egne formuleringer, ikke
+  // kundens tekst.
+  await vent(() => KALL.length >= 3);
   assert.deepEqual([...new Set(KALL.map((k) => k.sti))].sort(),
-    ["/v1/kundeservice", "/v1/kundeservice/stilleregler"]);
+    ["/v1/kundeservice", "/v1/kundeservice/stilleregler",
+     "/v1/kundeservice/svarmaler"]);
   assert.ok(!KALL.some((k) => k.sti.includes("/innhold")),
     "innholdet ble hentet uten at noen åpnet en rad");
   assert.ok(!h.textContent.includes(INNHOLD.kropp));
@@ -640,7 +643,13 @@ test("Svarmaler: ny mal sendes med nøkkel, og «Endre» lagrer på samme id",
       tekst: "Vi kommer gjerne på befaring." });
     assert.ok(SISTE.headers["Idempotency-Key"]);
 
-    // «Endre» fyller skjemaet og lagrer på malens egen id.
+    // «Endre» fyller skjemaet og lagrer på malens egen id. Forrige
+    // lagring må være HELT ferdig: knappen er låst til svaret er tatt imot.
+    const lagreknapp = () =>
+      h.querySelector(".ks-malskjema button[type=submit]");
+    assert.ok(await vent(() => !lagreknapp().disabled
+      && h.querySelector("#ks-mal-navn").value === "", 400),
+      "skjemaet ble ikke tømt etter lagringen");
     await vent(() => h.querySelectorAll(".ks-mal").length === 2);
     SISTE = null;
     [...h.querySelectorAll(".ks-mal button")].find(
