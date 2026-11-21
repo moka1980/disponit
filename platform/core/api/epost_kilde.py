@@ -779,7 +779,49 @@ def hent_access_token(conn, tenant: str, kilde_id, *,
     access = token.get("access_token")
     if not isinstance(access, str) or not access:
         raise KildeFeil("tokensvaret manglet access_token")
+    ny = token.get("refresh_token")
+    if isinstance(ny, str) and ny and ny != refresh:
+        _lagre_fornyet_refresh(conn, tenant, kilde_id, dek, key_id, ny)
     return access
+
+
+def _lagre_fornyet_refresh(conn, tenant: str, kilde_id, dek, key_id: str,
+                           ny: str) -> bool:
+    """Skriver det NYE refresh-tokenet tilbake på kilden. -> lagret?
+
+    TIDSBOMBEN (funnet 21.11.2026). Et refresh-token fra Microsoft lever i
+    90 dager, og hver fornyelse gir et nytt med nye 90 dager. Vi brukte det
+    nye access-tokenet og KASTET det nye refresh-tokenet — så det som sto på
+    kilden var alltid det fra samtykkedagen, og hver postboks ville sluttet
+    å hentes 90 dager etter at den ble koblet til, uten at noe var galt
+    hos kunden.
+
+    Skrivingen committes HER: kallerne ruller tilbake rett etter at
+    tokenet er hentet (lesingen skal ikke holde en transaksjon åpen), og en
+    rullet-tilbake fornyelse er den samme tidsbomben. Tenantkonteksten
+    settes igjen etterpå, så kalleren står der den sto.
+
+    EN FEILET SKRIVING STOPPER IKKE RUNDEN — det gamle tokenet virker ennå
+    — men den SIES: en stille feil her er nøyaktig det som lå i 90 dager.
+    """
+    from db.pg import sett_tenant
+    try:
+        ct, nonce = kryptering.krypter(dek, {"refresh_token": ny},
+                                       tenant, key_id)
+        r = conn.execute(
+            "UPDATE epost_kilde SET auth_kryptert=%s, nonce=%s"
+            " WHERE tenant=%s AND kilde_id=%s AND status='aktiv'"
+            "   AND key_id=%s", (ct, nonce, tenant, kilde_id, key_id))
+        lagret = r.rowcount == 1
+        conn.commit()
+    except psycopg.Error as e:
+        conn.rollback()
+        lagret = False
+        print(json.dumps({"hendelse": "m6_refresh_ikke_lagret",
+                          "kilde": str(kilde_id)[:8],
+                          "feil": type(e).__name__}), flush=True)
+    sett_tenant(conn, tenant)
+    return lagret
 
 
 #: Settet samtykket ba om FØR delescopene (10/9–20/11). Fornyelsen for en

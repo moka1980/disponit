@@ -1328,6 +1328,11 @@ GRANT SELECT (tenant, kilde_id, leverandor, postboks, status, sist_hentet_ts,
     delta_token, auth_kryptert, nonce, key_id, opprettet, scope)
     ON epost_kilde TO {rolle};
 GRANT UPDATE (status, sist_hentet_ts, delta_token) ON epost_kilde TO {rolle};
+-- Refresh-tokenet FORNYES ved hver veksling (Microsoft: 90 dagers levetid,
+-- nytt token ved hver bruk). Innhenteren må kunne skrive det nye tilbake —
+-- ellers står samtykkedagens token på kilden til det utløper. Bare
+-- ciphertexten og noncen: nøkkel-id-en og identiteten rører den ikke.
+GRANT UPDATE (auth_kryptert, nonce) ON epost_kilde TO {rolle};
 GRANT INSERT ON epost_melding TO {rolle};
 -- 181: utkastets sendetilstand skrives av prosessen som faktisk sendte.
 GRANT SELECT ON epost_utkast TO {rolle};
