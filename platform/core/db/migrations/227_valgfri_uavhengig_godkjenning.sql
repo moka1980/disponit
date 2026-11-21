@@ -38,6 +38,22 @@ ALTER TABLE firma
 UPDATE firma SET godkjenning_valgt_ts = opprettet,
                  godkjenning_valgt_av = 'migrasjon:227';
 
+-- AKTIVERINGSHENDELSEN (047) sa strukturelt at attestanten ALDRI er
+-- forfatteren: `attestant_er_forfatter` var låst til false, og FK-en mot
+-- attestasjonen bar flagget. Et firma som har valgt én godkjenner, får en
+-- hendelse der attestanten ER forfatteren — og den skal si det selv:
+-- `eneattestert`. De to flaggene følger hverandre, og en eneattestert
+-- hendelse har aldri en attestant B.
+ALTER TABLE policyaktivering
+    ADD COLUMN eneattestert BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE policyaktivering
+    DROP CONSTRAINT policyaktivering_attestant_er_forfatter_check;
+ALTER TABLE policyaktivering
+    ADD CONSTRAINT hendelse_forfatter_bare_naar_eneattestert
+        CHECK (attestant_er_forfatter = eneattestert),
+    ADD CONSTRAINT hendelse_eneattestert_har_en_attestant
+        CHECK (NOT eneattestert OR attestant_b IS NULL);
+
 -- KVORUMGATEN leser regelen fra firmaets egen rad. Gaten er policy-eierens
 -- (048); den får lese NØYAKTIG de to kolonnene den trenger.
 GRANT SELECT (tenant, uavhengig_godkjenning) ON firma TO disponit_policy_eier;
@@ -109,6 +125,7 @@ DECLARE
     v_dok_status    TEXT;
     v_att_a         TEXT;
     v_att_b         TEXT;
+    v_ene           BOOLEAN := false;
     v_i             INT;
     v_a             TEXT;
     v_b             TEXT;
@@ -221,6 +238,19 @@ BEGIN
                AND a.runde = p_runde AND NOT a.er_forfatter
                AND a.diff_hash = v_diff_hash) q
      WHERE q.rn <= 2;
+    -- 227 (ADR-010): ingen uavhengig attestasjon kan bare skje når firmaet
+    -- har valgt det (steg 3 nektet ellers). Da er det FORFATTERENS
+    -- attestasjon som kvalifiserer, og hendelsen sier det i klartekst
+    -- (`eneattestert`) — evidensen skal ikke se ut som fire øyne.
+    IF v_att_a IS NULL THEN
+        SELECT a.bruker_id INTO v_att_a
+          FROM public.aktiveringsattestasjon a
+         WHERE a.tenant = p_tenant AND a.utkast_id = p_utkast_id
+           AND a.runde = p_runde AND a.er_forfatter
+           AND a.diff_hash = v_diff_hash
+         ORDER BY a.ts, a.id LIMIT 1;
+        v_ene := v_att_a IS NOT NULL;
+    END IF;
 
     -- 4. Lås ankerraden (V1). Finnes den ikke, opprett den (onboarding).
     INSERT INTO public.policy_hode (tenant, policy_id)
@@ -597,10 +627,11 @@ BEGIN
     INSERT INTO public.policyaktivering
         (tenant, policy_id, utkast_id, runde, decision_operation_id,
          versjon, innholds_hash, diff_hash, attestant_a, attestant_b,
-         aktiveringskilde, pakrevd_antall)
+         aktiveringskilde, pakrevd_antall, attestant_er_forfatter,
+         eneattestert)
       VALUES (p_tenant, v_policy_id, p_utkast_id, p_runde, v_opid,
               v_ny, v_innholds_hash, v_diff_hash, v_att_a, v_att_b,
-              'styrt', v_pakrevd);
+              'styrt', v_pakrevd, v_ene, v_ene);
 
     -- 5b. Deaktiver forrige + sett inn etterfølger i SAMME operasjon (V10).
     --     Versjonsraden bærer operasjonen — FK-en gjør at den ikke kan

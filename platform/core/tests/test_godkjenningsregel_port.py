@@ -154,6 +154,17 @@ def test_med_regelen_av_aktiverer_forfatteren_alene(monkeypatch):
     finally:
         rt.close()
     assert flyt._aktiv_versjon(pid) == "1.1.0"
+    # EVIDENSEN SIER DET SOM DET ER: én attestant, og det er forfatteren.
+    m = flyt._mig()
+    try:
+        rad = m.execute(
+            "SELECT attestant_a, attestant_b, attestant_er_forfatter,"
+            " eneattestert, pakrevd_antall FROM policyaktivering"
+            " WHERE tenant=%s AND utkast_id=%s", (tenant, uid)).fetchone()
+    finally:
+        m.rollback()
+        m.close()
+    assert rad == (a, None, True, True, 1), rad
 
 
 @pg
@@ -185,6 +196,24 @@ def test_med_regelen_paa_venter_forfatteren_fortsatt(monkeypatch):
         assert r2["utfall"] == "aktivert"
     finally:
         rt.close()
+    m = flyt._mig()
+    try:
+        rad = m.execute(
+            "SELECT attestant_a, attestant_er_forfatter, eneattestert"
+            " FROM policyaktivering WHERE tenant=%s AND utkast_id=%s",
+            (tenant, uid)).fetchone()
+        # Tabellen selv nekter en hendelse som later som noe annet.
+        import psycopg
+        for sql in (
+                "UPDATE policyaktivering SET eneattestert=true"
+                " WHERE tenant=%s AND utkast_id=%s",):
+            with pytest.raises(psycopg.Error):
+                m.execute(sql, (tenant, uid))
+            m.rollback()
+    finally:
+        m.rollback()
+        m.close()
+    assert rad == (b, False, False), rad
 
 
 def test_en_usikker_lesing_gjor_aldri_kontrollen_svakere():
@@ -240,11 +269,18 @@ def test_aktiveringsdora_er_048s_kropp_med_en_endret_blokk():
     diff = list(difflib.ndiff(gml, ny))
     fjernet = [l[2:] for l in diff if l.startswith("- ")]
     lagt_til = [l[2:] for l in diff if l.startswith("+ ")]
-    # ÉN linje ut: det ubetingede kravet.
-    assert [l.strip() for l in fjernet] == ["IF v_uavhengige < 1 THEN"], \
-        fjernet
+    # TO linjer ut: det ubetingede kravet, og INSERT-ens kolonneliste.
+    assert sorted(l.strip() for l in fjernet) == sorted([
+        "IF v_uavhengige < 1 THEN",
+        "aktiveringskilde, pakrevd_antall)",
+        "'styrt', v_pakrevd);"]), fjernet
     tekst = "\n".join(lagt_til)
     assert "IF v_uavhengige < 1 AND coalesce(" in tekst
     assert "f.uavhengig_godkjenning FROM public.firma f" in tekst
     assert "true) THEN" in tekst, "uten svar må regelen være streng"
-    assert len(lagt_til) == 5, lagt_til
+    # Forfatteren velges BARE når ingen uavhengig finnes, og hendelsen
+    # merkes — begge flaggene settes av samme variabel.
+    assert "IF v_att_a IS NULL THEN" in tekst
+    assert "AND a.runde = p_runde AND a.er_forfatter" in tekst
+    assert "'styrt', v_pakrevd, v_ene, v_ene);" in tekst
+    assert len(lagt_til) <= 24, lagt_til
