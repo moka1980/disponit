@@ -23,8 +23,8 @@
 id: m06_epost
 navn: E-postoperasjonsagent
 versjon: 0.1.0
-status: aktiv                  # aktiv | inaktiv | under_utvikling
-driftstilstand: produksjon     # ikke_i_drift | staging | produksjon
+status: aktiv
+driftstilstand: produksjon
 # REELLE, målte avhengigheter — ulikt m16/m38, som LESER kjernen og
 # derfor ærlig oppgir ingen: M-6 BESTILLER gjennom policyporten
 # (`epost.behandling` er en bestillingstype, hver kjøring policyvurderes
@@ -43,8 +43,8 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
-    # KJØRT PÅ NYTT 17/9 etter 210 (slettesynk): bevisroten dekker
-    # innhenteren, så det forrige artefaktet (16/9) målte en annen
+    # KJØRT PÅ NYTT 21/11 etter felles postboks: bevisroten dekker
+    # innhenteren, så det forrige artefaktet (17/9) målte en annen
     # innhenter. Fersk base fra utsjekket på verten, hele suiten.
     status: ja
     krav_id: m6-suite-v1
@@ -57,12 +57,12 @@ staging_sjekkliste:
       - maalt.tester_totalt
       - maalt.tester_hoppet
       - maalt.suite_exitkode
-    artefakt: deploy/staging/artefakter/m6-suite-v1-20260917T200309Z.json
-    artefakt_sha256: 98bf6bad90672c688f11b0170358fb58bb24ce24d0fa695ada727110d34946fc
+    artefakt: deploy/staging/artefakter/m6-suite-v1-20261121T100727Z.json
+    artefakt_sha256: 53cc6a87f0c8388704a88e6fc0cf8009314ebd805a7b951ef35c5aa3a7f40339
     notat: >-
-      5478 tester, 0 feilet, 0 hoppet; modulens egen andel
-      85 tester i elleve filer, 0 feilet, 0 hoppet. Kjørt på
-      disponit-srv 17/9 mot fersk base fra utsjekket (samme rigg som
+      5605 tester, 0 feilet, 0 hoppet; modulens egen andel
+      86 tester i elleve filer, 0 feilet, 0 hoppet. Kjørt på
+      disponit-srv 21/11 mot fersk base fra utsjekket (samme rigg som
       CI bygger), som administrator.
   syntetisk_datasett_likt_lokalt:
     # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
@@ -94,16 +94,18 @@ staging_sjekkliste:
       - maalt.inntaksavvik
       - maalt.broavvik
       - maalt.svaravvik
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
-    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
       12 meldinger av 16 inntaket så (fire duplikater ble ikke nye rader;
       de to @removed telles ikke som sett),
       10 nye i runde 1 og 2 i runde 2, 12 henvendelser i M-17,
       1 svar sendt som reply i tråden — NULL avvik på alle fire aksene,
-      kjørt på disponit-srv 17/9 mot en fersk base fra utsjekket gjennom
-      produktets egne dører med Graph byttet ut (16/9-kjøringen gikk mot
-      prod-basen; 210 måtte finnes i basen før innhenteren kunne måles).
+      kjørt på disponit-srv 21/11 mot en fersk base fra utsjekket gjennom
+      produktets egne dører med Graph byttet ut. Målt på nytt fordi
+      innhenteren fikk felles postboks (`/users/<adresse>` for kilder med
+      delescopet); fasitens to kilder har ikke scopet og går som før
+      gjennom `/me` (forrige måling 17/9, etter 210).
       Samme sett kjøres mot lokal base ved hver CI-runde
       (`test_m6_fasit_port`), og bindingen er BYTENE: `sett_sha256` må
       stemme i begge ledd.
@@ -119,8 +121,8 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.evidenshendelser
       - maalt.evidensavvik
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
-    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
       28 hendelser i kjeden, null avvik, hver med aktør og sin egen
       `input_hash`. Målingen er felt av en mutasjon — døpes
@@ -159,12 +161,12 @@ staging_sjekkliste:
     bevismaalinger:
       - maalt.innhentingstid_ms
       - maalt.meldinger
-    artefakt: deploy/staging/artefakter/m6-fasit-v1-20260917T191405Z.json
-    artefakt_sha256: 15a381b5fc2e19d026fd9e5dd9c1a96ac61f274d0f02bb302a734a7a55027536
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
-      71 ms for runde 1 over begge postboksene mot taket på 30 000 —
-      5,9 ms per melding mot taket på 5 000 (17/9, fersk base; 16/9 mot
-      prod: 84 ms / 7,0). Målt med veggklokke av produsenten; porten
+      55 ms for runde 1 over begge postboksene mot taket på 30 000 —
+      4,6 ms per melding mot taket på 5 000 (21/11, fersk base; 17/9:
+      71 ms / 5,9). Målt med veggklokke av produsenten; porten
       avviser 0.
   rollback_testet:
     # DRILLET 17/9 PÅ disponit-srv med `rollback-m6.py` i KJERNE-form: M-6

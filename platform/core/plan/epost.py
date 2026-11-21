@@ -34,9 +34,16 @@ import time
 GRAPH = "https://graph.microsoft.com/v1.0"
 #: Delta over innboksen — feltene lista trenger; kroppen hentes per
 #: melding som tekst (Prefer-headeren), aldri som HTML i registeret.
-DELTA_START = (GRAPH + "/me/mailFolders/inbox/messages/delta"
-               "?$select=id,conversationId,receivedDateTime,from,"
-               "toRecipients,subject,bodyPreview,hasAttachments&$top=25")
+DELTA_SPORRING = ("/mailFolders/inbox/messages/delta"
+                  "?$select=id,conversationId,receivedDateTime,from,"
+                  "toRecipients,subject,bodyPreview,hasAttachments&$top=25")
+DELTA_START = GRAPH + "/me" + DELTA_SPORRING
+
+
+def delta_start(rot: str) -> str:
+    """Første delta-side for en kilde. `rot` er `/me` eller
+    `/users/<adresse>` (felles postboks) — se `epost_kilde.graph_rot`."""
+    return GRAPH + rot + DELTA_SPORRING
 MAKS_KILDER = int(os.environ.get("DISPONIT_EPOST_MAKS_KILDER", "20"))
 MAKS_SIDER = int(os.environ.get("DISPONIT_EPOST_MAKS_SIDER", "4"))
 MAKS_KROPP = 64 * 1024
@@ -228,7 +235,8 @@ def _lagre(conn, tenant, kilde_id, m, kropp: str | None, kropp_type) -> bool:
 
 def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
     """Én kilde, én runde. `graf`/`veksler` er testsnittene."""
-    from api.epost_kilde import KildeFeil, hent_access_token
+    from api.epost_kilde import (KildeFeil, hent_access_token,
+                                 kildens_rot)
     from db.pg import sett_kontekst
     tenant, kilde_id, _postboks, delta, _sist = rad
     kid = str(kilde_id)
@@ -237,11 +245,17 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
     sett_kontekst(conn, tenant, AKTOR, rid)
     try:
         access = hent_access_token(conn, tenant, kilde_id, veksler=veksler)
+        rot = kildens_rot(conn, tenant, kilde_id)
     except KildeFeil as e:
         conn.rollback()
         return _feilet(conn, tenant, kilde_id, rid, ut, "token", str(e))
     conn.rollback()
-    url = delta if delta and delta.startswith(GRAPH + "/") else DELTA_START
+    # CURSOREN GJELDER POSTBOKSEN DEN BLE HENTET FRA. En kilde som er
+    # koblet på nytt med delescopet bytter rot (`/me` → `/users/<adresse>`),
+    # og en cursor fra den gamle roten peker da inn i en ANNEN innboks —
+    # da starter kilden forfra, fra nå.
+    url = delta if delta and delta.startswith(GRAPH + rot + "/") \
+        else delta_start(rot)
     neste_delta = None
     try:
         for _ in range(MAKS_SIDER):
@@ -261,7 +275,7 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
                 ut["sett"] += 1
                 kropp, ktype = None, None
                 try:
-                    k = graf(access, f"{GRAPH}/me/messages/{m['id']}"
+                    k = graf(access, f"{GRAPH}{rot}/messages/{m['id']}"
                              "?$select=body", tekstkropp=True)
                     kropp = str(((k.get("body") or {}).get("content")) or "")
                     ktype = (k.get("body") or {}).get("contentType")
@@ -289,7 +303,7 @@ def hent_en(conn, rad, *, graf=graph_get, veksler=None) -> dict:
     # sto stille, må spørres om — et begrenset antall av de eldst sjekkede
     # per runde, så køen roterer og ingen runde blir lang.
     ut["avstemt"], ut["fjernet_ved_avstemming"] = _avstem(
-        conn, tenant, kilde_id, access, graf)
+        conn, tenant, kilde_id, access, graf, rot)
     sett_kontekst(conn, tenant, AKTOR, rid)
     conn.execute(
         "UPDATE epost_kilde SET sist_hentet_ts = now(),"
@@ -309,7 +323,8 @@ def _fjernet_i_kilden(conn, tenant, kilde_id, lev_id: str) -> bool:
     return bool(rad and rad[0])
 
 
-def _avstem(conn, tenant, kilde_id, access, graf) -> tuple[int, int]:
+def _avstem(conn, tenant, kilde_id, access, graf,
+            rot: str = "/me") -> tuple[int, int]:
     """-> (sjekket, fjernet). 404 fra Graph = borte fra postboksen (slettet
     eller flyttet ut av innboksen) → speiles. Enhver annen feil stopper
     avstemmingen for denne runden uten å røre noe: usikkerhet sletter
@@ -325,7 +340,7 @@ def _avstem(conn, tenant, kilde_id, access, graf) -> tuple[int, int]:
     fjernet = 0
     for (lev_id,) in rader:
         try:
-            graf(access, f"{GRAPH}/me/messages/{lev_id}?$select=id")
+            graf(access, f"{GRAPH}{rot}/messages/{lev_id}?$select=id")
         except GraphFeil as e:
             if e.status == 404:
                 sett_kontekst_avstem(conn, tenant)
@@ -415,7 +430,8 @@ def graph_post(access: str, url: str, kropp: dict) -> None:
 
 def send_ett(conn, rad, *, poster=graph_post, veksler=None) -> dict:
     """Ett svar ut. `poster`/`veksler` er testsnittene."""
-    from api.epost_kilde import KildeFeil, hent_access_token
+    from api.epost_kilde import (KildeFeil, hent_access_token,
+                                 kildens_rot)
     from db import kryptering
     from db.pg import sett_kontekst
     tenant, utkast_id, _melding_id, kilde_id = rad
@@ -456,6 +472,9 @@ def send_ett(conn, rad, *, poster=graph_post, veksler=None) -> dict:
         return feilet("uleselig_utkast")
     try:
         access = hent_access_token(conn, tenant, kilde_id, veksler=veksler)
+        # SVARET GÅR FRA POSTBOKSEN MELDINGEN KOM TIL: en henvendelse til
+        # post@ besvares fra post@, ikke fra den ansattes egen adresse.
+        rot = kildens_rot(conn, tenant, kilde_id)
     except KildeFeil:
         conn.rollback()
         return feilet("token_avvist")
@@ -465,7 +484,7 @@ def send_ett(conn, rad, *, poster=graph_post, veksler=None) -> dict:
         # oppgir aldri en mottaker: den er Microsofts egen, fra den
         # opprinnelige meldingen.
         poster(access,
-               f"{GRAPH}/me/messages/{lev_id}/reply",
+               f"{GRAPH}{rot}/messages/{lev_id}/reply",
                {"comment": tekst})
     except GraphFeil as e:
         conn.rollback()

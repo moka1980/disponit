@@ -172,8 +172,9 @@ def _kilderad(migrator_, postboks):
 # ---------------------------------------------------------------------------
 
 def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
-    """Scopesettet er lukket og pinnet: `Mail.Read`, `Mail.Send` og
-    `offline_access`, og ingen skriveverb mot postboksen i hele
+    """Scopesettet er lukket og pinnet: `Mail.Read`, `Mail.Send`, de to
+    delescopene (`Mail.Read.Shared`, `Mail.Send.Shared`, eiervedtak
+    20/11) og `offline_access`, og ingen skriveverb mot postboksen i hele
     kildeveien. En scope-utvidelse er en kontraktsendring — den skal
     FELLE denne testen, ikke gli gjennom som en strengendring.
 
@@ -189,9 +190,16 @@ def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
     # et scope til er en kontraktsendring som skal felle denne testen,
     # ikke gli gjennom. Det som IKKE kom til, er like viktig:
     # `Mail.ReadWrite` (å endre kundens postboks) og `MailboxSettings`.
+    # EIERVEDTAK 20/11: `Mail.Read.Shared` og `Mail.Send.Shared` kom til,
+    # fordi kundene deler en FELLES innboks (post@, kundeservice@,
+    # ordre@), og en delt postboks nås bare gjennom en bruker som har
+    # tilgang til den. Fortsatt ingen `Mail.ReadWrite`, ingen
+    # `MailboxSettings`.
     assert M365_SCOPE.split() == [
         "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.Send", "offline_access"], \
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Mail.Read.Shared",
+        "https://graph.microsoft.com/Mail.Send.Shared", "offline_access"], \
         "scopet er vedtakets, ikke utviklerens"
     kilde = KILDEMODUL.read_text(encoding="utf-8")
     # SENDINGEN BOR IKKE HER. Kildeveien er samtykket og token­veksling;
@@ -298,9 +306,13 @@ def test_start_bygger_authorize_url_med_state_pkce_og_binding(klient, migrator,
     param = _autorisasjonsparametre(r)
     assert param["response_type"] == "code"
     assert param["client_id"] == M365_ID
-    assert param["scope"] == ("https://graph.microsoft.com/Mail.Read"
-                             " https://graph.microsoft.com/Mail.Send"
-                             " offline_access")
+    # Dommens scope, ordrett: lese- og sendetilgang, og de to
+    # delescopene for felles postboks (eiervedtak 20/11).
+    assert param["scope"] == (
+        "https://graph.microsoft.com/Mail.Read"
+        " https://graph.microsoft.com/Mail.Send"
+        " https://graph.microsoft.com/Mail.Read.Shared"
+        " https://graph.microsoft.com/Mail.Send.Shared offline_access")
     assert param["code_challenge_method"] == "S256"
     assert param["code_challenge"]
     assert param["redirect_uri"].endswith("/v1/epost/kilder/callback")
@@ -891,3 +903,73 @@ def test_m365_konfigurasjonen_er_koblet_hele_veien():
             continue
         assert linje.strip().startswith("LoadCredential="), \
             f"klienthemmeligheten eksponeres utenfor LoadCredential: {linje!r}"
+
+
+def test_graph_roten_er_postboksen_som_staar_paa_kilden():
+    """FØR 20/11 ble adressen administratoren oppga bare et navn:
+    innhenteren leste alltid `/me`, altså innloggerens egen innboks —
+    også når det sto post@firma.no på kilden. Med delescopet leses
+    postboksen som faktisk står der.
+
+    MUTASJONEN SOM DREPER DENNE: la `graph_rot` alltid svare `/me`.
+    """
+    from api.epost_kilde import DELESCOPE, M365_SCOPE, graph_rot
+    assert DELESCOPE in M365_SCOPE.split()
+    # Nytt samtykke: adressen på kilden er postboksen som leses.
+    assert graph_rot("post@firma.example", M365_SCOPE) \
+        == "/users/post@firma.example"
+    # En kilde koblet FØR vedtaket har ikke scopet og beholder `/me` —
+    # å bytte rot under den ville gitt 403 på hver runde.
+    gammelt = ("https://graph.microsoft.com/Mail.Read"
+               " https://graph.microsoft.com/Mail.Send offline_access")
+    assert graph_rot("post@firma.example", gammelt) == "/me"
+    assert graph_rot("post@firma.example", None) == "/me"
+    # Adressen går inn i en URL-sti: ingenting i den kan bryte ut av den.
+    rot = graph_rot("a/b?x=1#y@firma.example", M365_SCOPE)
+    assert rot.startswith("/users/")
+    for tegn in "/?#":
+        assert tegn not in rot[len("/users/"):], rot
+    assert graph_rot("  ", M365_SCOPE) == "/me"
+
+
+def test_fornyelsen_ber_om_kildens_eget_samtykke():
+    """Da delescopene kom inn i `M365_SCOPE`, ville en fornyelse med dagens
+    sett bedt Microsoft om scoper en eldre kilde aldri har gitt. En avvist
+    fornyelse setter kilden `feilet` — hver postboks koblet før 20/11 ville
+    stoppet ved første runde etter utrullingen.
+
+    MUTASJONEN SOM DREPER DENNE: send `M365_SCOPE` i fornyelsen uansett
+    hva kilden har samtykket til.
+    """
+    import inspect
+
+    from api import epost_kilde
+    from api.epost_kilde import M365_SCOPE, fornyelsesdata
+
+    from api.epost_kilde import SCOPE_UTEN_DELING
+
+    class K:
+        client_id, client_secret = "id", "hemmelig"
+    # Slik de to postboksene i drift står lagret 21/11 (tokensvarets ord).
+    for gammelt in (
+            "https://graph.microsoft.com/Mail.Read"
+            " https://graph.microsoft.com/Mail.Send",
+            "https://graph.microsoft.com/Mail.Read"
+            " https://graph.microsoft.com/Mail.Send profile email",
+            None, "  "):
+        d = fornyelsesdata(K, "r-1", gammelt)
+        # NØYAKTIG det fornyelsen sendte før delescopene kom.
+        assert d["scope"] == SCOPE_UTEN_DELING, gammelt
+        assert "Shared" not in d["scope"]
+        assert d["grant_type"] == "refresh_token"
+        assert d["refresh_token"] == "r-1"
+    assert SCOPE_UTEN_DELING.split() == [
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.Send", "offline_access"]
+    # En ny kilde fornyer med delescopene den faktisk fikk.
+    assert fornyelsesdata(K, "r", M365_SCOPE)["scope"] == M365_SCOPE
+    # …og fornyelsen bruker NETTOPP denne funksjonen, med kildens rad.
+    kilde = inspect.getsource(epost_kilde._veksle_refresh)
+    assert "fornyelsesdata(konfig, refresh, samtykket)" in kilde
+    assert "_veksle_refresh(konfig, refresh, samtykket)" in inspect.getsource(
+        epost_kilde.hent_access_token)

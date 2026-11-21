@@ -86,8 +86,49 @@ EPOSTMODUL = "m06_epost"
 #:
 #: Ingen openid/User.Read: postboksen oppgis av administratoren i
 #: /start-kroppen, ikke utledes av en identitetsclaim.
+#:
+#: `Mail.Read.Shared` og `Mail.Send.Shared` kom med EIERVEDTAK 20/11:
+#: kundene er bedrifter som deler en FELLES innboks (post@,
+#: kundeservice@, ordre@). En delt postboks har ingen egen pålogging —
+#: den nås gjennom en bruker som har tilgang til den, og bare med disse
+#: to scopene. De gir ingenting ut over det brukeren selv alt kan lese
+#: og sende fra i Outlook.
 M365_SCOPE = ("https://graph.microsoft.com/Mail.Read"
-              " https://graph.microsoft.com/Mail.Send offline_access")
+              " https://graph.microsoft.com/Mail.Send"
+              " https://graph.microsoft.com/Mail.Read.Shared"
+              " https://graph.microsoft.com/Mail.Send.Shared offline_access")
+
+#: Scopet som gjør at postboksen kan være en ANNEN enn innloggerens egen.
+DELESCOPE = "https://graph.microsoft.com/Mail.Read.Shared"
+
+
+def graph_rot(postboks: str, scope: str | None) -> str:
+    """Graph-roten kilden leses og svares gjennom.
+
+    FØR 20/11 ble adressen administratoren oppga bare et NAVN: innhenteren
+    leste alltid `/me`, altså innloggerens egen innboks — også når det sto
+    post@firma.no på kilden. Med delescopet leses postboksen som faktisk
+    står der, `/users/<adresse>`; det er riktig både for en delt postboks
+    og for innloggerens egen (da er de to det samme).
+
+    En kilde koblet FØR vedtaket har ikke scopet og beholder `/me` — å
+    bytte rot under den ville gitt 403 på hver runde. Veien dit er en ny
+    samtykkerunde, som for `Mail.Send` (178).
+    """
+    from urllib.parse import quote
+    if DELESCOPE.lower() in (scope or "").lower() and (postboks or "").strip():
+        return "/users/" + quote(postboks.strip(), safe="@.-_+")
+    return "/me"
+
+
+def kildens_rot(conn, tenant: str, kilde_id) -> str:
+    """Graph-roten for én kilde, lest fra kildens egen rad."""
+    rad = conn.execute(
+        "SELECT postboks, scope FROM epost_kilde"
+        " WHERE tenant=%s AND kilde_id=%s", (tenant, kilde_id)).fetchone()
+    if rad is None:
+        raise KildeFeil("ukjent kilde")
+    return graph_rot(rad[0], rad[1])
 
 #: Scopet svarveien krever. En kilde koblet FØR vedtaket har det ikke,
 #: og da skal flaten si det før noen skriver et svar som ikke kan sendes.
@@ -717,11 +758,11 @@ def hent_access_token(conn, tenant: str, kilde_id, *,
     if konfig is None:
         raise KildeFeil("m365 er ikke konfigurert")
     rad = conn.execute(
-        "SELECT auth_kryptert, nonce, key_id, status FROM epost_kilde"
+        "SELECT auth_kryptert, nonce, key_id, status, scope FROM epost_kilde"
         " WHERE tenant=%s AND kilde_id=%s", (tenant, kilde_id)).fetchone()
     if rad is None:
         raise KildeFeil("ukjent kilde")
-    ct, nonce, key_id, status = rad
+    ct, nonce, key_id, status, samtykket = rad
     if status != "aktiv":
         raise KildeFeil("kilden er ikke aktiv")
     dek = kryptering.hent_dek(conn, tenant, key_id)
@@ -730,25 +771,47 @@ def hent_access_token(conn, tenant: str, kilde_id, *,
     if veksler is not None:
         token = veksler(konfig, refresh)
     else:
-        token = _veksle_refresh(konfig, refresh)
+        # FORNYELSEN BER OM DET KILDEN SAMTYKKET TIL, ikke om det vi ber
+        # om i dag. Da delescopene kom inn i `M365_SCOPE` (20/11), ville en
+        # fornyelse med dagens sett bedt Microsoft om scoper en eldre kilde
+        # aldri har gitt — og en avvist fornyelse setter kilden `feilet`.
+        token = _veksle_refresh(konfig, refresh, samtykket)
     access = token.get("access_token")
     if not isinstance(access, str) or not access:
         raise KildeFeil("tokensvaret manglet access_token")
     return access
 
 
-def _veksle_refresh(konfig: M365Konfig, refresh: str) -> dict:
+#: Settet samtykket ba om FØR delescopene (10/9–20/11). Fornyelsen for en
+#: kilde uten delescopet sender nøyaktig dette, som den alltid har gjort —
+#: de to postboksene som står i drift i dag skal ikke merke utrullingen.
+SCOPE_UTEN_DELING = ("https://graph.microsoft.com/Mail.Read"
+                     " https://graph.microsoft.com/Mail.Send offline_access")
+
+
+def fornyelsesdata(konfig: M365Konfig, refresh: str,
+                   samtykket: str | None) -> dict:
+    """Kroppen i en refresh-veksling.
+
+    `scope` FØLGER KILDENS SAMTYKKE (`epost_kilde.scope`, tokensvarets
+    egne ord): har kilden delescopet, bes det om dagens sett; har den det
+    ikke, bes det om settet fra før — aldri om scoper kilden ikke har gitt.
+    """
+    deler = DELESCOPE.lower() in (samtykket or "").lower()
+    return {"client_id": konfig.client_id,
+            "client_secret": konfig.client_secret,
+            "grant_type": "refresh_token", "refresh_token": refresh,
+            "scope": M365_SCOPE if deler else SCOPE_UTEN_DELING}
+
+
+def _veksle_refresh(konfig: M365Konfig, refresh: str,
+                    samtykket: str | None = None) -> dict:
     """refresh → tokensvar, samme ssrf-transport som kodevekslingen."""
     _valider_egress(konfig.token_endepunkt, konfig.allowlist)
     klient = ssrf.lag_klient(konfig.allowlist)
     try:
-        r = klient.post(konfig.token_endepunkt, data={
-            "client_id": konfig.client_id,
-            "client_secret": konfig.client_secret,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh,
-            "scope": M365_SCOPE,
-        })
+        r = klient.post(konfig.token_endepunkt,
+                        data=fornyelsesdata(konfig, refresh, samtykket))
         raa = ssrf.les_begrenset(r)
         if r.status_code != 200:
             raise KildeFeil(f"tokenfornyelse ga status {r.status_code}")
