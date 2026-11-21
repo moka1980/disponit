@@ -3433,6 +3433,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import firmaregistrering
         return firmaregistrering.sett_fullmakter_endepunkt(tjeneste, request)
 
+    # 227 (ADR-010): fire øyne er firmaets valg.
+    def firma_godkjenningsregel(request: Request) -> Response:
+        from . import firmaregistrering as frmodul
+        return frmodul.godkjenningsregel_endepunkt(tjeneste, request)
+
+    def firma_sett_godkjenningsregel(request: Request) -> Response:
+        from . import firmaregistrering as frmodul
+        return frmodul.sett_godkjenningsregel_endepunkt(tjeneste, request)
+
     def invitasjon_opprett(request: Request) -> Response:
         from . import invitasjon
         return invitasjon.opprett_endepunkt(tjeneste, request)
@@ -4601,6 +4610,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # 208: fullmaktene — lest, og valgt om mens policyen er urørt.
         Route("/v1/firma/fullmakter", firma_fullmakter, methods=["GET"]),
         Route("/v1/firma/fullmakter", firma_sett_fullmakter,
+              methods=["POST"]),
+        Route("/v1/firma/godkjenningsregel", firma_godkjenningsregel,
+              methods=["GET"]),
+        Route("/v1/firma/godkjenningsregel", firma_sett_godkjenningsregel,
               methods=["POST"]),
         Route("/v1/invitasjoner", invitasjon_liste, methods=["GET"]),
         Route("/v1/invitasjoner", invitasjon_opprett, methods=["POST"]),
@@ -6332,6 +6345,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/firma/registrer"):         "firma:opprett",
     ("GET",  "/v1/firma/fullmakter"):        "policy:read",
     ("POST", "/v1/firma/fullmakter"):        "policy:activate",
+    ("GET",  "/v1/firma/godkjenningsregel"): "policy:read",
+    ("POST", "/v1/firma/godkjenningsregel"): "policy:activate",
     # 194/195: å invitere er administratorens handling — men Å SE LISTA er
     # en LESERUTE, og `test_pr008` håndhever at en GET har et scope fra
     # `LESESCOPES`. `security:read` er riktig og ikke bare tilgjengelig:

@@ -433,6 +433,12 @@ export const registrerFirma = (firma, idem) =>
   _muter("/v1/firma/registrer", "POST", firma, idem);
 // 208: fullmaktene — lest, og valgt om mens policyen er urørt.
 export const hentFullmakter = () => hentJson("/v1/firma/fullmakter");
+// 227 (ADR-010): fire øyne er firmaets valg.
+export const hentGodkjenningsregel = () =>
+  hentJson("/v1/firma/godkjenningsregel");
+export const settGodkjenningsregel = (uavhengig, idem) =>
+  _muter("/v1/firma/godkjenningsregel", "POST",
+         { uavhengig_godkjenning: uavhengig }, idem || nyIdempotensnokkel());
 export const hentMedlemmer = () => hentJson("/v1/firma/medlemmer");
 export const settFullmakter = (fullmakter, idem) =>
   _muter("/v1/firma/fullmakter", "POST", { fullmakter }, idem);

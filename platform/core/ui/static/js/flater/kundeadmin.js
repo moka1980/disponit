@@ -2,6 +2,7 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { flateHode } from "./felles.js";
 import { KUNDEROLLER, modulerFraIder, tenantTelling } from "../plattformdata.js";
+import { hentGodkjenningsregel, settGodkjenningsregel } from "../api.js";
 import { ApiFeil, UautorisertFeil, loggUt, opprettInvitasjon,
          hentInvitasjoner, siOppAbonnement,
          nyIdempotensnokkel } from "../api.js";
@@ -196,6 +197,79 @@ function invitasjonsdel(ctx) {
 // TO STEG, og «behold» har fokus. Dette er det mest inngripende en kunde
 // kan gjøre, og den som traff knappen ved et uhell skal ikke kunne bekrefte
 // med samme bevegelse.
+// GODKJENNINGSREGELEN (227, ADR-010): fire øyne er firmaets eget valg.
+// Kortet sier hva som gjelder NÅ, i én setning, og tilbyr den ene endringen
+// som er mulig. Å GÅ TIL ÉN PERSON er en svekkelse og krever to: den ene
+// foreslår, en annen bekrefter — og kortet sier hvem som står for tur.
+export function godkjenningsregelDel(ctx) {
+  const scopes = new Set(ctx.scopes || []);
+  if (!scopes.has("policy:read")) return el("div", { hidden: true });
+  const kanEndre = scopes.has("policy:activate");
+  const boks = el("section", { class: "kort godkjenningsregel",
+    "aria-labelledby": "gkregel-tittel" });
+  const innhold = el("div", {});
+  const melding = el("p", { class: "melding", role: "status" });
+  boks.append(
+    el("h2", { id: "gkregel-tittel", text: t("ui.gkregel.tittel") }),
+    innhold, melding);
+
+  const send = (valg, knapp) => {
+    knapp.disabled = true;
+    melding.classList.remove("feil");
+    settGodkjenningsregel(valg).then((r) => {
+      tegn(r);
+      const kv = t(`ui.gkregel.utfall.${r.utfall}`, "");
+      sett(melding, kv);
+      if (kv) meldLive(kv);
+    }).catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+      knapp.disabled = false;
+      melding.classList.add("feil");
+      sett(melding, t("ui.gkregel.feil"));
+    });
+  };
+  const knapp = (nokkel, valg, primar) => {
+    const k = el("button", { type: "button",
+      class: primar ? "knapp primar" : "knapp", text: t(nokkel) });
+    k.addEventListener("click", () => send(valg, k));
+    return k;
+  };
+
+  function tegn(r) {
+    const deler = [el("p", { text: t(r.uavhengig_godkjenning
+      ? "ui.gkregel.to" : "ui.gkregel.en") })];
+    if (kanEndre) {
+      if (!r.uavhengig_godkjenning) {
+        deler.push(el("div", { class: "knapperad" },
+          knapp("ui.gkregel.krev_to", true, false)));
+      } else if (r.forslag_om_en && r.forslag_er_mitt) {
+        deler.push(
+          el("p", { class: "muted", text: t("ui.gkregel.mitt_forslag") }),
+          el("div", { class: "knapperad" },
+            knapp("ui.gkregel.trekk", true, false)));
+      } else if (r.forslag_om_en) {
+        deler.push(
+          el("p", { text: t("ui.gkregel.andres_forslag") }),
+          el("div", { class: "knapperad" },
+            knapp("ui.gkregel.bekreft", false, true),
+            knapp("ui.gkregel.avslaa", true, false)));
+      } else {
+        deler.push(
+          el("p", { class: "muted", text: t("ui.gkregel.en_hjelp") }),
+          el("div", { class: "knapperad" },
+            knapp("ui.gkregel.foresla_en", false, false)));
+      }
+    }
+    sett(innhold, ...deler);
+  }
+
+  hentGodkjenningsregel().then(tegn).catch((e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+    boks.hidden = true;
+  });
+  return boks;
+}
+
 function abonnementsdel(ctx) {
   // EGEN SCOPE-SJEKK, som `invitasjonsdel` over. Jeg la den foerst i
   // `visKundeadmin` og brukte en `scopes` som er definert i en HELT ANNEN
@@ -380,5 +454,6 @@ export function visKundeadmin(hoved, ctx = {}) {
           siteStatusMerke("i_drift"),
           siteStatusMerke("klargjort"),
           siteStatusMerke("bygges"),
-          siteStatusMerke("planlagt")))));
+          siteStatusMerke("planlagt")))),
+    godkjenningsregelDel(ctx));
 }

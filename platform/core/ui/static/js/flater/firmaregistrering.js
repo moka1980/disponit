@@ -86,14 +86,18 @@ export function slugAv(navn) {
 }
 
 export function idempotensnokkelFor(navn, orgnummer, bransje, kortnavn,
-                                    fullmakter = []) {
+                                    fullmakter = [], toGodkjennere = false) {
   // KORTNAVNET INN I NØKKELEN. Retter hun et opptatt kortnavn og prøver på
   // nytt, er det en NY handling — med den gamle nøkkelen ville hun fått det
   // første forsøkets svar tilbake, altså «opptatt», uansett hva hun skrev.
   // FULLMAKTENE INN I NØKKELEN (207): to like kropper med ulikt valg av
   // fullmakter er to ulike registreringer, ikke en replay.
-  const raa = JSON.stringify([navn, orgnummer ?? null, bransje,
-                              kortnavn ?? null, [...fullmakter].sort()]);
+  // GODKJENNINGSREGELEN INN I NØKKELEN (227) — men bare når den er PÅ, så
+  // nøklene fra før valget fantes står uendret.
+  const deler = [navn, orgnummer ?? null, bransje, kortnavn ?? null,
+                 [...fullmakter].sort()];
+  if (toGodkjennere) deler.push("to-godkjennere");
+  const raa = JSON.stringify(deler);
   const a = _hash(raa, 0x811c9dc5, 0x01000193);
   const b = _hash(raa, 0xdeadbeef, 0x85ebca6b);
   return `firmareg-${a.toString(16).padStart(8, "0")}`
@@ -192,6 +196,15 @@ export function visFirmaregistrering(hoved, ctx) {
     .map((l) => l.querySelector("input")).filter((b) => b.checked)
     .map((b) => b.value);
 
+  // GODKJENNINGSREGELEN (227): av som standard — et lite firma skal ikke
+  // stoppes av en kollega det ikke har. Den kan strammes når som helst.
+  const toBoks = el("input", { type: "checkbox", id: "firmareg-to",
+                               name: "uavhengig_godkjenning" });
+  const torad = el("div", { class: "felt" },
+    el("label", { class: "avkryssing", for: "firmareg-to" }, toBoks,
+      el("span", { text: t("ui.firmareg.to_godkjennere") })),
+    el("p", { class: "hjelpetekst", text: t("ui.firmareg.to_godkjennere_hjelp") }));
+
   const knapp = el("button", { type: "submit", class: "knapp primar",
                                text: t("ui.firmareg.send") });
   const melding = el("p", { class: "melding", hidden: true, role: "status" });
@@ -199,7 +212,7 @@ export function visFirmaregistrering(hoved, ctx) {
   // `novalidate`: nettleserens egen boble er ikke oversatt og kan ikke
   // knyttes til feltet med aria-errormessage.
   const skjema = el("form", { class: "kv-skjema", novalidate: "" },
-    navn.rad, kort.rad, org.rad, bransjerad, fullmaktrad,
+    navn.rad, kort.rad, org.rad, bransjerad, fullmaktrad, torad,
     el("div", { class: "knapperad" }, knapp), melding);
 
   const visFeil = (nokkel) => {
@@ -252,10 +265,13 @@ export function visFirmaregistrering(hoved, ctx) {
       const kortnavn =
         (kortRortAvHenne ? kort.inp.value.trim() : "") || null;
       const fullmakter = valgteFullmakter();
+      const uavhengig_godkjenning = toBoks.checked;
       const svar = await registrerFirma(
-        kortnavn ? { navn: n, kortnavn, orgnummer, bransje, fullmakter }
-          : { navn: n, orgnummer, bransje, fullmakter },
-        idempotensnokkelFor(n, orgnummer, bransje, kortnavn, fullmakter));
+        kortnavn ? { navn: n, kortnavn, orgnummer, bransje, fullmakter,
+                     uavhengig_godkjenning }
+          : { navn: n, orgnummer, bransje, fullmakter, uavhengig_godkjenning },
+        idempotensnokkelFor(n, orgnummer, bransje, kortnavn, fullmakter,
+                            uavhengig_godkjenning));
       // FERDIG — OG HUN MÅ LOGGE INN PÅ NYTT. Sesjonen hennes peker på
       // registreringskonteksten, som ikke lenger har et medlemskap.
       sett(hoved, ...flateHode(t("ui.firmareg.ferdig_tittel"),

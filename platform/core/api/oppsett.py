@@ -255,7 +255,18 @@ def godkjenning(conn, tenant: str) -> dict | None:
                 (tenant,)).fetchall()
     except psycopg.Error:
         return None
+    # 227: krever firmaet en uavhengig godkjenner i det hele tatt? Uten
+    # kravet er «legg til en godkjenner» ikke et hinder, og flaten skal
+    # ikke si at det er det.
+    try:
+        with conn.transaction():
+            uavhengig = bool(conn.execute(
+                "SELECT uavhengig FROM firma_godkjenningsregel(%s)",
+                (tenant,)).fetchone()[0])
+    except psycopg.Error:
+        uavhengig = True
     return {
+        "uavhengig_godkjenning": uavhengig,
         "kan_godkjenne": sum(1 for (r,) in medlemmer
                              if attestroller & set(r or ())),
         "apen_runde": apen > 0,
