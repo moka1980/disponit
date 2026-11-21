@@ -255,6 +255,16 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
          "godkjent_utkast": bool(r[16])}
         for r in conn.execute("SELECT * FROM m17_koen(%s,%s)",
                               (tenant, MAKS_KOE)).fetchall()]
+    # 225: HVEM HAR SAKEN. Egen dør — køens form er uendret — og navnet
+    # slås opp her, så flaten aldri viser en rå bruker-id.
+    navn = _medlemsnavn(conn, tenant)
+    tildelt = {str(r[0]): r for r in conn.execute(
+        "SELECT * FROM m17_tildelingene(%s)", (tenant,)).fetchall()}
+    for rad in koe:
+        t = tildelt.get(rad["henvendelse_id"])
+        rad["tildelt"] = None if t is None else {
+            "bruker_id": t[1], "navn": navn.get(t[1]),
+            "tildelt_ts": t[3].isoformat()}
     if med_emne:
         emner = _koens_emner(conn, tenant)
         for rad in koe:
@@ -288,6 +298,99 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
         "avsenderprofil": None if a is None else {
             "avsender_navn": a[0], "svar_til": a[1], "signatur": a[2],
             "oppdatert": a[3].isoformat() if a[3] else None}}
+
+
+def _medlemsnavn(conn, tenant: str) -> dict:
+    """bruker_id -> visningsnavn for firmaets aktive medlemmer (samme
+    lesedør som eiervelgeren, `medlemmer.svar_for`)."""
+    from . import medlemmer
+    return {m["bruker_id"]: m["navn"]
+            for m in medlemmer.svar_for(conn, tenant)["medlemmer"]}
+
+
+def _aktornavn(aktor: str, navn: dict) -> dict:
+    """Hvem en sporrad skyldes, i ord flaten kan vise. En agent er en
+    agent og sies som det; et medlem får navnet sitt; resten er «ukjent»
+    — aldri en rå id på skjermen."""
+    a = aktor or ""
+    if a.startswith("agent:"):
+        return {"type": "agent", "navn": a.split(":", 1)[1]}
+    bid = a.split(":", 1)[1] if a.startswith("bruker:") else a
+    if bid in navn:
+        return {"type": "bruker", "navn": navn[bid]}
+    return {"type": "ukjent", "navn": None}
+
+
+MAKS_SPOR = 200
+
+
+def sporet_for(conn, tenant: str, henvendelse_id) -> dict:
+    """Sporet for én henvendelse: handling, hvem og når. Aldri emne,
+    kropp eller avsender — sporet bærer ikke det (225)."""
+    navn = _medlemsnavn(conn, tenant)
+    rader = conn.execute("SELECT * FROM m17_sporet(%s,%s,%s)",
+                         (tenant, henvendelse_id, MAKS_SPOR + 1)).fetchall()
+    spor = []
+    for r in rader[:MAKS_SPOR]:
+        detalj = dict(r[3] or {})
+        rad = {"handling": r[1], "hvem": _aktornavn(r[2], navn),
+               "naar": r[4].isoformat(),
+               # Etterfylt = hentet fra registerets kolonner da sporet ble
+               # innført; resten er skrevet i samme transaksjon som
+               # handlingen, og peker på loggposten sin.
+               "etterfylt": bool(detalj.get("etterfylt")),
+               "loggpost_id": r[5]}
+        if r[1] == "henvendelse.tildelt":
+            rad["til"] = navn.get(detalj.get("til"))
+        if "utfall" in detalj:
+            rad["utfall"] = detalj["utfall"]
+        spor.append(rad)
+    return {"spor": spor, "avkortet": len(rader) > MAKS_SPOR}
+
+
+def sporet_endepunkt(tjeneste, request):
+    """GET /v1/kundeservice/henvendelse/{henvendelse_id}/spor
+    (decisions:read) — samme scope som køen: sporet sier HVA som er gjort
+    og av HVEM, ikke hva kunden skrev."""
+    from .app import _rid
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        hid = _sti_uuid(request, "henvendelse_id", rid)
+        svar = sporet_for(conn, auth.tenant, hid)
+        svar["henvendelse_id"] = str(hid)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def tildel_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/henvendelse/{henvendelse_id}/tildel
+    (bestilling:opprett, idem). Kropp: {"bruker_id": "<id>"} gir saken
+    til et medlem, {"bruker_id": "meg"} tar den selv, {"bruker_id": null}
+    frigir den.
+
+    MEDLEMSKAPET PRØVES HER, ikke i døra: `brukermedlemskap` er ikke
+    kundeserviceeierens tabell. En sak kan bare gis til et AKTIVT medlem
+    av firmaet — ellers ville den stått hos noen som aldri ser køen.
+    """
+    def bygg(conn, tenant, bid, _nokkel, kropp, rid, request):
+        from .policyadmin_http import _Avbrudd, _feil
+        hid = _sti_uuid(request, "henvendelse_id", rid)
+        onske = kropp.get("bruker_id") if isinstance(kropp, dict) else None
+        if onske is not None and (not isinstance(onske, str)
+                                  or not onske.strip()):
+            raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                 detalj="bruker_id"))
+        til = None if onske is None else (
+            bid if onske.strip() == "meg" else onske.strip())
+        if til is not None and til != bid:
+            if til not in _medlemsnavn(conn, tenant):
+                raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                     detalj="bruker_id"))
+        return ("SELECT m17_tildel(%s,%s,%s,%s)", (tenant, hid, til, bid),
+                {"henvendelse_id": str(hid), "tildelt": til})
+    return _skriv(tjeneste, request, bygg)
 
 
 def kobilde(tjeneste, request):

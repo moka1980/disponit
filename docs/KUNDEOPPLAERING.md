@@ -266,6 +266,28 @@ ingenting her».
 
 ---
 
+## 6b. Felles innboks: flere om samme kø
+
+For firmaer der flere deler på post@, kundeservice@ eller ordre@. Køen
+står under **Kundeservice**.
+
+- **Hvem har den.** Hver sak i køen viser navnet på den som har tatt den,
+  eller **Ledig**. Åpne saken og trykk **Ta saken** før du begynner på et
+  svar — da ser kollegene at den er din.
+- **Gi til en kollega.** Velg navnet i lista ved siden av knappen. Saken
+  kan bare gis til en som er medlem av firmaet.
+- **Frigi saken** når du ikke rekker den likevel. Da står den som ledig
+  igjen.
+- **Hva som er gjort med denne saken.** Under knappene ligger sporet:
+  mottatt, klassifisert, tildelt, utkast lagret, godkjent, sendt, lukket —
+  hver linje med hvem og når. Sporet kan ikke endres eller slettes, og det
+  inneholder ikke kundens tekst.
+
+For saker som kom inn før 20.11.2026 viser sporet bare når saken ble
+mottatt og eventuelt lukket; resten ble ikke ført per sak den gangen.
+
+---
+
 ## 7. Slik kommer en ny kunde i gang
 
 1. **Registrer firmaet** på forsiden. Utvidelsene velges her, og for et
