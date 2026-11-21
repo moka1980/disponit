@@ -930,3 +930,46 @@ def test_graph_roten_er_postboksen_som_staar_paa_kilden():
     for tegn in "/?#":
         assert tegn not in rot[len("/users/"):], rot
     assert graph_rot("  ", M365_SCOPE) == "/me"
+
+
+def test_fornyelsen_ber_om_kildens_eget_samtykke():
+    """Da delescopene kom inn i `M365_SCOPE`, ville en fornyelse med dagens
+    sett bedt Microsoft om scoper en eldre kilde aldri har gitt. En avvist
+    fornyelse setter kilden `feilet` — hver postboks koblet før 20/11 ville
+    stoppet ved første runde etter utrullingen.
+
+    MUTASJONEN SOM DREPER DENNE: send `M365_SCOPE` i fornyelsen uansett
+    hva kilden har samtykket til.
+    """
+    import inspect
+
+    from api import epost_kilde
+    from api.epost_kilde import M365_SCOPE, fornyelsesdata
+
+    from api.epost_kilde import SCOPE_UTEN_DELING
+
+    class K:
+        client_id, client_secret = "id", "hemmelig"
+    # Slik de to postboksene i drift står lagret 21/11 (tokensvarets ord).
+    for gammelt in (
+            "https://graph.microsoft.com/Mail.Read"
+            " https://graph.microsoft.com/Mail.Send",
+            "https://graph.microsoft.com/Mail.Read"
+            " https://graph.microsoft.com/Mail.Send profile email",
+            None, "  "):
+        d = fornyelsesdata(K, "r-1", gammelt)
+        # NØYAKTIG det fornyelsen sendte før delescopene kom.
+        assert d["scope"] == SCOPE_UTEN_DELING, gammelt
+        assert "Shared" not in d["scope"]
+        assert d["grant_type"] == "refresh_token"
+        assert d["refresh_token"] == "r-1"
+    assert SCOPE_UTEN_DELING.split() == [
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.Send", "offline_access"]
+    # En ny kilde fornyer med delescopene den faktisk fikk.
+    assert fornyelsesdata(K, "r", M365_SCOPE)["scope"] == M365_SCOPE
+    # …og fornyelsen bruker NETTOPP denne funksjonen, med kildens rad.
+    kilde = inspect.getsource(epost_kilde._veksle_refresh)
+    assert "fornyelsesdata(konfig, refresh, samtykket)" in kilde
+    assert "_veksle_refresh(konfig, refresh, samtykket)" in inspect.getsource(
+        epost_kilde.hent_access_token)
