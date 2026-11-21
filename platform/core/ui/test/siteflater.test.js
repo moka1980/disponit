@@ -125,6 +125,39 @@ test("Landing: forsiden har hovednavigasjon og er ikke en lang katalog", async (
   assert.equal(b.length, 0, beskrivBrudd(b));
 });
 
+test("Landing: felles innboks — de tre tingene, i ord", async () => {
+  // Kundetypen eier pekte ut 20.11.2026: bedrifter på Microsoft 365 som
+  // deler én innboks. Seksjonen skal si de tre tingene produktet gjør for
+  // dem, og ikke bruke interne ord.
+  window.history.replaceState({}, "", "/");
+  const app = nyttAppBrett();
+  await visInnlogging();
+  await vent(() => app.querySelector(".site-felles"));
+  const seksjon = app.querySelector(".site-felles");
+  assert.ok(seksjon, "seksjonen om felles innboks mangler på forsiden");
+  assert.equal(seksjon.querySelector("h2").textContent,
+               t("site.felles.tittel"));
+  assert.equal(seksjon.getAttribute("aria-labelledby"),
+               seksjon.querySelector("h2").id);
+  assert.deepEqual(
+    [...seksjon.querySelectorAll(".site-prinsipp h3")]
+      .map((h) => h.textContent),
+    ["ko", "fullmakt", "spor"].map((n) => t(`site.felles.${n}_tittel`)));
+  for (const n of ["ingress", "ko_tekst", "fullmakt_tekst", "spor_tekst",
+                   "note"]) {
+    assert.ok(seksjon.textContent.includes(t(`site.felles.${n}`)), n);
+  }
+  // Nøkler som mangler i locale, ville stått som nøkkelstrenger.
+  assert.ok(!seksjon.textContent.includes("site.felles."),
+            "en tekstnøkkel ble rendret rått");
+  assert.ok(!/\bM-\d+\b/.test(seksjon.textContent));
+  // Den står FØR prinsippene: det er kundens situasjon, ikke vår metode.
+  const seksjoner = [...app.querySelectorAll("section")];
+  assert.ok(seksjoner.indexOf(seksjon)
+    < seksjoner.indexOf(app.querySelector("#prinsipper-tittel")
+      .closest("section")));
+});
+
 test("Landing: tjenester har hele katalogen og søk filtrerer den", async () => {
   window.history.replaceState({}, "", "/?side=tjenester&q=svindel");
   const app = nyttAppBrett();

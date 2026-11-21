@@ -307,6 +307,29 @@ function tilbudseksjon() {
           el("p", { text: t(post.tekst_nokkel) }))))));
 }
 
+// FELLES INNBOKS — kundetypen eier pekte ut 20.11.2026: bedrifter med 5–30
+// ansatte på Microsoft 365 som deler post@, kundeservice@ eller ordre@.
+// Seksjonen viser de tre tingene en assistent i den enkeltes egen innboks
+// ikke gir dem: én kø der man ser hvem som har saken, fullmakter for hva
+// som kan sendes, og et spor som kan vises fram. Hvert punkt er noe
+// produktet GJØR i dag (M-6, M-17, 225) — ikke et løfte.
+function fellesinnboksSeksjon() {
+  return el("section", { class: "site-section site-prinsipper site-felles",
+    "aria-labelledby": "felles-tittel" },
+    el("div", { class: "site-section-head" }, el("div", {},
+      el("p", { class: "site-eyebrow", text: t("site.felles.kicker") }),
+      el("h2", { id: "felles-tittel", text: t("site.felles.tittel") }))),
+    el("p", { class: "site-tilbud-ingress", text: t("site.felles.ingress") }),
+    el("div", { class: "site-prinsipp-grid" },
+      ["ko", "fullmakt", "spor"].map((n, indeks) =>
+        el("article", { class: "site-prinsipp" },
+          el("span", { "aria-hidden": "true",
+            text: String(indeks + 1).padStart(2, "0") }),
+          el("h3", { text: t(`site.felles.${n}_tittel`) }),
+          el("p", { text: t(`site.felles.${n}_tekst`) })))),
+    el("p", { class: "muted site-felles-note", text: t("site.felles.note") }));
+}
+
 function hjemSide() {
   return [
     el("section", { class: "site-home-hero" },
@@ -355,6 +378,7 @@ function hjemSide() {
       el("div", {},
         el("h2", { id: "driftstatus-tittel", text: t("site.home.status.tittel") }),
         el("p", { text: t(heroTekstNokkel()) }))),
+    fellesinnboksSeksjon(),
     el("section", { class: "site-section site-prinsipper",
       "aria-labelledby": "prinsipper-tittel" },
       el("div", { class: "site-section-head" }, el("div", {},
