@@ -306,9 +306,13 @@ def test_start_bygger_authorize_url_med_state_pkce_og_binding(klient, migrator,
     param = _autorisasjonsparametre(r)
     assert param["response_type"] == "code"
     assert param["client_id"] == M365_ID
-    assert param["scope"] == ("https://graph.microsoft.com/Mail.Read"
-                             " https://graph.microsoft.com/Mail.Send"
-                             " offline_access")
+    # Dommens scope, ordrett: lese- og sendetilgang, og de to
+    # delescopene for felles postboks (eiervedtak 20/11).
+    assert param["scope"] == (
+        "https://graph.microsoft.com/Mail.Read"
+        " https://graph.microsoft.com/Mail.Send"
+        " https://graph.microsoft.com/Mail.Read.Shared"
+        " https://graph.microsoft.com/Mail.Send.Shared offline_access")
     assert param["code_challenge_method"] == "S256"
     assert param["code_challenge"]
     assert param["redirect_uri"].endswith("/v1/epost/kilder/callback")

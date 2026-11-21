@@ -18,16 +18,22 @@ from .test_m37 import _sett_kontekst
 from .test_m6_inntak_port import (KROPP, _kilde, _m365, _melding, _pa,
                                   _veksler, pg_plan)
 
-FELLES = "post-" + secrets.token_hex(3) + "@fjordlys.example"
+def _gjor_felles(m, kid, *, delta=None) -> str:
+    """Gir kilden delescopene, slik et nytt samtykke gjør. -> postboksen.
 
-
-def _gjor_felles(m, kid, *, delta=None):
+    ADRESSEN RØRES IKKE: identitetskolonnene på en kilde er immutable
+    (`epost_kilde_vakt`) — en annen postboks er en NY kilde. Det som
+    endrer seg ved et nytt samtykke, er scopet."""
     from api.epost_kilde import M365_SCOPE
     _sett_kontekst(m, TENANT)
-    m.execute("UPDATE epost_kilde SET postboks=%s, scope=%s, delta_token=%s"
+    m.execute("UPDATE epost_kilde SET scope=%s, delta_token=%s"
               " WHERE tenant=%s AND kilde_id=%s",
-              (FELLES, M365_SCOPE, delta, TENANT, kid))
+              (M365_SCOPE, delta, TENANT, kid))
+    postboks = m.execute(
+        "SELECT postboks FROM epost_kilde WHERE tenant=%s AND kilde_id=%s",
+        (TENANT, kid)).fetchone()[0]
     m.commit()
+    return postboks
 
 
 def _graf(sider, kall):
@@ -46,10 +52,10 @@ def test_felles_postboks_leses_fra_adressen_paa_kilden(migrator, miljo, app,
     from plan.epost import GRAPH, kjor_en_runde
     _m365(monkeypatch)
     kid, _key, _dek = _kilde(migrator)
-    rot = GRAPH + "/users/" + FELLES
     # En cursor fra FØR kilden ble felles peker inn i en annen innboks.
     gammel = GRAPH + "/me/mailFolders/inbox/messages/delta?$deltatoken=gml"
-    _gjor_felles(migrator, kid, delta=gammel)
+    FELLES = _gjor_felles(migrator, kid, delta=gammel)
+    rot = GRAPH + "/users/" + FELLES
     ny = rot + "/mailFolders/inbox/messages/delta?$deltatoken=ny"
     kall = []
     pa = _pa()
@@ -88,7 +94,7 @@ def test_svaret_gaar_fra_den_felles_postboksen(migrator, miljo, app, klient,
     from .test_m6_utsending_port import _veksler as _sendeveksler
     _m365(monkeypatch)
     kid, _mid, uid, _tok = _i_ko(klient, migrator, token)
-    _gjor_felles(migrator, kid)
+    FELLES = _gjor_felles(migrator, kid)
     kall = []
     pa = _pa()
     try:
