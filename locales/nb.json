@@ -1708,7 +1708,7 @@
   "ui.epost.status.ukjent": "Ukjent",
   "ui.epost.tittel": "E-post",
   "ui.epost.tom": "Ingen kilder er koblet til",
-  "ui.epost.tom_tekst": "Koble til en Microsoft 365-postboks for å komme i gang.",
+  "ui.epost.tom_tekst": "Koble til en postboks under — Microsoft 365 eller vanlig Gmail — for å komme i gang.",
   "ui.epost.undertittel": "Tilkoblede postbokser bak e-postagenten",
   "ui.esg.apne_periode": "Åpne periode",
   "ui.esg.avklar": "Avklar",
@@ -7239,5 +7239,18 @@
   "ui.gkregel.utfall.uendret": "Regelen står som før.",
   "ui.gkregel.utfall.foreslatt": "Forslaget er sendt. En kollega må bekrefte innen sju døgn.",
   "ui.gkregel.utfall.venter": "Forslaget ditt venter fortsatt på en kollega.",
-  "ui.gkregel.feil": "Endringen ble ikke lagret. Prøv igjen."
+  "ui.gkregel.feil": "Endringen ble ikke lagret. Prøv igjen.",
+  "ui.epost.gmail.tittel": "Koble til vanlig Gmail",
+  "ui.epost.gmail.forklaring": "For en Gmail-konto som flere deler. Du lager et eget app-passord hos Google og limer det inn her. Disponit leser innboksen og svarer fra samme adresse — bare når et menneske har godkjent svaret.",
+  "ui.epost.gmail.steg1": "Slå på totrinnsbekreftelse på Google-kontoen, hvis den ikke alt er på.",
+  "ui.epost.gmail.steg2": "Gå til myaccount.google.com/apppasswords og lag et app-passord. Kall det «Disponit».",
+  "ui.epost.gmail.steg3": "Lim inn de 16 bokstavene under. Du kan slette app-passordet hos Google når som helst; da stopper tilgangen.",
+  "ui.epost.gmail.adresse": "Gmail-adressen",
+  "ui.epost.gmail.passord": "App-passord (16 bokstaver)",
+  "ui.epost.gmail.passord_hjelp": "Ikke passordet du logger inn med. App-passordet lagres kryptert og vises aldri igjen.",
+  "ui.epost.gmail.koble": "Koble til Gmail",
+  "ui.epost.gmail.koblet": "Postboksen er koblet til. Første henting skjer innen fem minutter, og bare ny e-post hentes.",
+  "ui.epost.gmail.feil.format": "App-passordet er 16 bokstaver. Kopier det fra Google en gang til.",
+  "ui.epost.gmail.feil.avvist": "Google avviste innloggingen. Sjekk adressen, lag et nytt app-passord og prøv igjen. Ingenting er lagret.",
+  "ui.epost.gmail.feil.nede": "Fikk ikke kontakt med Gmail akkurat nå. Prøv igjen om litt. Ingenting er lagret."
 }

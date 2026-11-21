@@ -537,6 +537,15 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " er tenantsegmentet ugyldig — svarer /start denne ÆRLIGE koden i"
         " stedet for å utstede en state ingen callback kan fullføre."
         " Drift: det er en konfigurasjonsmangel, aldri kallerens feil.")),
+    # --- 229 (ADR-011): IMAP-kilden, vanlig Gmail med app-passord -------
+    Feilvei("imap_innlogging_avvist", 400, ("drift",), None, notat=(
+        "Gmail avviste innloggingen ved tilkobling: app-passordet er feil,"
+        " tilbakekalt, eller IMAP er slått av på kontoen. Ingenting er"
+        " lagret. Kallerens feil — hun retter passordet og prøver igjen.")),
+    Feilvei("imap_utilgjengelig", 502, ("drift",), None, notat=(
+        "E-posttjenesten svarte ikke da innloggingen skulle prøves"
+        " (nettverk, tidsavbrudd). Ingenting er lagret; samme kall kan"
+        " gjentas.")),
     Feilvei("m365_tilkobling_feilet", 400, ("sikkerhet",), None,
             aggregert=True, notat=(
         "Generisk callback-feilside for kildetilkoblingen (v5 §6-formen"

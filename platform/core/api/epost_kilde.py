@@ -135,9 +135,15 @@ def kildens_rot(conn, tenant: str, kilde_id) -> str:
 SENDESCOPE = "https://graph.microsoft.com/Mail.Send"
 
 
+#: Scope-ordene en IMAP-kilde bærer (229): lese over IMAP, svare over SMTP.
+#: Det er ikke et samtykke fra en leverandør — app-passordet gir begge.
+IMAP_SCOPE = "imap smtp"
+
+
 def kan_svare(scope: str | None) -> bool:
     """-> kan denne kilden sende? Samtykkets egne ord, ikke vårt ønske."""
-    return SENDESCOPE.lower() in (scope or "").lower()
+    ord_ = (scope or "").lower()
+    return SENDESCOPE.lower() in ord_ or "smtp" in ord_.split()
 
 #: Statens levetid — OIDC-flytens frist (sesjon.LOGIN_TX_MIN), samme
 #: begrunnelse: en authorize-runde tar sekunder, ikke timer.
@@ -864,3 +870,122 @@ def _veksle_refresh(konfig: M365Konfig, refresh: str,
         raise KildeFeil(f"tokenfornyelse feilet: {type(e).__name__}") from e
     finally:
         klient.close()
+
+
+# ---------------------------------------------------------------------------
+# 229 (ADR-011): IMAP-kilden — vanlig Gmail med app-passord.
+# ---------------------------------------------------------------------------
+
+#: Tjenestene en IMAP-kilde kan kobles mot. VERTENE står i
+#: `plan/epost_imap.TJENESTER`; kunden oppgir aldri en server.
+IMAP_TJENESTER = ("gmail",)
+#: Et app-passord fra Google er 16 små bokstaver (vist med mellomrom).
+_APPPASSORD = re.compile(r"^[a-z]{16}$")
+
+
+def hent_imap_tilgang(conn, tenant: str, kilde_id) -> dict:
+    """-> {tjeneste, bruker, passord} for en AKTIV IMAP-kilde.
+
+    KALLERENS kobling og rolle, som `hent_access_token`: web-API-rollen er
+    nektet SELECT på credential-trioen, så dette lykkes bare for
+    innhenteren. Passordet lever i minnet til runden er ferdig, og logges
+    aldri."""
+    rad = conn.execute(
+        "SELECT auth_kryptert, nonce, key_id, status, leverandor, postboks"
+        " FROM epost_kilde WHERE tenant=%s AND kilde_id=%s",
+        (tenant, kilde_id)).fetchone()
+    if rad is None:
+        raise KildeFeil("ukjent kilde")
+    ct, nonce, key_id, status, leverandor, postboks = rad
+    if status != "aktiv" or leverandor != "imap":
+        raise KildeFeil("kilden er ikke en aktiv imap-kilde")
+    dek = kryptering.hent_dek(conn, tenant, key_id)
+    p = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant, key_id)
+    tjeneste, passord = p.get("imap_tjeneste"), p.get("imap_passord")
+    if tjeneste not in IMAP_TJENESTER or not isinstance(passord, str) \
+            or not passord:
+        raise KildeFeil("kilden mangler imap-tilgang")
+    return {"tjeneste": tjeneste, "bruker": postboks, "passord": passord}
+
+
+def imap_endepunkt(tjeneste, request: Request, *, prover=None) -> Response:
+    """POST /v1/epost/kilder/imap (`epost:kilde:administrer`, idem).
+
+    Kropp: {"postboks": "navn@gmail.com", "passord": "<app-passord>",
+    "tjeneste": "gmail"}. Innloggingen PRØVES mot Gmail før noe lagres —
+    et passord som ikke virker skal sies nå, ikke oppdages som en feilet
+    kilde fem minutter senere. Passordet krypteres med tenantens DEK
+    (samme lager som Microsoft-tokenet) og returneres aldri.
+
+    `prover` er testsnittet (samme form som `epost_imap.prov_innlogging`).
+    """
+    from .app import _feilsvar, _rid
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "epost:kilde:administrer")
+        nokkel = _krev_idem(request, rid)
+        from . import kjerne
+        if kjerne.er_reservert_nokkel(nokkel):
+            raise _Avbrudd(_feilsvar("idempotensnokkel_reservert", rid))
+        kropp = _kropp(request)
+        postboks = kropp.get("postboks")
+        passord = kropp.get("passord")
+        valgt = kropp.get("tjeneste", "gmail")
+        if not isinstance(postboks, str) \
+                or not _POSTBOKS.match(postboks.strip()) \
+                or len(postboks.strip()) > 254:
+            raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                 detalj="postboks"))
+        if valgt not in IMAP_TJENESTER:
+            raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                 detalj="tjeneste"))
+        # Google VISER app-passordet i fire grupper; mellomrommene er ikke
+        # en del av det. Alt annet enn 16 bokstaver er ikke et app-passord
+        # — og et vanlig kontopassord skal vi aldri ta imot.
+        rent = re.sub(r"\s+", "", passord) if isinstance(passord, str) else ""
+        if not _APPPASSORD.match(rent.lower()):
+            raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                 detalj="passord"))
+        rent = rent.lower()
+        postboks = postboks.strip().lower()
+        conn.rollback()
+
+        from plan import epost_imap
+        prov = prover if prover is not None else epost_imap.prov_innlogging
+        try:
+            prov(valgt, postboks, rent)
+        except epost_imap.ImapAvvist:
+            tjeneste.logg.hendelse("imap_innlogging_avvist", rid, tenant,
+                                   art="drift", aktor=f"bruker:{bid}")
+            return _feil("imap_innlogging_avvist", rid, 400)
+        except epost_imap.ImapForbigaende:
+            return _feil("imap_utilgjengelig", rid, 502)
+
+        sett_kontekst(conn, tenant, f"bruker:{bid}", rid)
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+        ct, nonce = kryptering.krypter(
+            dek, {"imap_tjeneste": valgt, "imap_passord": rent},
+            tenant, key_id)
+        kid = conn.execute(
+            "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
+            " auth_kryptert, nonce, key_id, scope)"
+            " VALUES (%s,'imap',%s,%s,%s,%s,%s)"
+            " ON CONFLICT (tenant, leverandor, postboks) DO UPDATE SET"
+            " auth_kryptert=%s, nonce=%s, key_id=%s, status='aktiv',"
+            " scope=%s RETURNING kilde_id",
+            (tenant, postboks, ct, nonce, key_id, IMAP_SCOPE,
+             ct, nonce, key_id, IMAP_SCOPE)).fetchone()[0]
+        conn.commit()
+        tjeneste.logg.hendelse("imap_kilde_tilkoblet", rid, tenant,
+                               art="drift", aktor=f"bruker:{bid}")
+        return _ok({"kilde_id": str(kid), "leverandor": "imap",
+                    "postboks": postboks, "status": "aktiv"}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)

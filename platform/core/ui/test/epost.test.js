@@ -146,6 +146,74 @@ test("Epost: Koble til navigerer til SERVERENS authorize-URL med idem-nøkkel",
   }
 });
 
+test("Epost: vanlig Gmail kobles til med APP-PASSORD, og passordet blir ikke stående",
+    async () => {
+  SVAR = { "/v1/epost/kilder": { kilder: [] },
+    "/v1/epost/kilder/imap": { kilde_id: "k-1", leverandor: "imap",
+      postboks: "felles@gmail.example", status: "aktiv" } };
+  KALL.length = 0;
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelector(".epost-gmail"));
+  const g = h.querySelector(".epost-gmail");
+  // Stegene står i klartekst: app-passordet lages hos Google, ikke her.
+  assert.equal(g.querySelectorAll(".epost-gmail-steg li").length, 3);
+  assert.ok(g.textContent.includes(t("ui.epost.gmail.passord_hjelp")));
+  const pass = g.querySelector("#epost-gmail-passord");
+  assert.equal(pass.getAttribute("type"), "password");
+  assert.equal(pass.getAttribute("autocomplete"), "off");
+
+  // Et vanlig passord stoppes FØR det sendes noe sted.
+  g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
+  pass.value = "Sommer2026!";
+  g.querySelector("button").click();
+  assert.ok(g.textContent.includes(t("ui.epost.gmail.feil.format")));
+  assert.ok(!KALL.some((k) => k.url === "/v1/epost/kilder/imap"));
+
+  // Google viser app-passordet i fire grupper; mellomrommene tas bort.
+  pass.value = "abcd efgh ijkl mnop";
+  g.querySelector("button").click();
+  await vent(() => KALL.some((k) => k.url === "/v1/epost/kilder/imap"));
+  const kall = KALL.find((k) => k.url === "/v1/epost/kilder/imap");
+  assert.equal(kall.metode, "POST");
+  assert.deepEqual(kall.kropp, { postboks: "felles@gmail.example",
+    passord: "abcdefghijklmnop", tjeneste: "gmail" });
+  assert.ok(kall.headers["Idempotency-Key"]);
+  // Passordet går i KROPPEN, aldri i adressen.
+  assert.ok(!kall.url.includes("abcdefgh"));
+  await vent(() => pass.value === "");
+  assert.equal(pass.value, "", "passordet ble stående i feltet");
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+test("Epost: Gmail som sier nei gir en melding som sier hva man gjør",
+    async () => {
+  for (const [kode, status, nokkel] of [
+    ["imap_innlogging_avvist", 400, "ui.epost.gmail.feil.avvist"],
+    ["imap_utilgjengelig", 502, "ui.epost.gmail.feil.nede"]]) {
+    SVAR = { "/v1/epost/kilder": { kilder: [] },
+      "/v1/epost/kilder/imap": status, _feilkode: kode };
+    const h = nyHoved();
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h.querySelector(".epost-gmail"));
+    const g = h.querySelector(".epost-gmail");
+    g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
+    g.querySelector("#epost-gmail-passord").value = "abcdefghijklmnop";
+    g.querySelector("button").click();
+    await vent(() => g.textContent.includes(t(nokkel)));
+    assert.ok(g.textContent.includes(t(nokkel)), kode);
+    // Feltene låses opp igjen, så hun kan rette og prøve på nytt.
+    assert.equal(g.querySelector("button").disabled, false);
+  }
+  // En leser får ikke tilkoblingen i det hele tatt.
+  SVAR = { "/v1/epost/kilder": { kilder: [] } };
+  const h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.textContent.length > 0);
+  assert.equal(h.querySelector(".epost-gmail"), null);
+});
+
 test("Epost: m365_ikke_konfigurert er en ÆRLIG melding, ikke en generisk feil",
     async () => {
   SVAR = { "/v1/epost/kilder": { kilder: [] },
