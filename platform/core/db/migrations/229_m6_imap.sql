@@ -1,4 +1,4 @@
--- 228 — M-6: IMAP SOM KILDE (ADR-011) — vanlig Gmail med app-passord.
+-- 229 — M-6: IMAP SOM KILDE (ADR-011) — vanlig Gmail med app-passord.
 --
 -- Eiers vedtak 21.11.2026: mange små bedrifter bruker en vanlig
 -- Gmail-konto som flere deler. Googles egen innlogging (OAuth) krever

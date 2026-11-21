@@ -341,7 +341,7 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # bestilling, ingen policyport her: dette er inntak, ikke handling.
     from plan.epost import kjor_en_runde as epostrunde
     epost = epostrunde(tjeneste, conn)
-    # M-6 over IMAP (228, ADR-011): vanlig Gmail med app-passord — egen
+    # M-6 over IMAP (229, ADR-011): vanlig Gmail med app-passord — egen
     # modul med egne kandidatdører, så Microsoft-veien står urørt.
     from plan.epost_imap import kjor_en_runde as imaprunde
     epost_imap = imaprunde(tjeneste, conn)

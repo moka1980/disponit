@@ -291,6 +291,18 @@ som godkjennes, går ut fra samme adresse. En postboks som ble koblet til
 før 21.11.2026, må kobles til på nytt for å bli lest som felles — fram til
 da leses innboksen til den som koblet til.
 
+**Koble til vanlig Gmail.** For en Gmail-konto flere deler (ikke Google
+Workspace). Under **E-post → Koble til vanlig Gmail**:
+
+1. Slå på totrinnsbekreftelse på Google-kontoen.
+2. Lag et app-passord på myaccount.google.com/apppasswords.
+3. Skriv Gmail-adressen og lim inn de 16 bokstavene.
+
+Bare ny e-post hentes — ingenting eldre enn tilkoblingen. Svar som
+godkjennes, går ut fra Gmail-adressen. App-passordet kan slettes hos Google
+når som helst; da stopper tilgangen. Sletter dere en e-post i Gmail, blir
+den stående i Disponit til slettefristen.
+
 For saker som kom inn før 20.11.2026 viser sporet bare når saken ble
 mottatt og eventuelt lukket; resten ble ikke ført per sak den gangen.
 

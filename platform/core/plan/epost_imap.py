@@ -1,4 +1,4 @@
-"""M-6 over IMAP (228, ADR-011): vanlig Gmail med app-passord.
+"""M-6 over IMAP (229, ADR-011): vanlig Gmail med app-passord.
 
 Eiers vedtak 21.11.2026: mange små bedrifter deler én vanlig Gmail-konto.
 Googles egen innlogging (OAuth) krever verifisering og en årlig
@@ -7,7 +7,7 @@ app-passord gjør det ikke.
 
 EGEN MODUL, IKKE EN GREN I `plan/epost.py`. Microsoft-innhenteren står i
 M-6s bevisrot og røres ikke: de to veiene har hver sine kandidatdører
-(228), og deler bare det som er likt — lagringen av én melding (`_lagre`,
+(229), og deler bare det som er likt — lagringen av én melding (`_lagre`,
 med kryptering, idempotens og broen til kundeserviceregisteret) og
 bokføringen av et sendt svar (`m6_svar_sendt` / `m6_svar_feilet`).
 

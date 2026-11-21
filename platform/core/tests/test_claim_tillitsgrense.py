@@ -236,7 +236,7 @@ def test_execute_settet_er_kallsettet(migrator):
               # M-6 inntak (175): innhenteren kaller den claimer-eide
               # kandidatdøra.
               ROT / "platform" / "core" / "plan" / "epost.py",
-              # 228 (ADR-011): IMAP-veien har sine egne kandidatdører.
+              # 229 (ADR-011): IMAP-veien har sine egne kandidatdører.
               ROT / "platform" / "core" / "plan" / "epost_imap.py",
               ROT / "platform" / "core" / "api" / "bestilling.py"]
     kalt = set()

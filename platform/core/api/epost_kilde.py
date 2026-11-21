@@ -135,7 +135,7 @@ def kildens_rot(conn, tenant: str, kilde_id) -> str:
 SENDESCOPE = "https://graph.microsoft.com/Mail.Send"
 
 
-#: Scope-ordene en IMAP-kilde bærer (228): lese over IMAP, svare over SMTP.
+#: Scope-ordene en IMAP-kilde bærer (229): lese over IMAP, svare over SMTP.
 #: Det er ikke et samtykke fra en leverandør — app-passordet gir begge.
 IMAP_SCOPE = "imap smtp"
 
@@ -873,7 +873,7 @@ def _veksle_refresh(konfig: M365Konfig, refresh: str,
 
 
 # ---------------------------------------------------------------------------
-# 228 (ADR-011): IMAP-kilden — vanlig Gmail med app-passord.
+# 229 (ADR-011): IMAP-kilden — vanlig Gmail med app-passord.
 # ---------------------------------------------------------------------------
 
 #: Tjenestene en IMAP-kilde kan kobles mot. VERTENE står i

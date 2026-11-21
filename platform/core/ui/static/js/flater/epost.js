@@ -565,7 +565,7 @@ export function visEpost(hoved, ctx) {
       gmailSeksjon());
   }
 
-  // VANLIG GMAIL (228, ADR-011): adressen og et APP-PASSORD — aldri
+  // VANLIG GMAIL (229, ADR-011): adressen og et APP-PASSORD — aldri
   // kontopassordet. Stegene står i klartekst, fordi app-passordet lages
   // hos Google og ikke her, og ingen finner den siden uten å få den pekt ut.
   function gmailSeksjon() {

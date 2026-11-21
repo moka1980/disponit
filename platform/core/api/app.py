@@ -3384,7 +3384,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_kilde_start(request: Request) -> Response:
         return epostkildemodul.start_endepunkt(tjeneste, request)
 
-    # 228 (ADR-011): vanlig Gmail med app-passord.
+    # 229 (ADR-011): vanlig Gmail med app-passord.
     def epost_kilde_imap(request: Request) -> Response:
         return epostkildemodul.imap_endepunkt(tjeneste, request)
 

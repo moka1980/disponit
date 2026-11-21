@@ -477,7 +477,7 @@ export const deaktiverPart = (partId, idem) =>
 export const hentEpostKilder = () => hentJson("/v1/epost/kilder");
 export const startEpostKilde = (postboks, idempotensnokkel) =>
   _muter("/v1/epost/kilder/start", "POST", { postboks }, idempotensnokkel);
-// 228 (ADR-011): vanlig Gmail med app-passord. Passordet sendes ÉN gang,
+// 229 (ADR-011): vanlig Gmail med app-passord. Passordet sendes ÉN gang,
 // i kroppen på et POST over TLS, og kommer aldri tilbake i noe svar.
 export const kobleImapKilde = (postboks, passord, idempotensnokkel) =>
   _muter("/v1/epost/kilder/imap", "POST",

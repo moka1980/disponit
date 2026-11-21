@@ -1,4 +1,4 @@
-"""Porten for 228 (ADR-011): M-6 over IMAP — vanlig Gmail med app-passord.
+"""Porten for 229 (ADR-011): M-6 over IMAP — vanlig Gmail med app-passord.
 
   1. En e-post tolkes riktig: tekstdel foran HTML, HTML uten tekstdel
      renses, vedlegg merkes, kodet emne dekodes, Message-ID blir id-en.
