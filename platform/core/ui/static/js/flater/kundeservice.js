@@ -34,6 +34,7 @@ import {
   UautorisertFeil, avgjorUtkast, hentJson, henvendelseTilUnntakskoe,
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
   tildelHenvendelse, hentHenvendelsesspor, hentMedlemmer,
+  hentSvarmaler, lagreSvarmal, slettSvarmal,
   hentFullmakter, hentStilleregler, nyIdempotensnokkel,
   settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
@@ -763,7 +764,37 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
     text: t("ui.kundeservice.knapp.godkjenn_svar") });
   const uLagre = el("button", { type: "button",
     text: t("ui.kundeservice.knapp.utkast") });
+  // 230: START FRA EN MAL. Firmaets egne formuleringer, valgt av den som
+  // har saken — malen fylles inn i tekstfeltet og er derfra et helt vanlig
+  // utkast: den kan endres fritt, og ingenting sendes før et menneske har
+  // godkjent. Velgeren finnes bare når firmaet HAR maler.
+  const malvelger = el("select", { id: "ks-mal", name: "mal" });
+  const malfelt = felt("ks-mal", "ui.kundeservice.mal.velg", malvelger);
+  malfelt.hidden = true;
+  let malene = [];
+  const tegnMalvelger = (tema) => {
+    // Malene for sakens tema står ØVERST; resten følger alfabetisk.
+    const sortert = [...malene].sort((a, b) =>
+      (b.tema === tema && !!tema) - (a.tema === tema && !!tema));
+    sett(malvelger, el("option", { value: "",
+      text: t("ui.kundeservice.mal.velg_ingen") }),
+      ...sortert.map((m) => el("option", { value: m.mal_id,
+        text: m.tema ? `${m.navn} (${t(`ui.kundeservice.tema.${m.tema}`)})`
+          : m.navn })));
+    malfelt.hidden = malene.length === 0;
+  };
+  malvelger.addEventListener("change", () => {
+    const m = malene.find((x) => x.mal_id === malvelger.value);
+    malvelger.value = "";
+    if (!m) return;
+    // Har hun alt skrevet noe, legges malen TIL — den skriver aldri over.
+    const fra = utkasttekst.value.trimEnd();
+    utkasttekst.value = fra ? `${fra}\n\n${m.tekst}` : m.tekst;
+    utkasttekst.dispatchEvent(new window.Event("input", { bubbles: true }));
+    utkasttekst.focus();
+  });
   uSkjema.append(
+    malfelt,
     felt("ks-utkast", "ui.kundeservice.skjema.utkast_tekst", utkasttekst,
          "ui.kundeservice.skjema.utkast_teksthjelp"),
     el("div", { class: "skjema-bunn" }, uKnapp, uLagre));
@@ -1098,6 +1129,13 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       sett(utfall);
       // 160: masken, aldri adressen — og adressens fravær som ord.
       sett(meta, ...metaBrikker(h));
+      tegnMalvelger(h.tema);
+      if (skriver) {
+        hentSvarmaler().then((d) => {
+          malene = d.maler || [];
+          if (fortsatt(h.henvendelse_id)) tegnMalvelger(h.tema);
+        }).catch(() => { /* uten maler skriver hun som før */ });
+      }
       tegnTildeling(h);
       spor.open = false;
       sett(sporliste);
@@ -1144,6 +1182,139 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       await tegnUtkast(hid);
     },
   };
+}
+
+// 230: SVARMALENE — firmaets egne formuleringer. Kortet viser malene som
+// finnes, og ett skjema som både lager en ny og endrer en som finnes
+// («Endre» fyller skjemaet). En leser ser malene; skrivekontrollene vises
+// bare for den som kan bruke dem.
+function svarmalSeksjon(ctx, kvitter) {
+  const kanSkrive = harScope(ctx, "bestilling:opprett");
+  const boks = el("section", { class: "kpi-kort ks-maler" },
+    el("h2", { text: t("ui.kundeservice.mal.tittel") }),
+    el("p", { class: "muted", text: t("ui.kundeservice.mal.forklaring") }));
+  const liste = el("div", { class: "ks-malliste" });
+  const utfall = el("p", { "aria-live": "polite" });
+  boks.append(liste);
+
+  const navn = el("input", { id: "ks-mal-navn", type: "text",
+    maxlength: "80", required: true });
+  const tema = el("select", { id: "ks-mal-tema" },
+    el("option", { value: "", text: t("ui.kundeservice.mal.tema_alle") }),
+    ...TEMAER.map((v) => el("option", { value: v,
+      text: t(`ui.kundeservice.tema.${v}`) })));
+  const tekst = el("textarea", { id: "ks-mal-tekst", rows: "6",
+    maxlength: "4000", required: true });
+  const lagre = el("button", { type: "submit", class: "knapp primar",
+    text: t("ui.kundeservice.mal.lagre") });
+  const avbryt = el("button", { type: "button", class: "knapp",
+    text: t("ui.kundeservice.mal.avbryt") });
+  avbryt.hidden = true;
+  let endrer = null;
+  let idem = null;
+  const tom = () => {
+    endrer = null; idem = null;
+    navn.value = ""; tema.value = ""; tekst.value = "";
+    avbryt.hidden = true;
+    lagre.textContent = t("ui.kundeservice.mal.lagre");
+  };
+  avbryt.addEventListener("click", tom);
+  const skjema = el("form", { class: "kv-skjema ks-malskjema" },
+    el("h3", { text: t("ui.kundeservice.mal.ny") }),
+    felt("ks-mal-navn", "ui.kundeservice.mal.navn", navn),
+    felt("ks-mal-tema", "ui.kundeservice.mal.tema", tema,
+         "ui.kundeservice.mal.tema_hjelp"),
+    felt("ks-mal-tekst", "ui.kundeservice.mal.tekst", tekst),
+    el("div", { class: "skjema-bunn" }, lagre, avbryt), utfall);
+  skjema.addEventListener("input", () => { idem = null; });
+
+  const tegn = (maler) => {
+    if (!maler.length) {
+      sett(liste, el("p", { class: "muted",
+        text: t("ui.kundeservice.mal.ingen") }));
+      return;
+    }
+    sett(liste, el("ul", { class: "ks-maler-ul" }, ...maler.map((m) => {
+      const rad = el("li", { class: "ks-mal" },
+        el("div", {},
+          el("strong", { text: m.navn }), " ",
+          m.tema ? el("span", { class: "brikke brikke-tekst",
+            text: t(`ui.kundeservice.tema.${m.tema}`) }) : null,
+          el("p", { class: "muted ks-mal-utdrag", text:
+            m.tekst.length > 140 ? `${m.tekst.slice(0, 140)}…` : m.tekst })));
+      if (kanSkrive) {
+        const endre = el("button", { type: "button", class: "knapp liten",
+          text: t("ui.kundeservice.mal.endre"),
+          "aria-label": `${t("ui.kundeservice.mal.endre")}: ${m.navn}` });
+        endre.addEventListener("click", () => {
+          endrer = m.mal_id; idem = null;
+          navn.value = m.navn; tema.value = m.tema || "";
+          tekst.value = m.tekst;
+          avbryt.hidden = false;
+          lagre.textContent = t("ui.kundeservice.mal.lagre_endring");
+          navn.focus();
+        });
+        const slett = el("button", { type: "button", class: "knapp liten",
+          text: t("ui.kundeservice.mal.slett"),
+          "aria-label": `${t("ui.kundeservice.mal.slett")}: ${m.navn}` });
+        slett.addEventListener("click", () => {
+          slett.disabled = true;
+          slettSvarmal(m.mal_id).then(() => {
+            kvitter(t("ui.kundeservice.mal.slettet"));
+            meldLive(t("ui.kundeservice.mal.slettet"));
+            if (endrer === m.mal_id) tom();
+            return hent();
+          }).catch((e) => {
+            slett.disabled = false;
+            if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+          });
+        });
+        rad.append(el("div", { class: "knapperad" }, endre, slett));
+      }
+      return rad;
+    })));
+  };
+  const hent = () => hentSvarmaler().then((d) => tegn(d.maler || []))
+    .catch((e) => {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      sett(liste, el("p", { role: "alert",
+        text: t("ui.kundeservice.feil.generell") }));
+    });
+
+  if (kanSkrive) {
+    boks.append(skjema);
+    skjema.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      if (lagre.disabled) return;
+      const kropp = { navn: navn.value.trim(), tekst: tekst.value.trim() };
+      if (!kropp.navn || !kropp.tekst) {
+        sett(utfall, el("span", { role: "alert",
+          text: t("ui.kundeservice.mal.feil.tom") }));
+        return;
+      }
+      if (tema.value) kropp.tema = tema.value;
+      if (endrer) kropp.mal_id = endrer;
+      if (!idem) idem = nyIdempotensnokkel();
+      lagre.disabled = true;
+      sett(utfall);
+      lagreSvarmal(kropp, idem).then(() => {
+        lagre.disabled = false;
+        tom();
+        kvitter(t("ui.kundeservice.mal.lagret"));
+        meldLive(t("ui.kundeservice.mal.lagret"));
+        return hent();
+      }).catch((e) => {
+        lagre.disabled = false;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        if (e && e.status >= 400 && e.status < 500) idem = null;
+        sett(utfall, el("span", { role: "alert", text: t(
+          e && e.status === 409 ? "ui.kundeservice.mal.feil.navn"
+            : "ui.kundeservice.feil.generell") }));
+      });
+    });
+  }
+  hent();
+  return boks;
 }
 
 // Sammendraget over tabellen. TALLENE KOMMER FRA SIN EGEN DØR og gjelder
@@ -1250,6 +1421,7 @@ export function visKundeservice(hoved, ctx) {
         el("h2", { text: t("ui.kundeservice.koe.tittel") }),
         koblokk, detalj.node);
       const deler = [oversikt, koseksjon,
+                     svarmalSeksjon(ctx, kvitter),
                      avsenderSeksjon(d.avsenderprofil, s, ctx, last, kvitter),
                      stilleSeksjon(ctx, last, kvitter)];
       if (harScope(ctx, "bestilling:opprett")) {

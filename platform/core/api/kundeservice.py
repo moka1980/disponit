@@ -953,3 +953,71 @@ def utkastene_endepunkt(tjeneste, request):
                               "request_id": rid},
                              200, {"x-request-id": rid})
     return _les(tjeneste, request, "kundeservice:innhold", _fn)
+
+
+# ---------------------------------------------------------------------------
+# 230: SVARMALER — firmaets egne formuleringer, valgt av den som har saken.
+# ---------------------------------------------------------------------------
+
+MAL_NAVN_MAKS = 80
+MAL_TEKST_MAKS = 4000
+
+
+def svarmaler_for(conn, tenant: str) -> dict:
+    return {"maler": [
+        {"mal_id": str(r[0]), "navn": r[1], "tema": r[2], "tekst": r[3],
+         "endret": r[4].isoformat()}
+        for r in conn.execute("SELECT * FROM m17_svarmalene(%s)",
+                              (tenant,)).fetchall()]}
+
+
+def svarmaler_endepunkt(tjeneste, request):
+    """GET /v1/kundeservice/svarmaler (decisions:read). Malene er firmaets
+    egen tekst, ikke kundens — samme scope som køen."""
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        svar = svarmaler_for(conn, auth.tenant)
+        svar["request_id"] = rid
+        return kanonisk_json(svar, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
+def lagre_svarmal_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/svarmaler (bestilling:opprett, idem).
+
+    Kropp: {"navn", "tekst", "tema"?, "mal_id"?}. Uten `mal_id` er det en
+    NY mal, og id-en utledes av idempotensnøkkelen (SP-2): et tapt svar og
+    et nytt klikk gir samme mal, ikke to.
+    """
+    def bygg(_conn, tenant, bid, nokkel, kropp, rid, _request):
+        from .policyadmin_http import _Avbrudd, _feil
+        navn = _tekst(kropp, "navn", rid, MAL_NAVN_MAKS)
+        tekst = _tekst(kropp, "tekst", rid, MAL_TEKST_MAKS)
+        tema = kropp.get("tema")
+        if tema is not None and tema not in TEMAER:
+            raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                 detalj="tema"))
+        raa = kropp.get("mal_id")
+        if raa is None:
+            mal_id = _utled("svarmal", tenant, nokkel)
+        else:
+            try:
+                mal_id = uuidlib.UUID(str(raa))
+            except ValueError:
+                raise _Avbrudd(_feil("request_feilformet", rid, 400,
+                                     detalj="mal_id")) from None
+        return ("SELECT m17_lagre_svarmal(%s,%s,%s,%s,%s,%s)",
+                (tenant, mal_id, navn, tema, tekst, bid),
+                {"mal_id": str(mal_id), "navn": navn})
+    return _skriv(tjeneste, request, bygg)
+
+
+def slett_svarmal_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/svarmaler/{mal_id}/slett
+    (bestilling:opprett, idem)."""
+    def bygg(_conn, tenant, bid, _nokkel, _kropp, rid, request):
+        mal_id = _sti_uuid(request, "mal_id", rid)
+        return ("SELECT m17_slett_svarmal(%s,%s,%s)", (tenant, mal_id, bid),
+                {"mal_id": str(mal_id)})
+    return _skriv(tjeneste, request, bygg)

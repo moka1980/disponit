@@ -1351,6 +1351,19 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.sporet_endepunkt(tjeneste, request)
 
+    # 230: svarmaler.
+    def kundeservice_svarmaler(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.svarmaler_endepunkt(tjeneste, request)
+
+    def kundeservice_svarmal_lagre(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.lagre_svarmal_endepunkt(tjeneste, request)
+
+    def kundeservice_svarmal_slett(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.slett_svarmal_endepunkt(tjeneste, request)
+
     # 103 (M-18): onboardingregisteret. To leseveier (løpene og ett løps
     # steg) og seks skriveveier — alle menneskelige handlinger i flaten,
     # bak `bestilling:opprett` + CSRF + Idempotency-Key.
@@ -3863,6 +3876,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_tildel, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
               kundeservice_spor, methods=["GET"]),
+        Route("/v1/kundeservice/svarmaler", kundeservice_svarmaler,
+              methods=["GET"]),
+        Route("/v1/kundeservice/svarmaler", kundeservice_svarmal_lagre,
+              methods=["POST"]),
+        Route("/v1/kundeservice/svarmaler/{mal_id:uuid}/slett",
+              kundeservice_svarmal_slett, methods=["POST"]),
         Route("/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
               kundeservice_utkastdom, methods=["POST"]),
         # 103 (M-18): kolleksjonsruten FØRST. STIENE STÅR PÅ ÉN LINJE —
@@ -5427,6 +5446,10 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor"):
         "decisions:read",
+    ("GET",  "/v1/kundeservice/svarmaler"):   "decisions:read",
+    ("POST", "/v1/kundeservice/svarmaler"):   "bestilling:opprett",
+    ("POST", "/v1/kundeservice/svarmaler/{mal_id:uuid}/slett"):
+        "bestilling:opprett",
     ("POST", "/v1/kundeservice/utkast/{utkast_id:uuid}/dom"):
         "bestilling:opprett",
     # 103 (M-18): onboardingregisteret. LESINGEN bærer `decisions:read` —

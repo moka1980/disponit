@@ -267,6 +267,11 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         # sending: reglene klassifiserer, de sender ingenting.
         "/v1/kundeservice/stilleregler",
         "/v1/kundeservice/stilleregler",
+        # 230: svarmaler — firmaets egne formuleringer. REGISTER, ikke
+        # sending: en mal blir et utkast, og utkastet går sin vanlige vei.
+        "/v1/kundeservice/svarmaler",
+        "/v1/kundeservice/svarmaler",
+        "/v1/kundeservice/svarmaler/{mal_id:uuid}/slett",
         "/v1/kundeservice/utkast/{utkast_id:uuid}/dom",
     ], mine
 
