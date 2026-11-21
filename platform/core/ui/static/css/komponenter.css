@@ -199,6 +199,20 @@
 .epost-gmail-steg { margin: 0 0 var(--sp-3); padding-left: var(--sp-5);
   display: grid; gap: var(--sp-1); }
 
+/* 230: svarmaler. */
+.ks-maler-ul { list-style: none; margin: 0 0 var(--sp-4); padding: 0;
+  display: grid; gap: var(--sp-3); }
+.ks-mal { display: flex; gap: var(--sp-3); justify-content: space-between;
+  align-items: flex-start; flex-wrap: wrap; padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line); }
+.ks-mal > div:first-child { flex: 1 1 18rem; min-width: 0; }
+.ks-mal-utdrag { margin: var(--sp-1) 0 0; white-space: pre-line;
+  overflow-wrap: anywhere; }
+.ks-malskjema { display: grid; gap: var(--sp-3); max-width: 44rem; }
+.ks-malskjema h3 { margin: 0; }
+.ks-malskjema input[type=text], .ks-malskjema textarea,
+.ks-malskjema select { width: 100%; }
+
 /* 225: hvem som har saken, og sporet. */
 .hv-hvem { margin: var(--sp-2) 0 0; font-weight: 600; }
 .hv-tildel { align-items: center; flex-wrap: wrap; }

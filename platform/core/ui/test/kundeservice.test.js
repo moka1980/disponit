@@ -580,6 +580,112 @@ test("Måltall: svartid og volum, i ord", async () => {
   assert.equal(h.querySelector(".ks-maaltall"), null);
 });
 
+// --- 230: svarmaler ---------------------------------------------------------
+const MALER = { maler: [
+  { mal_id: "aaaaaaaa-0000-0000-0000-000000000001", navn: "Ordrestatus",
+    tema: null, tekst: "Hei,\n\nordren din er på vei." },
+  { mal_id: "aaaaaaaa-0000-0000-0000-000000000002", navn: "Fakturaspørsmål",
+    tema: "faktura", tekst: "Hei,\n\ntakk for at du tok kontakt." }] };
+
+test("Svarmaler: kortet viser malene, og en leser får ingen skjemaer",
+  async () => {
+    SVAR = { ...fullSvar(), "/v1/kundeservice/svarmaler": MALER };
+    let h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll(".ks-mal").length === 2);
+    const kort = h.querySelector(".ks-maler");
+    assert.ok(kort.textContent.includes("Ordrestatus"));
+    assert.ok(kort.textContent.includes(t("ui.kundeservice.tema.faktura")));
+    assert.ok(kort.querySelector("#ks-mal-navn"), "skjemaet mangler");
+    let brudd = await alvorligeBrudd(h);
+    assert.deepEqual(brudd, [], beskrivBrudd(brudd));
+
+    h = nyHoved();
+    visKundeservice(h, ctx(["decisions:read"]));
+    await vent(() => h.querySelectorAll(".ks-mal").length === 2);
+    assert.equal(h.querySelector("#ks-mal-navn"), null);
+    assert.equal(h.querySelectorAll(".ks-mal button").length, 0);
+
+    // Uten maler sier kortet det, i stedet for en tom boks.
+    SVAR = { ...fullSvar(), "/v1/kundeservice/svarmaler": { maler: [] } };
+    h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelector(".ks-maler")
+      && h.querySelector(".ks-maler").textContent.includes(
+        t("ui.kundeservice.mal.ingen")));
+    assert.ok(h.querySelector(".ks-maler").textContent.includes(
+      t("ui.kundeservice.mal.ingen")));
+  });
+
+test("Svarmaler: ny mal sendes med nøkkel, og «Endre» lagrer på samme id",
+  async () => {
+    SVAR = { ...fullSvar(), "/v1/kundeservice/svarmaler": MALER };
+    SISTE = null;
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll(".ks-mal").length === 2);
+    const skjema = h.querySelector(".ks-malskjema");
+    // Tomt skjema stoppes før serveren.
+    skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+    assert.ok(skjema.textContent.includes(t("ui.kundeservice.mal.feil.tom")));
+    assert.equal(SISTE, null);
+
+    h.querySelector("#ks-mal-navn").value = "Befaring";
+    h.querySelector("#ks-mal-tema").value = "salg";
+    h.querySelector("#ks-mal-tekst").value = "Vi kommer gjerne på befaring.";
+    skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE !== null);
+    assert.equal(SISTE.sti, "/v1/kundeservice/svarmaler");
+    assert.deepEqual(SISTE.kropp, { navn: "Befaring", tema: "salg",
+      tekst: "Vi kommer gjerne på befaring." });
+    assert.ok(SISTE.headers["Idempotency-Key"]);
+
+    // «Endre» fyller skjemaet og lagrer på malens egen id.
+    await vent(() => h.querySelectorAll(".ks-mal").length === 2);
+    SISTE = null;
+    [...h.querySelectorAll(".ks-mal button")].find(
+      (b) => b.textContent === t("ui.kundeservice.mal.endre")).click();
+    assert.equal(h.querySelector("#ks-mal-navn").value, "Ordrestatus");
+    h.querySelector("#ks-mal-tekst").value = "Oppdatert tekst.";
+    h.querySelector(".ks-malskjema").dispatchEvent(
+      new window.Event("submit", { cancelable: true }));
+    await vent(() => SISTE !== null);
+    assert.equal(SISTE.kropp.mal_id, MALER.maler[0].mal_id);
+    assert.equal(SISTE.kropp.tekst, "Oppdatert tekst.");
+    assert.ok(!("tema" in SISTE.kropp), "tomt tema skal ikke sendes");
+  });
+
+test("Svarmaler: malen fylles inn i utkastet, sakens tema øverst, og skriver aldri over",
+  async () => {
+    const ko = JSON.parse(JSON.stringify(KOEN));
+    ko.koe[0].tema = "faktura";
+    ko.koe[0].prioritet = "normal";
+    ko.koe[0].handlingstype = "svar_kreves";
+    SVAR = { ...fullSvar(), "/v1/kundeservice": ko,
+             "/v1/kundeservice/svarmaler": MALER };
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    await vent(() => h.querySelectorAll("#ks-mal option").length === 3);
+    const velger = h.querySelector("#ks-mal");
+    // Malen for sakens tema står først etter «Velg en mal …».
+    assert.ok(velger.options[1].textContent.startsWith("Fakturaspørsmål"));
+    const tekst = h.querySelector("#ks-utkast");
+    assert.equal(tekst.value, "");
+    velger.value = MALER.maler[1].mal_id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+    assert.equal(tekst.value, MALER.maler[1].tekst);
+    assert.equal(velger.value, "", "velgeren skal stå klar til neste valg");
+    // Hun har skrevet noe selv: neste mal legges TIL, den skriver ikke over.
+    tekst.value = "Min egen innledning.";
+    velger.value = MALER.maler[0].mal_id;
+    velger.dispatchEvent(new window.Event("change", { bubbles: true }));
+    assert.equal(tekst.value,
+      `Min egen innledning.\n\n${MALER.maler[0].tekst}`);
+  });
+
 test("Kundeservice: kilden bærer ingen sendevei", () => {
   // MODULEN SENDER INGENTING, målt på FLATENS kilde. De andre halvdelene
   // av samme dom står i `test_m17_kundeservice.py` (AST, datamodellen,

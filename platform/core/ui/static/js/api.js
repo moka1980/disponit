@@ -870,6 +870,15 @@ export const tildelHenvendelse = (id, brukerId, idem) =>
   _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/tildel`,
          "POST", { bruker_id: brukerId }, idem || nyIdempotensnokkel());
 
+// 230: svarmaler — firmaets egne formuleringer.
+export const hentSvarmaler = () => hentJson("/v1/kundeservice/svarmaler");
+export const lagreSvarmal = (mal, idem) =>
+  _muter("/v1/kundeservice/svarmaler", "POST", mal,
+         idem || nyIdempotensnokkel());
+export const slettSvarmal = (malId, idem) =>
+  _muter(`/v1/kundeservice/svarmaler/${encodeURIComponent(malId)}/slett`,
+         "POST", {}, idem || nyIdempotensnokkel());
+
 export const hentHenvendelsesspor = (id) =>
   hentJson(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/spor`);
 // M-18 (103): onboardingregisteret. MALEN og LØPET bærer hver sin
