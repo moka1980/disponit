@@ -108,6 +108,40 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION m6_imap_sendekandidater(INT) FROM PUBLIC;
 
+-- KAN KILDEN SVARE? (180) Døra spurte bare etter Microsofts `Mail.Send`.
+-- En IMAP-kilde svarer over SMTP med samme app-passord; scope-ordet
+-- `smtp` sier det. Resten av døra er uendret — sendekommandoen
+-- (`m6_send_svaret`) leser fortsatt svaret HERFRA og bare herfra.
+CREATE OR REPLACE FUNCTION m6_for_svar(p_tenant TEXT, p_utkast_id UUID)
+RETURNS TABLE(utkast_status TEXT, melding_lever BOOLEAN,
+              kilde_aktiv BOOLEAN, kilde_kan_svare BOOLEAN,
+              har_leverandor_id BOOLEAN, har_avsender BOOLEAN,
+              melding_id UUID, kilde_id UUID)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM public.krev_tenantkontekst(p_tenant, 'm6_for_svar');
+    RETURN QUERY
+    SELECT u.status,
+           m.slettet_ts IS NULL,
+           k.status = 'aktiv',
+           (position(lower('https://graph.microsoft.com/Mail.Send')
+                     in lower(coalesce(k.scope, ''))) > 0
+            OR (k.leverandor = 'imap'
+                AND 'smtp' = ANY (string_to_array(
+                        lower(coalesce(k.scope, '')), ' ')))),
+           btrim(coalesce(m.leverandor_melding_id, '')) <> '',
+           btrim(coalesce(m.avsender_hash, '')) <> '',
+           m.melding_id, k.kilde_id
+      FROM public.epost_utkast u
+      JOIN public.epost_melding m
+        ON m.tenant = u.tenant AND m.melding_id = u.melding_id
+      JOIN public.epost_kilde k
+        ON k.tenant = m.tenant AND k.kilde_id = m.kilde_id
+     WHERE u.tenant = p_tenant AND u.utkast_id = p_utkast_id
+       AND u.slettet_ts IS NULL;
+END $$;
+
 -- Det senderen trenger: utkastets tekst OG meldingen det svarer på —
 -- begge som ciphertext; dekrypteringen skjer hos planarbeideren.
 CREATE FUNCTION m6_imap_for_utsending(p_tenant TEXT, p_utkast_id UUID)
