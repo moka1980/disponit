@@ -43,17 +43,75 @@ i18n_prefiks: m06epost
 # sterkere enn porten måler.»
 staging_sjekkliste:
   tester_gronne_pa_staging:
+    # 21/11: innhenteren er endret for felles postboks (/users/<adresse>
+    # for kilder med delescopet), og bevisroten dekker den.
     status: nei
     notat: >-
-      SUITEN KJØRER.
+      Suiten kjøres på nytt etter endringen i innhenteren 21/11.
   syntetisk_datasett_likt_lokalt:
-    status: nei
+    # POSTBOKSEN FINNES: `deploy/staging/m6_fasit.py` — en RIGGET GRAPH,
+    # og alt annet er produktets eget: tokenutpakking, delta-paging (to
+    # sider i runde 1, én i runde 2 fra lagret deltaLink), kroppshenting
+    # (én gir 404 → forhåndsvisningen står), kryptering, idempotens (samme
+    # melding to ganger → én rad), `@removed`, en uten avsender, broen til
+    # kundeserviceregisteret (203), svaret som REPLY i tråden nøyaktig én
+    # gang, og slettingen. To tenanter: med og uten sendescope.
+    #
+    # «FASIT-KLASSIFISERINGER» (manifestets ord fra fødselen) finnes ikke
+    # som modell — M-6 klassifiserer ikke selv; broen gir meldingen til
+    # M-17, som klassifiserer etter REGEL (204). Fasiten måler derfor
+    # broen: én henvendelse per melding, masken der adressen finnes.
+    #
+    # FIRE MUTASJONER KJØRT, fire fall, hver på sin navngitte rad: broen
+    # av (`_bro_pa`: 0 henvendelser for 6 meldinger), sendescope-sjekken
+    # bort (tenanten uten scope fikk «sendes» og Graph en POST),
+    # `epost.svar_sendt` omdøpt (kjeden mangler den), `ON CONFLICT`
+    # fjernet.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.meldinger
+      - maalt.nye_runde1
+      - maalt.nye_runde2
+      - maalt.henvendelser
+      - maalt.sendt
+      - maalt.inntaksavvik
+      - maalt.broavvik
+      - maalt.svaravvik
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
-      MÅLES PÅ NYTT.
+      12 meldinger av 16 inntaket så (fire duplikater ble ikke nye rader;
+      de to @removed telles ikke som sett),
+      10 nye i runde 1 og 2 i runde 2, 12 henvendelser i M-17,
+      1 svar sendt som reply i tråden — NULL avvik på alle fire aksene,
+      kjørt på disponit-srv 21/11 mot en fersk base fra utsjekket gjennom
+      produktets egne dører med Graph byttet ut. Målt på nytt fordi
+      innhenteren fikk felles postboks (`/users/<adresse>` for kilder med
+      delescopet); fasitens to kilder har ikke scopet og går som før
+      gjennom `/me` (forrige måling 17/9, etter 210).
+      Samme sett kjøres mot lokal base ved hver CI-runde
+      (`test_m6_fasit_port`), og bindingen er BYTENE: `sett_sha256` må
+      stemme i begge ledd.
   revisjonslogg_korrekt:
-    status: nei
+    # NOTATET VAR UTDATERT: M-6 skriver evidens selv (`m6_evidens`, kilde
+    # `m06_epost`) for utkastet, bestillingen, sendingen og slettingen —
+    # og broen skriver M-17s `henvendelse.mottatt`/`avsender.satt`. Målt i
+    # samme kjøring, på de samme radene: 6 M-6-hendelser (fire i tenanten
+    # med sendescope, to i den uten) og 22 broens. «Med identitet»: hver
+    # hendelse har SIN EGEN `input_hash`.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.evidenshendelser
+      - maalt.evidensavvik
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
-      MÅLES PÅ NYTT.
+      28 hendelser i kjeden, null avvik, hver med aktør og sin egen
+      `input_hash`. Målingen er felt av en mutasjon — døpes
+      `epost.svar_sendt` om, står svaret sendt mens kjeden mangler
+      hendelsen og bærer en fasiten ikke kjenner.
   feilinjisering_til_unntakskø:
     # MÅLINGEN VAR GJORT, BINDINGEN MANGLET — som m23-purring og m17-svar:
     # bevisrunden 10/9 injiserte ti feil i innhenteren mot disponit.com,
@@ -78,9 +136,22 @@ staging_sjekkliste:
       ingen kilder, den deaktiverte kilden sto urørt, og den samme
       meldingen to ganger ble én rad. `rundtur_paa_disponit_com`.
   ytelse_bestatt:
-    status: nei
+    # GRENSEN ER PINNET: `maks_innhentingstid_ms: 30000` for runde 1 over
+    # begge postboksene, og per melding `5000` med `meldinger` som nevner.
+    # Porten avviser 0. Manifestet ba om «meldinger per hentevindu» —
+    # settet ER hentevinduet: to delta-sider, sju sett, seks lagret.
+    status: ja
+    krav_id: m6-fasit-v1
+    bevismaalinger:
+      - maalt.innhentingstid_ms
+      - maalt.meldinger
+    artefakt: deploy/staging/artefakter/m6-fasit-v1-20261121T090825Z.json
+    artefakt_sha256: 0cb074c0ae07e5643e564cc62aad4573816919ddc07339974207becb42542466
     notat: >-
-      MÅLES PÅ NYTT.
+      55 ms for runde 1 over begge postboksene mot taket på 30 000 —
+      4,6 ms per melding mot taket på 5 000 (21/11, fersk base; 17/9:
+      71 ms / 5,9). Målt med veggklokke av produsenten; porten
+      avviser 0.
   rollback_testet:
     # DRILLET 17/9 PÅ disponit-srv med `rollback-m6.py` i KJERNE-form: M-6
     # har ingen egen release — innhenteren ruller med kjernen. En
