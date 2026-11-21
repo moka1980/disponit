@@ -190,6 +190,16 @@
   color: var(--ink); }
 .ks-stille-gruppe > .tablewrap { margin-top: var(--sp-2); }
 .hv-flere { display: grid; gap: var(--sp-3); }
+/* 225: hvem som har saken, og sporet. */
+.hv-hvem { margin: var(--sp-2) 0 0; font-weight: 600; }
+.hv-tildel { align-items: center; flex-wrap: wrap; }
+.hv-tildel-velg { font: inherit; min-height: 2.25rem; max-width: 100%;
+  padding: 0 var(--sp-2); border: 1px solid var(--line-sterk);
+  border-radius: var(--radius-sm); background: var(--card);
+  color: var(--ink); }
+.hv-spor { margin: 0; padding-left: var(--sp-4); display: grid;
+  gap: var(--sp-1); }
+.hv-spor-naar { font-variant-numeric: tabular-nums; color: var(--muted); }
 .hv-flere > h4 { margin: 0; }
 
 /* Fullmakter (207): avkryssinger ved registrering, og varsellinjen i

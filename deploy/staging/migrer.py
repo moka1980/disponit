@@ -351,6 +351,9 @@ GRANT EXECUTE ON FUNCTION m17_kostatus(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_koen(TEXT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_hent_innhold(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_utkastene(TEXT, UUID) TO {rolle};
+-- 225: hvem som har saken, og sporet for én henvendelse.
+GRANT EXECUTE ON FUNCTION m17_tildelingene(TEXT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_sporet(TEXT, UUID, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m17_funnkandidater(TEXT, DATE, INT, INT) FROM {rolle};
 
@@ -1026,6 +1029,8 @@ GRANT EXECUTE ON FUNCTION m17_til_unntakskoe(TEXT, UUID, TEXT, BYTEA, BYTEA, TEX
 GRANT EXECUTE ON FUNCTION m17_lagre_utkast(TEXT, UUID, UUID, BYTEA, BYTEA, TEXT, TEXT[], TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_avgjor_utkast(TEXT, UUID, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_lukk(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 225: tildelingsdøra («Ta saken» / gi den til en kollega).
+GRANT EXECUTE ON FUNCTION m17_tildel(TEXT, UUID, TEXT, TEXT) TO {rolle};
 -- 103 (M-18): onboardingregisterets seks skrivedører. Sekvensregelen,
 -- fullført-kravet og eierkravet håndheves i dørene og i vaktene, aldri
 -- her.

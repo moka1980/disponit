@@ -255,6 +255,10 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk",
+        # 225 (felles innboks): sporet og tildelingen — hvem som har saken
+        # og hva som er gjort med den. REGISTER, ikke sending.
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/tildel",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast/ny",
