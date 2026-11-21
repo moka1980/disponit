@@ -81,6 +81,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'm6_send_svaret(text,uuid,text)',                   'disponit_m37_claimer'),
     -- 181 (M-6): utsendingen — køen, det den trenger, og hva som skjedde.
     ('FUNCTION', 'm6_sendekandidater(integer)',                      'disponit_m37_claimer'),
+    -- 228 (ADR-011): IMAP-veien.
+    ('FUNCTION', 'm6_imap_hentekandidater(integer)',                 'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_imap_sendekandidater(integer)',                 'disponit_m37_claimer'),
+    ('FUNCTION', 'm6_imap_for_utsending(text,uuid)',                 'disponit_m37_claimer'),
     ('FUNCTION', 'm6_for_utsending(text,uuid)',                      'disponit_m37_claimer'),
     ('FUNCTION', 'm6_svar_sendt(text,uuid,text)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'm6_svar_feilet(text,uuid,text,text)',              'disponit_m37_claimer'),

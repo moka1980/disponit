@@ -3384,6 +3384,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_kilde_start(request: Request) -> Response:
         return epostkildemodul.start_endepunkt(tjeneste, request)
 
+    # 228 (ADR-011): vanlig Gmail med app-passord.
+    def epost_kilde_imap(request: Request) -> Response:
+        return epostkildemodul.imap_endepunkt(tjeneste, request)
+
     def epost_kilde_callback(request: Request) -> Response:
         return epostkildemodul.callback_endepunkt(tjeneste, request)
 
@@ -4590,6 +4594,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # konverteren avviser dem uansett — rekkefølgen sier intensjonen).
         Route("/v1/epost/kilder", epost_kilder, methods=["GET"]),
         Route("/v1/epost/kilder/start", epost_kilde_start,
+              methods=["POST"]),
+        Route("/v1/epost/kilder/imap", epost_kilde_imap,
               methods=["POST"]),
         Route("/v1/epost/kilder/callback", epost_kilde_callback,
               methods=["GET"]),
@@ -6321,6 +6327,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # MAC-ede engangsstaten + browserbindingen, aldri en sesjon.
     ("GET",  "/v1/epost/kilder"):            "epost:read",
     ("POST", "/v1/epost/kilder/start"):      "epost:kilde:administrer",
+    ("POST", "/v1/epost/kilder/imap"):       "epost:kilde:administrer",
     ("GET",  "/v1/epost/kilder/callback"):   None,
     ("POST", "/v1/epost/kilder/{kilde_id:uuid}/deaktiver"):
         "epost:kilde:administrer",

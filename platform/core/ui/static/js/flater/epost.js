@@ -13,7 +13,7 @@
 // serveren håndhever begge uansett hva flaten viser.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
+import { kobleImapKilde, hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
          skrivSvarutkast, avgjorSvarutkast, settSvarIKo,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
@@ -556,11 +556,69 @@ export function visEpost(hoved, ctx) {
     const knapp = el("button", { type: "button",
       text: t("ui.epost.koble_til") });
     knapp.addEventListener("click", () => koble(input, knapp, feilfelt));
-    return el("section", {},
-      el("h2", { text: t("ui.epost.koble_tittel") }),
-      el("p", { class: "muted", text: t("ui.epost.koble_forklaring") }),
-      el("label", { for: inputId, text: t("ui.epost.postboks_label") }),
-      input, knapp, feilfelt);
+    return el("div", { class: "epost-kobling" },
+      el("section", {},
+        el("h2", { text: t("ui.epost.koble_tittel") }),
+        el("p", { class: "muted", text: t("ui.epost.koble_forklaring") }),
+        el("label", { for: inputId, text: t("ui.epost.postboks_label") }),
+        input, knapp, feilfelt),
+      gmailSeksjon());
+  }
+
+  // VANLIG GMAIL (228, ADR-011): adressen og et APP-PASSORD — aldri
+  // kontopassordet. Stegene står i klartekst, fordi app-passordet lages
+  // hos Google og ikke her, og ingen finner den siden uten å få den pekt ut.
+  function gmailSeksjon() {
+    const adr = el("input", { id: "epost-gmail-adresse", type: "email",
+      autocomplete: "off" });
+    const pass = el("input", { id: "epost-gmail-passord", type: "password",
+      autocomplete: "off", spellcheck: "false" });
+    let nokkel = nyIdempotensnokkel();
+    for (const f of [adr, pass]) {
+      f.addEventListener("input", () => { nokkel = nyIdempotensnokkel(); });
+    }
+    const utfall = el("p", { class: "muted", "aria-live": "polite" });
+    const knapp = el("button", { type: "button",
+      text: t("ui.epost.gmail.koble") });
+    knapp.addEventListener("click", () => {
+      const postboks = (adr.value || "").trim();
+      const passord = (pass.value || "").replace(/\s+/g, "");
+      if (!postboks) {
+        utfall.textContent = t("ui.epost.postboks_mangler"); return;
+      }
+      if (!/^[a-zA-Z]{16}$/.test(passord)) {
+        utfall.textContent = t("ui.epost.gmail.feil.format"); return;
+      }
+      knapp.disabled = true; adr.disabled = true; pass.disabled = true;
+      kobleImapKilde(postboks, passord, nokkel).then(() => {
+        // Passordet skal ikke bli stående i et felt på skjermen.
+        pass.value = "";
+        if (!eierSkjermen()) return;
+        meldLive(t("ui.epost.gmail.koblet"));
+        visEpost(hoved, ctx);
+      }).catch((e) => {
+        knapp.disabled = false; adr.disabled = false; pass.disabled = false;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        const kode = e instanceof ApiFeil ? e.kode : "";
+        utfall.textContent = t(
+          kode === "imap_innlogging_avvist" ? "ui.epost.gmail.feil.avvist"
+            : kode === "imap_utilgjengelig" ? "ui.epost.gmail.feil.nede"
+              : "ui.epost.feilet");
+        meldLive(utfall.textContent);
+      });
+    });
+    return el("section", { class: "epost-gmail" },
+      el("h2", { text: t("ui.epost.gmail.tittel") }),
+      el("p", { class: "muted", text: t("ui.epost.gmail.forklaring") }),
+      el("ol", { class: "epost-gmail-steg" },
+        ...["steg1", "steg2", "steg3"].map((n) =>
+          el("li", { text: t(`ui.epost.gmail.${n}`) }))),
+      el("label", { for: "epost-gmail-adresse",
+                    text: t("ui.epost.gmail.adresse") }), adr,
+      el("label", { for: "epost-gmail-passord",
+                    text: t("ui.epost.gmail.passord") }), pass,
+      el("p", { class: "muted", text: t("ui.epost.gmail.passord_hjelp") }),
+      knapp, utfall);
   }
 
   function koble(input, knapp, feilfelt) {

@@ -1362,6 +1362,10 @@ GRANT EXECUTE ON FUNCTION m6_sendekandidater(INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m6_for_utsending(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION m6_svar_sendt(TEXT, UUID, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m6_svar_feilet(TEXT, UUID, TEXT, TEXT) TO {rolle};
+-- 228 (ADR-011): IMAP-veien — egne kandidatdører, samme form.
+GRANT EXECUTE ON FUNCTION m6_imap_hentekandidater(INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_imap_sendekandidater(INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m6_imap_for_utsending(TEXT, UUID) TO {rolle};
 GRANT EXECUTE ON FUNCTION planvinduer_til_klassifisering(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_kandidater(INT, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION plan_nedetid_aggregert(TEXT, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, TEXT, BOOLEAN) TO {rolle};
