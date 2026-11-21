@@ -284,3 +284,41 @@ def test_aktiveringsdora_er_048s_kropp_med_en_endret_blokk():
     assert "AND a.runde = p_runde AND a.er_forfatter" in tekst
     assert "'styrt', v_pakrevd, v_ene, v_ene);" in tekst
     assert len(lagt_til) <= 24, lagt_til
+
+
+@pg
+def test_etterfyllingen_treffer_firmaer_som_finnes():
+    """227 merket INGEN eksisterende firma som «har valgt»: migratoren ser
+    ikke radene i `firma` (FORCE RLS), og testbasen var tom da den kjørte.
+    Funnet i drift 21.11.2026. Her kjøres 228s setninger mot et firma som
+    FINNES, og etterpå kan én person ikke lenger svekke regelen alene.
+
+    MUTASJONEN SOM DREPER DENNE: fjern `SET LOCAL ROLE` fra 228.
+    """
+    from pathlib import Path
+
+    from db.pg import koble
+    tenant = "t-228-" + secrets.token_hex(4)
+    _firma(tenant)
+    c = koble(DSN)
+    try:
+        assert _regel(c, tenant) == (True, False, None)
+    finally:
+        c.close()
+    fil = (Path(__file__).resolve().parents[1] / "db" / "migrations"
+           / "228_godkjenningsvalg_etterfylles.sql")
+    sql = fil.read_text(encoding="utf-8")
+    m = koble(MIGRATOR_DSN)
+    try:
+        m.execute(sql)
+        m.commit()
+    finally:
+        m.close()
+    c = koble(DSN)
+    try:
+        assert _regel(c, tenant) == (True, True, None)
+        # Første valg er BRUKT: å gå til én person er nå et forslag.
+        assert _sett(c, tenant, False, "kari") == "foreslatt"
+        assert _regel(c, tenant)[0] is True
+    finally:
+        c.close()
