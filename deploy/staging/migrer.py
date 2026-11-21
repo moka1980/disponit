@@ -354,6 +354,8 @@ GRANT EXECUTE ON FUNCTION m17_utkastene(TEXT, UUID) TO {rolle};
 -- 225: hvem som har saken, og sporet for én henvendelse.
 GRANT EXECUTE ON FUNCTION m17_tildelingene(TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_sporet(TEXT, UUID, INT) TO {rolle};
+-- 226: måltallene for køen (svartid og volum).
+GRANT EXECUTE ON FUNCTION m17_maaltall(TEXT, INT) TO {rolle};
 REVOKE ALL ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m17_funnkandidater(TEXT, DATE, INT, INT) FROM {rolle};
 

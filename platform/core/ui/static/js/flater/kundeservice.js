@@ -1165,6 +1165,46 @@ function sammendrag(s) {
   return p;
 }
 
+// 226: minutter som tid et menneske leser. Under en time i minutter, under
+// et døgn i timer og minutter, ellers døgn og timer.
+export function svartidTekst(min) {
+  if (min == null) return null;
+  const m = Math.max(0, Math.round(min));
+  if (m < 60) {
+    return t("ui.kundeservice.maal.min").replace("{m}", String(m));
+  }
+  if (m < 1440) {
+    return t("ui.kundeservice.maal.timer")
+      .replace("{t}", String(Math.floor(m / 60)))
+      .replace("{m}", String(m % 60));
+  }
+  return t("ui.kundeservice.maal.dogn")
+    .replace("{d}", String(Math.floor(m / 1440)))
+    .replace("{t}", String(Math.floor((m % 1440) / 60)));
+}
+
+// MÅLTALLENE: det kunden kan vise fram — hvor mye som kom inn, hvor mye
+// som ble besvart, og hvor lang tid det typisk tok. «Ingen besvart ennå»
+// er et ord, ikke «0 min»: null minutter ville vært en påstand.
+function maaltall(mt) {
+  if (!mt) return null;
+  const ut = el("p", { class: "ks-maaltall" });
+  ut.append(t("ui.kundeservice.maal.volum")
+    .replace("{dogn}", String(mt.dogn))
+    .replace("{mottatt}", String(mt.mottatt))
+    .replace("{besvart}", String(mt.besvart)), " ");
+  const tid = svartidTekst(mt.median_svartid_min);
+  ut.append(tid
+    ? el("strong", { text: t("ui.kundeservice.maal.svartid")
+        .replace("{tid}", tid) })
+    : t("ui.kundeservice.maal.ingen_besvart"));
+  if (mt.eldste_apne_dogn != null && mt.eldste_apne_dogn > 0) {
+    ut.append(" ", t("ui.kundeservice.maal.eldste")
+      .replace("{dogn}", String(mt.eldste_apne_dogn)));
+  }
+  return ut;
+}
+
 export function visKundeservice(hoved, ctx) {
   const hode = () => flateHode(t("ui.kundeservice.tittel"),
     t("ui.kundeservice.undertittel"));
@@ -1203,7 +1243,7 @@ export function visKundeservice(hoved, ctx) {
 
       const oversikt = el("section", { class: "kpi-kort" },
         el("h2", { text: t("ui.kundeservice.oversikt.tittel") }),
-        sammendrag(s));
+        sammendrag(s), maaltall(d.maaltall));
 
       koblokk = koBlokk(koe, ctx, detalj.apne);
       const koseksjon = el("section", { class: "kpi-kort" },

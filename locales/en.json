@@ -7214,5 +7214,12 @@
   "site.felles.fullmakt_tekst": "You decide what may be sent and who must approve. The reply goes out from the shared address, not from the individual's.",
   "site.felles.spor_tittel": "A trail you can show",
   "site.felles.spor_tekst": "Every case has its history: received, assigned, approved, sent — with who and when. The trail cannot be changed or deleted.",
-  "site.felles.note": "An assistant in Outlook helps the individual in their own inbox. Disponit is built for the inbox you share."
+  "site.felles.note": "An assistant in Outlook helps the individual in their own inbox. Disponit is built for the inbox you share.",
+  "ui.kundeservice.maal.min": "{m} min",
+  "ui.kundeservice.maal.timer": "{t} h {m} min",
+  "ui.kundeservice.maal.dogn": "{d} days {t} h",
+  "ui.kundeservice.maal.volum": "Last {dogn} days: {mottatt} enquiries in, {besvart} answered.",
+  "ui.kundeservice.maal.svartid": "Typical response time: {tid}.",
+  "ui.kundeservice.maal.ingen_besvart": "None has been answered in the period yet.",
+  "ui.kundeservice.maal.eldste": "The oldest open case is {dogn} days old."
 }
