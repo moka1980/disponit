@@ -23,7 +23,7 @@ import secrets
 import pytest
 
 from .test_api import (DSN, MIGRATOR_DSN, TENANT,  # noqa: F401
-                       app, klient, migrator, miljo, pg, token)
+                       app, dekker, klient, migrator, miljo, pg, token)
 from .test_m37 import _sett_kontekst
 from .test_m6_inntak_port import _m365, _pa, _veksler, pg_plan
 
@@ -475,6 +475,8 @@ def _koble(klient, tok, kropp):
 
 
 @pg
+@dekker("imap_innlogging_avvist")
+@dekker("imap_utilgjengelig")
 def test_tilkoblingen_prover_innloggingen_for_noe_lagres(
         migrator, miljo, klient, token, monkeypatch):
     from plan import epost_imap
@@ -521,6 +523,7 @@ def test_tilkoblingen_prover_innloggingen_for_noe_lagres(
     monkeypatch.setattr(epost_imap, "prov_innlogging", nede)
     r = _koble(klient, tok, {"postboks": postboks, "passord": PASSORD})
     assert r.status_code == 502 and antall() == 0
+    assert r.json()["feil"] == "imap_utilgjengelig"
 
     # Google sier ja: kilden finnes, kryptert, og passordet kommer ikke ut.
     monkeypatch.setattr(epost_imap, "prov_innlogging", lambda *a: None)
