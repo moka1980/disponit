@@ -132,3 +132,59 @@ def test_en_kilde_uten_delescopet_er_urort(migrator, miljo, app,
         "en kilde uten delescopet ble lest gjennom /users"
     assert any(u.startswith(GRAPH + "/me/mailFolders/inbox/messages/delta")
                for u in kall)
+
+
+@pg_plan
+def test_det_fornyede_refresh_tokenet_lagres_paa_kilden(migrator, miljo, app,
+                                                       monkeypatch, capsys):
+    """TIDSBOMBEN (funnet 21.11.2026): Microsoft gir et NYTT refresh-token
+    ved hver fornyelse, og det gamle lever i 90 dager fra det ble utstedt.
+    Vi kastet det nye — hver postboks ville sluttet å hentes 90 dager etter
+    tilkoblingen.
+
+    MUTASJONEN SOM DREPER DENNE: fjern kallet til `_lagre_fornyet_refresh`,
+    eller la det skrive uten å committe.
+    """
+    from db import kryptering
+    from plan.epost import kjor_en_runde
+
+    from .test_m6_inntak_port import REFRESH
+    _m365(monkeypatch)
+    kid, _key, dek = _kilde(migrator)
+    nytt = "rotert-" + secrets.token_hex(8)
+    sett_refresh = []
+
+    def veksler(konfig, refresh):
+        sett_refresh.append(refresh)
+        return {"access_token": "kortlivet-" + secrets.token_hex(4),
+                "refresh_token": nytt}
+
+    def lagret():
+        _sett_kontekst(migrator, TENANT)
+        ct, nonce, key_id = migrator.execute(
+            "SELECT auth_kryptert, nonce, key_id FROM epost_kilde"
+            " WHERE tenant=%s AND kilde_id=%s", (TENANT, kid)).fetchone()
+        migrator.rollback()
+        return kryptering.dekrypter(dek, bytes(ct), bytes(nonce), TENANT,
+                                    key_id)["refresh_token"]
+
+    assert lagret() == REFRESH
+    pa = _pa()
+    try:
+        res = kjor_en_runde(app.tjeneste, pa, veksler=veksler,
+                            graf=_graf([{"value": [_melding(3)],
+                                         "@odata.deltaLink": "x"}], []))
+        mine = [r for r in res["resultater"] if r["kilde"] == str(kid)[:8]]
+        # Runden fullførte ETTER commit-en inni tokenutleveringen: konteksten
+        # ble satt tilbake, og meldingen ble lagret.
+        assert mine and mine[0]["nye"] == 1, res
+        assert lagret() == nytt, "det fornyede tokenet ble ikke lagret"
+        # Neste runde bruker det NYE tokenet.
+        sett_refresh.clear()
+        kjor_en_runde(app.tjeneste, pa, veksler=veksler, graf=_graf([], []))
+        assert nytt in sett_refresh, sett_refresh
+    finally:
+        pa.close()
+    logg = capsys.readouterr().out
+    assert "m6_refresh_ikke_lagret" not in logg
+    assert nytt not in logg and REFRESH not in logg, "token i loggen"
