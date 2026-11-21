@@ -456,7 +456,7 @@ def test_en_usikker_smtp_feil_sendes_aldri_paa_nytt(migrator, miljo, app,
                             sender=usikker)
         mine = [x for x in res["svar"]["resultater"]
                 if x["utkast"] == str(uid)[:8]]
-        assert mine and mine[0]["feilet"].startswith("smtp_"), res
+        assert mine and mine[0]["feilet"] == "smtp_usikker", res
         kjor_en_runde(app.tjeneste, pa, kobler=boks.kobler(),
                       sender=usikker)
         assert len(forsok) == 1, "svaret ble forsøkt sendt to ganger"

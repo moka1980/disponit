@@ -464,7 +464,9 @@ def send_ett(conn, rad, *, sender=send_smtp) -> dict:
     except Exception as e:                                  # noqa: BLE001
         # USIKKERT om serveren tok imot: ALDRI et nytt forsøk av seg selv —
         # et svar skal ikke gå to ganger. Et menneske ser det som feilet.
-        return feilet(f"smtp_{type(e).__name__}"[:40])
+        # Grunnen er en KODE (181): typenavnet går i loggen, ikke i basen.
+        epost._log("epost_svar_usikker", feil=type(e).__name__, **ut)
+        return feilet("smtp_usikker")
     sett_kontekst(conn, tenant, AKTOR, rid)
     ny = conn.execute("SELECT m6_svar_sendt(%s,%s,%s)",
                       (tenant, utkast_id, AKTOR)).fetchone()[0]
