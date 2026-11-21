@@ -556,12 +556,20 @@ export function visEpost(hoved, ctx) {
     const knapp = el("button", { type: "button",
       text: t("ui.epost.koble_til") });
     knapp.addEventListener("click", () => koble(input, knapp, feilfelt));
+    input.classList.add("felt-inp");
+    knapp.classList.add("knapp", "primar");
+    // TO KORT SIDE OM SIDE (ett under det andre på smal skjerm): de to
+    // veiene inn er likeverdige, og hvert kort er et skjema med ett felt
+    // per linje — ikke felt og knapp klemt på samme rad.
     return el("div", { class: "epost-kobling" },
-      el("section", {},
+      el("section", { class: "kort" },
         el("h2", { text: t("ui.epost.koble_tittel") }),
         el("p", { class: "muted", text: t("ui.epost.koble_forklaring") }),
-        el("label", { for: inputId, text: t("ui.epost.postboks_label") }),
-        input, knapp, feilfelt),
+        el("div", { class: "kv-skjema" },
+          el("div", { class: "felt" },
+            el("label", { for: inputId,
+                          text: t("ui.epost.postboks_label") }), input),
+          el("div", { class: "knapperad" }, knapp), feilfelt)),
       gmailSeksjon());
   }
 
@@ -607,18 +615,25 @@ export function visEpost(hoved, ctx) {
         meldLive(utfall.textContent);
       });
     });
-    return el("section", { class: "epost-gmail" },
+    adr.classList.add("felt-inp");
+    pass.classList.add("felt-inp");
+    knapp.classList.add("knapp", "primar");
+    return el("section", { class: "kort epost-gmail" },
       el("h2", { text: t("ui.epost.gmail.tittel") }),
       el("p", { class: "muted", text: t("ui.epost.gmail.forklaring") }),
       el("ol", { class: "epost-gmail-steg" },
         ...["steg1", "steg2", "steg3"].map((n) =>
           el("li", { text: t(`ui.epost.gmail.${n}`) }))),
-      el("label", { for: "epost-gmail-adresse",
-                    text: t("ui.epost.gmail.adresse") }), adr,
-      el("label", { for: "epost-gmail-passord",
-                    text: t("ui.epost.gmail.passord") }), pass,
-      el("p", { class: "muted", text: t("ui.epost.gmail.passord_hjelp") }),
-      knapp, utfall);
+      el("div", { class: "kv-skjema" },
+        el("div", { class: "felt" },
+          el("label", { for: "epost-gmail-adresse",
+                        text: t("ui.epost.gmail.adresse") }), adr),
+        el("div", { class: "felt" },
+          el("label", { for: "epost-gmail-passord",
+                        text: t("ui.epost.gmail.passord") }), pass,
+          el("p", { class: "hjelpetekst",
+                    text: t("ui.epost.gmail.passord_hjelp") })),
+        el("div", { class: "knapperad" }, knapp), utfall));
   }
 
   function koble(input, knapp, feilfelt) {
