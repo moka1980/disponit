@@ -86,8 +86,49 @@ EPOSTMODUL = "m06_epost"
 #:
 #: Ingen openid/User.Read: postboksen oppgis av administratoren i
 #: /start-kroppen, ikke utledes av en identitetsclaim.
+#:
+#: `Mail.Read.Shared` og `Mail.Send.Shared` kom med EIERVEDTAK 20/11:
+#: kundene er bedrifter som deler en FELLES innboks (post@,
+#: kundeservice@, ordre@). En delt postboks har ingen egen pålogging —
+#: den nås gjennom en bruker som har tilgang til den, og bare med disse
+#: to scopene. De gir ingenting ut over det brukeren selv alt kan lese
+#: og sende fra i Outlook.
 M365_SCOPE = ("https://graph.microsoft.com/Mail.Read"
-              " https://graph.microsoft.com/Mail.Send offline_access")
+              " https://graph.microsoft.com/Mail.Send"
+              " https://graph.microsoft.com/Mail.Read.Shared"
+              " https://graph.microsoft.com/Mail.Send.Shared offline_access")
+
+#: Scopet som gjør at postboksen kan være en ANNEN enn innloggerens egen.
+DELESCOPE = "https://graph.microsoft.com/Mail.Read.Shared"
+
+
+def graph_rot(postboks: str, scope: str | None) -> str:
+    """Graph-roten kilden leses og svares gjennom.
+
+    FØR 20/11 ble adressen administratoren oppga bare et NAVN: innhenteren
+    leste alltid `/me`, altså innloggerens egen innboks — også når det sto
+    post@firma.no på kilden. Med delescopet leses postboksen som faktisk
+    står der, `/users/<adresse>`; det er riktig både for en delt postboks
+    og for innloggerens egen (da er de to det samme).
+
+    En kilde koblet FØR vedtaket har ikke scopet og beholder `/me` — å
+    bytte rot under den ville gitt 403 på hver runde. Veien dit er en ny
+    samtykkerunde, som for `Mail.Send` (178).
+    """
+    from urllib.parse import quote
+    if DELESCOPE.lower() in (scope or "").lower() and (postboks or "").strip():
+        return "/users/" + quote(postboks.strip(), safe="@.-_+")
+    return "/me"
+
+
+def kildens_rot(conn, tenant: str, kilde_id) -> str:
+    """Graph-roten for én kilde, lest fra kildens egen rad."""
+    rad = conn.execute(
+        "SELECT postboks, scope FROM epost_kilde"
+        " WHERE tenant=%s AND kilde_id=%s", (tenant, kilde_id)).fetchone()
+    if rad is None:
+        raise KildeFeil("ukjent kilde")
+    return graph_rot(rad[0], rad[1])
 
 #: Scopet svarveien krever. En kilde koblet FØR vedtaket har det ikke,
 #: og da skal flaten si det før noen skriver et svar som ikke kan sendes.

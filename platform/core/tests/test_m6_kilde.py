@@ -172,8 +172,9 @@ def _kilderad(migrator_, postboks):
 # ---------------------------------------------------------------------------
 
 def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
-    """Scopesettet er lukket og pinnet: `Mail.Read`, `Mail.Send` og
-    `offline_access`, og ingen skriveverb mot postboksen i hele
+    """Scopesettet er lukket og pinnet: `Mail.Read`, `Mail.Send`, de to
+    delescopene (`Mail.Read.Shared`, `Mail.Send.Shared`, eiervedtak
+    20/11) og `offline_access`, og ingen skriveverb mot postboksen i hele
     kildeveien. En scope-utvidelse er en kontraktsendring — den skal
     FELLE denne testen, ikke gli gjennom som en strengendring.
 
@@ -189,9 +190,16 @@ def test_scopet_er_lukket_og_kildeveien_har_ingen_sendekall():
     # et scope til er en kontraktsendring som skal felle denne testen,
     # ikke gli gjennom. Det som IKKE kom til, er like viktig:
     # `Mail.ReadWrite` (å endre kundens postboks) og `MailboxSettings`.
+    # EIERVEDTAK 20/11: `Mail.Read.Shared` og `Mail.Send.Shared` kom til,
+    # fordi kundene deler en FELLES innboks (post@, kundeservice@,
+    # ordre@), og en delt postboks nås bare gjennom en bruker som har
+    # tilgang til den. Fortsatt ingen `Mail.ReadWrite`, ingen
+    # `MailboxSettings`.
     assert M365_SCOPE.split() == [
         "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.Send", "offline_access"], \
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Mail.Read.Shared",
+        "https://graph.microsoft.com/Mail.Send.Shared", "offline_access"], \
         "scopet er vedtakets, ikke utviklerens"
     kilde = KILDEMODUL.read_text(encoding="utf-8")
     # SENDINGEN BOR IKKE HER. Kildeveien er samtykket og token­veksling;
@@ -891,3 +899,30 @@ def test_m365_konfigurasjonen_er_koblet_hele_veien():
             continue
         assert linje.strip().startswith("LoadCredential="), \
             f"klienthemmeligheten eksponeres utenfor LoadCredential: {linje!r}"
+
+
+def test_graph_roten_er_postboksen_som_staar_paa_kilden():
+    """FØR 20/11 ble adressen administratoren oppga bare et navn:
+    innhenteren leste alltid `/me`, altså innloggerens egen innboks —
+    også når det sto post@firma.no på kilden. Med delescopet leses
+    postboksen som faktisk står der.
+
+    MUTASJONEN SOM DREPER DENNE: la `graph_rot` alltid svare `/me`.
+    """
+    from api.epost_kilde import DELESCOPE, M365_SCOPE, graph_rot
+    assert DELESCOPE in M365_SCOPE.split()
+    # Nytt samtykke: adressen på kilden er postboksen som leses.
+    assert graph_rot("post@firma.example", M365_SCOPE) \
+        == "/users/post@firma.example"
+    # En kilde koblet FØR vedtaket har ikke scopet og beholder `/me` —
+    # å bytte rot under den ville gitt 403 på hver runde.
+    gammelt = ("https://graph.microsoft.com/Mail.Read"
+               " https://graph.microsoft.com/Mail.Send offline_access")
+    assert graph_rot("post@firma.example", gammelt) == "/me"
+    assert graph_rot("post@firma.example", None) == "/me"
+    # Adressen går inn i en URL-sti: ingenting i den kan bryte ut av den.
+    rot = graph_rot("a/b?x=1#y@firma.example", M365_SCOPE)
+    assert rot.startswith("/users/")
+    for tegn in "/?#":
+        assert tegn not in rot[len("/users/"):], rot
+    assert graph_rot("  ", M365_SCOPE) == "/me"
