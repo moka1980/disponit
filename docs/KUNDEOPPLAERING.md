@@ -303,12 +303,15 @@ mottatt og eventuelt lukket; resten ble ikke ført per sak den gangen.
 2. **Åpne Oversikt og følg «Kom i gang».** Lista viser hver modul dere
    har, om kravet er satt, og hvor mange funn som står åpne. For flere
    moduler står et forslag til grenser som godtas med ett klikk.
-3. **Legg til en godkjenner.** En policyendring må godkjennes av en ANNEN
-   enn den som skrev den. Er dere bare én som kan godkjenne, står
-   «Legg til en godkjenner» øverst i «Kom i gang»: trykk **Inviter en
-   godkjenner**, kopier lenken og send den til en kollega. Kollegaen åpner
-   lenken, logger inn, trykker **Bli med** og deretter knappen **Åpne** med firmanavnet.
-   Lenken virker én gang.
+3. **Velg hvem som godkjenner endringer i fullmaktene.** Ved registrering
+   krysser dere av for «Krev at to personer godkjenner» hvis dere vil ha
+   det. Uten krysset kan den som endrer fullmaktene, godkjenne endringen
+   selv — det passer når én person bestemmer. Regelen står under
+   **Kundeflate → Godkjenning av endringer i fullmaktene** og kan strammes
+   når som helst. Å gå fra to personer til én må bekreftes av en kollega.
+   Har dere valgt to, og er bare én som kan godkjenne, står «Legg til en
+   godkjenner» øverst i «Kom i gang»: trykk **Inviter en godkjenner**,
+   kopier lenken og send den til en kollega.
 4. **Sett kravet i hver modul dere skal bruke.** Dette er det eneste
    steget som krever at noen tenker. Tallene er deres egne, ikke bransjens.
 5. **Legg inn grunndataene** — varer, leverandører, prosjekter, ansatte,
@@ -338,8 +341,8 @@ etterslepet som har bygget seg opp, ikke bare det som skjedde i går.
 firmaet du var innlogget i. Har du flere firmaer, står en nedtrekksliste
 øverst ved siden av Disponit-merket: velg firmaet der.
 
-**«Endringen i policyen blir stående og vente.»** Den som skrev endringen,
-kan ikke godkjenne den selv. En kollega med rollen policyforvalter må åpne
+**«Endringen i policyen blir stående og vente.»** Har firmaet valgt to
+godkjennere, kan den som skrev endringen ikke godkjenne den selv. En kollega med rollen policyforvalter må åpne
 Policyadministrasjon og trykke **Attester og aktiver**. Oversikten sier
 fra når en endring venter.
 

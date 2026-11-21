@@ -131,6 +131,32 @@ test("Manglende tilkobling: kortet sier «Koble til»", async () => {
   assert.equal(lenke.getAttribute("href"), "#/wcagkontroll");
 });
 
+test("Én godkjenner er ikke et hinder når firmaet har valgt det", async () => {
+  // 227: med regelen AV skal «Legg til en godkjenner» ikke stå der — det
+  // ville sagt at firmaet mangler noe det har valgt bort.
+  const g = { kan_godkjenne: 1, apen_runde: false, invitasjon_ute: false };
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 27, tilgjengelig: true, klar: false, apne_funn: 0 }],
+    godkjenning: { ...g, uavhengig_godkjenning: false } } };
+  let h = nyHoved();
+  visOversikt(h, ctx([...OKONOMI, "policy:read", "firma:inviter"]));
+  let blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden), "blokken ble aldri vist");
+  assert.ok(!blokk.textContent.includes(
+    t("ui.oppsett.godkjenner.mangler_tittel")));
+
+  // Med regelen PÅ (og én godkjenner) står kortet der som før.
+  SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
+    { modul: 27, tilgjengelig: true, klar: false, apne_funn: 0 }],
+    godkjenning: { ...g, uavhengig_godkjenning: true } } };
+  h = nyHoved();
+  visOversikt(h, ctx([...OKONOMI, "policy:read", "firma:inviter"]));
+  blokk = h.querySelector(".dash-oppsett");
+  assert.ok(await vent(() => !blokk.hidden), "blokken ble aldri vist");
+  assert.ok(blokk.textContent.includes(
+    t("ui.oppsett.godkjenner.mangler_tittel")));
+});
+
 test("Alt satt opp: ingen kort, egen tittel", async () => {
   SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [
     { modul: 27, tilgjengelig: true, klar: true, apne_funn: 0 }] } };

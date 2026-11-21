@@ -137,7 +137,32 @@ def _base(conn: psycopg.Connection, tenant: str, policy_id: str,
     return innhold, lagret
 
 
-def _vurder(base_innhold: dict, base_hash: str, ny_innhold: dict) -> dict:
+def _krever_uavhengig(conn, tenant: str) -> bool:
+    """Krever firmaet en godkjenner som IKKE skrev endringen? (227, ADR-010)
+
+    Fire øyne er firmaets eget valg. Svaret leses fra firmaets rad gjennom
+    lesedøra; uten rad, uten svar eller ved en lesefeil er regelen STRENG —
+    en usikker lesing skal aldri gjøre kontrollen svakere.
+    """
+    try:
+        with conn.transaction():
+            rad = conn.execute(
+                "SELECT uavhengig FROM firma_godkjenningsregel(%s)",
+                (tenant,)).fetchone()
+    except psycopg.Error:
+        return True
+    return True if rad is None or rad[0] is None else bool(rad[0])
+
+
+def _tellende_uavhengige(krever: bool, ikke_forfatter: int) -> int:
+    """Antall uavhengige attestasjoner SLIK TERSKELEN SER DEM. Når firmaet
+    ikke krever en uavhengig godkjenner, er kravet oppfylt uansett — da
+    regnes det som én, og resten av terskelregningen står urørt."""
+    return ikke_forfatter if krever else max(ikke_forfatter, 1)
+
+
+def _vurder(base_innhold: dict, base_hash: str, ny_innhold: dict,
+            *, uavhengig: bool = True) -> dict:
     """Diff + klassifisering + påkrevd antall godkjennere. Ren funksjon av
     inndata (ingen DB) → SAMME resultat ved runde-åpning og ved rekalk under
     låsen; avvik betyr at basen (eller motorsemantikken) flyttet seg."""
@@ -147,7 +172,10 @@ def _vurder(base_innhold: dict, base_hash: str, ny_innhold: dict) -> dict:
     # V6: UTVIDER krever to godkjennere (forfatter kan være én, aldri begge —
     # sikret av «minst én ikke-forfatter» + UNIQUE(bruker) per runde).
     # INNSNEVRER/NØYTRAL: én godkjenner ≠ forfatter (samme ikke-forfatter-krav).
-    pakrevd = 2 if risikoklasse == klassifikator.UTVIDER else 1
+    # 227: uten krav om uavhengig godkjenner er det ÉN attestasjon som
+    # gjelder — to attestasjoner ER to personer (UNIQUE per bruker og runde).
+    pakrevd = 2 if (uavhengig
+                    and risikoklasse == klassifikator.UTVIDER) else 1
     return {
         "diff": policydiff.strukturert_diff(base_innhold, ny_innhold),
         "diff_hash": dh,
@@ -683,7 +711,8 @@ def _forson_rundevarsling(conn: psycopg.Connection, tenant: str, aktor: str,
             "  FROM aktiveringsattestasjon"
             " WHERE tenant=%s AND utkast_id=%s AND runde=%s",
             (tenant, utkast_id, runde)).fetchone()
-        return (*laast, antall, ikke_forfatter)
+        return (*laast, antall, _tellende_uavhengige(
+            _krever_uavhengig(conn, tenant), ikke_forfatter))
 
     rad = varsel.skjermet(conn, _les_under_laas)
     if rad is varsel.FEILET or rad is None:
@@ -1143,7 +1172,8 @@ def hent_utkast_detalj(conn: psycopg.Connection, *, tenant: str, aktor: str,
         raise Aktiveringsfeil("utkast_ukjent")
     policy_id, innhold, innholds_hash, status, ver, opprettet_av = rad
     base_innhold, base_hash, aktiv = _base_med_versjon(conn, tenant, policy_id)
-    v = _vurder(base_innhold, base_hash, innhold)
+    v = _vurder(base_innhold, base_hash, innhold,
+                uavhengig=_krever_uavhengig(conn, tenant))
     runde = conn.execute(
         "SELECT runde, status, diff_hash, risikoklasse,"
         " pakrevd_antall_godkjennere, utloper FROM aktiveringsrunde"
@@ -2006,7 +2036,8 @@ def opprett_aktiveringsrunde(conn: psycopg.Connection, *, tenant: str,
     _krev_innforingskrav(ny_innhold)
     _krev_ekstern_lesing_port(conn, ny_innhold)
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
-    v = _vurder(base_innhold, base_hash, ny_innhold)
+    v = _vurder(base_innhold, base_hash, ny_innhold,
+                uavhengig=_krever_uavhengig(conn, tenant))
 
     runde = int(conn.execute(
         "SELECT coalesce(max(runde),0)+1 FROM aktiveringsrunde"
@@ -2085,7 +2116,8 @@ def _kan_gjenoppta_aktivering(conn, tenant: str, utkast_id: str, runde: int,
         "SELECT count(*), count(*) FILTER (WHERE NOT er_forfatter) FROM"
         " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND runde=%s",
         (tenant, utkast_id, runde)).fetchone()
-    return antall >= pakrevd and uavhengige >= 1
+    return antall >= pakrevd and _tellende_uavhengige(
+        _krever_uavhengig(conn, tenant), uavhengige) >= 1
 
 
 # --------------------------------------------------------------------------
@@ -2316,7 +2348,9 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
         " aktiveringsattestasjon WHERE tenant=%s AND utkast_id=%s AND runde=%s",
         (tenant, utkast_id, r_nr)).fetchall()
     antall = len(rader)
-    ikke_forfatter = sum(1 for _b, ef, _r, _a in rader if not ef)
+    ikke_forfatter = _tellende_uavhengige(
+        _krever_uavhengig(conn, tenant),
+        sum(1 for _b, ef, _r, _a in rader if not ef))
     if antall < r_pakrevd or ikke_forfatter < 1:
         # Det samme tallet inn i varslene til dem som fortsatt venter (Codex
         # P2). Før ble det regnet ut BARE for dette svaret — altså bare for
@@ -2348,7 +2382,8 @@ def attester_aktivering(conn: psycopg.Connection, mac_register, *,
     # --- 9. REKALK UNDER LÅSEN: har basen/semantikken flyttet seg? ---------
     # aktiv_versjon ble lest FOR UPDATE i steg 4, så settet er stabilt.
     base_innhold, base_hash = _base(conn, tenant, policy_id, aktiv_versjon)
-    v = _vurder(base_innhold, base_hash, ny_innhold)
+    v = _vurder(base_innhold, base_hash, ny_innhold,
+                uavhengig=_krever_uavhengig(conn, tenant))
     if (v["diff_hash"] != r_diff_hash
             or v["base_policy_hash"] != r_base_hash
             or v["klassifisering_hash"] != r_klass_hash

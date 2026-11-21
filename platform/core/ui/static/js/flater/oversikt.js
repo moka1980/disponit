@@ -253,7 +253,10 @@ function automatikkDel(liste, ctx) {
 // godkjenne (policyforvalter), så ingen må vite at den heter det.
 function godkjenningDel(g, ctx) {
   if (!g) return [];
-  const mangler = g.kan_godkjenne < 2;
+  // 227: uten krav om en uavhengig godkjenner er «bare én som kan
+  // godkjenne» ikke et hinder — da sier kortet det heller ikke.
+  const enHolder = g.uavhengig_godkjenning === false;
+  const mangler = !enHolder && g.kan_godkjenne < 2;
   if (!mangler && !g.apen_runde) return [];
   const kort = el("div", { class: "kort oppsett-kort oppsett-godkjenning" });
   if (mangler) {
