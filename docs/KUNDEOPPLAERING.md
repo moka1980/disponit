@@ -283,6 +283,14 @@ står under **Kundeservice**.
   hver linje med hvem og når. Sporet kan ikke endres eller slettes, og det
   inneholder ikke kundens tekst.
 
+**Koble til en felles postboks.** Under **E-post**: skriv adressen til
+postboksen (post@, kundeservice@ eller ordre@) og trykk **Koble til
+Microsoft 365**. Logg inn hos Microsoft som en person som har tilgang til
+den postboksen. Meldingene hentes da fra den felles postboksen, og svar
+som godkjennes, går ut fra samme adresse. En postboks som ble koblet til
+før 21.11.2026, må kobles til på nytt for å bli lest som felles — fram til
+da leses innboksen til den som koblet til.
+
 For saker som kom inn før 20.11.2026 viser sporet bare når saken ble
 mottatt og eventuelt lukket; resten ble ikke ført per sak den gangen.
 
