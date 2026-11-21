@@ -217,3 +217,34 @@ def test_en_usikker_lesing_gjor_aldri_kontrollen_svakere():
     assert policyadmin._tellende_uavhengige(False, 0) == 1
     assert policyadmin._tellende_uavhengige(True, 0) == 0
     assert policyadmin._tellende_uavhengige(True, 2) == 2
+
+
+def test_aktiveringsdora_er_048s_kropp_med_en_endret_blokk():
+    """227 erstatter hele `aktiver_policy`. En erstatning som ikke er målt
+    mot forgjengeren kan ha mistet en kontroll uten at noen så det: her
+    holdes de to kroppene mot hverandre, linje for linje."""
+    import difflib
+    from pathlib import Path
+
+    rot = Path(__file__).resolve().parents[1] / "db" / "migrations"
+    start = "CREATE OR REPLACE FUNCTION public.aktiver_policy("
+
+    def kropp(fil):
+        s = (rot / fil).read_text(encoding="utf-8")
+        i = s.index(start)
+        return s[i:s.index("$function$;", i)].splitlines()
+
+    gml = kropp("048_claim_tillitsgrense.sql")
+    ny = kropp("227_valgfri_uavhengig_godkjenning.sql")
+    assert len(gml) > 100, "fant ikke 048s kropp"
+    diff = list(difflib.ndiff(gml, ny))
+    fjernet = [l[2:] for l in diff if l.startswith("- ")]
+    lagt_til = [l[2:] for l in diff if l.startswith("+ ")]
+    # ÉN linje ut: det ubetingede kravet.
+    assert [l.strip() for l in fjernet] == ["IF v_uavhengige < 1 THEN"], \
+        fjernet
+    tekst = "\n".join(lagt_til)
+    assert "IF v_uavhengige < 1 AND coalesce(" in tekst
+    assert "f.uavhengig_godkjenning FROM public.firma f" in tekst
+    assert "true) THEN" in tekst, "uten svar må regelen være streng"
+    assert len(lagt_til) == 5, lagt_til
