@@ -923,7 +923,7 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
     # begge gikk hele lesten uten en eneste modulspesifikk produsent.
     assert st.aktive == ["m01_policy", "m02_revisjonslogg",
                          "m03_datakvalitet", "m04_dataforvalter",
-                         "m05_dokumentmal", "m06_epost", "m07_moteoperasjon",
+                         "m05_dokumentmal", "m07_moteoperasjon",
                          "m08_kalender", "m09_kunnskap", "m10_backup",
                          "m11_selvtest", "m12_tilgang", "m13_avstemming",
                          "m14_fakturakontroll", "m15_likviditet",
@@ -944,7 +944,7 @@ def test_registeret_skiller_godkjent_fra_utrullet(m01):
                          "m55_merkevare", "m57_ats", "wcag_audit"], st
     assert st.i_drift == ["m01_policy", "m02_revisjonslogg",
                           "m03_datakvalitet", "m04_dataforvalter",
-                          "m05_dokumentmal", "m06_epost", "m07_moteoperasjon",
+                          "m05_dokumentmal", "m07_moteoperasjon",
                           "m08_kalender", "m09_kunnskap", "m10_backup",
                           "m11_selvtest", "m12_tilgang", "m13_avstemming",
                           "m14_fakturakontroll", "m15_likviditet",
