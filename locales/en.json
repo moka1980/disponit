@@ -7240,15 +7240,15 @@
   "ui.gkregel.utfall.foreslatt": "The proposal is sent. A colleague must confirm within seven days.",
   "ui.gkregel.utfall.venter": "Your proposal is still waiting for a colleague.",
   "ui.gkregel.feil": "The change was not saved. Try again.",
-  "ui.epost.gmail.tittel": "Connect ordinary Gmail",
-  "ui.epost.gmail.forklaring": "For a Gmail account several people share. You create a separate app password at Google and paste it here. Disponit reads the inbox and replies from the same address — only when a person has approved the reply.",
+  "ui.epost.gmail.tittel": "Connect Gmail",
+  "ui.epost.gmail.forklaring": "For a Gmail account several people share. Enter the address and you are sent to Google: sign in with that account and accept. Disponit reads the inbox and replies from the same address — only when a person has approved the reply.",
   "ui.epost.gmail.steg1": "Turn on 2-Step Verification on the Google account, if it is not already on.",
   "ui.epost.gmail.steg2": "Go to myaccount.google.com/apppasswords and create an app password. Name it “Disponit”.",
   "ui.epost.gmail.steg3": "Paste the 16 letters below. You can delete the app password at Google at any time; access then stops.",
   "ui.epost.gmail.adresse": "The Gmail address",
   "ui.epost.gmail.passord": "App password (16 letters)",
   "ui.epost.gmail.passord_hjelp": "Not the password you sign in with. The app password is stored encrypted and never shown again.",
-  "ui.epost.gmail.koble": "Connect Gmail",
+  "ui.epost.gmail.koble": "Connect with app password",
   "ui.epost.gmail.koblet": "The mailbox is connected. The first fetch happens within five minutes, and only new mail is fetched.",
   "ui.epost.gmail.feil.format": "The app password is 16 letters. Copy it from Google once more.",
   "ui.epost.gmail.feil.avvist": "Google rejected the sign-in. Check the address, create a new app password and try again. Nothing was stored.",
@@ -7272,5 +7272,8 @@
   "ui.kundeservice.mal.feil.tom": "The template needs both a name and text.",
   "ui.kundeservice.mal.feil.navn": "There is already a template with that name. Choose another name.",
   "ui.kundeservice.mal.velg": "Start from a template",
-  "ui.kundeservice.mal.velg_ingen": "Choose a template …"
+  "ui.kundeservice.mal.velg_ingen": "Choose a template …",
+  "ui.epost.gmail.google": "Continue to Google",
+  "ui.epost.gmail.reserve": "Use an app password instead",
+  "ui.epost.gmail.feil.ikke_satt_opp": "Sign-in with Google is not set up here yet. You can connect with an app password below."
 }

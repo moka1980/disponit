@@ -3397,6 +3397,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def epost_kilde_start(request: Request) -> Response:
         return epostkildemodul.start_endepunkt(tjeneste, request)
 
+    # ADR-012: Gmail med Google-innlogging — samme flyt, annen leverandør.
+    def epost_kilde_google_start(request: Request) -> Response:
+        return epostkildemodul.start_endepunkt(tjeneste, request,
+                                               leverandor="google")
+
     # 229 (ADR-011): vanlig Gmail med app-passord.
     def epost_kilde_imap(request: Request) -> Response:
         return epostkildemodul.imap_endepunkt(tjeneste, request)
@@ -4615,6 +4620,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/epost/kilder/start", epost_kilde_start,
               methods=["POST"]),
         Route("/v1/epost/kilder/imap", epost_kilde_imap,
+              methods=["POST"]),
+        Route("/v1/epost/kilder/google/start", epost_kilde_google_start,
               methods=["POST"]),
         Route("/v1/epost/kilder/callback", epost_kilde_callback,
               methods=["GET"]),
@@ -6351,6 +6358,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/epost/kilder"):            "epost:read",
     ("POST", "/v1/epost/kilder/start"):      "epost:kilde:administrer",
     ("POST", "/v1/epost/kilder/imap"):       "epost:kilde:administrer",
+    ("POST", "/v1/epost/kilder/google/start"):
+        "epost:kilde:administrer",
     ("GET",  "/v1/epost/kilder/callback"):   None,
     ("POST", "/v1/epost/kilder/{kilde_id:uuid}/deaktiver"):
         "epost:kilde:administrer",

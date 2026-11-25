@@ -233,6 +233,42 @@ def hent_konfig() -> M365Konfig | None:
         redirect_uri=redirect_uri or None)
 
 
+# ---------------------------------------------------------------------------
+# ADR-012: Google-innlogging for Gmail-kilden
+# ---------------------------------------------------------------------------
+
+#: Det ENE scopet Google krever for IMAP og SMTP med innloggingstoken
+#: (XOAUTH2). Det finnes ikke et smalere som virker over IMAP. Ingen
+#: openid/e-post-scope: postboksen oppgis av administratoren, og at hun
+#: logget inn med NETTOPP den kontoen bevises ved at IMAP-innloggingen
+#: lykkes for den adressen i callbacken — før noe lagres.
+GOOGLE_SCOPE = "https://mail.google.com/"
+#: Scope-ordene kilden bærer: de samme to som app-passordet gir, pluss
+#: ordet som sier hvordan tilgangen ble gitt.
+GOOGLE_KILDESCOPE = "imap smtp google"
+GOOGLE_AUTORISER = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+
+
+def hent_google_konfig() -> M365Konfig | None:
+    """Google-konfigen fra miljøet — VALGFRI, som Microsoft-konfigen:
+    mangler klient-id eller -hemmelighet finnes ingen flyt, og /start
+    svarer `google_ikke_konfigurert`. Samme form som `M365Konfig`, fordi
+    flyten er den samme (kode + PKCE + state); bare endepunktene skiller.
+    """
+    cid = os.environ.get("DISPONIT_GOOGLE_CLIENT_ID", "").strip()
+    secret = os.environ.get("DISPONIT_GOOGLE_CLIENT_SECRET", "").strip()
+    if not cid or not secret:
+        return None
+    redirect_uri = os.environ.get("DISPONIT_GOOGLE_REDIRECT_URI", "").strip()
+    if redirect_uri and not _gyldig_redirect_uri(redirect_uri):
+        return None
+    return M365Konfig(
+        client_id=cid, client_secret=secret,
+        autoriser_endepunkt=GOOGLE_AUTORISER, token_endepunkt=GOOGLE_TOKEN,
+        allowlist=_allowlist(), redirect_uri=redirect_uri or None)
+
+
 def _gyldig_redirect_uri(raa: str) -> bool:
     """En redirect-URI er BARE gyldig hvis den er nøyaktig husets egen
     callback over https: rett sti, ingen query/fragment/userinfo, og en
@@ -348,8 +384,14 @@ def _kanonisk_host(request: Request) -> str:
             or request.headers.get("host", "").split(":")[0]).lower()
 
 
-def start_endepunkt(tjeneste, request: Request) -> Response:
+def start_endepunkt(tjeneste, request: Request, *,
+                    leverandor: str = "m365") -> Response:
+    """`leverandor` er RUTENS valg, aldri kroppens: "m365" (Microsoft) eller
+    "google" (ADR-012). De to deler state, binding, PKCE og callback."""
     from .app import _feilsvar, _rid
+    google = leverandor == "google"
+    ukonfigurert = ("google_ikke_konfigurert" if google
+                    else "m365_ikke_konfigurert")
     from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
                                    _krev_idem, _kropp, _med_conn)
     rid = _rid(request)
@@ -378,25 +420,25 @@ def start_endepunkt(tjeneste, request: Request) -> Response:
             raise _Avbrudd(_feil("request_feilformet", rid))
         postboks = postboks.strip().lower()
 
-        konfig = hent_konfig()
+        konfig = hent_google_konfig() if google else hent_konfig()
         if konfig is None:
             # Den ÆRLIGE koden — ingen state utstedes, ingen halv flyt.
-            tjeneste.logg.hendelse("m365_ikke_konfigurert", rid, tenant,
-                                   art="drift")
-            raise _Avbrudd(_feilsvar("m365_ikke_konfigurert", rid))
+            tjeneste.logg.hendelse(ukonfigurert, rid, tenant, art="drift")
+            raise _Avbrudd(_feilsvar(ukonfigurert, rid))
         try:
             _valider_egress(konfig.autoriser_endepunkt, konfig.allowlist)
             _valider_egress(konfig.token_endepunkt, konfig.allowlist)
         except KildeFeil:
             tjeneste.logg.hendelse("m365_egress_avvist", rid, tenant,
                                    art="sikkerhet")
-            raise _Avbrudd(_feilsvar("m365_ikke_konfigurert", rid))
+            raise _Avbrudd(_feilsvar(ukonfigurert, rid))
 
         # Idempotensclaim (003-lageret, kjerne-formen light): samme
         # nøkkel + samme input → REPLAY av nøyaktig samme authorize-URL
         # (staten er fortsatt ubrukt til callbacken konsumerer den);
         # samme nøkkel + annen postboks → konflikt.
-        input_hash = _hash(f"{tenant}\x1f{bid}\x1fm365start\x1f{postboks}")
+        input_hash = _hash(
+            f"{tenant}\x1f{bid}\x1f{leverandor}start\x1f{postboks}")
         ny = conn.execute(
             "INSERT INTO idempotens (tenant, nokkel, input_hash, status,"
             " respons, request_id) VALUES (%s,%s,%s,'paagaar',NULL,%s)"
@@ -433,17 +475,28 @@ def start_endepunkt(tjeneste, request: Request) -> Response:
             "pkce_ct": _b64url(ct), "pkce_nonce": _b64url(nonce),
             "pkce_key_id": key_id,
         }
+        if google:
+            # Feltet finnes BARE for Google: en state uten det er en
+            # Microsoft-state, som den alltid har vært.
+            payload["lev"] = "google"
         state = bygg_state(tjeneste.mac_register, payload)
-        url = konfig.autoriser_endepunkt + "?" + urlencode({
+        sporring = {
             "response_type": "code",
             "client_id": konfig.client_id,
             "redirect_uri": redirect_uri,
-            "response_mode": "query",
-            "scope": M365_SCOPE,
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
-        })
+        }
+        if google:
+            # `offline` + `consent`: uten begge gir Google ikke et
+            # refresh-token ved en NY tilkobling av en konto som har
+            # samtykket før. `login_hint` velger kontoen hun skrev inn.
+            sporring.update(scope=GOOGLE_SCOPE, access_type="offline",
+                            prompt="consent", login_hint=postboks)
+        else:
+            sporring.update(response_mode="query", scope=M365_SCOPE)
+        url = konfig.autoriser_endepunkt + "?" + urlencode(sporring)
         respons = {"autorisasjonsurl": url, "jti": jti}
         conn.execute(
             "UPDATE idempotens SET status='ferdig', respons=%s"
@@ -518,6 +571,60 @@ def _veksle_kode(konfig: M365Konfig, code: str, verifier: str,
         klient.close()
 
 
+def _google_token(konfig: M365Konfig, data: dict) -> tuple[int, dict]:
+    """Ett kall mot Googles tokenendepunkt over ssrf-transporten.
+    -> (status, svar). Kaster KildeFeil bare når det ikke KOM noe svar."""
+    _valider_egress(konfig.token_endepunkt, konfig.allowlist)
+    klient = ssrf.lag_klient(konfig.allowlist)
+    try:
+        r = klient.post(konfig.token_endepunkt, data={
+            "client_id": konfig.client_id,
+            "client_secret": konfig.client_secret, **data})
+        raa = ssrf.les_begrenset(r)
+        try:
+            svar = json.loads(raa)
+        except json.JSONDecodeError:
+            svar = {}
+        return r.status_code, svar if isinstance(svar, dict) else {}
+    except ssrf.SsrfAvvist as e:
+        raise KildeFeil(str(e)) from e
+    except OSError as e:
+        raise KildeFeil(f"google-token feilet: {type(e).__name__}") from e
+    finally:
+        klient.close()
+
+
+def _veksle_google_kode(konfig: M365Konfig, code: str, verifier: str,
+                        redirect_uri: str) -> dict:
+    """code → tokensvar hos Google. Testene bytter ut denne funksjonen."""
+    status, svar = _google_token(konfig, {
+        "grant_type": "authorization_code", "code": code,
+        "redirect_uri": redirect_uri, "code_verifier": verifier})
+    if status != 200:
+        raise KildeFeil(f"tokenveksling ga status {status}")
+    return svar
+
+
+def _veksle_google_refresh(konfig: M365Konfig, refresh: str) -> dict:
+    """refresh → tokensvar hos Google. Testene bytter ut denne funksjonen.
+
+    TO SLAGS NEI, og de skilles: 400/401 er Googles dom over tokenet
+    (tilbakekalt, utløpt, passordet byttet) — kilden kan ikke hentes før
+    noen kobler til på nytt. Alt annet er drift, og runden prøver igjen.
+    """
+    from plan import epost_imap
+    try:
+        status, svar = _google_token(konfig, {
+            "grant_type": "refresh_token", "refresh_token": refresh})
+    except KildeFeil as e:
+        raise epost_imap.ImapForbigaende("google_token") from e
+    if status in (400, 401):
+        raise KildeFeil("google avviste fornyelsen")
+    if status != 200:
+        raise epost_imap.ImapForbigaende(f"google_token_{status}")
+    return svar
+
+
 def callback_endepunkt(tjeneste, request: Request) -> Response:
     from .app import _feilsvar, _rid
     from .sesjon import _ip_prefiks, _rate, SesjonFeil
@@ -579,7 +686,8 @@ def callback_endepunkt(tjeneste, request: Request) -> Response:
             return _feil_side(rid)
         conn.commit()                # ingen lås under nettverkskallet
 
-        konfig = hent_konfig()
+        google = payload.get("lev") == "google"
+        konfig = hent_google_konfig() if google else hent_konfig()
         if konfig is None:
             return _feil_side(rid)
         # Dekrypter PKCE-verifieren (statens DEK-krypterte last) og veksle
@@ -595,11 +703,22 @@ def callback_endepunkt(tjeneste, request: Request) -> Response:
                 dek, _fra_b64url(payload["pkce_ct"]),
                 _fra_b64url(payload["pkce_nonce"]), tenant,
                 payload["pkce_key_id"])["v"]
-            token = _veksle_kode(konfig, code, verifier,
-                                 payload["redirect_uri"])
+            veksle = _veksle_google_kode if google else _veksle_kode
+            token = veksle(konfig, code, verifier, payload["redirect_uri"])
             refresh = token.get("refresh_token")
             if not isinstance(refresh, str) or not refresh:
                 raise KildeFeil("tokensvaret manglet refresh_token")
+            if google:
+                # BEVISET for at samtykket gjelder NETTOPP denne postboksen:
+                # IMAP-innloggingen må lykkes for adressen hun skrev inn.
+                # Logget hun inn med en annen Google-konto, sier Gmail nei
+                # her — og ingenting lagres.
+                from plan import epost_imap
+                access = token.get("access_token")
+                if not isinstance(access, str) or not access:
+                    raise KildeFeil("tokensvaret manglet access_token")
+                epost_imap.prov_innlogging(
+                    "gmail", postboks, epost_imap.Bearer(access))
         except Exception:
             conn.rollback()
             sett_tenant(conn, "_oidc")
@@ -618,6 +737,33 @@ def callback_endepunkt(tjeneste, request: Request) -> Response:
         # web-API-rollen med vilje ikke har.
         sett_kontekst(conn, tenant, f"bruker:{bruker}", rid)
         key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+        if google:
+            # En Google-kilde ER en IMAP-kilde (229): samme leverandør,
+            # samme kandidatdører, samme innhenter. Det eneste som skiller
+            # er hva som ligger kryptert — et refresh-token, ikke et
+            # app-passord. En postboks som alt var koblet til med
+            # app-passord, går over til innloggingen (UNIQUE-en gir én rad).
+            ct, nonce = kryptering.krypter(
+                dek, {"imap_tjeneste": "gmail", "google_refresh": refresh},
+                tenant, key_id)
+            conn.execute(
+                "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
+                " auth_kryptert, nonce, key_id, scope)"
+                " VALUES (%s,'imap',%s,%s,%s,%s,%s)"
+                " ON CONFLICT (tenant, leverandor, postboks) DO UPDATE SET"
+                " auth_kryptert=%s, nonce=%s, key_id=%s, status='aktiv',"
+                " scope=%s",
+                (tenant, postboks, ct, nonce, key_id, GOOGLE_KILDESCOPE,
+                 ct, nonce, key_id, GOOGLE_KILDESCOPE))
+            conn.commit()
+            tjeneste.logg.hendelse("google_kilde_tilkoblet", rid, tenant,
+                                   art="drift", aktor=f"bruker:{bruker}")
+            r = Response(status_code=303, headers={
+                "Location": "/#/epost",
+                "Referrer-Policy": "no-referrer", "x-request-id": rid})
+            r.raw_headers.append(
+                (b"set-cookie", _cookie(C_BINDING, "", 0).encode()))
+            return r
         ct, nonce = kryptering.krypter(dek, {"refresh_token": refresh},
                                        tenant, key_id)
         conn.execute(
@@ -883,7 +1029,8 @@ IMAP_TJENESTER = ("gmail",)
 _APPPASSORD = re.compile(r"^[a-z]{16}$")
 
 
-def hent_imap_tilgang(conn, tenant: str, kilde_id) -> dict:
+def hent_imap_tilgang(conn, tenant: str, kilde_id, *,
+                      veksler=None) -> dict:
     """-> {tjeneste, bruker, passord} for en AKTIV IMAP-kilde.
 
     KALLERENS kobling og rolle, som `hent_access_token`: web-API-rollen er
@@ -902,6 +1049,23 @@ def hent_imap_tilgang(conn, tenant: str, kilde_id) -> dict:
     dek = kryptering.hent_dek(conn, tenant, key_id)
     p = kryptering.dekrypter(dek, bytes(ct), bytes(nonce), tenant, key_id)
     tjeneste, passord = p.get("imap_tjeneste"), p.get("imap_passord")
+    refresh = p.get("google_refresh")
+    if tjeneste == "gmail" and isinstance(refresh, str) and refresh:
+        # ADR-012: kilden ble koblet til med Google-innlogging. Refresh-
+        # tokenet veksles til et kortlivet token for DENNE runden; det
+        # reiser som «passord» av typen `Bearer`, og klienten logger inn
+        # med XOAUTH2 i stedet for LOGIN.
+        from plan import epost_imap
+        konfig = hent_google_konfig()
+        if konfig is None:
+            # Driftens mangel, aldri kundens: kilden skal ikke felles.
+            raise epost_imap.ImapForbigaende("google_ikke_konfigurert")
+        veksle = veksler if veksler is not None else _veksle_google_refresh
+        access = veksle(konfig, refresh).get("access_token")
+        if not isinstance(access, str) or not access:
+            raise KildeFeil("tokensvaret manglet access_token")
+        return {"tjeneste": tjeneste, "bruker": postboks,
+                "passord": epost_imap.Bearer(access)}
     if tjeneste not in IMAP_TJENESTER or not isinstance(passord, str) \
             or not passord:
         raise KildeFeil("kilden mangler imap-tilgang")
