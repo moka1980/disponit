@@ -38,8 +38,11 @@ PAAMINN_S = int(os.environ.get("DISPONIT_DRIFTSVARSEL_PAAMINN_S", "86400"))
 SELV = "disponit-driftsvarsel.service"
 
 
-def feilede_units() -> list[str] | None:
-    """Feilede disponit-units, eller None når systemd ikke svarte."""
+#: Sekunder mellom de to prøvene i `feilede_units`.
+PROVEPAUSE_S = int(os.environ.get("DISPONIT_DRIFTSVARSEL_PROVEPAUSE_S", "25"))
+
+
+def _en_prove() -> set[str] | None:
     try:
         r = subprocess.run(
             ["systemctl", "list-units", "disponit-*", "--state=failed",
@@ -49,7 +52,29 @@ def feilede_units() -> list[str] | None:
         return None
     if r.returncode != 0:
         return None
-    ut = {linje.split()[0] for linje in r.stdout.splitlines() if linje.split()}
+    return {linje.split()[0] for linje in r.stdout.splitlines()
+            if linje.split()}
+
+
+def feilede_units(*, prove=_en_prove, sov=time.sleep,
+                  pause: int | None = None) -> list[str] | None:
+    """Feilede disponit-units, eller None når systemd ikke svarte.
+
+    TO PRØVER, IKKE ÉN (funnet 25.11.2026). En tjeneste som startes av en
+    timer og feiler, står som `failed` MELLOM kjøringene og som `activating`
+    mens den prøver igjen. systemd fyrer timere som ligger nær hverandre i
+    samme øyeblikk, så varselet og planarbeideren startet i samme sekund —
+    og varselet så «ingen feil» hver eneste gang i tre og en halv time mens
+    planarbeideren feilet hvert femte minutt. Den andre prøven tas etter at
+    en slik kjøring har rukket å feile; en unit som er feilet i ÉN av de to,
+    er feilet.
+    """
+    forste = prove()
+    if forste is None:
+        return None
+    sov(PROVEPAUSE_S if pause is None else pause)
+    andre = prove()
+    ut = forste | (andre or set())
     # Oss selv kan vi ikke varsle om: er vi feilet, kjører vi ikke.
     ut.discard(SELV)
     return sorted(ut)
