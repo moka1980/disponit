@@ -7240,15 +7240,15 @@
   "ui.gkregel.utfall.foreslatt": "Forslaget er sendt. En kollega må bekrefte innen sju døgn.",
   "ui.gkregel.utfall.venter": "Forslaget ditt venter fortsatt på en kollega.",
   "ui.gkregel.feil": "Endringen ble ikke lagret. Prøv igjen.",
-  "ui.epost.gmail.tittel": "Koble til vanlig Gmail",
-  "ui.epost.gmail.forklaring": "For en Gmail-konto som flere deler. Du lager et eget app-passord hos Google og limer det inn her. Disponit leser innboksen og svarer fra samme adresse — bare når et menneske har godkjent svaret.",
+  "ui.epost.gmail.tittel": "Koble til Gmail",
+  "ui.epost.gmail.forklaring": "For en Gmail-konto som flere deler. Skriv adressen, så sendes du til Google: logg inn med den kontoen og godta. Disponit leser innboksen og svarer fra samme adresse — bare når et menneske har godkjent svaret.",
   "ui.epost.gmail.steg1": "Slå på totrinnsbekreftelse på Google-kontoen, hvis den ikke alt er på.",
   "ui.epost.gmail.steg2": "Gå til myaccount.google.com/apppasswords og lag et app-passord. Kall det «Disponit».",
   "ui.epost.gmail.steg3": "Lim inn de 16 bokstavene under. Du kan slette app-passordet hos Google når som helst; da stopper tilgangen.",
   "ui.epost.gmail.adresse": "Gmail-adressen",
   "ui.epost.gmail.passord": "App-passord (16 bokstaver)",
   "ui.epost.gmail.passord_hjelp": "Ikke passordet du logger inn med. App-passordet lagres kryptert og vises aldri igjen.",
-  "ui.epost.gmail.koble": "Koble til Gmail",
+  "ui.epost.gmail.koble": "Koble til med app-passord",
   "ui.epost.gmail.koblet": "Postboksen er koblet til. Første henting skjer innen fem minutter, og bare ny e-post hentes.",
   "ui.epost.gmail.feil.format": "App-passordet er 16 bokstaver. Kopier det fra Google en gang til.",
   "ui.epost.gmail.feil.avvist": "Google avviste innloggingen. Sjekk adressen, lag et nytt app-passord og prøv igjen. Ingenting er lagret.",
@@ -7272,5 +7272,8 @@
   "ui.kundeservice.mal.feil.tom": "Malen trenger både navn og tekst.",
   "ui.kundeservice.mal.feil.navn": "Det finnes alt en mal med det navnet. Velg et annet navn.",
   "ui.kundeservice.mal.velg": "Start fra en mal",
-  "ui.kundeservice.mal.velg_ingen": "Velg en mal …"
+  "ui.kundeservice.mal.velg_ingen": "Velg en mal …",
+  "ui.epost.gmail.google": "Fortsett til Google",
+  "ui.epost.gmail.reserve": "Bruk et app-passord i stedet",
+  "ui.epost.gmail.feil.ikke_satt_opp": "Innlogging med Google er ikke satt opp her ennå. Du kan koble til med et app-passord under."
 }

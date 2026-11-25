@@ -477,6 +477,10 @@ export const deaktiverPart = (partId, idem) =>
 export const hentEpostKilder = () => hentJson("/v1/epost/kilder");
 export const startEpostKilde = (postboks, idempotensnokkel) =>
   _muter("/v1/epost/kilder/start", "POST", { postboks }, idempotensnokkel);
+// ADR-012: Gmail med Google-innlogging. Svaret er en authorize-URL.
+export const startGoogleKilde = (postboks, idempotensnokkel) =>
+  _muter("/v1/epost/kilder/google/start", "POST", { postboks },
+         idempotensnokkel);
 // 229 (ADR-011): vanlig Gmail med app-passord. Passordet sendes ÉN gang,
 // i kroppen på et POST over TLS, og kommer aldri tilbake i noe svar.
 export const kobleImapKilde = (postboks, passord, idempotensnokkel) =>

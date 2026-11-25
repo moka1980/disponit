@@ -31,6 +31,7 @@ Loggen bærer aldri adresse, emne, tekst eller passord.
 """
 from __future__ import annotations
 
+import base64
 import email
 import email.policy
 import email.utils
@@ -53,6 +54,17 @@ MAKS_PER_RUNDE = int(os.environ.get("DISPONIT_IMAP_MAKS_PER_RUNDE", "25"))
 MAKS_BYTES = 2 * 1024 * 1024          # større meldinger hentes uten vedlegg
 TIDSAVBRUDD_S = 20
 AKTOR = epost.AKTOR
+
+
+class Bearer(str):
+    """Et kortlivet innloggingstoken fra Google (ADR-012), der et
+    app-passord ellers står. TYPEN velger innloggingsmåten: XOAUTH2 for et
+    `Bearer`, vanlig LOGIN for en ren streng. Slik holder alle kallene —
+    og alle testsnittene — den ene formen (tjeneste, bruker, passord)."""
+
+
+def _xoauth2(bruker: str, token: str) -> bytes:
+    return f"user={bruker}\x01auth=Bearer {token}\x01\x01".encode("utf-8")
 
 
 class ImapAvvist(Exception):
@@ -179,7 +191,11 @@ class Imap:
         except (OSError, socket.timeout, ssl.SSLError) as e:
             raise ImapForbigaende(type(e).__name__) from e
         try:
-            self._c.login(bruker, passord)
+            if isinstance(passord, Bearer):
+                self._c.authenticate(
+                    "XOAUTH2", lambda _utfordring: _xoauth2(bruker, passord))
+            else:
+                self._c.login(bruker, passord)
         except imaplib.IMAP4.error as e:
             self.lukk()
             raise ImapAvvist("innloggingen ble avvist") from e
@@ -270,7 +286,18 @@ def send_smtp(tjeneste: str, bruker: str, passord: str,
         raise ImapForbigaende(type(e).__name__) from e
     try:
         try:
-            s.login(bruker, passord)
+            if isinstance(passord, Bearer):
+                s.ehlo()
+                kode, _svar = s.docmd("AUTH", "XOAUTH2 " + base64.b64encode(
+                    _xoauth2(bruker, passord)).decode("ascii"))
+                if kode == 334:
+                    # Google forklarer avslaget i en utfordring og venter
+                    # et tomt svar før den endelige koden kommer.
+                    kode, _svar = s.docmd("")
+                if kode != 235:
+                    raise smtplib.SMTPAuthenticationError(kode, b"xoauth2")
+            else:
+                s.login(bruker, passord)
         except smtplib.SMTPAuthenticationError as e:
             raise ImapAvvist("smtp-innloggingen ble avvist") from e
         except (smtplib.SMTPException, OSError, socket.timeout) as e:
@@ -310,6 +337,11 @@ def hent_en(conn, rad, *, kobler=Imap) -> dict:
         conn.rollback()
         return epost._feilet(conn, tenant, kilde_id, rid, ut, "tilgang",
                              str(e))
+    except ImapForbigaende as e:
+        # Google-tokenet lot seg ikke fornye AKKURAT NÅ (ADR-012): drift.
+        conn.rollback()
+        ut["forbigaende"] = str(e)[:40]
+        return ut
     conn.rollback()
     try:
         k = kobler(tilgang["tjeneste"], tilgang["bruker"],
@@ -446,6 +478,11 @@ def send_ett(conn, rad, *, sender=send_smtp) -> dict:
     except KildeFeil:
         conn.rollback()
         return feilet("tilgang_avvist")
+    except ImapForbigaende as e:
+        conn.rollback()
+        ut["forbigaende"] = str(e)[:40]
+        epost._log("epost_svar_forbigaende", **ut)
+        return ut
     conn.rollback()
     melding = bygg_svar(postboks, til, str(opprinnelig.get("emne") or ""),
                         tekst, lev_id)

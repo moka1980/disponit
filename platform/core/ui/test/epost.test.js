@@ -146,6 +146,60 @@ test("Epost: Koble til navigerer til SERVERENS authorize-URL med idem-nøkkel",
   }
 });
 
+test("Epost: Gmail kobles til med GOOGLES INNLOGGING — adressen og én knapp",
+    async () => {
+  SVAR = { "/v1/epost/kilder": { kilder: [] },
+    "/v1/epost/kilder/google/start":
+      { autorisasjonsurl: "https://accounts.google.example/auth?x=1" } };
+  KALL.length = 0;
+  const h = nyHoved();
+  const navigasjoner = [];
+  settNavigasjonForTest((url) => navigasjoner.push(url));
+  try {
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h.querySelector(".epost-gmail"));
+    const g = h.querySelector(".epost-gmail");
+    // Hovedveien er FØRSTE knapp, og app-passordet er foldet sammen.
+    assert.equal(g.querySelector("button").id, "epost-gmail-google");
+    assert.equal(g.querySelector("details").open, false);
+    assert.ok(g.querySelector("details #epost-gmail-passord"));
+    g.querySelector("#epost-gmail-google").click();
+    assert.ok(g.textContent.includes(t("ui.epost.postboks_mangler")));
+    assert.equal(navigasjoner.length, 0);
+    g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
+    g.querySelector("#epost-gmail-google").click();
+    await vent(() => navigasjoner.length === 1);
+    assert.deepEqual(navigasjoner,
+      ["https://accounts.google.example/auth?x=1"]);
+    const kall = KALL.find((k) => k.url === "/v1/epost/kilder/google/start");
+    assert.equal(kall.metode, "POST");
+    assert.deepEqual(kall.kropp, { postboks: "felles@gmail.example" });
+    assert.ok(kall.headers["Idempotency-Key"]);
+    assert.equal(g.querySelector("#epost-gmail-adresse").disabled, true);
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  } finally {
+    settNavigasjonForTest((url) => { window.location.assign(url); });
+  }
+});
+
+test("Epost: er Google-innloggingen ikke satt opp, åpnes app-passordet",
+    async () => {
+  SVAR = { "/v1/epost/kilder": { kilder: [] },
+    "/v1/epost/kilder/google/start": 503,
+    _feilkode: "google_ikke_konfigurert" };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelector(".epost-gmail"));
+  const g = h.querySelector(".epost-gmail");
+  g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
+  g.querySelector("#epost-gmail-google").click();
+  await vent(() =>
+    g.textContent.includes(t("ui.epost.gmail.feil.ikke_satt_opp")));
+  assert.equal(g.querySelector("details").open, true);
+  assert.equal(g.querySelector("#epost-gmail-google").disabled, false);
+});
+
 test("Epost: vanlig Gmail kobles til med APP-PASSORD, og passordet blir ikke stående",
     async () => {
   SVAR = { "/v1/epost/kilder": { kilder: [] },
@@ -166,13 +220,13 @@ test("Epost: vanlig Gmail kobles til med APP-PASSORD, og passordet blir ikke st�
   // Et vanlig passord stoppes FØR det sendes noe sted.
   g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
   pass.value = "Sommer2026!";
-  g.querySelector("button").click();
+  g.querySelector("#epost-gmail-app-knapp").click();
   assert.ok(g.textContent.includes(t("ui.epost.gmail.feil.format")));
   assert.ok(!KALL.some((k) => k.url === "/v1/epost/kilder/imap"));
 
   // Google viser app-passordet i fire grupper; mellomrommene tas bort.
   pass.value = "abcd efgh ijkl mnop";
-  g.querySelector("button").click();
+  g.querySelector("#epost-gmail-app-knapp").click();
   await vent(() => KALL.some((k) => k.url === "/v1/epost/kilder/imap"));
   const kall = KALL.find((k) => k.url === "/v1/epost/kilder/imap");
   assert.equal(kall.metode, "POST");
@@ -200,11 +254,11 @@ test("Epost: Gmail som sier nei gir en melding som sier hva man gjør",
     const g = h.querySelector(".epost-gmail");
     g.querySelector("#epost-gmail-adresse").value = "felles@gmail.example";
     g.querySelector("#epost-gmail-passord").value = "abcdefghijklmnop";
-    g.querySelector("button").click();
+    g.querySelector("#epost-gmail-app-knapp").click();
     await vent(() => g.textContent.includes(t(nokkel)));
     assert.ok(g.textContent.includes(t(nokkel)), kode);
     // Feltene låses opp igjen, så hun kan rette og prøve på nytt.
-    assert.equal(g.querySelector("button").disabled, false);
+    assert.equal(g.querySelector("#epost-gmail-app-knapp").disabled, false);
   }
   // En leser får ikke tilkoblingen i det hele tatt.
   SVAR = { "/v1/epost/kilder": { kilder: [] } };

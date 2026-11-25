@@ -537,6 +537,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
         " er tenantsegmentet ugyldig — svarer /start denne ÆRLIGE koden i"
         " stedet for å utstede en state ingen callback kan fullføre."
         " Drift: det er en konfigurasjonsmangel, aldri kallerens feil.")),
+    Feilvei("google_ikke_konfigurert", 503, ("drift",), None, notat=(
+        "Google-innloggingen for Gmail-kilden (ADR-012) er ikke satt opp"
+        " på denne instansen: klient-id eller -hemmelighet mangler."
+        " /google/start svarer denne ÆRLIGE koden i stedet for å utstede"
+        " en state ingen callback kan fullføre. Drift, aldri kallerens"
+        " feil — app-passordveien virker uansett.")),
     # --- 229 (ADR-011): IMAP-kilden, vanlig Gmail med app-passord -------
     Feilvei("imap_innlogging_avvist", 400, ("drift",), None, notat=(
         "Gmail avviste innloggingen ved tilkobling: app-passordet er feil,"

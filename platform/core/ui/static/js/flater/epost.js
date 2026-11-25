@@ -13,7 +13,7 @@
 // serveren håndhever begge uansett hva flaten viser.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { kobleImapKilde, hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
+import { kobleImapKilde, startGoogleKilde, hentEpostKilder, startEpostKilde, deaktiverEpostKilde,
          hentEpostMeldinger, hentEpostMelding, slettEpostMelding,
          skrivSvarutkast, avgjorSvarutkast, settSvarIKo,
          nyIdempotensnokkel, UautorisertFeil, ApiFeil } from "../api.js";
@@ -573,9 +573,10 @@ export function visEpost(hoved, ctx) {
       gmailSeksjon());
   }
 
-  // VANLIG GMAIL (229, ADR-011): adressen og et APP-PASSORD — aldri
-  // kontopassordet. Stegene står i klartekst, fordi app-passordet lages
-  // hos Google og ikke her, og ingen finner den siden uten å få den pekt ut.
+  // GMAIL. HOVEDVEIEN ER GOOGLES EGEN INNLOGGING (ADR-012): adressen og
+  // én knapp, som på telefonen. App-passordet (229, ADR-011) står igjen
+  // som reserve, foldet sammen — det virker også der innloggingen ikke er
+  // satt opp, men ingen skal måtte lete det frem hos Google for å begynne.
   function gmailSeksjon() {
     const adr = el("input", { id: "epost-gmail-adresse", type: "email",
       autocomplete: "off" });
@@ -586,8 +587,37 @@ export function visEpost(hoved, ctx) {
       f.addEventListener("input", () => { nokkel = nyIdempotensnokkel(); });
     }
     const utfall = el("p", { class: "muted", "aria-live": "polite" });
-    const knapp = el("button", { type: "button",
+    const google = el("button", { type: "button", id: "epost-gmail-google",
+      text: t("ui.epost.gmail.google") });
+    const knapp = el("button", { type: "button", id: "epost-gmail-app-knapp",
       text: t("ui.epost.gmail.koble") });
+    const reserve = el("details", { class: "epost-gmail-reserve" });
+    const laas = (paa) => {
+      for (const k of [google, knapp, adr, pass]) k.disabled = paa;
+    };
+    google.addEventListener("click", () => {
+      const postboks = (adr.value || "").trim();
+      if (!postboks) {
+        utfall.textContent = t("ui.epost.postboks_mangler"); return;
+      }
+      laas(true);
+      startGoogleKilde(postboks, nokkel).then((d) => {
+        // Toppnivå-navigasjon til Google — bare hvis flaten fortsatt er vår.
+        if (!eierSkjermen()) return;
+        _naviger(d.autorisasjonsurl);
+      }).catch((e) => {
+        laas(false);
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        const mangler = e instanceof ApiFeil
+          && e.kode === "google_ikke_konfigurert";
+        // Er innloggingen ikke satt opp, er reserven veien — den åpnes,
+        // så hun ser hva hun kan gjøre i stedet for bare en feil.
+        if (mangler) reserve.open = true;
+        utfall.textContent = t(mangler ? "ui.epost.gmail.feil.ikke_satt_opp"
+          : "ui.epost.feilet");
+        meldLive(utfall.textContent);
+      });
+    });
     knapp.addEventListener("click", () => {
       const postboks = (adr.value || "").trim();
       const passord = (pass.value || "").replace(/\s+/g, "");
@@ -597,7 +627,7 @@ export function visEpost(hoved, ctx) {
       if (!/^[a-zA-Z]{16}$/.test(passord)) {
         utfall.textContent = t("ui.epost.gmail.feil.format"); return;
       }
-      knapp.disabled = true; adr.disabled = true; pass.disabled = true;
+      laas(true);
       kobleImapKilde(postboks, passord, nokkel).then(() => {
         // Passordet skal ikke bli stående i et felt på skjermen.
         pass.value = "";
@@ -605,7 +635,7 @@ export function visEpost(hoved, ctx) {
         meldLive(t("ui.epost.gmail.koblet"));
         visEpost(hoved, ctx);
       }).catch((e) => {
-        knapp.disabled = false; adr.disabled = false; pass.disabled = false;
+        laas(false);
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
         const kode = e instanceof ApiFeil ? e.kode : "";
         utfall.textContent = t(
@@ -617,23 +647,29 @@ export function visEpost(hoved, ctx) {
     });
     adr.classList.add("felt-inp");
     pass.classList.add("felt-inp");
-    knapp.classList.add("knapp", "primar");
-    return el("section", { class: "kort epost-gmail" },
-      el("h2", { text: t("ui.epost.gmail.tittel") }),
-      el("p", { class: "muted", text: t("ui.epost.gmail.forklaring") }),
+    google.classList.add("knapp", "primar");
+    knapp.classList.add("knapp");
+    reserve.append(
+      el("summary", { text: t("ui.epost.gmail.reserve") }),
       el("ol", { class: "epost-gmail-steg" },
         ...["steg1", "steg2", "steg3"].map((n) =>
           el("li", { text: t(`ui.epost.gmail.${n}`) }))),
       el("div", { class: "kv-skjema" },
         el("div", { class: "felt" },
-          el("label", { for: "epost-gmail-adresse",
-                        text: t("ui.epost.gmail.adresse") }), adr),
-        el("div", { class: "felt" },
           el("label", { for: "epost-gmail-passord",
                         text: t("ui.epost.gmail.passord") }), pass,
           el("p", { class: "hjelpetekst",
                     text: t("ui.epost.gmail.passord_hjelp") })),
-        el("div", { class: "knapperad" }, knapp), utfall));
+        el("div", { class: "knapperad" }, knapp)));
+    return el("section", { class: "kort epost-gmail" },
+      el("h2", { text: t("ui.epost.gmail.tittel") }),
+      el("p", { class: "muted", text: t("ui.epost.gmail.forklaring") }),
+      el("div", { class: "kv-skjema" },
+        el("div", { class: "felt" },
+          el("label", { for: "epost-gmail-adresse",
+                        text: t("ui.epost.gmail.adresse") }), adr),
+        el("div", { class: "knapperad" }, google), utfall),
+      reserve);
   }
 
   function koble(input, knapp, feilfelt) {
