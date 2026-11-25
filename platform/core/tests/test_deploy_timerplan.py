@@ -479,3 +479,30 @@ def test_driftsvarselet_er_blindt_og_sier_det(tmp_path, monkeypatch):
         encoding="utf-8")
     assert ("ExecStart=/usr/bin/python3 /opt/disponit/aktiv/deploy/staging/"
             "driftsvarsel.py") in unit
+
+
+def test_driftsvarselet_ser_en_timertjeneste_som_feiler_mens_den_starter():
+    """25.11.2026: planarbeideren feilet hvert femte minutt i tre og en halv
+    time, og varselet sa «ingen feil» hver gang — de to timerne fyrte i samme
+    sekund, og i det sekundet sto tjenesten som `activating`, ikke `failed`.
+
+    MUTASJONEN SOM DREPER DENNE: ta bare én prøve.
+    """
+    dv = _driftsvarsel()
+    prover = [set(), {"disponit-plan.service", dv.SELV}]
+    sovet = []
+    ut = dv.feilede_units(prove=lambda: prover.pop(0), sov=sovet.append)
+    assert ut == ["disponit-plan.service"]
+    assert sovet == [dv.PROVEPAUSE_S] and dv.PROVEPAUSE_S >= 10
+    # Feilet i første prøve og startet på nytt i den andre: fortsatt feilet.
+    prover = [{"disponit-m17.service"}, set()]
+    assert dv.feilede_units(prove=lambda: prover.pop(0),
+                            sov=lambda s: None) == ["disponit-m17.service"]
+    # Svarer ikke systemd, er vi blinde — og sier det, uten å vente.
+    sovet.clear()
+    assert dv.feilede_units(prove=lambda: None, sov=sovet.append) is None
+    assert sovet == []
+    # Pausen må få plass i tjenestens tidsfrist.
+    unit = (TIMERKATALOG / "disponit-driftsvarsel.service").read_text(
+        encoding="utf-8")
+    assert "TimeoutStartSec=2min" in unit and dv.PROVEPAUSE_S < 60
