@@ -57,6 +57,10 @@ LoadCredential=DISPONIT_M365_CLIENT_SECRET:/etc/disponit/api/DISPONIT_M365_CLIEN
 LoadCredential=DISPONIT_M365_REDIRECT_URI:/etc/disponit/api/DISPONIT_M365_REDIRECT_URI
 LoadCredential=DISPONIT_M365_TENANT:/etc/disponit/api/DISPONIT_M365_TENANT
 LoadCredential=DISPONIT_M365_ALLOWLIST:/etc/disponit/api/DISPONIT_M365_ALLOWLIST
+# ADR-012: Google-innloggingen for Gmail-kilden. Tomme filer = ikke satt opp.
+LoadCredential=DISPONIT_GOOGLE_CLIENT_ID:/etc/disponit/api/DISPONIT_GOOGLE_CLIENT_ID
+LoadCredential=DISPONIT_GOOGLE_CLIENT_SECRET:/etc/disponit/api/DISPONIT_GOOGLE_CLIENT_SECRET
+LoadCredential=DISPONIT_GOOGLE_REDIRECT_URI:/etc/disponit/api/DISPONIT_GOOGLE_REDIRECT_URI
 # PR-045: miljøet prosessen kjører i (`platform/core/miljo`). Ikke en
 # hemmelighet, men samme hydreringsvei — og uten den nådde verdien aldri
 # prosessen: `lag_app()` leser kun det unitten laster, så både

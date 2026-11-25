@@ -1795,6 +1795,14 @@ skriv_cred plan DISPONIT_M365_CLIENT_ID     "${DISPONIT_M365_CLIENT_ID:-}"
 skriv_cred plan DISPONIT_M365_CLIENT_SECRET "${DISPONIT_M365_CLIENT_SECRET:-}"
 skriv_cred plan DISPONIT_M365_TENANT        "${DISPONIT_M365_TENANT:-}"
 skriv_cred plan DISPONIT_M365_ALLOWLIST     "${DISPONIT_M365_ALLOWLIST:-}"
+# ADR-012: Google-innloggingen for Gmail-kilden. VALGFRI som M365 — tomme
+# filer gir `google_ikke_konfigurert` på /google/start, og app-passordveien
+# virker uansett. API-et eier samtykkerunden; planarbeideren fornyer tokenet.
+skriv_cred api  DISPONIT_GOOGLE_CLIENT_ID     "${DISPONIT_GOOGLE_CLIENT_ID:-}"
+skriv_cred api  DISPONIT_GOOGLE_CLIENT_SECRET "${DISPONIT_GOOGLE_CLIENT_SECRET:-}"
+skriv_cred api  DISPONIT_GOOGLE_REDIRECT_URI  "${DISPONIT_GOOGLE_REDIRECT_URI:-}"
+skriv_cred plan DISPONIT_GOOGLE_CLIENT_ID     "${DISPONIT_GOOGLE_CLIENT_ID:-}"
+skriv_cred plan DISPONIT_GOOGLE_CLIENT_SECRET "${DISPONIT_GOOGLE_CLIENT_SECRET:-}"
 # PR-045 (Codex P1): MILJØET prosessen kjører i. `platform/core/miljo` er den
 # ene tolkningen av variabelen, og TO ting leser den: hvilke policystatuser som
 # får binde en beslutning (`api.policyregister.tillatte_statuser`), og om

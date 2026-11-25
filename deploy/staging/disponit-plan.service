@@ -43,6 +43,9 @@ LoadCredential=DISPONIT_M365_CLIENT_ID:/etc/disponit/plan/DISPONIT_M365_CLIENT_I
 LoadCredential=DISPONIT_M365_CLIENT_SECRET:/etc/disponit/plan/DISPONIT_M365_CLIENT_SECRET
 LoadCredential=DISPONIT_M365_TENANT:/etc/disponit/plan/DISPONIT_M365_TENANT
 LoadCredential=DISPONIT_M365_ALLOWLIST:/etc/disponit/plan/DISPONIT_M365_ALLOWLIST
+# ADR-012: planarbeideren fornyer Google-tokenet for Gmail-kilder.
+LoadCredential=DISPONIT_GOOGLE_CLIENT_ID:/etc/disponit/plan/DISPONIT_GOOGLE_CLIENT_ID
+LoadCredential=DISPONIT_GOOGLE_CLIENT_SECRET:/etc/disponit/plan/DISPONIT_GOOGLE_CLIENT_SECRET
 EnvironmentFile=-/etc/disponit/plan/konfig
 ExecStart=/opt/disponit/.venv/bin/python -m plan.materialiser
 TimeoutStartSec=10min
