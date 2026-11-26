@@ -3292,7 +3292,7 @@
   "ui.kundeservice.skjema.unntakskoe_ok": "Henvendelsen er sendt til unntakskøen.",
   "ui.kundeservice.skjema.utkast_ok": "Utkastet er lagret.",
   "ui.kundeservice.skjema.utkast_tekst": "Utkast",
-  "ui.kundeservice.skjema.utkast_teksthjelp": "Utkastet lagres og sendes ikke. Sender du det, merker du det som brukt her etterpå — det er sporet som gjør «besvart» etterprøvbart.",
+  "ui.kundeservice.skjema.utkast_teksthjelp": "«Lagre utkast» lagrer teksten uten å sende den, så du kan skrive ferdig senere.",
   "ui.kundeservice.skjema.utkast_tittel": "Nytt svarutkast",
   "ui.kundeservice.svar.sendt_ok": "Svaret er godkjent — plattformen sender det innenfor policyen.",
   "ui.kundeservice.tema.annet": "Annet",

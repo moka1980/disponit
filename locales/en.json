@@ -3292,7 +3292,7 @@
   "ui.kundeservice.skjema.unntakskoe_ok": "The enquiry was sent to the exception queue.",
   "ui.kundeservice.skjema.utkast_ok": "The draft is saved.",
   "ui.kundeservice.skjema.utkast_tekst": "Draft",
-  "ui.kundeservice.skjema.utkast_teksthjelp": "The draft is stored and not sent. If you send it, mark it as used here afterwards - that trace is what makes 'answered' verifiable.",
+  "ui.kundeservice.skjema.utkast_teksthjelp": "“Save draft” stores the text without sending it, so you can finish it later.",
   "ui.kundeservice.skjema.utkast_tittel": "New draft reply",
   "ui.kundeservice.svar.sendt_ok": "The reply is approved - the platform sends it within the policy.",
   "ui.kundeservice.tema.annet": "Other",
