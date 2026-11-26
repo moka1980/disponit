@@ -203,3 +203,11 @@ def test_svaret_krever_e_postscopet(klient, token):
         "00000000-0000-0000-0000-000000000001/svar-fra-postboks",
         json={"tekst": "Hei"}, headers=_hode(tok))
     assert r.status_code == 403, r.text
+
+
+def test_modultokenet_er_plattformen_ikke_ukjent():
+    from api.kundeservice import _aktornavn
+    assert _aktornavn("token:mtk_3d9f00", {})["type"] == "agent"
+    assert _aktornavn("bid_abc", {"bid_abc": "Kari"}) == {
+        "type": "bruker", "navn": "Kari"}
+    assert _aktornavn("token:noe_annet", {})["type"] == "ukjent"

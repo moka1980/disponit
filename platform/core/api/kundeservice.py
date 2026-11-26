@@ -510,6 +510,11 @@ def _aktornavn(aktor: str, navn: dict) -> dict:
     a = aktor or ""
     if a.startswith("agent:"):
         return {"type": "agent", "navn": a.split(":", 1)[1]}
+    # MODULTOKENET er plattformen: husets svar kvitteres av M-17-arbeideren
+    # med sitt modultoken (`token:mtk_…`). Før sto det «ukjent» i «Sendte
+    # svar» for hvert svar plattformen sendte (målt i drift 26.11.2026).
+    if a.startswith("token:mtk_"):
+        return {"type": "agent", "navn": "modul"}
     bid = a.split(":", 1)[1] if a.startswith("bruker:") else a
     if bid in navn:
         return {"type": "bruker", "navn": navn[bid]}
