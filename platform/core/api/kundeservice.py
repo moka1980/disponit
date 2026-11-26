@@ -265,6 +265,15 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
         rad["tildelt"] = None if t is None else {
             "bruker_id": t[1], "navn": navn.get(t[1]),
             "tildelt_ts": t[3].isoformat()}
+    # 231: SVARET GÅR FRA POSTBOKSEN SAKEN KOM INN PÅ, når den kan sende.
+    # Flaten må vite det før noen skriver, så knappen kan si hvilken
+    # adresse kunden får svaret fra.
+    postbokser = postbokser_for(conn, tenant, [
+        r["ekstern_ref"] for r in koe
+        if r["kanal"] == "epost" and r["ekstern_ref"]])
+    for rad in koe:
+        rad["svarpostboks"] = (postbokser.get(rad["ekstern_ref"])
+                               if rad["kanal"] == "epost" else None)
     if med_emne:
         emner = _koens_emner(conn, tenant)
         for rad in koe:
@@ -312,6 +321,180 @@ def svar_for(conn, tenant: str, *, med_emne: bool = False) -> dict:
 MAALTALL_DOGN = 30
 
 
+def postbokser_for(conn, tenant: str, refs: list) -> dict:
+    """{leverandørens melding-id: postboksen den kom inn på} — bare for en
+    AKTIV kilde som KAN SVARE (samtykkets egne ord, `kan_svare`). En sak
+    uten treff her besvares fra husets adresse, som før (163)."""
+    from .epost_kilde import kan_svare
+    refs = sorted({str(r) for r in refs if r})
+    if not refs:
+        return {}
+    ut = {}
+    for ref, postboks, scope in conn.execute(
+            "SELECT m.leverandor_melding_id, k.postboks, k.scope"
+            "  FROM epost_melding m JOIN epost_kilde k"
+            "    ON k.tenant = m.tenant AND k.kilde_id = m.kilde_id"
+            " WHERE m.tenant = %s AND m.leverandor_melding_id = ANY(%s)"
+            "   AND m.slettet_ts IS NULL AND k.status = 'aktiv'",
+            (tenant, refs)).fetchall():
+        if kan_svare(scope):
+            ut[str(ref)] = postboks
+    return ut
+
+
+def _postboksmelding(conn, tenant: str, ref: str):
+    """-> (melding_id, postboks) for den levende meldingen saken kom fra,
+    i en kilde som kan svare — eller None."""
+    from .epost_kilde import kan_svare
+    for mid, postboks, scope in conn.execute(
+            "SELECT m.melding_id, k.postboks, k.scope"
+            "  FROM epost_melding m JOIN epost_kilde k"
+            "    ON k.tenant = m.tenant AND k.kilde_id = m.kilde_id"
+            " WHERE m.tenant = %s AND m.leverandor_melding_id = %s"
+            "   AND m.slettet_ts IS NULL AND k.status = 'aktiv'"
+            " ORDER BY m.mottatt_ts DESC NULLS LAST", (tenant, ref)).fetchall():
+        if kan_svare(scope):
+            return mid, postboks
+    return None
+
+
+def postbokssvar_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/henvendelse/{henvendelse_id}/svar-fra-postboks
+    (epost:utkast:behandle, idem). Kropp: {"tekst": "..."}.
+
+    MENNESKETS EGET SVAR, FRA POSTBOKSEN SAKEN KOM INN PÅ (231). Det samme
+    som e-postflatens «Send» (eiervedtak 10/9: ingen policyport for et svar
+    et menneske skriver og sender selv), bare startet fra saken. ÉN
+    transaksjon: utkastet i registeret, utkastet i postboksen, køen, og
+    koblingen mellom dem — enten alt eller ingenting.
+
+    Selve sendingen skjer i bakgrunnsprosessen som har nøkkelen til
+    postboksen (088). Saken lukkes når svaret ER ute (triggeren i 231),
+    ikke her.
+    """
+    from .app import _rid
+    from .epost_kilde import _modul_inaktiv
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _krev_idem, _kropp, _med_conn, _ok)
+    rid = _rid(request)
+    av = _modul_inaktiv(tjeneste, rid)
+    if av is not None:
+        return av
+
+    def kjor(conn):
+        from db import kryptering
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "epost:utkast:behandle")
+        nokkel = _krev_idem(request, rid)
+        kropp = _kropp(request)
+        hid = _sti_uuid(request, "henvendelse_id", rid)
+        tekst = _tekst(kropp, "tekst", rid, MAKS_UTKAST)
+        try:
+            ref = conn.execute("SELECT * FROM m17_kilde_ref(%s,%s)",
+                               (tenant, hid)).fetchone()
+            if ref is None:
+                raise _Avbrudd(_feil("ikke_funnet", rid, 404))
+            kanal, ekstern_ref, lukket = ref
+            if lukket:
+                raise _Avbrudd(_feil("henvendelse_ulovlig_tilstand", rid,
+                                     409, detalj="henvendelsen er lukket"))
+            treff = (_postboksmelding(conn, tenant, ekstern_ref)
+                     if kanal == "epost" and ekstern_ref else None)
+            if treff is None:
+                raise _Avbrudd(_feil(
+                    "henvendelse_ulovlig_tilstand", rid, 409,
+                    detalj="saken kom ikke inn på en postboks som kan svare"))
+            melding_id, postboks = treff
+            key_id, dek = _dek(conn, tenant)
+            uid = _utled("utkast", tenant, nokkel)
+            ct, nonce = _krypter(dek, key_id, tenant, tekst)
+            ny = conn.execute(
+                "SELECT m17_lagre_utkast(%s,%s,%s,%s,%s,%s,%s,'menneske',"
+                "                        NULL,%s)",
+                (tenant, uid, hid, ct, nonce, key_id, [], bid)).fetchone()[0]
+            if not ny:
+                # GJENSPILL: samme nøkkel har alt lagt svaret i kø.
+                conn.rollback()
+                return _ok({"henvendelse_id": str(hid), "utkast_id": str(uid),
+                            "postboks": postboks, "ny": False}, rid)
+            # Signaturen fra avsenderprofilen følger med, som på husets vei.
+            profil = conn.execute("SELECT * FROM m17_avsenderprofilen(%s)",
+                                  (tenant,)).fetchone()
+            signatur = (profil[2] or "").strip() if profil else ""
+            ut = f"{tekst.rstrip()}\n\n{signatur}" if signatur else tekst
+            e_ct, e_nonce = kryptering.krypter(dek, {"tekst": ut}, tenant,
+                                               key_id)
+            euid = conn.execute(
+                "SELECT m6_skriv_svarutkast(%s,%s,%s,%s,%s,%s)",
+                (tenant, melding_id, e_ct, e_nonce, key_id, bid)
+            ).fetchone()[0]
+            conn.execute("SELECT m6_send_svaret(%s,%s,%s)",
+                         (tenant, euid, bid))
+            conn.execute(
+                "SELECT m17_koble_postbokssvar(%s,%s,%s,%s,%s,%s)",
+                (tenant, hid, uid, euid, postboks, bid))
+        except psycopg.Error as e:
+            avbrudd = _doerfeil(e, rid)
+            if avbrudd is None:
+                raise
+            raise avbrudd from e
+        conn.commit()
+        return _ok({"henvendelse_id": str(hid), "utkast_id": str(uid),
+                    "postboks": postboks, "status": "sendes", "ny": True},
+                   rid)
+
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def sendte_svar_for(conn, tenant: str, *, med_emne: bool) -> list:
+    """Sporradene om svar, begge veier, med navn i stedet for id."""
+    navn = _medlemsnavn(conn, tenant)
+    rader = conn.execute("SELECT * FROM m17_sendte_svar(%s,%s)",
+                         (tenant, 200)).fetchall()
+    emner = {}
+    if med_emne and rader:
+        from db import kryptering
+        for hid in {r[0] for r in rader}:
+            try:
+                rad = conn.execute("SELECT * FROM m17_hent_innhold(%s,%s)",
+                                   (tenant, hid)).fetchone()
+                dek = kryptering.hent_dek(conn, tenant, rad[4])
+                emner[str(hid)] = kryptering.dekrypter(
+                    dek, rad[0], rad[1], tenant, rad[4])["t"]
+            except psycopg.Error:
+                raise
+            except Exception:                               # noqa: BLE001
+                emner[str(hid)] = None
+    ut = []
+    for hid, handling, aktor, detalj, ts, lukket_utfall in rader:
+        d = detalj or {}
+        via = d.get("via") or ("postboks" if handling == "svar.til_postboks"
+                               else "huset")
+        post = {"henvendelse_id": str(hid), "handling": handling,
+                "via": via, "postboks": d.get("postboks"),
+                "mottaker_maske": d.get("mottaker_maske"),
+                "grunn": d.get("grunn"), "ts": ts.isoformat(),
+                "lukket_utfall": lukket_utfall,
+                "hvem": _aktornavn(aktor, navn)}
+        if med_emne:
+            post["emne"] = emner.get(str(hid))
+        ut.append(post)
+    return ut
+
+
+def sendte_svar_endepunkt(tjeneste, request):
+    """GET /v1/kundeservice/sendte (decisions:read) — svarene som er sendt,
+    lagt i kø eller feilet, nyeste først. Emnet bare med innholdsscopet."""
+    from .lesing import _les, kanonisk_json
+
+    def _fn(conn, auth, rid):
+        return kanonisk_json({"sendte": sendte_svar_for(
+            conn, auth.tenant,
+            med_emne="kundeservice:innhold" in auth.scopes),
+            "request_id": rid}, 200, {"x-request-id": rid})
+    return _les(tjeneste, request, "decisions:read", _fn)
+
+
 def _medlemsnavn(conn, tenant: str) -> dict:
     """bruker_id -> visningsnavn for firmaets aktive medlemmer (samme
     lesedør som eiervelgeren, `medlemmer.svar_for`)."""
@@ -356,6 +539,13 @@ def sporet_for(conn, tenant: str, henvendelse_id) -> dict:
             rad["til"] = navn.get(detalj.get("til"))
         if "utfall" in detalj:
             rad["utfall"] = detalj["utfall"]
+        # 231: hvilken postboks et svar gikk fra (adressen er firmaets
+        # egen, ikke kundens), og hvorfor det ikke gikk.
+        if r[1] in ("svar.sendt", "svar.til_postboks", "svar.feilet"):
+            if detalj.get("postboks"):
+                rad["postboks"] = detalj["postboks"]
+            if detalj.get("grunn"):
+                rad["grunn"] = detalj["grunn"]
         spor.append(rad)
     return {"spor": spor, "avkortet": len(rader) > MAKS_SPOR}
 

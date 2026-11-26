@@ -874,6 +874,13 @@ export const tildelHenvendelse = (id, brukerId, idem) =>
   _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/tildel`,
          "POST", { bruker_id: brukerId }, idem || nyIdempotensnokkel());
 
+// 231: svaret går fra postboksen saken kom inn på, og sendte svar.
+export const sendFraPostboks = (id, tekst, idem) =>
+  _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}`
+         + "/svar-fra-postboks", "POST", { tekst },
+         idem || nyIdempotensnokkel());
+export const hentSendteSvar = () => hentJson("/v1/kundeservice/sendte");
+
 // 230: svarmaler — firmaets egne formuleringer.
 export const hentSvarmaler = () => hentJson("/v1/kundeservice/svarmaler");
 export const lagreSvarmal = (mal, idem) =>

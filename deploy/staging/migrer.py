@@ -358,6 +358,9 @@ GRANT EXECUTE ON FUNCTION m17_sporet(TEXT, UUID, INT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_maaltall(TEXT, INT) TO {rolle};
 -- 230: svarmalene — firmaets egne formuleringer.
 GRANT EXECUTE ON FUNCTION m17_svarmalene(TEXT) TO {rolle};
+-- 231: sendte svar, begge veier.
+GRANT EXECUTE ON FUNCTION m17_sendte_svar(TEXT, INT) TO {rolle};
+GRANT EXECUTE ON FUNCTION m17_kilde_ref(TEXT, UUID) TO {rolle};
 REVOKE ALL ON FUNCTION m17_sveip_henvendelser(INT, INT, INT) FROM {rolle};
 REVOKE ALL ON FUNCTION m17_funnkandidater(TEXT, DATE, INT, INT) FROM {rolle};
 
@@ -1038,6 +1041,8 @@ GRANT EXECUTE ON FUNCTION m17_tildel(TEXT, UUID, TEXT, TEXT) TO {rolle};
 -- 230: svarmalene lagres og slettes av den som har skriverett i køen.
 GRANT EXECUTE ON FUNCTION m17_lagre_svarmal(TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO {rolle};
 GRANT EXECUTE ON FUNCTION m17_slett_svarmal(TEXT, UUID, TEXT) TO {rolle};
+-- 231: svaret fra postboksen saken kom inn på kobles til saken.
+GRANT EXECUTE ON FUNCTION m17_koble_postbokssvar(TEXT, UUID, UUID, UUID, TEXT, TEXT) TO {rolle};
 -- 103 (M-18): onboardingregisterets seks skrivedører. Sekvensregelen,
 -- fullført-kravet og eierkravet håndheves i dørene og i vaktene, aldri
 -- her.

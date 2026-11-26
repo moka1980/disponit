@@ -1351,6 +1351,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.sporet_endepunkt(tjeneste, request)
 
+    # 231: svaret fra postboksen saken kom inn på, og sendte svar.
+    def kundeservice_postbokssvar(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.postbokssvar_endepunkt(tjeneste, request)
+
+    def kundeservice_sendte(request: Request) -> Response:
+        from . import kundeservice as ksmodul
+        return ksmodul.sendte_svar_endepunkt(tjeneste, request)
+
     # 230: svarmaler.
     def kundeservice_svarmaler(request: Request) -> Response:
         from . import kundeservice as ksmodul
@@ -3881,6 +3890,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_tildel, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
               kundeservice_spor, methods=["GET"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks",
+              kundeservice_postbokssvar, methods=["POST"]),
+        Route("/v1/kundeservice/sendte", kundeservice_sendte,
+              methods=["GET"]),
         Route("/v1/kundeservice/svarmaler", kundeservice_svarmaler,
               methods=["GET"]),
         Route("/v1/kundeservice/svarmaler", kundeservice_svarmal_lagre,
@@ -5453,6 +5466,9 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor"):
         "decisions:read",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks"):
+        "epost:utkast:behandle",
+    ("GET",  "/v1/kundeservice/sendte"):      "decisions:read",
     ("GET",  "/v1/kundeservice/svarmaler"):   "decisions:read",
     ("POST", "/v1/kundeservice/svarmaler"):   "bestilling:opprett",
     ("POST", "/v1/kundeservice/svarmaler/{mal_id:uuid}/slett"):

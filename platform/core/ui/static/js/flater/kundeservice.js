@@ -34,7 +34,8 @@ import {
   UautorisertFeil, avgjorUtkast, hentJson, henvendelseTilUnntakskoe,
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
   tildelHenvendelse, hentHenvendelsesspor, hentMedlemmer,
-  hentSvarmaler, lagreSvarmal, slettSvarmal,
+  hentSvarmaler, lagreSvarmal, slettSvarmal, sendFraPostboks,
+  hentSendteSvar,
   hentFullmakter, hentStilleregler, nyIdempotensnokkel,
   settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
@@ -150,6 +151,13 @@ export function sporTekst(s) {
   if (s.utfall) {
     tekst += ` (${t(`ui.kundeservice.utfall.${s.utfall}`, s.utfall)})`;
   }
+  // 231: HVILKEN ADRESSE svaret gikk fra — det var nettopp det som ikke
+  // syntes da et svar gikk fra feil adresse.
+  if (s.postboks) {
+    tekst += ` · ${t("ui.kundeservice.spor.fra").replace("{postboks}",
+      s.postboks)}`;
+  }
+  if (s.grunn) tekst += ` (${s.grunn})`;
   return tekst;
 }
 
@@ -331,7 +339,8 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     idem = null;
     knapp.disabled = false;
     if (tilbakestill) tilbakestill();
-    meldLive(t(okNokkel));
+    const ok = typeof okNokkel === "function" ? okNokkel() : t(okNokkel);
+    meldLive(ok);
     // KVITTERINGEN SKAL OVERLEVE TEGNINGEN. `last()` bygger listen,
     // panelet og skjemaene på nytt, og en melding satt i skjemaets eget
     // `utfall` forsvant i samme øyeblikk den ble satt — brukeren trykket,
@@ -340,7 +349,7 @@ function skjemaramme(ctx, last, { skjema, knapp, utfall, send,
     // utenfor tegningen. FEILEN blir stående i skjemaet, der den hører
     // hjemme: den veien tegner ikke om. (CodeRabbit på M-24, samme feil
     // i alle fem flatene i klyngen.)
-    kvitter(t(okNokkel));
+    kvitter(ok);
     await last();
   });
 }
@@ -798,14 +807,36 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
     felt("ks-utkast", "ui.kundeservice.skjema.utkast_tekst", utkasttekst,
          "ui.kundeservice.skjema.utkast_teksthjelp"),
     el("div", { class: "skjema-bunn" }, uKnapp, uLagre));
-  const utenFullmakt = !!(sammendrag && "svar_fullmakt" in sammendrag
-                          && !sammendrag.svar_fullmakt);
-  if (utenFullmakt) {
-    uKnapp.disabled = true;
-    uKnapp.dataset.utenFullmakt = "1";
-    uSkjema.append(el("p", { class: "muted hv-varsel",
-      text: t("ui.kundeservice.avsender.fullmakt_nei") }));
-  }
+  const utenPolicy = !!(sammendrag && "svar_fullmakt" in sammendrag
+                        && !sammendrag.svar_fullmakt);
+  // 231: HVOR SVARET GÅR FRA. Kom saken inn på en postboks som kan sende,
+  // går svaret derfra — og da trengs ingen fullmakt: det er menneskets
+  // eget svar (eiervedtak 10/9). Ellers går det fra plattformens adresse
+  // med firmaets navn, og fullmakten gjelder som før (207).
+  const fraPostboks = () => !!(gjeldende && gjeldende.svarpostboks
+    && harScope(ctx, "epost:utkast:behandle"));
+  let utenFullmakt = utenPolicy;
+  const fullmaktNei = el("p", { class: "muted hv-varsel",
+    text: t("ui.kundeservice.avsender.fullmakt_nei") });
+  const svarvei = el("p", { class: "muted hv-svarvei" });
+  uSkjema.append(svarvei, fullmaktNei);
+  const tegnSvarvei = () => {
+    const pb = fraPostboks();
+    utenFullmakt = !pb && utenPolicy;
+    uKnapp.textContent = pb
+      ? t("ui.kundeservice.knapp.send_fra").replace("{postboks}",
+        gjeldende.svarpostboks)
+      : t("ui.kundeservice.knapp.godkjenn_svar");
+    svarvei.textContent = pb
+      ? t("ui.kundeservice.svarvei.postboks").replace("{postboks}",
+        gjeldende.svarpostboks)
+      : t("ui.kundeservice.svarvei.huset");
+    fullmaktNei.hidden = !utenFullmakt;
+    uKnapp.disabled = utenFullmakt;
+    if (utenFullmakt) uKnapp.dataset.utenFullmakt = "1";
+    else delete uKnapp.dataset.utenFullmakt;
+  };
+  tegnSvarvei();
   // TO KALL, ÉN INTENSJON (CodeRabbit): feiler godkjenningen etter at
   // utkastet er lagret, holder rammen nøkkelen — og neste klikk skal
   // godkjenne DET utkastet, ikke lagre et til. Husket per nøkkel til
@@ -814,9 +845,18 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
   let lagret = null;
   skjemaramme(ctx, last, {
     skjema: uSkjema, knapp: uKnapp, utfall, kvitter,
-    okNokkel: "ui.kundeservice.svar.sendt_ok",
+    okNokkel: () => (fraPostboks()
+      ? t("ui.kundeservice.svar.postboks_ok").replace("{postboks}",
+        gjeldende.svarpostboks)
+      : t("ui.kundeservice.svar.sendt_ok")),
     send: async (idem) => {
       let svar;
+      // 231: FRA POSTBOKSEN SAKEN KOM INN PÅ. Menneskets eget svar, i
+      // postboksens kø — ett kall, og saken lukkes når svaret ER ute.
+      if (fraPostboks()) {
+        return sendFraPostboks(gjeldende.henvendelse_id,
+                               utkasttekst.value, idem);
+      }
       if (lagret && lagret.idem === idem) {
         svar = { utkast_id: lagret.utkast_id };
       } else {
@@ -1130,6 +1170,7 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       // 160: masken, aldri adressen — og adressens fravær som ord.
       sett(meta, ...metaBrikker(h));
       tegnMalvelger(h.tema);
+      tegnSvarvei();
       if (skriver) {
         hentSvarmaler().then((d) => {
           malene = d.maler || [];
@@ -1188,6 +1229,63 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
 // finnes, og ett skjema som både lager en ny og endrer en som finnes
 // («Endre» fyller skjemaet). En leser ser malene; skrivekontrollene vises
 // bare for den som kan bruke dem.
+// 231: SENDTE SVAR. Hvert svar som er sendt, ligger i kø eller feilet —
+// begge veier, med adressen det gikk fra. Før fantes ingen sted å se det.
+export function sendtStatus(r) {
+  if (r.handling === "svar.til_postboks") return t("ui.kundeservice.sendte.i_ko");
+  if (r.handling === "svar.feilet") return t("ui.kundeservice.sendte.feilet");
+  return t("ui.kundeservice.sendte.sendt");
+}
+
+function sendteSeksjon(ctx) {
+  const medEmne = harScope(ctx, "kundeservice:innhold");
+  const liste = el("div", { class: "ks-sendte" },
+    el("p", { class: "muted", text: t("ui.kundeservice.sendte.laster") }));
+  const boks = el("section", { class: "kpi-kort ks-sendte-boks" },
+    el("h2", { text: t("ui.kundeservice.sendte.tittel") }),
+    el("p", { class: "muted", text: t("ui.kundeservice.sendte.forklaring") }),
+    liste);
+  hentSendteSvar().then((d) => {
+    const rader = d.sendte || [];
+    if (!rader.length) {
+      sett(liste, el("p", { class: "muted",
+        text: t("ui.kundeservice.sendte.ingen") }));
+      return;
+    }
+    const tb = el("table", { class: "kpi-tabell" },
+      el("caption", { text: t("ui.kundeservice.sendte.caption") }),
+      el("thead", {}, el("tr", {},
+        medEmne ? el("th", { scope: "col",
+          text: t("ui.kundeservice.detalj.emne") }) : null,
+        el("th", { scope: "col", text: t("ui.kundeservice.sendte.status") }),
+        el("th", { scope: "col", text: t("ui.kundeservice.sendte.fra") }),
+        el("th", { scope: "col", text: t("ui.kundeservice.sendte.til") }),
+        el("th", { scope: "col", text: t("ui.kundeservice.sendte.av") }),
+        el("th", { scope: "col", text: t("ui.kundeservice.sendte.naar") }))));
+    const tbody = el("tbody");
+    for (const r of rader) {
+      tbody.append(el("tr", {},
+        medEmne ? el("td", { class: "celle-tekst",
+          text: r.emne || t("ui.kundeservice.detalj.uten_emne") }) : null,
+        el("td", { class: "celle-tekst", text: sendtStatus(r)
+          + (r.grunn ? ` (${r.grunn})` : "") }),
+        el("td", { class: "celle-tekst", text: r.postboks
+          || t("ui.kundeservice.sendte.fra_huset") }),
+        el("td", { class: "celle-tekst", text: r.mottaker_maske || "–" }),
+        el("td", { class: "celle-tekst", text: sporHvem(r) }),
+        el("td", { class: "celle-tekst",
+          text: r.ts.slice(0, 16).replace("T", " ") })));
+    }
+    tb.append(tbody);
+    sett(liste, el("div", { class: "tablewrap" }, tb));
+  }).catch((e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+    sett(liste, el("p", { role: "alert",
+      text: t("ui.kundeservice.feil.generell") }));
+  });
+  return boks;
+}
+
 function svarmalSeksjon(ctx, kvitter) {
   const kanSkrive = harScope(ctx, "bestilling:opprett");
   const boks = el("section", { class: "kpi-kort ks-maler" },
@@ -1421,6 +1519,7 @@ export function visKundeservice(hoved, ctx) {
         el("h2", { text: t("ui.kundeservice.koe.tittel") }),
         koblokk, detalj.node);
       const deler = [oversikt, koseksjon,
+                     sendteSeksjon(ctx),
                      svarmalSeksjon(ctx, kvitter),
                      avsenderSeksjon(d.avsenderprofil, s, ctx, last, kvitter),
                      stilleSeksjon(ctx, last, kvitter)];

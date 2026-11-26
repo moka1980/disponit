@@ -228,5 +228,6 @@
   "227_valgfri_uavhengig_godkjenning.sql": "0f10fa472cd813978d29bdfd6130f51f4346a9d3a15bf5d1d60e86131942a9ff",
   "228_godkjenningsvalg_etterfylles.sql": "30f7f5a9d974924641329d14d2c7bcc0c7ec9f547cf098046e9a09e65a3e47aa",
   "229_m6_imap.sql": "381c091a2a1fababad20d1a08fe27c9cc47943a788a0f863a2c35c052bdaa4ae",
-  "230_m17_svarmaler.sql": "90c6adfe124e32704542cfd4b53d83c6e44200cce42a9cc1dc7990435d1239ef"
+  "230_m17_svarmaler.sql": "90c6adfe124e32704542cfd4b53d83c6e44200cce42a9cc1dc7990435d1239ef",
+  "231_m17_svar_fra_postboksen.sql": "7f515005c7fc52d873c88d939aeca89e33b2e961d49b46e29b63848197ad9556"
 }
