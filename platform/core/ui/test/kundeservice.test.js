@@ -1323,7 +1323,11 @@ test("Kundeservice: uten fullmakt sier avsenderfanen det høyt; med, stille"
     assert.ok(await vent(
       () => h.querySelectorAll("table tbody tr").length === 2));
     assert.ok(h.textContent.includes(t(nokkel)), `mangler ${nokkel}`);
-    assert.equal(!!h.querySelector(".kpi-kort .hv-varsel"), !fullmakt);
+    // 231: varselet i detaljen STÅR SKJULT der svaret går fra postboksen,
+    // så det som teller er om et varsel er SYNLIG.
+    const synlig = (rot, sel) => [...rot.querySelectorAll(sel)]
+      .some((x) => !x.hidden);
+    assert.equal(synlig(h, ".kpi-kort .hv-varsel"), !fullmakt);
     // …og i detaljen: «Godkjenn svaret» er AVSLÅTT uten fullmakt, «Lagre
     // utkast» står — utkastet er menneskets. MUTASJONEN SOM DREPER DENNE:
     // fjern `uKnapp.disabled = true` i detaljpanel.
@@ -1336,7 +1340,7 @@ test("Kundeservice: uten fullmakt sier avsenderfanen det høyt; med, stille"
     const lagre = [...skjema.querySelectorAll("button")].find(
       (b) => b.textContent === t("ui.kundeservice.knapp.utkast"));
     assert.equal(lagre.disabled, false);
-    assert.equal(!!skjema.querySelector(".hv-varsel"), !fullmakt);
+    assert.equal(synlig(skjema, ".hv-varsel"), !fullmakt);
     // …og lagringen VIRKER uten fullmakt (CodeRabbit): handleren venter
     // ikke på godkjenn-knappen. MUTASJONEN: sjekk `uKnapp.disabled` i
     // «Lagre utkast»-handleren.

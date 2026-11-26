@@ -3890,9 +3890,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_tildel, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
               kundeservice_spor, methods=["GET"]),
-        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}"
-              "/svar-fra-postboks", kundeservice_postbokssvar,
-              methods=["POST"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks",
+              kundeservice_postbokssvar, methods=["POST"]),
         Route("/v1/kundeservice/sendte", kundeservice_sendte,
               methods=["GET"]),
         Route("/v1/kundeservice/svarmaler", kundeservice_svarmaler,
@@ -5467,8 +5466,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor"):
         "decisions:read",
-    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}"
-             "/svar-fra-postboks"):             "epost:utkast:behandle",
+    ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks"):
+        "epost:utkast:behandle",
     ("GET",  "/v1/kundeservice/sendte"):      "decisions:read",
     ("GET",  "/v1/kundeservice/svarmaler"):   "decisions:read",
     ("POST", "/v1/kundeservice/svarmaler"):   "bestilling:opprett",
