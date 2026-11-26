@@ -203,10 +203,12 @@ test("Kundeservice: listen bærer ALDRI kundeteksten", async () => {
   // et nytt kall ved tegning må begrunnes her.
   // 230: svarmalene hentes også — de er FIRMAETS egne formuleringer, ikke
   // kundens tekst.
-  await vent(() => KALL.length >= 3);
+  // 231: sendte svar — sporet om svarene, aldri kundens tekst (emnet
+  // følger bare innholdsscopet, som i køen).
+  await vent(() => KALL.length >= 4);
   assert.deepEqual([...new Set(KALL.map((k) => k.sti))].sort(),
-    ["/v1/kundeservice", "/v1/kundeservice/stilleregler",
-     "/v1/kundeservice/svarmaler"]);
+    ["/v1/kundeservice", "/v1/kundeservice/sendte",
+     "/v1/kundeservice/stilleregler", "/v1/kundeservice/svarmaler"]);
   assert.ok(!KALL.some((k) => k.sti.includes("/innhold")),
     "innholdet ble hentet uten at noen åpnet en rad");
   assert.ok(!h.textContent.includes(INNHOLD.kropp));
@@ -1400,4 +1402,107 @@ test("Kundeservice: med historikk vises ingen bokser — bare veien via"
   await new Promise((r) => setTimeout(r, 5));
   assert.ok(!KALL.some((k) => k.sti === "/v1/firma/fullmakter"),
     "fullmaktene ble hentet uten scope for å sette dem");
+});
+
+
+// 231: SVARET GÅR FRA POSTBOKSEN SAKEN KOM INN PÅ. Funnet i drift 26.11:
+// et svar på en Gmail-sak gikk fra plattformens adresse.
+test("Kundeservice: en sak fra en postboks som kan sende besvares DERFRA,"
+  + " uten fullmakt og uten godkjenningsrunde", async () => {
+  const koe = structuredClone(KOEN);
+  koe.koe[0].svarpostboks = "felles@gmail.example";
+  koe.sammendrag.svar_fullmakt = false;
+  SVAR = { ...fullSvar(), "/v1/kundeservice": koe };
+  KALL = [];
+  const h = nyHoved();
+  SVAR_POST[`/v1/kundeservice/henvendelse/${H1}/svar-fra-postboks`] =
+    { henvendelse_id: H1, utkast_id: "u-p", postboks: "felles@gmail.example",
+      status: "sendes", ny: true };
+  visKundeservice(h, ctx(["decisions:read", "kundeservice:innhold",
+                          "bestilling:opprett", "epost:utkast:behandle"]));
+  assert.ok(await vent(
+    () => h.querySelectorAll(".ks-koe table tbody tr").length === 2));
+  [...h.querySelectorAll("tbody button")].find(
+    (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+  assert.ok(await vent(() => h.querySelector("#ks-utkast") !== null));
+  const felt = h.querySelector("#ks-utkast");
+  const skjema = felt.closest("form");
+  const send = skjema.querySelector('button[type="submit"]');
+  const ventet = t("ui.kundeservice.knapp.send_fra")
+    .replace("{postboks}", "felles@gmail.example");
+  assert.equal(send.textContent, ventet);
+  assert.equal(send.disabled, false, "fullmakten gjelder ikke eget svar");
+  assert.ok(skjema.textContent.includes("felles@gmail.example"));
+  assert.ok(skjema.querySelector(".hv-varsel").hidden);
+  felt.value = "Takk, vi ser på det.";
+  KALL.length = 0;
+  skjema.dispatchEvent(new window.Event("submit", { cancelable: true }));
+  assert.ok(await vent(() => KALL.some((k) => k.metode === "POST"
+    && k.sti.endsWith("/svar-fra-postboks"))));
+  assert.deepEqual(SISTE.kropp, { tekst: "Takk, vi ser på det." });
+  assert.ok(SISTE.headers["Idempotency-Key"]);
+  assert.ok(!KALL.some((k) => k.sti.endsWith("/utkast/ny")
+    || k.sti.endsWith("/dom")), "postboksveien gikk via godkjenningen");
+  assert.ok(await vent(() => h.textContent.includes(
+    t("ui.kundeservice.svar.postboks_ok")
+      .replace("{postboks}", "felles@gmail.example"))));
+});
+
+test("Kundeservice: uten postboks — eller uten e-postscopet — er veien"
+  + " husets, og knappen sier det", async () => {
+  for (const [pb, scopes] of [
+    [null, ["decisions:read", "kundeservice:innhold", "bestilling:opprett",
+            "epost:utkast:behandle"]],
+    ["felles@gmail.example", ["decisions:read", "kundeservice:innhold",
+                              "bestilling:opprett"]]]) {
+    const koe = structuredClone(KOEN);
+    koe.koe[0].svarpostboks = pb;
+    SVAR = { ...fullSvar(), "/v1/kundeservice": koe };
+    KALL = [];
+    const h = nyHoved();
+    visKundeservice(h, ctx(scopes));
+    assert.ok(await vent(
+      () => h.querySelectorAll(".ks-koe table tbody tr").length === 2));
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    assert.ok(await vent(() => h.querySelector("#ks-utkast") !== null));
+    const skjema = h.querySelector("#ks-utkast").closest("form");
+    assert.equal(skjema.querySelector('button[type="submit"]').textContent,
+      t("ui.kundeservice.knapp.godkjenn_svar"));
+    assert.ok(skjema.textContent.includes(
+      t("ui.kundeservice.svarvei.huset")));
+  }
+});
+
+test("Kundeservice: «Sendte svar» viser adressen hvert svar gikk fra",
+    async () => {
+  SVAR = { ...fullSvar(), "/v1/kundeservice/sendte": { sendte: [
+    { henvendelse_id: H1, handling: "svar.sendt", via: "postboks",
+      postboks: "felles@gmail.example", mottaker_maske: null,
+      ts: "2026-11-26T10:52:00+00:00", lukket_utfall: "besvart",
+      hvem: { type: "bruker", navn: "Kari Nordmann" }, emne: "Test" },
+    { henvendelse_id: H2, handling: "svar.sendt", via: "huset",
+      postboks: null, mottaker_maske: "e***@gmail.com",
+      ts: "2026-11-26T09:00:00+00:00", lukket_utfall: "besvart",
+      hvem: { type: "agent", navn: "m17" }, emne: "Faktura" },
+    { henvendelse_id: H2, handling: "svar.feilet", via: "postboks",
+      postboks: "felles@gmail.example", grunn: "sendetilgang_avvist",
+      ts: "2026-11-25T09:00:00+00:00", lukket_utfall: null,
+      hvem: { type: "bruker", navn: "Kari Nordmann" }, emne: "Faktura" }] } };
+  KALL = [];
+  const h = nyHoved();
+  visKundeservice(h, ctx());
+  assert.ok(await vent(() => h.querySelector(".ks-sendte table")));
+  const rader = [...h.querySelectorAll(".ks-sendte tbody tr")]
+    .map((r) => [...r.cells].map((c) => c.textContent));
+  assert.equal(rader.length, 3);
+  assert.deepEqual(rader[0].slice(0, 3), ["Test",
+    t("ui.kundeservice.sendte.sendt"), "felles@gmail.example"]);
+  assert.equal(rader[1][2], t("ui.kundeservice.sendte.fra_huset"));
+  assert.equal(rader[1][3], "e***@gmail.com");
+  assert.ok(rader[2][1].includes(t("ui.kundeservice.sendte.feilet"))
+    && rader[2][1].includes("sendetilgang_avvist"));
+  assert.equal(rader[0][4], "Kari Nordmann");
+  const brudd = await alvorligeBrudd(h, { fragment: true });
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });

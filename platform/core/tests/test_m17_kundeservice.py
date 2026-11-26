@@ -258,6 +258,11 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         # 225 (felles innboks): sporet og tildelingen — hvem som har saken
         # og hva som er gjort med den. REGISTER, ikke sending.
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
+        # 231: MENNESKETS EGET SVAR fra postboksen saken kom inn på — samme
+        # handling som e-postflatens «Send» (eiervedtak 10/9), og bak samme
+        # scope. Plattformen sender ingenting av seg selv her.
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}"
+        "/svar-fra-postboks",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/tildel",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/unntakskoe",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/utkast",
@@ -265,6 +270,8 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         # 204: stille avsendere — tenantens regelliste, GET og POST på
         # samme sti (to Route-objekter, som /v1/fordring). REGISTER, ikke
         # sending: reglene klassifiserer, de sender ingenting.
+        # 231: sendte svar — en lesning av sporet.
+        "/v1/kundeservice/sendte",
         "/v1/kundeservice/stilleregler",
         "/v1/kundeservice/stilleregler",
         # 230: svarmaler — firmaets egne formuleringer. REGISTER, ikke
