@@ -156,6 +156,9 @@ BEGIN
     RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION m17_postbokssvar_utfall() FROM PUBLIC;
+-- Den som OPPRETTER triggeren må kunne utføre funksjonen (migratoren,
+-- under RESET ROLE nederst). Ingen andre: en triggerfunksjon kalles ikke.
+GRANT EXECUTE ON FUNCTION m17_postbokssvar_utfall() TO disponit_migrator;
 
 -- SENDTE SVAR, for flaten «Sendte svar»: hver sporrad om et svar som gikk
 -- ut, ble lagt i kø eller feilet — begge veier (husets og postboksens),
