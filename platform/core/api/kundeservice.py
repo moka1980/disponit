@@ -466,8 +466,17 @@ def sendte_svar_for(conn, tenant: str, *, med_emne: bool) -> list:
             except Exception:                               # noqa: BLE001
                 emner[str(hid)] = None
     ut = []
+    # ÉTT SVAR, ÉN RAD (eier 26.11): radene kommer nyeste først, så et svar
+    # som alt står som sendt eller feilet skal ikke stå en gang til som
+    # «venter på sending». Køraden vises bare så lenge den er siste ord.
+    avgjort = set()
     for hid, handling, aktor, detalj, ts, lukket_utfall in rader:
         d = detalj or {}
+        eid = d.get("epost_utkast_id")
+        if eid and handling in ("svar.sendt", "svar.feilet"):
+            avgjort.add(eid)
+        elif eid and handling == "svar.til_postboks" and eid in avgjort:
+            continue
         via = d.get("via") or ("postboks" if handling == "svar.til_postboks"
                                else "huset")
         post = {"henvendelse_id": str(hid), "handling": handling,

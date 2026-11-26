@@ -142,7 +142,9 @@ def test_svaret_gaar_fra_postboksen_og_saken_lukkes_naar_det_er_ute(
         assert mine[(hid, "svar.sendt")]["postboks"] == postboks
         assert mine[(hid, "svar.sendt")]["emne"] == emne
         assert mine[(hid2, "svar.feilet")]["grunn"] == "sendetilgang_avvist"
-        assert (hid, "svar.til_postboks") in mine
+        # Ett svar, én rad: køraden er borte når svaret er avgjort.
+        assert (hid, "svar.til_postboks") not in mine
+        assert (hid2, "svar.til_postboks") not in mine
 
         # Sporet per sak sier det samme, med postboksen.
         sp = klient.get(f"/v1/kundeservice/henvendelse/{hid}/spor",
