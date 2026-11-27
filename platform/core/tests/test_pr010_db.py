@@ -320,9 +320,13 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
         # `leser` som kunne det, kunne avsluttet firmaet på vei ut døra.
         # Døra går én vei (201), så scopet kan ikke brukes til å GI seg noe.
         "part:administrer", "firma:inviter", "firma:blimed",
-        "firma:avslutt",
-        # 27/11: eksporten av alt firmaet har — admin alene.
-        "firma:eksport"}
+        "firma:avslutt"}
+    # 27/11: `firma:eksport` er LESENDE (GET, i LESESCOPES) og står derfor
+    # ikke over — men den er admins ALENE: fila samler alt firmaet har,
+    # også det en `leser` ikke får se modul for modul.
+    assert "firma:eksport" in ROLLE_TIL_SCOPES["admin"]
+    assert all("firma:eksport" not in s for r, s in ROLLE_TIL_SCOPES.items()
+               if r != "admin")
     # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
     # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
     # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant
