@@ -968,17 +968,23 @@ test("Epost: en frakoblet postboks sies øverst og kobles til igjen med ett klik
     visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
     await vent(() => h.querySelector(".epost-frakoblet"));
     const varsel = h.querySelector(".epost-frakoblet");
-    assert.equal(varsel.getAttribute("role"), "alert");
+    assert.ok(varsel.querySelector("[role=alert]"));
     assert.ok(varsel.textContent.includes("felles@gmail.example"));
     assert.ok(varsel.textContent.includes("post@acme.example"));
     // Varselet står FØR tabellen — det er det første hun ser.
     assert.ok(varsel.compareDocumentPosition(h.querySelector("table"))
       & Node.DOCUMENT_POSITION_FOLLOWING);
     assert.ok(h.textContent.includes(t("ui.epost.status.feilet")));
-    const igjen = [...h.querySelectorAll("tbody button")]
-      .filter((b) => b.textContent === t("ui.epost.koble_igjen"));
+    // Knappen står I VARSELET — en tabell som scroller sidelengs på
+    // telefonen skjuler handlingscellen. Tabellen har bare Deaktiver.
+    const igjen = [...varsel.querySelectorAll("button")];
     assert.equal(igjen.length, 2);
+    // To bokser: hver knapp navngir sin.
+    assert.equal(igjen[0].textContent, t("ui.epost.koble_igjen_boks")
+      .replace("{postboks}", "felles@gmail.example"));
     assert.ok(igjen[0].classList.contains("primar"));
+    assert.ok([...h.querySelectorAll("tbody button")]
+      .every((b) => b.textContent === t("ui.epost.deaktiver")));
     igjen[0].click();
     await vent(() => navigasjoner.length === 1);
     assert.deepEqual(navigasjoner,
@@ -986,12 +992,19 @@ test("Epost: en frakoblet postboks sies øverst og kobles til igjen med ett klik
     const g = KALL.find((k) => k.url === "/v1/epost/kilder/google/start");
     assert.deepEqual(g.kropp, { postboks: "felles@gmail.example" });
     assert.ok(g.headers["Idempotency-Key"]);
-    igjen[1].click();
+    // Alle knappene låses til navigasjonen er i gang: ett klikk, én runde.
+    assert.ok(igjen.every((b) => b.disabled));
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    // Microsoft-boksen går Microsofts vei.
+    SVAR["/v1/epost/kilder"] = { kilder: [FRAKOBLET.kilder[1]] };
+    const h2 = nyHoved();
+    visEpost(h2, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h2.querySelector(".epost-frakoblet button"));
+    h2.querySelector(".epost-frakoblet button").click();
     await vent(() => navigasjoner.length === 2);
     const m = KALL.find((k) => k.url === "/v1/epost/kilder/start");
     assert.deepEqual(m.kropp, { postboks: "post@acme.example" });
-    const brudd = await alvorligeBrudd(h, { fragment: true });
-    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   } finally {
     settNavigasjonForTest((url) => { window.location.assign(url); });
   }
@@ -1006,8 +1019,7 @@ test("Epost: app-passord og leser får ingen død knapp — teksten sier veien",
   await vent(() => h.querySelector(".epost-frakoblet"));
   assert.ok(h.querySelector(".epost-frakoblet").textContent
     .includes(t("ui.epost.frakoblet.tekst_passord").slice(0, 20)));
-  assert.equal([...h.querySelectorAll("tbody button")]
-    .filter((b) => b.textContent === t("ui.epost.koble_igjen")).length, 0);
+  assert.equal(h.querySelector(".epost-frakoblet button"), null);
   // En leser kan ikke koble til — og blir bedt om å si fra.
   SVAR = { "/v1/epost/kilder": FRAKOBLET,
     "/v1/epost/meldinger": { meldinger: [] } };
@@ -1019,7 +1031,7 @@ test("Epost: app-passord og leser får ingen død knapp — teksten sier veien",
   assert.equal(h.querySelector("tbody button"), null);
 });
 
-test("Epost: feiler gjenoppkoblingen, står feilen synlig i raden",
+test("Epost: feiler gjenoppkoblingen, står feilen synlig ved knappen",
     async () => {
   SVAR = { "/v1/epost/kilder": { kilder: [FRAKOBLET.kilder[0]] },
     "/v1/epost/meldinger": { meldinger: [] },
@@ -1027,10 +1039,12 @@ test("Epost: feiler gjenoppkoblingen, står feilen synlig i raden",
     _feilkode: "google_ikke_konfigurert" };
   const h = nyHoved();
   visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
-  await vent(() => h.querySelector("tbody button.primar"));
-  const igjen = h.querySelector("tbody button.primar");
+  await vent(() => h.querySelector(".epost-frakoblet button"));
+  const igjen = h.querySelector(".epost-frakoblet button");
+  // Én boks: knappen heter bare «Koble til på nytt».
+  assert.equal(igjen.textContent, t("ui.epost.koble_igjen"));
   igjen.click();
-  await vent(() => h.querySelector(".epost-igjen-feil"));
+  await vent(() => h.querySelector(".epost-igjen-feil").textContent);
   assert.equal(h.querySelector(".epost-igjen-feil").textContent,
     t("ui.epost.gmail.feil.ikke_satt_opp"));
   assert.equal(igjen.disabled, false);

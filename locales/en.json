@@ -7301,5 +7301,6 @@
   "ui.epost.koble_igjen": "Reconnect",
   "ui.epost.frakoblet.tekst": "We can no longer fetch email from {postbokser}. The sign-in has expired. Press “Reconnect” and sign in once more, and everything continues as before.",
   "ui.epost.frakoblet.tekst_passord": "We can no longer fetch email from {postbokser}. If the mailbox is connected with an app password, create a new app password at Google and enter it under Gmail below.",
-  "ui.epost.frakoblet.be_admin": "We can no longer fetch email from {postbokser}. The sign-in has expired. Ask an administrator to reconnect the mailbox."
+  "ui.epost.frakoblet.be_admin": "We can no longer fetch email from {postbokser}. The sign-in has expired. Ask an administrator to reconnect the mailbox.",
+  "ui.epost.koble_igjen_boks": "Reconnect {postboks}"
 }
