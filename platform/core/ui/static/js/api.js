@@ -422,6 +422,19 @@ export const hentRegistreringsvalg = () => {
   }
   return _registreringsvalg;
 };
+// 237: lovpålagte frister.
+export const hentLovfrister = () => hentJson("/v1/lovfrister");
+export const slaaOppOrgnr = (orgnummer, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/lovfrister/oppslag", "POST", { orgnummer }, idem);
+export const lagreLovfrister = (profil, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/lovfrister", "POST", profil, idem);
+export const hentPliktkatalog = () => hentJson("/v1/plattform/pliktkatalog");
+export const settPliktmal = (mal, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/pliktkatalog/mal", "POST", mal, idem);
+export const settPliktfrist = (frist, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/pliktkatalog/frist", "POST", frist, idem);
+export const slettPliktfrist = (frist, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/pliktkatalog/frist/slett", "POST", frist, idem);
 export const hentInnstillinger = () => hentJson("/v1/plattform/innstillinger");
 export const settInnstillinger = (kropp, idem = nyIdempotensnokkel()) =>
   _muter("/v1/plattform/innstillinger", "POST", kropp, idem);

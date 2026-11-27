@@ -34,6 +34,7 @@ import { visRetensjon } from "./flater/retensjon.js";
 import { visDokumentmal } from "./flater/dokumentmal.js";
 import { visKunnskap } from "./flater/kunnskap.js";
 import { visAvtalefrist } from "./flater/avtalefrist.js";
+import { visLovfrister } from "./flater/lovfrister.js";
 import { visTilgang } from "./flater/tilgang.js";
 import { visLisens } from "./flater/lisens.js";
 import { visPersonvern } from "./flater/personvern.js";
@@ -128,6 +129,7 @@ const FLATER = {
   // `bestilling:opprett`, men det er ergonomi: dørene i basen er den
   // bindende porten.
   avtalefrist: visAvtalefrist,
+  lovfrister: visLovfrister,
   // M-12 (097): basisrute bak `security:read` (sitekart.js) —
   // scope-gaten bor der. Registeret er sikkerhetsdata: det sier hvem som
   // har admin på hvilket system, og det er et smalere publikum enn

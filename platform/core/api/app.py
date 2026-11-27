@@ -3640,6 +3640,28 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         return plattformmodul.sett_leverandor_endepunkt(tjeneste, request)
 
     from . import plattform_innstillinger as innstillingsmodul
+    from . import lovfrister as lovfristmodul
+
+    def lovfrister_les(request: Request) -> Response:
+        return lovfristmodul.les_endepunkt(tjeneste, request)
+
+    def lovfrister_lagre(request: Request) -> Response:
+        return lovfristmodul.lagre_endepunkt(tjeneste, request)
+
+    def lovfrister_oppslag(request: Request) -> Response:
+        return lovfristmodul.oppslag_endepunkt(tjeneste, request)
+
+    def pa_pliktkatalog(request: Request) -> Response:
+        return lovfristmodul.katalog_endepunkt(tjeneste, request)
+
+    def pa_pliktkatalog_mal(request: Request) -> Response:
+        return lovfristmodul.mal_endepunkt(tjeneste, request)
+
+    def pa_pliktkatalog_frist(request: Request) -> Response:
+        return lovfristmodul.frist_endepunkt(tjeneste, request)
+
+    def pa_pliktkatalog_frist_slett(request: Request) -> Response:
+        return lovfristmodul.frist_slett_endepunkt(tjeneste, request)
 
     def pa_plattform_innstillinger(request: Request) -> Response:
         return innstillingsmodul.eier_endepunkt(tjeneste, request)
@@ -4784,6 +4806,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/plattform/innstillinger", pa_plattform_sett_innstillinger,
               methods=["POST"]),
         Route("/v1/registrering/valg", registrering_valg, methods=["GET"]),
+        Route("/v1/lovfrister", lovfrister_les, methods=["GET"]),
+        Route("/v1/lovfrister", lovfrister_lagre, methods=["POST"]),
+        Route("/v1/lovfrister/oppslag", lovfrister_oppslag,
+              methods=["POST"]),
+        Route("/v1/plattform/pliktkatalog", pa_pliktkatalog,
+              methods=["GET"]),
+        Route("/v1/plattform/pliktkatalog/mal", pa_pliktkatalog_mal,
+              methods=["POST"]),
+        Route("/v1/plattform/pliktkatalog/frist", pa_pliktkatalog_frist,
+              methods=["POST"]),
+        Route("/v1/plattform/pliktkatalog/frist/slett",
+              pa_pliktkatalog_frist_slett, methods=["POST"]),
         Route("/v1/plattform/firmaer", pa_plattform_firmaer,
               methods=["GET"]),
         Route("/v1/plattform/firmaer", pa_plattform_opprett,
@@ -6461,6 +6495,16 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/plattform/leverandor"):    "policy:read",
     ("GET",  "/v1/plattform/innstillinger"): "policy:read",
     ("POST", "/v1/plattform/innstillinger"): "policy:read",
+    # 237: pliktkatalogen — plattformeierens, døra dømmer.
+    ("GET",  "/v1/plattform/pliktkatalog"):  "policy:read",
+    ("POST", "/v1/plattform/pliktkatalog/mal"): "policy:read",
+    ("POST", "/v1/plattform/pliktkatalog/frist"): "policy:read",
+    ("POST", "/v1/plattform/pliktkatalog/frist/slett"): "policy:read",
+    # 237: kundens lovpålagte frister. Registreringen er en bestilling i
+    # M-21s forstand (samme scope som `POST /v1/plikt`).
+    ("GET",  "/v1/lovfrister"):              "decisions:read",
+    ("POST", "/v1/lovfrister"):              "bestilling:opprett",
+    ("POST", "/v1/lovfrister/oppslag"):      "bestilling:opprett",
     ("GET",  "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer/{tenant:str}/oppdater"): "policy:read",
