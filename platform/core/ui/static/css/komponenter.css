@@ -1915,3 +1915,8 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 
 /* Underlinje i en celle (146): mottakerens maske under kundenavnet. */
 .celle-under { display: block; font-size: 0.85em; }
+
+/* Eiers vedtak 27/11: hva firmaet vet om avsenderen, over kundens tekst. */
+.hv-kobling h4 { margin-top: 0; }
+.hv-kobling-liste { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+.hv-kobling-liste li + li { margin-top: 0.25rem; }

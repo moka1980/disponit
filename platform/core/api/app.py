@@ -1351,6 +1351,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import kundeservice as ksmodul
         return ksmodul.sporet_endepunkt(tjeneste, request)
 
+    # Eiers vedtak 27/11: saken koblet til kunden, fakturaene, tilbudene.
+    def kundeservice_koblinger(request: Request) -> Response:
+        from . import kundeservice_kobling as kobling
+        return kobling.koblinger_endepunkt(tjeneste, request)
+
     # 231: svaret fra postboksen saken kom inn på, og sendte svar.
     def kundeservice_postbokssvar(request: Request) -> Response:
         from . import kundeservice as ksmodul
@@ -3890,6 +3895,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               kundeservice_tildel, methods=["POST"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor",
               kundeservice_spor, methods=["GET"]),
+        Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/koblinger",
+              kundeservice_koblinger, methods=["GET"]),
         Route("/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks",
               kundeservice_postbokssvar, methods=["POST"]),
         Route("/v1/kundeservice/sendte", kundeservice_sendte,
@@ -5466,6 +5473,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
         "bestilling:opprett",
     ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/spor"):
         "decisions:read",
+    ("GET",  "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/koblinger"):
+        "kundeservice:innhold",
     ("POST", "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/svar-fra-postboks"):
         "epost:utkast:behandle",
     ("GET",  "/v1/kundeservice/sendte"):      "decisions:read",
