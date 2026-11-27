@@ -252,6 +252,10 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         "/v1/kundeservice/henvendelse",
         # 160 (ARC B): adressen er REGISTER, ikke sending.
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
+        # Koblingens siste mil: avsenderen legges til en kunde, gjennom
+        # partsregisterets egne dører. REGISTER, ikke sending.
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}"
+        "/avsender-til-kunde",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
         # Eiers vedtak 27/11: saken koblet til kunde/faktura/tilbud med
