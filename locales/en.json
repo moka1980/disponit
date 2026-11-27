@@ -7331,7 +7331,13 @@
   "ui.firmabanner.siste_dag": "today is the last day",
   "ui.firmabanner.kontakt": "Want to continue? Get in touch:",
   "ui.firmabanner.utlopt.tittel": "The trial has ended.",
-  "ui.firmabanner.utlopt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything.",
+  "ui.firmabanner.utlopt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in, see everything and download your data under Customer view.",
   "ui.firmabanner.stengt.tittel": "The company account is closed.",
-  "ui.firmabanner.stengt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything."
+  "ui.firmabanner.stengt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in, see everything and download your data under Customer view.",
+  "ui.kundeadmin.eksport.tittel": "Your data",
+  "ui.kundeadmin.eksport.tekst": "Download everything the company has entered, as one file: the same as the app shows, module by module. You can do this at any time, also after the trial has ended.",
+  "ui.kundeadmin.eksport.knapp": "Download the data",
+  "ui.kundeadmin.eksport.lager": "Creating the file …",
+  "ui.kundeadmin.eksport.ferdig": "Downloaded: {fil}",
+  "ui.kundeadmin.eksport.feil": "The file could not be created right now. Try again shortly."
 }
