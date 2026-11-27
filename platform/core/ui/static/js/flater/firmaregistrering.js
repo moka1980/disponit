@@ -27,7 +27,7 @@ import { t } from "../i18n.js";
 import { registrerFirma, hentGjeldendeVilkar, hentRegistreringsvalg,
          ApiFeil, UautorisertFeil }
   from "../api.js";
-import { meldLive } from "../komponenter.js";
+import { firmabytteSkjema, meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
 //: Malene som følger med appen. HVILKE av dem som tilbys, og hvor lang
@@ -323,16 +323,34 @@ export function visFirmaregistrering(hoved, ctx) {
       const svar = await registrerFirma(kropp,
         idempotensnokkelFor(n, orgnummer, bransje, kortnavn, fullmakter,
                             uavhengig_godkjenning));
-      // FERDIG — OG HUN MÅ LOGGE INN PÅ NYTT. Sesjonen hennes peker på
-      // registreringskonteksten, som ikke lenger har et medlemskap.
+      // FERDIG. Økten hennes peker på registreringskonteksten, som ikke
+      // lenger har et medlemskap, og en økts firma kan ikke endres (196).
+      // Før sto det «Logg inn på nytt» og en lenke til forsiden — hun
+      // måtte finne innloggingen, velge leverandør og lande i riktig firma
+      // selv. Nå er det ÉN knapp: firmabyttet (samme skjema som
+      // firmavelgeren) går leverandørrunden med `firma` satt, og med en
+      // levende innlogging hos leverandøren merker hun den knapt.
+      const frist = String(svar.prove_utloper || "").slice(0, 10)
+        .split("-").reverse().join(".");
+      const videre = ctx && ctx.providerId
+        ? firmabytteSkjema(svar.tenant, ctx.providerId, "/")
+        : null;
+      if (videre) {
+        videre.append(el("button", { type: "submit", class: "knapp primar",
+          text: t("ui.firmareg.ga_til_bedriften") }));
+      }
       sett(hoved, ...flateHode(t("ui.firmareg.ferdig_tittel"),
                                t("ui.firmareg.ferdig_undertittel")),
            el("p", { text: t("ui.firmareg.ferdig_tekst")
              .replace("{navn}", svar.navn)
-             .replace("{frist}", svar.prove_utloper) }),
-           el("p", { class: "knapperad" },
-             el("a", { class: "knapp primar", href: "/",
-                       text: t("ui.firmareg.logg_inn_paa_nytt") })));
+             .replace("{frist}", frist) }),
+           videre
+             ? el("div", { class: "knapperad" }, videre)
+             : el("p", { class: "knapperad" },
+               el("a", { class: "knapp primar", href: "/",
+                         text: t("ui.firmareg.logg_inn_paa_nytt") })));
+      const knappen = hoved.querySelector(".knapperad .knapp");
+      if (knappen) knappen.focus();
       meldLive(t("ui.firmareg.ferdig_tittel"));
       return;
     } catch (f) {

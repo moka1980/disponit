@@ -104,7 +104,7 @@ test("Registrering: skjemaet er kort, merket og axe-rent", async () => {
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
 
-test("Registrering: hele veien, og hun får VITE at hun må logge inn på nytt",
+test("Registrering: hele veien, og uten kjent leverandør en vei til innlogging",
      async () => {
   SVAR = { "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
     navn: "Fjordlys Elektro AS", prove_utloper: "2026-10-12",
@@ -121,7 +121,7 @@ test("Registrering: hele veien, og hun får VITE at hun må logge inn på nytt",
   assert.equal(lenke.getAttribute("href"), "/");
   // Kvitteringen sier BÅDE navnet og fristen — ikke bare «ok».
   assert.ok(h.textContent.includes("Fjordlys Elektro AS"));
-  assert.ok(h.textContent.includes("2026-10-12"));
+  assert.ok(h.textContent.includes("12.10.2026"), "fristen som norsk dato");
 
   const kall = KALL.filter((k) => k.metode === "POST");
   assert.equal(kall.length, 1);
@@ -134,6 +134,31 @@ test("Registrering: hele veien, og hun får VITE at hun må logge inn på nytt",
   // Skjemaet er BORTE: ingenting å klikke to ganger på.
   assert.equal(h.querySelector("form"), null);
 
+  const brudd = await alvorligeBrudd(h);
+  assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+});
+
+// ÉN KNAPP INN I BEDRIFTEN. Når økten vet leverandøren, er veien videre
+// firmabyttet — `/v1/oidc/start` med det NYE firmaet — ikke en lenke til
+// forsiden der hun må finne innloggingen og velge firma selv.
+test("Registrering: «Gå til bedriften» går rett inn i det nye firmaet",
+     async () => {
+  SVAR = { "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
+    navn: "Fjordlys Elektro AS", prove_utloper: "2026-10-12",
+    bransje: "tjenestebedrift" } };
+  const h = nyHoved();
+  visFirmaregistrering(h, { ...ctx(), providerId: "google" });
+  fyll(h);
+  await vent(() => h.textContent.includes(t("ui.firmareg.ferdig_tittel")));
+  const form = h.querySelector("form.firmabytte-form");
+  assert.ok(form, "ingen vei rett inn i bedriften");
+  assert.equal(form.getAttribute("action"), "/v1/oidc/start");
+  const verdi = (n) => form.querySelector(`input[name="${n}"]`).value;
+  assert.equal(verdi("firma"), "fjordlys-elektro-as");
+  assert.equal(verdi("provider_id"), "google");
+  const knapp = form.querySelector("button[type=submit]");
+  assert.equal(knapp.textContent, t("ui.firmareg.ga_til_bedriften"));
+  assert.equal(h.ownerDocument.activeElement, knapp, "fokus står på knappen");
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });

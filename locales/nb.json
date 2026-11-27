@@ -1985,9 +1985,9 @@
   "ui.firmareg.feil.orgnummer": "Organisasjonsnummeret er ni siffer.",
   "ui.firmareg.feil.tak": "Du har allerede registrert så mange bedrifter som kontoen tillater.",
   "ui.firmareg.feil.ukjent": "Registreringen gikk ikke gjennom. Prøv igjen om litt.",
-  "ui.firmareg.ferdig_tekst": "{navn} er opprettet, og prøveperioden varer til {frist}. Du er administrator. Logg inn på nytt for å komme inn i bedriften din.",
+  "ui.firmareg.ferdig_tekst": "{navn} er opprettet, og prøveperioden varer til {frist}. Du er administrator.",
   "ui.firmareg.ferdig_tittel": "Bedriften er registrert",
-  "ui.firmareg.ferdig_undertittel": "Siste steg: logg inn på nytt.",
+  "ui.firmareg.ferdig_undertittel": "Alt er klart. Gå videre til bedriften din.",
   "ui.firmareg.fullmakt.kampanje-send": "Sende kampanjer til mottakere med samtykke",
   "ui.firmareg.fullmakt.kundeservice-svar": "Sende kundesvar dere har godkjent",
   "ui.firmareg.fullmakt.purring-inkassovarsel": "Sende inkassovarsel på forfalte fordringer",
@@ -7401,5 +7401,6 @@
   "ui.innstillinger.lagret": "Innstillingene er lagret.",
   "ui.innstillinger.tekst": "Det som gjelder for nye kunder når de registrerer seg selv.",
   "ui.innstillinger.tittel": "Innstillinger",
-  "ui.plattform.nytt_firma_tekst": "Opprett et firma på vegne av en kunde. Prøveperioden er forhåndsutfylt fra Innstillinger."
+  "ui.plattform.nytt_firma_tekst": "Opprett et firma på vegne av en kunde. Prøveperioden er forhåndsutfylt fra Innstillinger.",
+  "ui.firmareg.ga_til_bedriften": "Gå til bedriften"
 }
