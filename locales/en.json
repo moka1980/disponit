@@ -7339,5 +7339,19 @@
   "ui.kundeadmin.eksport.knapp": "Download the data",
   "ui.kundeadmin.eksport.lager": "Creating the file …",
   "ui.kundeadmin.eksport.ferdig": "Downloaded: {fil}",
-  "ui.kundeadmin.eksport.feil": "The file could not be created right now. Try again shortly."
+  "ui.kundeadmin.eksport.feil": "The file could not be created right now. Try again shortly.",
+  "ui.omdisponit.tittel": "About Disponit",
+  "ui.omdisponit.tekst": "Your details as the supplier. The contact email appears in the trial banner customers see, and everything is used on the terms pages once they are published.",
+  "ui.omdisponit.tekst_tom": "Not filled in yet. The contact email appears in the trial banner customers see, and everything is used on the terms pages once they are published.",
+  "ui.omdisponit.felt.navn": "Name",
+  "ui.omdisponit.felt.orgnummer": "Organisation number",
+  "ui.omdisponit.felt.adresse": "Postal address",
+  "ui.omdisponit.felt.kontakt": "Contact email for customers",
+  "ui.omdisponit.felt.verneting": "Legal venue (district court)",
+  "ui.omdisponit.hjelp.orgnummer": "Nine digits. Leave empty until the business is registered in the Brønnøysund Register.",
+  "ui.omdisponit.lagre": "Save",
+  "ui.omdisponit.lagret": "Saved.",
+  "ui.omdisponit.feil.orgnummer": "The organisation number must be nine digits.",
+  "ui.omdisponit.feil.kontakt": "The contact email does not look like an email address.",
+  "ui.omdisponit.feil.form": "Something in the fields was not accepted. Check the organisation number and the email address."
 }

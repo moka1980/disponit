@@ -7339,5 +7339,19 @@
   "ui.kundeadmin.eksport.knapp": "Last ned dataene",
   "ui.kundeadmin.eksport.lager": "Lager fila …",
   "ui.kundeadmin.eksport.ferdig": "Lastet ned: {fil}",
-  "ui.kundeadmin.eksport.feil": "Fila kunne ikke lages akkurat nå. Prøv igjen om litt."
+  "ui.kundeadmin.eksport.feil": "Fila kunne ikke lages akkurat nå. Prøv igjen om litt.",
+  "ui.omdisponit.tittel": "Om Disponit",
+  "ui.omdisponit.tekst": "Opplysningene om deg som leverandør. Kontakt-e-posten vises i prøvebanneret kundene ser, og alt brukes på vilkårssidene når de publiseres.",
+  "ui.omdisponit.tekst_tom": "Ikke fylt inn ennå. Kontakt-e-posten vises i prøvebanneret kundene ser, og alt brukes på vilkårssidene når de publiseres.",
+  "ui.omdisponit.felt.navn": "Navn",
+  "ui.omdisponit.felt.orgnummer": "Organisasjonsnummer",
+  "ui.omdisponit.felt.adresse": "Postadresse",
+  "ui.omdisponit.felt.kontakt": "Kontakt-e-post for kunder",
+  "ui.omdisponit.felt.verneting": "Verneting (tingrett)",
+  "ui.omdisponit.hjelp.orgnummer": "Ni siffer. La feltet stå tomt til foretaket er registrert i Brønnøysundregistrene.",
+  "ui.omdisponit.lagre": "Lagre",
+  "ui.omdisponit.lagret": "Lagret.",
+  "ui.omdisponit.feil.orgnummer": "Organisasjonsnummeret må være ni siffer.",
+  "ui.omdisponit.feil.kontakt": "Kontakt-e-posten ser ikke ut som en e-postadresse.",
+  "ui.omdisponit.feil.form": "Noe i feltene ble ikke godtatt. Sjekk org.nr. og e-postadressen."
 }
