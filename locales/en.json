@@ -1985,9 +1985,9 @@
   "ui.firmareg.feil.orgnummer": "The organisation number is nine digits.",
   "ui.firmareg.feil.tak": "You have already registered as many companies as this account allows.",
   "ui.firmareg.feil.ukjent": "The registration did not go through. Try again shortly.",
-  "ui.firmareg.ferdig_tekst": "{navn} has been created, and the trial runs until {frist}. You are the administrator. Sign in again to enter your company.",
+  "ui.firmareg.ferdig_tekst": "{navn} has been created, and the trial lasts until {frist}. You are the administrator.",
   "ui.firmareg.ferdig_tittel": "Company registered",
-  "ui.firmareg.ferdig_undertittel": "One last step: sign in again.",
+  "ui.firmareg.ferdig_undertittel": "Everything is ready. Continue to your company.",
   "ui.firmareg.fullmakt.kampanje-send": "Send campaigns to recipients with consent",
   "ui.firmareg.fullmakt.kundeservice-svar": "Send customer replies you have approved",
   "ui.firmareg.fullmakt.purring-inkassovarsel": "Send debt collection notices on overdue claims",
@@ -7401,5 +7401,6 @@
   "ui.innstillinger.lagret": "The settings are saved.",
   "ui.innstillinger.tekst": "What applies to new customers when they sign up themselves.",
   "ui.innstillinger.tittel": "Settings",
-  "ui.plattform.nytt_firma_tekst": "Create a firm on behalf of a customer. The trial length is prefilled from Settings."
+  "ui.plattform.nytt_firma_tekst": "Create a firm on behalf of a customer. The trial length is prefilled from Settings.",
+  "ui.firmareg.ga_til_bedriften": "Go to your company"
 }
