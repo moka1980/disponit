@@ -147,13 +147,19 @@ def test_epostdorene_hopper_over_firma_som_staar_stille(migrator):
     for t in (stille, aktivt):
         _kilde(migrator, t, "imap")
         _kilde(migrator, t, "m365")
-    migrator.execute("RESET ALL")
-    migrator.execute("SET LOCAL ROLE disponit_plan_arbeider")
+    # Som PLANARBEIDEREN — rollen som kaller dørene i planrunden.
+    import os
+
+    from db.pg import koble
+    pa = koble(os.environ.get("DISPONIT_TEST_PLAN_DSN") or DSN)
     sett = set()
-    for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
-        sett |= {(dor, r[0]) for r in migrator.execute(
-            f"SELECT tenant FROM {dor}(200)").fetchall()}
-    migrator.rollback()
+    try:
+        for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
+            sett |= {(dor, r[0]) for r in pa.execute(
+                f"SELECT tenant FROM {dor}(200)").fetchall()}
+        pa.rollback()
+    finally:
+        pa.close()
     for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
         assert (dor, stille) not in sett, dor
         assert (dor, aktivt) in sett or len(
