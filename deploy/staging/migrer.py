@@ -1328,6 +1328,11 @@ GRANT SELECT, INSERT ON bestilling_idempotens TO {rolle};
 GRANT SELECT ON policyer, policy_hode TO {rolle};
 GRANT SELECT ON oppdrag TO {rolle};
 GRANT SELECT ON domenekontroll TO {rolle};
+-- 27/11 (eiers vedtak «pause agentene»): bestillingsveien leser firmaets
+-- EGEN status før den bestiller (`firmastatus.er_pauset_i`). Lesedøra,
+-- tenantbundet og migrator-eid (190) — ikke tabellen. Uten den feilet
+-- hver planlagt bestilling, i stedet for bare de pausede.
+GRANT EXECUTE ON FUNCTION firma_hent(TEXT) TO {rolle};
 GRANT SELECT ON oppdragstype_register, modulkontrakt, modulhode,
                 moduldeployment, modulregister_hendelse TO {rolle};
 GRANT SELECT ON malautorisasjonsvilkar TO {rolle};

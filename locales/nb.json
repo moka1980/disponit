@@ -7324,5 +7324,14 @@
   "ui.kundeservice.kobling.koble_hjelp_ny": "Skriv kundens navn, så opprettes kunden med avsenderens adresse.",
   "ui.kundeservice.kobling.koble": "Koble til kunden",
   "ui.kundeservice.kobling.koble_tom": "Skriv eller velg en kunde først.",
-  "ui.kundeservice.kobling.koblet": "Avsenderen er koblet til {navn}."
+  "ui.kundeservice.kobling.koblet": "Avsenderen er koblet til {navn}.",
+  "ui.firmabanner.prove": "Prøveperioden varer til {dato} – {igjen}.",
+  "ui.firmabanner.dager": "{n} dager igjen",
+  "ui.firmabanner.en_dag": "1 dag igjen",
+  "ui.firmabanner.siste_dag": "i dag er siste dag",
+  "ui.firmabanner.kontakt": "Vil du fortsette? Ta kontakt:",
+  "ui.firmabanner.utlopt.tittel": "Prøveperioden er over.",
+  "ui.firmabanner.utlopt.tekst": "Agentene står stille, og ingen e-post hentes eller sendes. Du kan fortsatt logge inn og se alt.",
+  "ui.firmabanner.stengt.tittel": "Firmaet er stengt.",
+  "ui.firmabanner.stengt.tekst": "Agentene står stille, og ingen e-post hentes eller sendes. Du kan fortsatt logge inn og se alt."
 }

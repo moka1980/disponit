@@ -61,6 +61,7 @@ LoadCredential=DISPONIT_M365_ALLOWLIST:/etc/disponit/api/DISPONIT_M365_ALLOWLIST
 LoadCredential=DISPONIT_GOOGLE_CLIENT_ID:/etc/disponit/api/DISPONIT_GOOGLE_CLIENT_ID
 LoadCredential=DISPONIT_GOOGLE_CLIENT_SECRET:/etc/disponit/api/DISPONIT_GOOGLE_CLIENT_SECRET
 LoadCredential=DISPONIT_GOOGLE_REDIRECT_URI:/etc/disponit/api/DISPONIT_GOOGLE_REDIRECT_URI
+LoadCredential=DISPONIT_KONTAKT_EPOST:/etc/disponit/api/DISPONIT_KONTAKT_EPOST
 # PR-045: miljøet prosessen kjører i (`platform/core/miljo`). Ikke en
 # hemmelighet, men samme hydreringsvei — og uten den nådde verdien aldri
 # prosessen: `lag_app()` leser kun det unitten laster, så både

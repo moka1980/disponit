@@ -49,6 +49,10 @@ _PAUSE_FOR_FEIL = {
 #: nøkkelen — helt riktig for en browser), men de sier «prøv igjen», ikke
 #: «denne planen er ferdig».
 _FORBIGAENDE = frozenset({
+    # FIRMAET STÅR STILLE (27/11): prøveperioden er over eller firmaet er
+    # stengt. Det er firmaets tilstand, ikke en dom over planen — aktiveres
+    # firmaet, skal planene gå videre uten at noen må slå dem på igjen.
+    "firma_pauset",
     # Nøkkelen er OPPTATT akkurat nå: en annen forespørsel holder
     # sesjonslåsen. Bruker et forsøk lengre tid enn planleasen (120 s),
     # tar en ny arbeider vinduet mens det FØRSTE fortsatt arbeider — og
