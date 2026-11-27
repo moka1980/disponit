@@ -35,7 +35,7 @@ import {
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
   tildelHenvendelse, hentHenvendelsesspor, hentMedlemmer,
   hentSvarmaler, lagreSvarmal, slettSvarmal, sendFraPostboks,
-  hentSendteSvar, hentKoblinger,
+  hentSendteSvar, hentKoblinger, kobleAvsenderTilKunde, hentParter,
   hentFullmakter, hentStilleregler, nyIdempotensnokkel,
   settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
@@ -679,7 +679,66 @@ function stilleSeksjon(ctx, last, kvitter) {
 // åpent mot henne. Hver linje sier HVORFOR den står der — en kobling man
 // ikke kan etterprøve, er en gjetning. Ingenting undersøkt = ingen boks;
 // undersøkt og ingenting funnet = én setning om hvordan man kobler.
-export function koblingsboks(d) {
+// KOBLINGENS SISTE MIL: «ikke registrert» er ingen blindvei. Ett felt
+// (navnet avsenderen satte på seg selv står ferdig utfylt), en liste over
+// kundene som finnes, og én knapp. Et navn fra lista kobler til den
+// kunden; et nytt navn oppretter kunden. Adressen går aldri via
+// nettleseren — serveren leser den fra saken.
+function kobleSkjema(d, valg) {
+  const id = "ks-koble-kunde";
+  const liste = el("datalist", { id: `${id}-liste` });
+  const felt = el("input", { id, type: "text", autocomplete: "off",
+    class: "felt-inp", value: d.avsender_navn || "" });
+  if (valg.kanSeKunder) felt.setAttribute("list", `${id}-liste`);
+  const knapp = el("button", { type: "submit", class: "knapp primar",
+    text: t("ui.kundeservice.kobling.koble") });
+  const utfall = el("p", { class: "muted", "aria-live": "polite" });
+  let kunder = null;
+  const lastKunder = async () => {
+    if (kunder || !valg.kanSeKunder) return;
+    kunder = [];
+    try {
+      kunder = (await hentParter("", 500)).parter || [];
+      sett(liste, ...kunder.filter((k) => k.aktiv)
+        .map((k) => el("option", { value: k.navn })));
+    } catch (e) {
+      kunder = null;
+      if (e instanceof UautorisertFeil) valg.paaUautorisert();
+    }
+  };
+  felt.addEventListener("focus", lastKunder);
+  const skjema = el("form", { class: "kv-skjema hv-koble" },
+    el("div", { class: "felt" },
+      el("label", { for: id, text: t("ui.kundeservice.kobling.koble_felt") }),
+      felt, liste,
+      el("p", { class: "hjelpetekst",
+        text: t(valg.kanSeKunder ? "ui.kundeservice.kobling.koble_hjelp"
+          : "ui.kundeservice.kobling.koble_hjelp_ny") })),
+    el("div", { class: "knapperad" }, knapp), utfall);
+  skjema.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const navn = felt.value.trim();
+    if (!navn) { utfall.textContent = t("ui.kundeservice.kobling.koble_tom"); return; }
+    await lastKunder();
+    const treff = (kunder || []).find((k) => k.aktiv
+      && k.navn.trim().toLowerCase() === navn.toLowerCase());
+    knapp.disabled = true; felt.disabled = true;
+    try {
+      await valg.koble(treff ? { part_id: treff.part_id } : { navn });
+    } catch (e) {
+      knapp.disabled = false; felt.disabled = false;
+      if (e instanceof UautorisertFeil) { valg.paaUautorisert(); return; }
+      utfall.textContent = t("ui.kundeservice.feil.generell");
+      return;
+    }
+    meldLive(t("ui.kundeservice.kobling.koblet").replace("{navn}",
+      treff ? treff.navn : navn));
+    valg.ferdig();
+  });
+  return skjema;
+}
+
+export function koblingsboks(d, valg = {}) {
   if (!d || (!d.sett?.kunde && !d.sett?.okonomi)) return null;
   const boks = el("section", { class: "kort hv-kobling",
     "aria-label": t("ui.kundeservice.kobling.tittel") },
@@ -692,8 +751,14 @@ export function koblingsboks(d) {
       el("span", { class: "muted",
         text: t("ui.kundeservice.kobling.grunn.avsender") })));
   } else if (d.sett?.kunde) {
-    boks.append(el("p", { class: "muted",
-      text: t("ui.kundeservice.kobling.ukjent_avsender") }));
+    if (valg.kanKoble && d.kan_kobles) {
+      boks.append(el("p", { class: "muted",
+        text: t("ui.kundeservice.kobling.ukjent_kan_koble") }),
+        kobleSkjema(d, valg));
+    } else {
+      boks.append(el("p", { class: "muted",
+        text: t("ui.kundeservice.kobling.ukjent_avsender") }));
+    }
   }
   if (fakt.length) {
     const ul = el("ul", { class: "hv-kobling-liste" });
@@ -1273,13 +1338,26 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       const hid = h.henvendelse_id;
       // Koblingen hentes VED SIDEN AV teksten, ikke etter: den er ikke
       // nødvendig for å lese, og en feil i den skal ikke stoppe lesingen.
-      hentKoblinger(hid).then((k) => {
+      const lastKobling = () => hentKoblinger(hid).then((k) => {
         if (!fortsatt(hid)) return;
-        const b = koblingsboks(k);
-        if (b) sett(kobling, b);
+        const b = koblingsboks(k, {
+          kanKoble: harScope(ctx, "part:administrer"),
+          kanSeKunder: harScope(ctx, "part:read"),
+          paaUautorisert: ctx.paaUautorisert,
+          koble: (kropp) => kobleAvsenderTilKunde(hid, kropp),
+          // Etter koblingen tegnes boksen på nytt fra serveren — den
+          // viser da kunden og hva som står åpent, som for enhver kjent
+          // avsender. Fokus til overskriften, så tastaturet ikke mistes.
+          ferdig: () => lastKobling().then(() => {
+            const o = kobling.querySelector("h4");
+            if (o) { o.tabIndex = -1; o.focus(); }
+          }),
+        });
+        sett(kobling, ...(b ? [b] : []));
       }).catch((e) => {
         if (e instanceof UautorisertFeil) ctx.paaUautorisert();
       });
+      lastKobling();
       try {
         const d = await hentJson(
           `/v1/kundeservice/henvendelse/${encodeURIComponent(hid)}/innhold`);
