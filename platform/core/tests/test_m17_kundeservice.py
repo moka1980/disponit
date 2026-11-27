@@ -254,6 +254,9 @@ def test_invariant_modulen_sendte_svar_har_ingen_sendestatus():
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/avsender",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/innhold",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/klassifiser",
+        # Eiers vedtak 27/11: saken koblet til kunde/faktura/tilbud med
+        # faste regler. LESING, ikke sending.
+        "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/koblinger",
         "/v1/kundeservice/henvendelse/{henvendelse_id:uuid}/lukk",
         # 225 (felles innboks): sporet og tildelingen — hvem som har saken
         # og hva som er gjort med den. REGISTER, ikke sending.
