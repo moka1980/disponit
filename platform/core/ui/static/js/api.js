@@ -917,6 +917,11 @@ export const hentHenvendelsesspor = (id) =>
 // funnet med faste regler, hver med sin grunn.
 export const hentKoblinger = (id) =>
   hentJson(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/koblinger`);
+// Avsenderen legges til en kunde — SERVEREN leser adressen fra saken.
+// Kropp: { part_id } for en kunde som finnes, { navn } for en ny.
+export const kobleAvsenderTilKunde = (id, kropp, idem) =>
+  _muter(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}`
+         + "/avsender-til-kunde", "POST", kropp, idem || nyIdempotensnokkel());
 // M-18 (103): onboardingregisteret. MALEN og LØPET bærer hver sin
 // SP-2-nøkkel — serveren utleder id-en av den, så en tapt respons + nytt
 // klikk gjenspiller i stedet for å starte et løp til. Et dobbelt startet
