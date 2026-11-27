@@ -396,3 +396,54 @@ test("Ingen moduler, men en godkjenner mangler: blokken vises likevel", async ()
   assert.ok(await vent(() => !blokk.hidden));
   assert.ok(blokk.querySelector(".oppsett-godkjenning"));
 });
+
+// 27/11: EN FRAKOBLET POSTBOKS SIES PÅ OVERSIKTEN — der man ser først.
+// Samme komponent som E-post-flaten, så teksten og knappen er de samme.
+const FRAKOBLET = { kilder: [
+  { kilde_id: "k1", leverandor: "imap", postboks: "felles@gmail.example",
+    status: "feilet", innlogging: "google", kan_svare: true,
+    sist_hentet_ts: null, opprettet: "2026-11-19T09:00:00+00:00" }] };
+
+test("Oversikt: frakoblet postboks står øverst, med knappen for administrator",
+  async () => {
+    SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [] },
+             "/v1/epost/kilder": FRAKOBLET };
+    const h = nyHoved();
+    visOversikt(h, ctx(["decisions:read", "epost:read",
+                        "epost:kilde:administrer"]));
+    assert.ok(await vent(() => h.querySelector(".epost-frakoblet")),
+      "varselet kom ikke på oversikten");
+    const v = h.querySelector(".epost-frakoblet");
+    assert.ok(v.textContent.includes("felles@gmail.example"));
+    assert.equal(v.querySelector("button").textContent,
+      t("ui.epost.koble_igjen"));
+    // Øverst: før «Kom i gang» og tallene.
+    assert.ok(v.compareDocumentPosition(h.querySelector(".dash-kpi"))
+      & Node.DOCUMENT_POSITION_FOLLOWING);
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0);
+  });
+
+test("Oversikt: ingen postboksboks når alt er koblet til, eller uten e-posttilgang",
+  async () => {
+    SVAR = { "/v1/oversikt": OVERSIKT, "/v1/oppsett": { moduler: [] },
+             "/v1/epost/kilder": { kilder: [
+               { ...FRAKOBLET.kilder[0], status: "aktiv" }] } };
+    let h = nyHoved();
+    visOversikt(h, ctx(["decisions:read", "epost:read"]));
+    await vent(() => h.querySelector(".stat"));
+    assert.equal(h.querySelector(".epost-frakoblet"), null);
+    // Uten epost:read spørres ikke engang.
+    SVAR["/v1/epost/kilder"] = FRAKOBLET;
+    h = nyHoved();
+    visOversikt(h, ctx(["decisions:read"]));
+    await vent(() => h.querySelector(".stat"));
+    assert.equal(h.querySelector(".epost-frakoblet"), null);
+    // En leser med epost:read ser varselet, men ingen knapp.
+    h = nyHoved();
+    visOversikt(h, ctx(["decisions:read", "epost:read"]));
+    assert.ok(await vent(() => h.querySelector(".epost-frakoblet")));
+    assert.equal(h.querySelector(".epost-frakoblet button"), null);
+    assert.ok(h.querySelector(".epost-frakoblet").textContent
+      .includes("administrator"));
+  });
