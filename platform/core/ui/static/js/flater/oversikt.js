@@ -20,6 +20,8 @@ import { hentJson, brukAnbefalteGrenser, nyIdempotensnokkel, UautorisertFeil,
 import { Tidspunkt, Feiltilstand, TomTilstand, TilgangsVakt,
          BeslutningBadge, KategoriTag } from "../komponenter.js";
 import { flateHode } from "./felles.js";
+import { frakobletVarsel } from "./epost.js";
+import { visningsToken, erGjeldendeVisning } from "../ruter.js";
 import { byggRuter, kanForvaltePolicy } from "../sitekart.js";
 
 function stat(klasse, tall, tekst) {
@@ -472,12 +474,35 @@ function oppsettBlokk(ctx) {
   return rot;
 }
 
+// EN FRAKOBLET POSTBOKS SIES DER MAN SER FØRST (27/11). Varselet på
+// E-post-flaten nådde bare den som gikk dit; uten dette stoppet
+// innhentingen stille til noen lurte på hvorfor det var tomt. Samme
+// komponent som E-post-flaten — samme tekst, samme knapp. Ingen boks når
+// alt er koblet til, og ingen når brukeren ikke kan se e-postkildene.
+function postboksvarsel(hoved, ctx) {
+  const rot = el("div", { class: "dash-postboks" });
+  if (!(ctx.scopes || []).includes("epost:read")) return rot;
+  const minRute = visningsToken(hoved);
+  const eier = () => erGjeldendeVisning(hoved, minRute);
+  hentJson("/v1/epost/kilder").then((d) => {
+    if (!eier()) return;
+    const v = frakobletVarsel(d.kilder || [],
+      (ctx.scopes || []).includes("epost:kilde:administrer"), ctx, eier);
+    if (v) sett(rot, v);
+  }).catch((e) => {
+    if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+    // Andre feil: ingen boks — dashbordet står uansett.
+  });
+  return rot;
+}
+
 export function visOversikt(hoved, ctx) {
   // KPI-kortene beholder heltside-semantikken de alltid har hatt: feiler
   // selve helsebildet, feiler siden — det er dashbordets rygg. De to
   // listene under er blokker med egne løp.
   sett(hoved,
     ...flateHode(t("ui.oversikt.tittel"), t("ui.oversikt.undertittel")),
+    postboksvarsel(hoved, ctx),
     oppsettBlokk(ctx),
     el("div", { class: "dash-kpi" }));
 
