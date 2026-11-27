@@ -4,8 +4,8 @@
 
 ## Hvem vi er
 
-**Disponit (org.nr. under registrering), 2007 Kjeller** leverer tjenesten Disponit.
-Personvernspørsmål: **eliassi@gmail.com**.
+**{{navn}}, org.nr. {{orgnummer}}, {{adresse}}** leverer tjenesten Disponit.
+Personvernspørsmål: **{{kontakt_epost}}**.
 
 ## To roller
 
@@ -58,7 +58,7 @@ per rolle, og alt som endres, logges.
 
 Du kan be om innsyn, retting, sletting, begrensning og dataportabilitet, og
 du kan protestere mot behandling som bygger på berettiget interesse. Kontakt
-oss på eliassi@gmail.com. Gjelder det data firmaet ditt har lagt inn, sender
+oss på {{kontakt_epost}}. Gjelder det data firmaet ditt har lagt inn, sender
 vi henvendelsen videre til firmaet.
 
 Du kan klage til Datatilsynet (datatilsynet.no).

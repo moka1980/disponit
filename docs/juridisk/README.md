@@ -11,24 +11,24 @@ publiseres og registreringen begynner å kreve at de godtas.
 | `personvern.md` | Personvernerklæring | Brukerne som logger inn, og alle som vil vite hva vi gjør med data |
 | `databehandleravtale.md` | Databehandleravtale (GDPR art. 28) | Kunden er behandlingsansvarlig for sine kunders og ansattes data, og Disponit er databehandler |
 
-## Fylt inn av eier 27.11.2026
+## Opplysningene om leverandøren er DATA, ikke tekst i repoet
 
-- Leverandør: Disponit, 2007 Kjeller. **Org.nr. mangler** — se under.
-- Kontakt: eliassi@gmail.com (også `DISPONIT_KONTAKT_EPOST` på verten).
-- Vert og e-post: one.com. Serveren (81.88.19.25) er registrert på
-  dogado GmbH i one.com-konsernet, Dortmund, **Tyskland (EØS)** — slått
-  opp i RIPE 27.11.
-- Pris: avtales individuelt.
-- Ansvarsgrense: forslag (§ 9) — det kunden har betalt siste 12 måneder,
-  null i prøveperioden, ikke ved grov uaktsomhet/forsett.
-- Verneting: Lillestrøm tingrett.
+`{{navn}}`, `{{orgnummer}}`, `{{adresse}}`, `{{kontakt_epost}}` og
+`{{verneting}}` fylles inn fra plattformadmin → «Om Disponit» (migrasjon
+234), der eieren redigerer dem selv. Repoet er offentlig; ingen
+kontaktadresse skal stå her.
+
+Fast i teksten (eiers svar 27.11.2026): vert og e-post er one.com — serveren
+(81.88.19.25) er registrert på dogado GmbH i one.com-konsernet, Dortmund,
+**Tyskland (EØS)**, slått opp i RIPE 27.11. Pris avtales individuelt.
+Ansvarsgrensen i § 9 er et forslag.
 
 ## Før publisering
 
-1. **Organisasjonsnummer.** «Disponit» uten org.nr. er ikke en juridisk
+1. **Organisasjonsnummer.** Uten org.nr. er «Disponit» ikke en juridisk
    person — avtalepart blir da personen bak. Registrer et
-   enkeltpersonforetak eller AS i Brønnøysundregistrene, og sett inn
-   navn og nummer.
+   enkeltpersonforetak eller AS i Brønnøysundregistrene, og fyll inn
+   nummeret under «Om Disponit».
 2. Helst en gjennomlesning av jurist.
 
 ## Fakta som er hentet fra koden (endres koden, må teksten følge)

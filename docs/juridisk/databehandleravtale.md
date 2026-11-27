@@ -2,7 +2,7 @@
 
 *UTKAST 27.11.2026, ikke gjeldende. Versjon 0.1.*
 
-Mellom **kunden** (behandlingsansvarlig) og **Disponit (org.nr. under registrering), 2007 Kjeller** («Disponit», databehandler). Avtalen er en del av bruksvilkårene
+Mellom **kunden** (behandlingsansvarlig) og **{{navn}}, org.nr. {{orgnummer}}, {{adresse}}** («Disponit», databehandler). Avtalen er en del av bruksvilkårene
 og gjelder så lenge Disponit behandler personopplysninger på kundens vegne.
 
 ## 1. Formål og instruks

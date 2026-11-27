@@ -4,7 +4,7 @@
 
 ## 1. Partene
 
-Disse vilkårene gjelder mellom **Disponit (org.nr. under registrering), 2007 Kjeller**
+Disse vilkårene gjelder mellom **{{navn}}, org.nr. {{orgnummer}}, {{adresse}}**
 («Disponit», «vi») og firmaet som registrerer seg og bruker tjenesten
 («kunden»). Den som registrerer firmaet, bekrefter at hun har rett til å binde
 firmaet.
@@ -93,8 +93,8 @@ forsett.
 
 ## 10. Lovvalg og verneting
 
-Norsk rett gjelder. Tvister løses ved Lillestrøm tingrett som avtalt verneting.
+Norsk rett gjelder. Tvister løses ved {{verneting}} som avtalt verneting.
 
 ## 11. Kontakt
 
-eliassi@gmail.com
+{{kontakt_epost}}
