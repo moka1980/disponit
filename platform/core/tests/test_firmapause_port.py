@@ -9,15 +9,16 @@ som før.
   2. `prove`, `aktiv` og et firma UTEN rad går; `utlopt` og `stengt` står.
   3. Banneret: ingen nedtelling før de siste sju dagene, så nedtellingen,
      så «står stille».
-  4. Bakgrunnsrundene får vite hvem som står stille.
+  4. E-posten (232): de fire kandidatdørene — Microsoft og IMAP, inn og
+     ut — tar ikke med et firma som står stille.
 
 MUTASJONER SOM DREPER DENNE: fjern sperren i `utfor_bestilling` (1),
 legg `prove` i PAUSET (2), dropp NEDTELLING_DOGN-grensen (3).
 """
 import secrets
 
-from .test_api import (DSN, MIGRATOR_DSN, app, klient, migrator,  # noqa: F401
-                       miljo, pg, token)
+from .test_api import (DSN, MIGRATOR_DSN, app, dekker, klient,  # noqa: F401
+                       migrator, miljo, pg, token)
 from .test_m37 import _sett_kontekst
 
 
@@ -45,6 +46,7 @@ def _kropp():
 
 
 @pg
+@dekker("firma_pauset")
 def test_pauset_firma_bestiller_ingenting_aktivt_gaar_forbi(migrator, app):
     from api.bestilling import utfor_bestilling
     from db.pg import koble
@@ -117,3 +119,51 @@ def test_statusruten(klient, token, migrator):
     tok2, _ = token(scopes=("bestilling:opprett",))
     assert klient.get("/v1/firma/status", headers={
         "authorization": f"Bearer {tok2}"}).status_code == 403
+
+
+def _kilde(m, t, lev):
+    _sett_kontekst(m, t)
+    kid = m.execute(
+        "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
+        " auth_kryptert, nonce, key_id, scope) VALUES"
+        " (%s,%s,%s,%s,%s,'k1','imap smtp') RETURNING kilde_id",
+        (t, lev, f"post-{secrets.token_hex(3)}@x.example", b"\x01",
+         bytes(range(12)))).fetchone()[0]
+    m.commit()
+    return kid
+
+
+@pg
+def test_epostdorene_hopper_over_firma_som_staar_stille(migrator):
+    """232: ingen henting for et firma som står stille — begge
+    leverandørene. (Utsendingsdørene har samme ledd; porten under leser
+    migrasjonen for dem, siden et utkast i kø krever en hel melding.)"""
+    stille, aktivt = _t(), _t()
+    _firma(migrator, stille, status="utlopt")
+    _firma(migrator, aktivt)
+    for t in (stille, aktivt):
+        _kilde(migrator, t, "imap")
+        _kilde(migrator, t, "m365")
+    migrator.execute("RESET ALL")
+    migrator.execute("SET LOCAL ROLE disponit_plan_arbeider")
+    sett = set()
+    for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
+        sett |= {(dor, r[0]) for r in migrator.execute(
+            f"SELECT tenant FROM {dor}(200)").fetchall()}
+    migrator.rollback()
+    for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
+        assert (dor, stille) not in sett, dor
+        assert (dor, aktivt) in sett or len(
+            [x for x in sett if x[0] == dor]) >= 200, dor
+
+
+def test_utsendingsdorene_har_samme_ledd():
+    from pathlib import Path
+    sql = (Path(__file__).resolve().parents[1] / "db/migrations"
+           / "232_firma_pause_stopper_epost.sql").read_text(encoding="utf-8")
+    kode = "\n".join(l for l in sql.splitlines()
+                     if not l.lstrip().startswith("--"))
+    assert kode.count("f.status IN ('utlopt', 'stengt')") == 4
+    for dor in ("m6_hentekandidater", "m6_sendekandidater",
+                "m6_imap_hentekandidater", "m6_imap_sendekandidater"):
+        assert f"CREATE OR REPLACE FUNCTION {dor}(" in kode, dor
