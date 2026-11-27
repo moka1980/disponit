@@ -319,7 +319,10 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
     hentJson("/v1/firma/status").then((s) => {
       if (!skall.hoved.isConnected) return;
       const b = firmabanner(s);
-      if (b && skall.hoved.parentElement) skall.hoved.parentElement.before(b);
+      // Rett under toppen, over hele bredden — ikke i rutenettets første
+      // kolonne (der havnet det i første utgave: modulmenyens plass).
+      const topp = skall.rot.querySelector(".skall-topp");
+      if (b && topp) topp.after(b);
     }).catch(() => {});
   }
   // En lang flate blir faner — for alle flatene, uten at noen av dem vet
