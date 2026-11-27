@@ -160,6 +160,14 @@ def test_epostdorene_hopper_over_firma_som_staar_stille(migrator):
         pa.rollback()
     finally:
         pa.close()
+        # RYDD: kildene har dummy-innhold. Står de aktive, plukker NESTE
+        # tests e-postrunde dem i den delte basen og snubler (målt:
+        # `test_de_to_veiene_deler_ikke_kandidater`, KeyError refresh_token).
+        for t in (stille, aktivt):
+            _sett_kontekst(migrator, t)
+            migrator.execute("UPDATE epost_kilde SET status='deaktivert'"
+                             " WHERE tenant=%s", (t,))
+            migrator.commit()
     for dor in ("m6_imap_hentekandidater", "m6_hentekandidater"):
         assert (dor, stille) not in sett, dor
         assert (dor, aktivt) in sett or len(
