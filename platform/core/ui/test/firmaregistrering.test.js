@@ -434,3 +434,51 @@ test("Registrering: bransjen styrer fullmaktene — netthandel slår av"
   const brudd = await alvorligeBrudd(h);
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+// 235: VILKÅRENE. Krysset finnes bare når de er publisert, kreves da, og
+// kroppen bærer NETTOPP de versjonene som gjelder.
+test("Registrering: publiserte vilkår må godtas, og versjonene sendes med",
+  async () => {
+    SVAR = { "/v1/juridisk": { gjeldende: { vilkar: 2, personvern: 1,
+               databehandleravtale: 1 },
+             kreves: { vilkar: 2, databehandleravtale: 1 } },
+             "/v1/firma/registrer": { tenant: "fjordlys-elektro-as",
+               navn: "Fjordlys Elektro AS", prove_utloper: "2026-12-27" } };
+    const h = nyHoved();
+    visFirmaregistrering(h, ctx());
+    const boks = h.querySelector("#firmareg-vilkar");
+    assert.ok(await vent(() => !boks.closest(".felt").hidden),
+      "krysset kom ikke fram");
+    const lenker = [...boks.closest(".felt").querySelectorAll("a")]
+      .map((a) => a.getAttribute("href"));
+    assert.deepEqual(lenker, ["/vilkar", "/databehandleravtale", "/personvern"]);
+    fyll(h);
+    await vent(() => false, 5);
+    assert.ok(!KALL.some((k) => k.url === "/v1/firma/registrer"),
+      "registreringen gikk uten samtykke");
+    assert.ok(h.textContent.includes(t("ui.firmareg.feil.vilkar")));
+    boks.checked = true;
+    fyll(h);
+    assert.ok(await vent(() => KALL.some((k) => k.url === "/v1/firma/registrer")));
+    const kall = KALL.find((k) => k.url === "/v1/firma/registrer");
+    assert.deepEqual(kall.kropp.godtar, { vilkar: 2, databehandleravtale: 1 });
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Registrering: uten publiserte vilkår finnes ikke krysset, og ingenting sendes",
+  async () => {
+    SVAR = { "/v1/juridisk": { gjeldende: {}, kreves: {} },
+             "/v1/firma/registrer": { tenant: "x", navn: "X",
+               prove_utloper: "2026-12-27" } };
+    const h = nyHoved();
+    visFirmaregistrering(h, ctx());
+    await vent(() => KALL.some((k) => k.url === "/v1/juridisk"));
+    await vent(() => false, 5);
+    assert.equal(h.querySelector("#firmareg-vilkar").closest(".felt").hidden,
+                 true);
+    fyll(h);
+    assert.ok(await vent(() => KALL.some((k) => k.url === "/v1/firma/registrer")));
+    const kall = KALL.find((k) => k.url === "/v1/firma/registrer");
+    assert.equal("godtar" in kall.kropp, false);
+  });
