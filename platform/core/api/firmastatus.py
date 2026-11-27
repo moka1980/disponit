@@ -91,9 +91,9 @@ def status_for(conn, tenant: str) -> dict:
     kontakt = None
     try:
         with conn.transaction():
-            r = conn.execute("SELECT kontakt_epost FROM"
-                             " plattform_leverandor_les()").fetchone()
-        kontakt = r[0] if r else None
+            lev = conn.execute("SELECT kontakt_epost FROM"
+                               " plattform_leverandor_les()").fetchone()
+        kontakt = lev[0] if lev else None
     except Exception:                                       # noqa: BLE001
         kontakt = None
     kontakt = kontakt or (os.environ.get("DISPONIT_KONTAKT_EPOST")
