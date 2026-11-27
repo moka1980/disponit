@@ -1058,7 +1058,12 @@ def test_rutescope_registeret_dekker_alle_ruter():
     UAUTENTISERT_OK = {"/live", "/ready", "/v1/oidc/start",
                        "/v1/oidc/callback", "/v1/sesjon",
                        "/v1/tidsvalg/oppslag", "/v1/tidsvalg/velg",
-                       "/tidsvalg", "/v1/epost/kilder/callback"}
+                       "/tidsvalg", "/v1/epost/kilder/callback",
+                       # 235: vilkårssidene og dokumentene bak dem er
+                       # OFFENTLIGE — det kunden leser FØR hun har en konto.
+                       # Lesedøra gir bare publisert tekst.
+                       "/vilkar", "/personvern", "/databehandleravtale",
+                       "/v1/juridisk", "/v1/juridisk/{dok:str}"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
             assert sti in UAUTENTISERT_OK, \

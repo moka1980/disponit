@@ -212,6 +212,17 @@ def tidsvalg_side(request: Request) -> Response:
                     headers=dict(_TIDSVALG_SIKKERHET))
 
 
+def juridisk_side(request: Request) -> Response:
+    """/vilkar, /personvern, /databehandleravtale (235): én frittstående
+    side, som tidsvalget — ingen innlogging, ingen cookies. Siden leser
+    stien og henter dokumentet fra `/v1/juridisk/{dok}`."""
+    data = _les_trygt(STATISK, STATISK / "juridisk.html")
+    if data is None:                  # byggefeil, ikke en brukervei
+        return Response("Not Found", status_code=404)
+    return Response(content=data, media_type=_CT[".html"],
+                    headers=dict(_TIDSVALG_SIKKERHET))
+
+
 # ---------------------------------------------------------------------------
 # GET / — SPA-skallet. Hash-ruting skjer i klienten, så ÉN skall-rute holder.
 # ---------------------------------------------------------------------------

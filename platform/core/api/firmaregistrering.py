@@ -226,6 +226,20 @@ def registrer_firma(tjeneste, request):
             if er_reservert(valgt):
                 return _feil("request_feilformet", rid, 400, detalj="kortnavn")
 
+        # VILKÅRENE (235): er vilkår og databehandleravtale publisert, må
+        # hun godta NETTOPP de versjonene som står på sidene nå. Før noe er
+        # publisert krever registreringen ingenting — eieren skal ikke
+        # stenge registreringen ved å skrive et utkast.
+        from . import juridisk
+        kreves = juridisk.krav(conn)
+        godtar = k.get("godtar") or {}
+        if not isinstance(godtar, dict):
+            return _feil("request_feilformet", rid, 400, detalj="godtar")
+        mangler = [d for d, v in kreves.items() if godtar.get(d) != v]
+        if mangler:
+            return _feil("vilkar_ikke_godtatt", rid, 409,
+                         detalj=", ".join(mangler))
+
         kandidater = kandidater_for(navn, valgt)
         if len(kandidater[0]) < 2:
             # Et navn som bare består av tegn slugen ikke tar imot.
@@ -272,6 +286,9 @@ def registrer_firma(tjeneste, request):
         # den alene nettopp fordi den aldri er valgt før.
         conn.execute("SELECT firma_sett_godkjenningsregel(%s,%s,%s)",
                      (tenant, uavhengig, bid))
+        # Samtykket i SAMME transaksjon som policyen: et firma som finnes
+        # uten at det står hvilke vilkår det godtok, skal ikke kunne oppstå.
+        juridisk.godta(conn, tenant, kreves, f"bruker:{bid}")
         conn.commit()
 
         sett_kontekst(conn, kontekst, f"bruker:{bid}", rid)
