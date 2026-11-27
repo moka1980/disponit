@@ -4803,6 +4803,9 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         # lesende, og skilt fra køens `decisions:read`
                         # fordi bare det ene er persondata.
                         "kundeservice:innhold",
+                        # 27/11: eksporten av alt firmaet har — rent
+                        # lesende (GET), admin alene (`autorisasjon.py`).
+                        "firma:eksport",
                         # 183: kundelista. UTEN DENNE LINJA er flaten
                         # DØD for alle som logger inn i nettleseren
                         # (CodeRabbit, kritisk): browsersesjonen får
@@ -4835,9 +4838,6 @@ BROWSER_MUTASJONSSCOPES = frozenset({
                                      # 201: oppsigelsen skjer i flaten, med
                                      # CSRF gjennom `_browserkontekst`.
                                      "firma:avslutt",
-                                     # 27/11: eksporten lastes ned i
-                                     # flaten (GET, ingen CSRF).
-                                     "firma:eksport",
                                      "exceptions:approve", "exceptions:reject",
                                      "exceptions:escalate",
                                      # PR-013: policyadministrasjon. `write`
