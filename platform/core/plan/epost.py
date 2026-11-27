@@ -516,6 +516,10 @@ def send_runde(tjeneste, conn, *, poster=graph_post, veksler=None) -> dict:
     if er_av():
         return {"av": True, "plukket": 0, "resultater": []}
     rader = sendekandidater(conn)
+    # …og sender ingenting: svaret ligger i kø til firmaet er aktivt igjen.
+    from api import firmastatus
+    stille = firmastatus.pausede(tjeneste, [r[0] for r in rader])
+    rader = [r for r in rader if r[0] not in stille]
     if not rader:
         return {"plukket": 0, "resultater": []}
     resultater = [send_ett(conn, r, poster=poster, veksler=veksler)
@@ -530,6 +534,10 @@ def kjor_en_runde(tjeneste, conn, *, graf=graph_get, veksler=None) -> dict:
         _log("epost_inntak_av")
         return {"av": True, "plukket": 0, "resultater": []}
     rader = kandidater(conn)
+    # Et firma som står stille (27/11), henter ingenting.
+    from api import firmastatus
+    stille = firmastatus.pausede(tjeneste, [r[0] for r in rader])
+    rader = [r for r in rader if r[0] not in stille]
     start = time.monotonic()
     resultater = [hent_en(conn, rad, graf=graf, veksler=veksler)
                   for rad in rader]

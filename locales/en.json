@@ -7317,5 +7317,14 @@
   "ui.kundeservice.kobling.tilbud": "Quote {belop} NOK",
   "ui.kundeservice.kobling.tilbudstatus.utkast": "draft",
   "ui.kundeservice.kobling.tilbudstatus.godkjent": "sent/approved",
-  "ui.kundeservice.kobling.gyldig_til": "valid until {dato}"
+  "ui.kundeservice.kobling.gyldig_til": "valid until {dato}",
+  "ui.firmabanner.prove": "The trial runs until {dato} – {igjen}.",
+  "ui.firmabanner.dager": "{n} days left",
+  "ui.firmabanner.en_dag": "1 day left",
+  "ui.firmabanner.siste_dag": "today is the last day",
+  "ui.firmabanner.kontakt": "Want to continue? Get in touch:",
+  "ui.firmabanner.utlopt.tittel": "The trial has ended.",
+  "ui.firmabanner.utlopt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything.",
+  "ui.firmabanner.stengt.tittel": "The company account is closed.",
+  "ui.firmabanner.stengt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything."
 }

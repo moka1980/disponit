@@ -7317,5 +7317,14 @@
   "ui.kundeservice.kobling.tilbud": "Tilbud {belop} kr",
   "ui.kundeservice.kobling.tilbudstatus.utkast": "utkast",
   "ui.kundeservice.kobling.tilbudstatus.godkjent": "sendt/godkjent",
-  "ui.kundeservice.kobling.gyldig_til": "gyldig til {dato}"
+  "ui.kundeservice.kobling.gyldig_til": "gyldig til {dato}",
+  "ui.firmabanner.prove": "Prøveperioden varer til {dato} – {igjen}.",
+  "ui.firmabanner.dager": "{n} dager igjen",
+  "ui.firmabanner.en_dag": "1 dag igjen",
+  "ui.firmabanner.siste_dag": "i dag er siste dag",
+  "ui.firmabanner.kontakt": "Vil du fortsette? Ta kontakt:",
+  "ui.firmabanner.utlopt.tittel": "Prøveperioden er over.",
+  "ui.firmabanner.utlopt.tekst": "Agentene står stille, og ingen e-post hentes eller sendes. Du kan fortsatt logge inn og se alt.",
+  "ui.firmabanner.stengt.tittel": "Firmaet er stengt.",
+  "ui.firmabanner.stengt.tekst": "Agentene står stille, og ingen e-post hentes eller sendes. Du kan fortsatt logge inn og se alt."
 }

@@ -777,6 +777,18 @@ def utfor_bestilling(tjeneste, conn, tenant: str, aktor: str,
                 lagret = rad[1] or {"beslutning": rad[2],
                                     "oppdrag_id": rad[3]}
                 return ("ok", lagret, True)
+        # FIRMAET STÅR STILLE (eiers vedtak 27/11): prøveperioden er over,
+        # eller plattformeieren har stengt det. Da bestilles INGENTING nytt
+        # — verken av agentene eller av et menneske. Etter gjenspillet (et
+        # resultat som alt er committet, leveres som før) og FØR
+        # beslutningen: et TILLAT her ville gitt et oppdrag for et firma
+        # som er pauset. Konteksten er satt like over.
+        from . import firmastatus
+        if firmastatus.er_pauset_i(conn, tenant):
+            conn.rollback()
+            tjeneste.logg.hendelse("firma_pauset", rid, tenant, art="drift",
+                                   flate="bestilling")
+            return ("feil", "firma_pauset")
         verifisert_ts = None
         gjenopprettbar = False
         terminal_dom = False

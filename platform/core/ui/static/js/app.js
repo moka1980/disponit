@@ -5,6 +5,7 @@ import { sett } from "./dom.js";
 import { velgSprak, lagreSprak, hentI18n, t, sprak } from "./i18n.js";
 import { hentJson, hentUtrullingForSkall, loggUt, UautorisertFeil } from "./api.js";
 import { AppShell, sikreLiveRegion, lokaliserSkiplenke } from "./komponenter.js";
+import { firmabanner } from "./firmabanner.js";
 import { Bekreftelsesdialog } from "./dialog.js";
 import { lagRuter } from "./ruter.js";
 import { seksjonsfaner } from "./seksjonsfaner.js";
@@ -310,6 +311,17 @@ function visApp(sesjon, utrulling = {}, opsjoner = {}) {
   app.setAttribute("aria-busy", "false");
   document.documentElement.setAttribute("data-visning", "app");
   sikreLiveRegion();
+  // PRØVEPERIODEN (27/11): en rad mellom toppen og innholdet, hentet én
+  // gang per skall. Bare for økter som kan lese (`decisions:read`) —
+  // ellers er kallet dømt til 403. Feiler det, er det ingen rad: skallet
+  // skal ikke hevde noe om fristen det ikke vet.
+  if ((sesjon.scopes || []).includes("decisions:read")) {
+    hentJson("/v1/firma/status").then((s) => {
+      if (!skall.hoved.isConnected) return;
+      const b = firmabanner(s);
+      if (b && skall.hoved.parentElement) skall.hoved.parentElement.before(b);
+    }).catch(() => {});
+  }
   // En lang flate blir faner — for alle flatene, uten at noen av dem vet
   // om det (seksjonsfaner.js).
   seksjonsStopp = seksjonsfaner(skall.hoved);

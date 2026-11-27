@@ -516,8 +516,16 @@ def kjor_en_runde(tjeneste, conn, *, kobler=Imap, sender=send_smtp) -> dict:
     """IMAP-rundens to halvdeler: inn, så ut. Kill-switchen er M-6s."""
     if epost.er_av():
         return {"av": True, "plukket": 0, "resultater": []}
-    inn = [hent_en(conn, r, kobler=kobler) for r in kandidater(conn)]
-    utk = [send_ett(conn, r, sender=sender) for r in sendekandidater(conn)]
+    rader, ut = kandidater(conn), sendekandidater(conn)
+    # Et firma som står stille (27/11), henter og sender ingenting; svaret
+    # ligger i kø til firmaet er aktivt igjen.
+    from api import firmastatus
+    stille = firmastatus.pausede(tjeneste,
+                                 [r[0] for r in rader] + [r[0] for r in ut])
+    inn = [hent_en(conn, r, kobler=kobler) for r in rader
+           if r[0] not in stille]
+    utk = [send_ett(conn, r, sender=sender) for r in ut
+           if r[0] not in stille]
     res = {"plukket": len(inn), "resultater": inn,
            "svar": {"plukket": len(utk), "resultater": utk}}
     if inn or utk:

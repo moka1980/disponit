@@ -441,6 +441,14 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "derimot to sannheter om samme dokument, og det committes "
         "aldri i stillhet. Sikkerhetslogg: noen forsøkte å bytte "
         "innholdet under en eksisterende evidensnøkkel.")),
+    Feilvei("firma_pauset", 409, ("avvis",), None, notat=(
+        "Firmaet står stille (eiers vedtak 27/11): prøveperioden er over "
+        "(`utlopt`) eller plattformeieren har stengt det (`stengt`). "
+        "Ingen bestilling — verken agentens eller et menneskes — før "
+        "firmaet er aktivert igjen. Lesing og eksport består. 409, ikke "
+        "403: kalleren HAR rettigheten; det er firmaets tilstand som "
+        "nekter. Planmaterialisereren regner den som forbigående, så "
+        "planene fortsetter når firmaet aktiveres.")),
     Feilvei("bestillingstype_utilgjengelig", 503, ("drift",), None, notat=(
         "Bestillingstypen er kodefestet, men oppdragstypen dens kan ikke "
         "CLAIMES nå: raden mangler i oppdragstype_register, har feil "
