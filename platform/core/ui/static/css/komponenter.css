@@ -1920,3 +1920,8 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 .hv-kobling h4 { margin-top: 0; }
 .hv-kobling-liste { margin: 0.25rem 0 0; padding-left: 1.25rem; }
 .hv-kobling-liste li + li { margin-top: 0.25rem; }
+
+/* 27/11: prøveperioden i skallet — VarselBanneret, som en rad mellom
+   toppen og innholdet (ikke inne i en flate). */
+.skall > .firmabanner { grid-column: 1 / -1; margin: var(--sp-3) 0 0; }
+.firmabanner p { margin: 0; }

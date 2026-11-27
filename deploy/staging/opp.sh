@@ -1801,6 +1801,9 @@ skriv_cred plan DISPONIT_M365_ALLOWLIST     "${DISPONIT_M365_ALLOWLIST:-}"
 skriv_cred api DISPONIT_GOOGLE_CLIENT_ID     "${DISPONIT_GOOGLE_CLIENT_ID:-}"
 skriv_cred api DISPONIT_GOOGLE_CLIENT_SECRET "${DISPONIT_GOOGLE_CLIENT_SECRET:-}"
 skriv_cred api DISPONIT_GOOGLE_REDIRECT_URI  "${DISPONIT_GOOGLE_REDIRECT_URI:-}"
+# 27/11: adressen kunden tar kontakt på når prøveperioden er over
+# (`firmastatus.status_for`). VALGFRI: tom gir et banner uten adresse.
+skriv_cred api DISPONIT_KONTAKT_EPOST "${DISPONIT_KONTAKT_EPOST:-}"
 skriv_cred plan DISPONIT_GOOGLE_CLIENT_ID     "${DISPONIT_GOOGLE_CLIENT_ID:-}"
 skriv_cred plan DISPONIT_GOOGLE_CLIENT_SECRET "${DISPONIT_GOOGLE_CLIENT_SECRET:-}"
 # PR-045 (Codex P1): MILJØET prosessen kjører i. `platform/core/miljo` er den
