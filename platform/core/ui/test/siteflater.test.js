@@ -201,7 +201,7 @@ test("Landing: en NY bedrift finner veien inn fra den offentlige siden",
   assert.equal(REGISTRERING_AAPEN, false,
     "registreringen er åpnet — eiers testperiode (17/9) er over, og da skal"
     + " denne porten skrives om til den gamle veien, ikke bare flippes");
-  assert.ok(!app.textContent.includes(t("site.login.ny_tittel")),
+  assert.ok(!app.textContent.includes(t("site.login.ny_tittel_kort")),
     "registreringskortet står i flaten i testperioden");
   assert.ok(!app.textContent.includes(t("site.login.ny_knapp")));
   assert.ok(!app.textContent.includes(t("site.login.alt_kunde")));

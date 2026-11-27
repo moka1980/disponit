@@ -3639,6 +3639,17 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_plattform_sett_leverandor(request: Request) -> Response:
         return plattformmodul.sett_leverandor_endepunkt(tjeneste, request)
 
+    from . import plattform_innstillinger as innstillingsmodul
+
+    def pa_plattform_innstillinger(request: Request) -> Response:
+        return innstillingsmodul.eier_endepunkt(tjeneste, request)
+
+    def pa_plattform_sett_innstillinger(request: Request) -> Response:
+        return innstillingsmodul.sett_endepunkt(tjeneste, request)
+
+    def registrering_valg(request: Request) -> Response:
+        return innstillingsmodul.valg_endepunkt(tjeneste, request)
+
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
@@ -4768,6 +4779,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["GET"]),
         Route("/v1/plattform/leverandor", pa_plattform_sett_leverandor,
               methods=["POST"]),
+        Route("/v1/plattform/innstillinger", pa_plattform_innstillinger,
+              methods=["GET"]),
+        Route("/v1/plattform/innstillinger", pa_plattform_sett_innstillinger,
+              methods=["POST"]),
+        Route("/v1/registrering/valg", registrering_valg, methods=["GET"]),
         Route("/v1/plattform/firmaer", pa_plattform_firmaer,
               methods=["GET"]),
         Route("/v1/plattform/firmaer", pa_plattform_opprett,
@@ -5337,6 +5353,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/databehandleravtale"):        None,
     ("GET",  "/v1/juridisk"):                None,
     ("GET",  "/v1/juridisk/{dok:str}"):      None,
+    # 236: prøveperioden og bransjene — det forsiden og registreringen viser.
+    ("GET",  "/v1/registrering/valg"):       None,
     ("GET",  "/v1/plattform/juridisk"):      "policy:read",
     ("POST", "/v1/plattform/juridisk/{dok:str}/utkast"): "policy:read",
     ("POST", "/v1/plattform/juridisk/{dok:str}/publiser"): "policy:read",
@@ -6441,6 +6459,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/plattform/meg"):           "policy:read",
     ("GET",  "/v1/plattform/leverandor"):    "policy:read",
     ("POST", "/v1/plattform/leverandor"):    "policy:read",
+    ("GET",  "/v1/plattform/innstillinger"): "policy:read",
+    ("POST", "/v1/plattform/innstillinger"): "policy:read",
     ("GET",  "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer/{tenant:str}/oppdater"): "policy:read",

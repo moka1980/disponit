@@ -138,7 +138,11 @@ def opprett_endepunkt(tjeneste, request):
         orgnummer, feil = _tekst(k, "orgnummer", 32, paakrevd=False)
         if feil:
             return _feil("request_feilformet", rid, 400, detalj=feil)
-        dogn = k.get("prove_dogn", 30)
+        dogn = k.get("prove_dogn")
+        if dogn is None:
+            # Standarden er plattformens innstilling (236), ikke et tall her.
+            from .plattform_innstillinger import les
+            dogn = les(conn)["prove_dogn"]
         if isinstance(dogn, bool) or not isinstance(dogn, int):
             return _feil("request_feilformet", rid, 400, detalj="prove_dogn")
 

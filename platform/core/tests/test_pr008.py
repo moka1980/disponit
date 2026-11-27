@@ -1063,7 +1063,10 @@ def test_rutescope_registeret_dekker_alle_ruter():
                        # OFFENTLIGE — det kunden leser FØR hun har en konto.
                        # Lesedøra gir bare publisert tekst.
                        "/vilkar", "/personvern", "/databehandleravtale",
-                       "/v1/juridisk", "/v1/juridisk/{dok:str}"}
+                       "/v1/juridisk", "/v1/juridisk/{dok:str}",
+                       # 236: prøveperioden og bransjene som tilbys —
+                       # forsiden viser tallet før noen er logget inn.
+                       "/v1/registrering/valg"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
             assert sti in UAUTENTISERT_OK, \

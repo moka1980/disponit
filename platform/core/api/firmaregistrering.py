@@ -37,7 +37,8 @@ from pathlib import Path
 
 MAKS_NAVN = 200
 MAKS_SLUG = 63
-PROVE_DOGN = 30
+#: Prøveperioden og hvilke bransjer som tilbys er PLATTFORMEIERENS valg og
+#: står i basen (236, `plattform_innstillinger.py`) — ikke her.
 
 #: Kunden velger én av disse. Hun leverer ALDRI policy selv — da ville
 #: registreringsruten vært en vei til å skrive sine egne fullmakter.
@@ -174,8 +175,13 @@ def registrer_firma(tjeneste, request):
                 return _feil("request_feilformet", rid, 400,
                              detalj="orgnummer er ni siffer")
 
+        # BRANSJEN MÅ VÆRE EN SOM TILBYS NÅ (236). Har eieren tatt en mal ut
+        # av tilbudet, er den borte fra skjemaet — og en forespørsel som
+        # likevel ber om den, er feilformet, ikke en stille vei rundt valget.
+        from . import plattform_innstillinger
+        innst = plattform_innstillinger.les(conn)
         bransje = k.get("bransje")
-        if bransje not in BRANSJEMALER:
+        if bransje not in BRANSJEMALER or bransje not in innst["bransjer"]:
             return _feil("request_feilformet", rid, 400, detalj="bransje")
         # FULLMAKTENE: en liste av navn fra det LUKKEDE settet, tom om hun
         # ikke ga noen. Et ukjent navn er en feilformet forespørsel, ikke
@@ -256,7 +262,8 @@ def registrer_firma(tjeneste, request):
                 with conn.transaction():
                     frist = conn.execute(
                         "SELECT firma_selvregistrer(%s,%s,%s,%s,%s)",
-                        (kandidat, navn, org, bid, PROVE_DOGN)).fetchone()[0]
+                        (kandidat, navn, org, bid,
+                         innst["prove_dogn"])).fetchone()[0]
                 tenant = kandidat
                 break
             except psycopg.errors.UniqueViolation:

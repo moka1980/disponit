@@ -3,7 +3,8 @@ import { t } from "../i18n.js";
 import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
          oppdaterPlattformFirma, opprettPlattformFirma,
          settPlattformFirmastatus, hentLeverandor, settLeverandor,
-         hentJuridisk, lagreJuridiskUtkast, publiserJuridisk }
+         hentJuridisk, lagreJuridiskUtkast, publiserJuridisk,
+         hentInnstillinger, settInnstillinger }
   from "../api.js";
 import { tekstTilNoder } from "./juridisk.js";
 import { meldLive } from "../komponenter.js";
@@ -30,13 +31,22 @@ import { siteFaseMerke, siteModuleKort } from "../sitekomponenter.js";
 //
 // Den bor på adminflaten fordi det er flaten som allerede heter «Plattform»
 // i toppnavigasjonen. Én ekstra henting, og bare når noen åpner den siden.
+//
+// FANER (eier 27/11: «disse bør organiseres som tabmeny»): listen og
+// opprettingen er to seksjoner med hver sin `h2`, så seksjonsfanene gjør dem
+// til hver sin fane. Seksjonene returneres derfor som et PAR.
 function plattformseksjon(ctx) {
-  const boks = el("section", { class: "kort" });
+  const boks = el("section", { class: "kort", "aria-labelledby": "pf-liste-t" });
   boks.hidden = true;
+  const nyBoks = el("section", { class: "kort", "aria-labelledby": "pf-ny-t" });
+  nyBoks.hidden = true;
 
-  const meld = (nokkel) => {
+  const meld = (nokkel, i = boks) => {
     const m = el("p", { class: "melding", role: "status", text: t(nokkel) });
-    boks.prepend(m);
+    // Etter overskriften: seksjonsfanene leser fanetittelen fra `h2`-en,
+    // og meldingen skal stå under den, ikke over.
+    const h = i.querySelector(":scope > h2");
+    if (h) h.after(m); else i.prepend(m);
     meldLive(t(nokkel));
   };
 
@@ -155,7 +165,7 @@ function plattformseksjon(ctx) {
         tbody));
   };
 
-  const nyttFirmaSkjema = () => {
+  const nyttFirmaSkjema = (standardDogn) => {
     const felt = (id, nokkel, type = "text", verdi = "") => {
       const inn = el("input", { type, id, value: verdi, class: "felt" });
       return [el("label", { for: id, text: t(nokkel) }), inn, inn];
@@ -163,8 +173,11 @@ function plattformseksjon(ctx) {
     const [lNavn, iNavn] = felt("pf-navn", "ui.plattform.felt.navn");
     const [lTenant, iTenant] = felt("pf-tenant", "ui.plattform.felt.tenant");
     const [lOrg, iOrg] = felt("pf-org", "ui.plattform.felt.orgnummer");
+    // STANDARDEN ER PLATTFORMENS INNSTILLING (236), ikke et tall i koden.
+    const dognTekst = String(standardDogn);
     const [lProve, iProve] = felt("pf-prove", "ui.plattform.felt.prove",
-                                  "number", "30");
+                                  "number", dognTekst);
+    iProve.min = "1"; iProve.max = "365";
     const knapp = el("button", { type: "submit", class: "knapp primar",
       text: t("ui.plattform.opprett") });
     const skjema = el("form", { class: "skjema" },
@@ -177,36 +190,128 @@ function plattformseksjon(ctx) {
         navn: iNavn.value.trim(),
         tenant: iTenant.value.trim(),
         orgnummer: iOrg.value.trim() || null,
-        prove_dogn: Number(iProve.value) || 30,
+        prove_dogn: Number(iProve.value) || standardDogn,
       })
         .then(() => {
-          skjema.reset(); iProve.value = "30";
-          return last().then(() => meld("ui.plattform.opprettet"));
+          skjema.reset(); iProve.value = dognTekst;
+          // Kvitteringen står i OPPRETT-fanen, der hun trykket; listen i
+          // den andre fanen er oppfrisket når hun går dit.
+          return last().then(() => meld("ui.plattform.opprettet", nyBoks));
         })
-        .catch((e) => { const k = feilkode(e); if (k) meld(k); })
+        .catch((e) => { const k = feilkode(e); if (k) meld(k, nyBoks); })
         .finally(() => { knapp.disabled = false; });
     });
-    return el("div", {},
-      el("h3", { text: t("ui.plattform.nytt_firma") }), skjema);
+    sett(nyBoks,
+      el("h2", { id: "pf-ny-t", text: t("ui.plattform.nytt_firma") }),
+      el("p", { text: t("ui.plattform.nytt_firma_tekst") }),
+      skjema);
+    nyBoks.hidden = false;
   };
 
   const last = () => hentPlattformFirmaer()
     .then((d) => {
       sett(boks,
-        el("h2", { text: t("ui.plattform.firmaer") }),
+        el("h2", { id: "pf-liste-t", text: t("ui.plattform.firmaer") }),
         el("p", { text: t("ui.plattform.firmaer_tekst") }),
-        tegnListe(d.firmaer || []),
-        nyttFirmaSkjema());
+        tegnListe(d.firmaer || []));
       boks.hidden = false;
     })
     .catch((e) => { if (feilkode(e)) boks.hidden = true; });
 
   // FØRST spørsmålet, så innholdet. Er svaret nei, gjøres ingen flere kall —
-  // og seksjonen forblir `hidden`.
+  // og seksjonene forblir `hidden`.
   erPlattformeier()
-    .then((d) => { if (d && d.eier === true) return last(); })
+    .then((d) => {
+      if (!(d && d.eier === true)) return null;
+      return Promise.all([
+        last(),
+        hentInnstillinger()
+          .then((x) => nyttFirmaSkjema(x.innstillinger.prove_dogn))
+          .catch((e) => { if (feilkode(e)) nyttFirmaSkjema(30); }),
+      ]);
+    })
     .catch(() => {});
 
+  return [boks, nyBoks];
+}
+
+// INNSTILLINGER (236). Eier 27/11: «gjøre de siste innstillingene som
+// fortsatt ligger i koden mulig å endre i plattformadmin». Prøveperiodens
+// lengde og hvilke bransjemaler en ny kunde kan velge sto i
+// `firmaregistrering.py`; nå står de her. Malene selv er policyfiler — her
+// velges bare hvilke som tilbys.
+export function innstillingsseksjon(ctx) {
+  const boks = el("section", { class: "kort", "aria-labelledby": "innst-tittel" });
+  boks.hidden = true;
+  const tegn = (d) => {
+    const i = d.innstillinger;
+    const melding = el("p", { class: "melding", role: "status" });
+    const dogn = el("input", { id: "innst-dogn", type: "number",
+      class: "felt-inp", min: "1", max: "365", inputmode: "numeric",
+      value: String(i.prove_dogn), required: true });
+    const bokser = (d.alle_bransjer || []).map((b) => {
+      const boks = el("input", { type: "checkbox", id: `innst-b-${b}`,
+        name: "bransjer", value: b });
+      boks.checked = i.bransjer.includes(b);
+      return el("label", { class: "avkryssing", for: `innst-b-${b}` },
+        boks, el("span", { text: t(`ui.firmareg.bransje.${b}`) }));
+    });
+    const knapp = el("button", { type: "submit", class: "knapp primar",
+      text: t("ui.innstillinger.lagre") });
+    const skjema = el("form", { class: "kv-skjema lev-skjema", novalidate: "" },
+      el("div", { class: "felt" },
+        el("label", { for: "innst-dogn", text: t("ui.innstillinger.dogn") }),
+        dogn,
+        el("p", { class: "hjelpetekst", text: t("ui.innstillinger.dogn_hjelp") })),
+      el("fieldset", { class: "felt" },
+        el("legend", { text: t("ui.innstillinger.bransjer") }),
+        ...bokser,
+        el("p", { class: "hjelpetekst",
+          text: t("ui.innstillinger.bransjer_hjelp") })),
+      el("div", { class: "knapperad" }, knapp), melding);
+    skjema.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const n = Number(dogn.value);
+      // SAMME REGLER SOM BASEN (236), sagt ved feltet før innsending.
+      if (!Number.isInteger(n) || n < 1 || n > 365) {
+        melding.textContent = t("ui.innstillinger.feil.dogn");
+        dogn.setAttribute("aria-invalid", "true");
+        dogn.focus(); return;
+      }
+      dogn.removeAttribute("aria-invalid");
+      const valgte = bokser.map((l) => l.querySelector("input"))
+        .filter((b) => b.checked).map((b) => b.value);
+      if (!valgte.length) {
+        melding.textContent = t("ui.innstillinger.feil.bransjer");
+        bokser[0]?.querySelector("input").focus(); return;
+      }
+      knapp.disabled = true;
+      settInnstillinger({ prove_dogn: n, bransjer: valgte })
+        .then((x) => {
+          tegn({ ...d, innstillinger: x.innstillinger });
+          const m = boks.querySelector(".melding");
+          m.textContent = t("ui.innstillinger.lagret");
+          meldLive(m.textContent);
+        })
+        .catch((e) => {
+          knapp.disabled = false;
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+          melding.textContent = t(e instanceof ApiFeil && e.status === 400
+            ? "ui.innstillinger.feil.form" : "ui.plattform.feilet");
+        });
+    });
+    sett(boks,
+      el("h2", { id: "innst-tittel", text: t("ui.innstillinger.tittel") }),
+      el("p", { text: t("ui.innstillinger.tekst") }),
+      skjema);
+    boks.hidden = false;
+  };
+  erPlattformeier()
+    .then((d) => {
+      if (!(d && d.eier === true)) return null;
+      return hentInnstillinger().then(tegn);
+    })
+    .catch((e) => { if (e instanceof UautorisertFeil) ctx.paaUautorisert?.(); });
   return boks;
 }
 
@@ -451,15 +556,19 @@ export function visAdmin(hoved, ctx = {}) {
         el("dd", { class: "celle-tekst", text: v }),
       ])));
 
-  sett(hoved,
-    ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
-    profil,
-    // Seksjonen tegner seg selv NÅR serveren har sagt at kalleren er
-    // plattformeier. Til da er den `hidden`, og for alle andre forblir den
-    // det for alltid.
-    plattformseksjon(ctx),
-    leverandorseksjon(ctx),
-    juridiskseksjon(ctx),
+  // FANER, IKKE EN LANG SIDE (eier 27/11: «når man klikker plattform, siden
+  // blir lang … disse bør organiseres som tabmeny»). Hver seksjon er et
+  // direkte barn av `.kpi-kort-liste` med sin egen `h2`, og seksjonsfanene
+  // (seksjonsfaner.js) gjør dem til faner — én om gangen, med piltaster.
+  // Driftsbildet under (status, utrulling, moduler, tenanter, snarveier) er
+  // samlet i ÉN fane; det var resten av den lange siden.
+  //
+  // Plattformeierens seksjoner tegner seg selv NÅR serveren har sagt at
+  // kalleren er plattformeier. Til da er de `hidden`, og for alle andre
+  // forblir de det for alltid — og en skjult seksjon er ingen fane.
+  const drift = el("section", { "aria-labelledby": "admin-drift-t" },
+    el("h2", { id: "admin-drift-t", class: "sr-only",
+      text: t("ui.admin.drift_fane") }),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.status") }),
@@ -609,4 +718,14 @@ export function visAdmin(hoved, ctx = {}) {
             el("a", { class: "lenkeknapp", href: "#/unntak",
               text: t("ui.admin.handling.ga_til") })),
         ] : []))));
+
+  sett(hoved,
+    ...flateHode(t("ui.admin.tittel"), t("ui.admin.undertittel")),
+    el("div", { class: "kpi-kort-liste en-kolonne" },
+      profil,
+      ...plattformseksjon(ctx),
+      innstillingsseksjon(ctx),
+      leverandorseksjon(ctx),
+      juridiskseksjon(ctx),
+      drift));
 }

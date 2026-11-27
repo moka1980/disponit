@@ -412,6 +412,19 @@ export const publiserJuridisk = (dok, idem = nyIdempotensnokkel()) =>
   _muter(`/v1/plattform/juridisk/${encodeURIComponent(dok)}/publiser`,
          "POST", {}, idem);
 export const hentGjeldendeVilkar = () => hentJson("/v1/juridisk");
+// 236: prøveperioden og bransjene som tilbys — offentlig, og den samme for
+// alle i økten, så den hentes én gang.
+let _registreringsvalg = null;
+export const hentRegistreringsvalg = () => {
+  if (!_registreringsvalg) {
+    _registreringsvalg = hentJson("/v1/registrering/valg")
+      .catch((e) => { _registreringsvalg = null; throw e; });
+  }
+  return _registreringsvalg;
+};
+export const hentInnstillinger = () => hentJson("/v1/plattform/innstillinger");
+export const settInnstillinger = (kropp, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/innstillinger", "POST", kropp, idem);
 // 234: leverandøren — hvem Disponit er, redigert av plattformeieren.
 export const hentLeverandor = () => hentJson("/v1/plattform/leverandor");
 export const settLeverandor = (kropp, idem = nyIdempotensnokkel()) =>
