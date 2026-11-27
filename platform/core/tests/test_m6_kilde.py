@@ -461,12 +461,16 @@ def test_callback_skriver_kilden_og_refresh_tokenet_er_ciphertext(
     assert len(poster) == 1
     # `kan_svare` er samtykkets egne ord som ja/nei (178) — ikke selve
     # scope-strengen: flaten trenger dommen, ikke Microsofts formulering.
+    # `innlogging` (ADR-012) er VEIEN tilbake for en frakoblet boks —
+    # google/microsoft/passord, aldri noe av det krypterte.
     assert set(poster[0]) == {"kilde_id", "leverandor", "postboks", "status",
-                              "sist_hentet_ts", "opprettet", "kan_svare"}, \
+                              "sist_hentet_ts", "opprettet", "kan_svare",
+                              "innlogging"}, \
         "leseflaten har fått en kolonne den ikke skal ha"
     assert poster[0]["kan_svare"] is True, \
         "en kilde koblet med det nye samtykket skal kunne svare"
     assert poster[0]["kilde_id"] == str(kilde_id)
+    assert poster[0]["innlogging"] == "microsoft"
 
 
 @pg
