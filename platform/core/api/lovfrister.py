@@ -91,9 +91,11 @@ def gjelder(mal: dict, profil: dict) -> bool:
 
 
 def firmaets_frister(maler: list[dict], profil: dict,
-                     fra: datetime.date) -> list[dict]:
-    """Fristene som gjelder firmaet fra `fra` og HORISONT_DOGN fram."""
-    til = fra + datetime.timedelta(days=HORISONT_DOGN)
+                     fra: datetime.date,
+                     til: datetime.date | None = None) -> list[dict]:
+    """Fristene som gjelder firmaet fra `fra` til `til` (standard:
+    HORISONT_DOGN fra i dag)."""
+    til = til or i_dag() + datetime.timedelta(days=HORISONT_DOGN)
     ut = []
     for m in maler:
         if not gjelder(m, profil):
@@ -233,6 +235,9 @@ def oppslag_endepunkt(tjeneste, request):
     def kjor(conn):
         _browserkontekst(tjeneste, request, conn, rid, "bestilling:opprett")
         orgnr = str(_kropp(request).get("orgnummer") or "").replace(" ", "")
+        if not _ORGNR.match(orgnr):
+            return _feil("request_feilformet", rid, 400,
+                         detalj="orgnummer er ni siffer")
         # Basen trengs ikke under oppslaget; transaksjonen skal ikke stå
         # åpen mens vi venter på Enhetsregisteret.
         conn.rollback()
