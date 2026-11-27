@@ -96,7 +96,7 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'part_deaktiver(text,uuid,text)',                    'disponit_m37_claimer'),
     ('FUNCTION', 'part_liste(text,text,integer)',                     'disponit_m37_claimer'),
     ('FUNCTION', 'part_fra_pseudonym(text,text)',                     'disponit_m37_claimer'),
-    -- 233: kontaktpunktene i eksporten (ciphertext; API-et dekrypterer).
+    -- 233: kontaktpunktene i eksporten (ciphertext, API-et dekrypterer).
     ('FUNCTION', 'part_kontakter_eksport(text)',                      'disponit_m37_claimer'),
     -- 184: reaperen for kontaktpunktene, kryss-tenant som reap_epostdata.
     ('FUNCTION', 'reap_partkontakt(integer)',                         'disponit_m37_claimer'),
