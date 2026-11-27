@@ -3416,6 +3416,28 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def tidsvalg_side(request: Request) -> Response:
         return uiserver.tidsvalg_side(request)
 
+    # 235: vilkår, personvern og databehandleravtale — redigert i
+    # plattformadmin, lest offentlig.
+    from . import juridisk as juridiskmodul
+
+    def juridisk_side(request: Request) -> Response:
+        return uiserver.juridisk_side(request)
+
+    def juridisk_gjeldende(request: Request) -> Response:
+        return juridiskmodul.gjeldende_endepunkt(tjeneste, request)
+
+    def juridisk_dokument(request: Request) -> Response:
+        return juridiskmodul.offentlig_endepunkt(tjeneste, request)
+
+    def pa_plattform_juridisk(request: Request) -> Response:
+        return juridiskmodul.eier_liste_endepunkt(tjeneste, request)
+
+    def pa_plattform_juridisk_utkast(request: Request) -> Response:
+        return juridiskmodul.utkast_endepunkt(tjeneste, request)
+
+    def pa_plattform_juridisk_publiser(request: Request) -> Response:
+        return juridiskmodul.publiser_endepunkt(tjeneste, request)
+
     # M-6 PR-B: kilderegistrering med M365-OAuth.
     from . import epost_kilde as epostkildemodul
 
@@ -4706,6 +4728,17 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/tidsvalg/oppslag", tidsvalg_oppslag, methods=["POST"]),
         Route("/v1/tidsvalg/velg", tidsvalg_velg, methods=["POST"]),
         Route("/tidsvalg", tidsvalg_side, methods=["GET"]),
+        Route("/vilkar", juridisk_side, methods=["GET"]),
+        Route("/personvern", juridisk_side, methods=["GET"]),
+        Route("/databehandleravtale", juridisk_side, methods=["GET"]),
+        Route("/v1/juridisk", juridisk_gjeldende, methods=["GET"]),
+        Route("/v1/juridisk/{dok:str}", juridisk_dokument, methods=["GET"]),
+        Route("/v1/plattform/juridisk", pa_plattform_juridisk,
+              methods=["GET"]),
+        Route("/v1/plattform/juridisk/{dok:str}/utkast",
+              pa_plattform_juridisk_utkast, methods=["POST"]),
+        Route("/v1/plattform/juridisk/{dok:str}/publiser",
+              pa_plattform_juridisk_publiser, methods=["POST"]),
         # PR-013: policyadministrasjon. Kolleksjonsrutene FØR mønsterrutene, og
         # de spesifikke handlings-subrutene (.../valider osv.) er egne stier så
         # {utkast_id:str} aldri slukter dem.
@@ -5297,6 +5330,16 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/tidsvalg/oppslag"):        None,
     ("POST", "/v1/tidsvalg/velg"):           None,
     ("GET",  "/tidsvalg"):                   None,
+    # 235: vilkårssidene og dokumentene bak dem er OFFENTLIGE — de er det
+    # en kunde leser før hun registrerer seg.
+    ("GET",  "/vilkar"):                     None,
+    ("GET",  "/personvern"):                 None,
+    ("GET",  "/databehandleravtale"):        None,
+    ("GET",  "/v1/juridisk"):                None,
+    ("GET",  "/v1/juridisk/{dok:str}"):      None,
+    ("GET",  "/v1/plattform/juridisk"):      "policy:read",
+    ("POST", "/v1/plattform/juridisk/{dok:str}/utkast"): "policy:read",
+    ("POST", "/v1/plattform/juridisk/{dok:str}/publiser"): "policy:read",
     # Utrullingsplanen: kundens egen flate, derfor `decisions:read` (som ALLE
     # kunderollene har). Kontrollplanet på tvers krever i tillegg
     # `platform:admin`, og det avgjøres inne i endepunktet — det er en

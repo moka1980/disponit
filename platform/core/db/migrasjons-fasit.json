@@ -232,5 +232,6 @@
   "231_m17_svar_fra_postboksen.sql": "7f515005c7fc52d873c88d939aeca89e33b2e961d49b46e29b63848197ad9556",
   "232_firma_pause_stopper_epost.sql": "9bcb0c83f579cd4440d84625d6e8c3c546456325a46eadc5ae0f62db3ad0bd78",
   "233_part_kontakter_til_eksport.sql": "780684d6a58c5f550e9e894121105db5f7401f87622f6c635e0b42f4a340c54b",
-  "234_plattform_leverandor.sql": "410e25984f8b483ac90fb487f8ff6024b18606b8dc2153378f317f747ba7814d"
+  "234_plattform_leverandor.sql": "410e25984f8b483ac90fb487f8ff6024b18606b8dc2153378f317f747ba7814d",
+  "235_juridiske_dokumenter.sql": "c827858c410db069cc2b97a9566579b4fc57278e0fb1ae238ce1260e7d5199dd"
 }

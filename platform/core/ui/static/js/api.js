@@ -403,6 +403,15 @@ export const oppdaterPlattformFirma = (tenant, kropp,
                                        idem = nyIdempotensnokkel()) =>
   _muter(`/v1/plattform/firmaer/${encodeURIComponent(tenant)}/oppdater`,
          "POST", kropp, idem);
+// 235: vilkår, personvern og databehandleravtale — plattformeierens.
+export const hentJuridisk = () => hentJson("/v1/plattform/juridisk");
+export const lagreJuridiskUtkast = (dok, tekst, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/plattform/juridisk/${encodeURIComponent(dok)}/utkast`, "POST",
+         { tekst }, idem);
+export const publiserJuridisk = (dok, idem = nyIdempotensnokkel()) =>
+  _muter(`/v1/plattform/juridisk/${encodeURIComponent(dok)}/publiser`,
+         "POST", {}, idem);
+export const hentGjeldendeVilkar = () => hentJson("/v1/juridisk");
 // 234: leverandøren — hvem Disponit er, redigert av plattformeieren.
 export const hentLeverandor = () => hentJson("/v1/plattform/leverandor");
 export const settLeverandor = (kropp, idem = nyIdempotensnokkel()) =>

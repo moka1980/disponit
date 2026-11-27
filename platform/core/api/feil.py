@@ -441,6 +441,12 @@ FEILVEIER: tuple[Feilvei, ...] = (
         "derimot to sannheter om samme dokument, og det committes "
         "aldri i stillhet. Sikkerhetslogg: noen forsøkte å bytte "
         "innholdet under en eksisterende evidensnøkkel.")),
+    Feilvei("vilkar_ikke_godtatt", 409, ("avvis",), None, notat=(
+        "Registreringen (235): vilkårene og databehandleravtalen er "
+        "publisert, og kroppen godtok ikke NETTOPP de gjeldende versjonene "
+        "(`godtar`). Ingen firma opprettes. 409: kroppen er velformet, men "
+        "et samtykke til en annen versjon enn den som står på siden er "
+        "ikke et samtykke.")),
     Feilvei("firma_pauset", 409, ("avvis",), None, notat=(
         "Firmaet står stille (eiers vedtak 27/11): prøveperioden er over "
         "(`utlopt`) eller plattformeieren har stengt det (`stengt`). "

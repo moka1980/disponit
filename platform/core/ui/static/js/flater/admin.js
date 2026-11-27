@@ -2,8 +2,10 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
          oppdaterPlattformFirma, opprettPlattformFirma,
-         settPlattformFirmastatus, hentLeverandor, settLeverandor }
+         settPlattformFirmastatus, hentLeverandor, settLeverandor,
+         hentJuridisk, lagreJuridiskUtkast, publiserJuridisk }
   from "../api.js";
+import { tekstTilNoder } from "./juridisk.js";
 import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 import { FASEOVERSIKT, MODULOVERSIKT, modulmerke, planEtikett, plattformTelling }
@@ -289,6 +291,116 @@ export function leverandorseksjon(ctx) {
   return boks;
 }
 
+// VILKÅR OG PERSONVERN (235). Eier: «alt må betjenes via dashboard …
+// ikke gjennom koden». Per dokument: hva som gjelder nå (og hvor mange
+// firmaer som har godtatt det), et utkast man redigerer, en forhåndsvisning
+// som er NØYAKTIG den offentlige siden, og «Publiser». Publiseringen er
+// enveis — en publisert versjon endres aldri, fordi firmaer har godtatt
+// nettopp de ordene — så den bekreftes i to trinn, som oppsigelsen.
+function dato(iso) {
+  return iso ? iso.slice(0, 10).split("-").reverse().join(".") : "";
+}
+
+export function juridiskseksjon(ctx) {
+  const boks = el("section", { class: "kort", "aria-labelledby": "jur-tittel" });
+  boks.hidden = true;
+  const melding = el("p", { class: "melding", role: "status" });
+  const feil = (e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+    melding.textContent = t("ui.juridiskadmin.feil");
+    meldLive(melding.textContent);
+  };
+
+  const dokKort = (d, felt) => {
+    const g = d.gjeldende;
+    const u = d.utkast;
+    const id = `jur-${d.dok}`;
+    const tekst = el("textarea", { id, class: "felt-inp jur-tekst", rows: "14",
+      spellcheck: "true" });
+    tekst.value = (u || g || {}).tekst || "";
+    const status = el("p", { class: "muted", text: g
+      ? t("ui.juridiskadmin.gjeldende").replace("{v}", String(g.versjon))
+        .replace("{dato}", dato(g.publisert))
+        .replace("{n}", String(g.samtykker))
+      : t("ui.juridiskadmin.ikke_publisert") });
+    const utkastinfo = el("p", { class: "muted", text: u
+      ? t("ui.juridiskadmin.utkast").replace("{v}", String(u.versjon))
+      : t("ui.juridiskadmin.ingen_utkast") });
+    const forhand = el("div", { class: "jur-forhand", hidden: true });
+    const lagre = el("button", { type: "button", class: "knapp",
+      text: t("ui.juridiskadmin.lagre") });
+    const vis = el("button", { type: "button", class: "knapp",
+      text: t("ui.juridiskadmin.forhandsvis"), "aria-expanded": "false" });
+    const publiser = el("button", { type: "button", class: "knapp primar",
+      text: t("ui.juridiskadmin.publiser") });
+    publiser.disabled = !u;
+    const rad = el("div", { class: "knapperad" }, lagre, vis, publiser);
+
+    lagre.addEventListener("click", () => {
+      if (!tekst.value.trim()) { tekst.focus(); return; }
+      lagre.disabled = true;
+      lagreJuridiskUtkast(d.dok, tekst.value)
+        .then(() => last(t("ui.juridiskadmin.lagret")))
+        .catch(feil).finally(() => { lagre.disabled = false; });
+    });
+    vis.addEventListener("click", () => {
+      const apen = forhand.hidden;
+      forhand.hidden = !apen;
+      vis.setAttribute("aria-expanded", String(apen));
+      if (apen) {
+        // Feltene fylles inn på serveren ved lesing; her vises navnene,
+        // så eieren ser hvor de står.
+        sett(forhand, ...tekstTilNoder(tekst.value));
+      }
+    });
+    publiser.addEventListener("click", () => {
+      // TO TRINN: «Publiser» bytter til en bekreftelse med «Avbryt» i fokus.
+      const ja = el("button", { type: "button", class: "knapp primar",
+        text: t("ui.juridiskadmin.publiser_ja") });
+      const nei = el("button", { type: "button", class: "knapp",
+        text: t("ui.juridiskadmin.avbryt") });
+      const sporsmal = el("p", { class: "advarsel",
+        text: t("ui.juridiskadmin.publiser_sporsmal") });
+      nei.addEventListener("click", () => {
+        sett(rad, lagre, vis, publiser); publiser.focus();
+      });
+      ja.addEventListener("click", () => {
+        ja.disabled = true; nei.disabled = true;
+        publiserJuridisk(d.dok)
+          .then(() => last(t("ui.juridiskadmin.publisert")))
+          .catch((e) => { ja.disabled = false; nei.disabled = false; feil(e); });
+      });
+      sett(rad, sporsmal, ja, nei);
+      nei.focus();
+    });
+    return el("section", { class: "jur-dok", "aria-labelledby": `${id}-t` },
+      el("h3", { id: `${id}-t` },
+        t(`ui.juridisk.dok.${d.dok}`), " ",
+        el("a", { href: `/${d.dok}`, target: "_blank", rel: "noopener",
+          text: t("ui.juridiskadmin.se_siden") })),
+      status, utkastinfo,
+      el("label", { for: id, text: t("ui.juridiskadmin.tekst") }), tekst,
+      el("p", { class: "hjelpetekst", text: t("ui.juridiskadmin.felt")
+        .replace("{felt}", felt.map((f) => `{{${f}}}`).join(", ")) }),
+      rad, forhand);
+  };
+
+  const last = (kvittering) => hentJuridisk().then((d) => {
+    sett(boks,
+      el("h2", { id: "jur-tittel", text: t("ui.juridiskadmin.tittel") }),
+      el("p", { text: t("ui.juridiskadmin.tekst_inn") }),
+      ...(d.dokumenter || []).map((x) => dokKort(x, d.felt || [])),
+      melding);
+    boks.hidden = false;
+    if (kvittering) { melding.textContent = kvittering; meldLive(kvittering); }
+  });
+
+  erPlattformeier()
+    .then((d) => { if (d && d.eier === true) return last(); return null; })
+    .catch(feil);
+  return boks;
+}
+
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
   const forvalter = kanForvaltePolicy(ctx);
@@ -346,6 +458,7 @@ export function visAdmin(hoved, ctx = {}) {
     // det for alltid.
     plattformseksjon(ctx),
     leverandorseksjon(ctx),
+    juridiskseksjon(ctx),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.status") }),

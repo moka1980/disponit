@@ -24,7 +24,8 @@
 // ville vært en vei til å skrive sine egne fullmakter.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { registrerFirma, ApiFeil, UautorisertFeil } from "../api.js";
+import { registrerFirma, hentGjeldendeVilkar, ApiFeil, UautorisertFeil }
+  from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
@@ -205,6 +206,27 @@ export function visFirmaregistrering(hoved, ctx) {
       el("span", { text: t("ui.firmareg.to_godkjennere") })),
     el("p", { class: "hjelpetekst", text: t("ui.firmareg.to_godkjennere_hjelp") }));
 
+  // VILKÅRENE (235). Krysset finnes bare når eieren HAR publisert vilkår
+  // og databehandleravtale — før det krever registreringen ingenting, og
+  // da skal hun heller ikke se en boks som lover noe som ikke finnes.
+  // Versjonene hun godtar, er de som står på sidene NÅ; serveren sjekker.
+  let kreves = {};
+  const vilkarBoks = el("input", { type: "checkbox", id: "firmareg-vilkar",
+                                   name: "godtar" });
+  const lenke = (dok) => el("a", { href: `/${dok}`, target: "_blank",
+    rel: "noopener", text: t(`ui.juridisk.dok.${dok}`) });
+  const vilkarrad = el("div", { class: "felt", hidden: true },
+    el("label", { class: "avkryssing", for: "firmareg-vilkar" }, vilkarBoks,
+      el("span", {}, t("ui.firmareg.vilkar_for"), " ", lenke("vilkar"), " ",
+        t("ui.firmareg.vilkar_og"), " ", lenke("databehandleravtale"),
+        t("ui.firmareg.vilkar_etter"))),
+    el("p", { class: "hjelpetekst" }, t("ui.firmareg.vilkar_hjelp"), " ",
+      lenke("personvern"), "."));
+  hentGjeldendeVilkar().then((d) => {
+    kreves = (d && d.kreves) || {};
+    vilkarrad.hidden = Object.keys(kreves).length === 0;
+  }).catch(() => { /* ingen vilkår å vise — serveren dømmer uansett */ });
+
   const knapp = el("button", { type: "submit", class: "knapp primar",
                                text: t("ui.firmareg.send") });
   const melding = el("p", { class: "melding", hidden: true, role: "status" });
@@ -212,7 +234,7 @@ export function visFirmaregistrering(hoved, ctx) {
   // `novalidate`: nettleserens egen boble er ikke oversatt og kan ikke
   // knyttes til feltet med aria-errormessage.
   const skjema = el("form", { class: "kv-skjema", novalidate: "" },
-    navn.rad, kort.rad, org.rad, bransjerad, fullmaktrad, torad,
+    navn.rad, kort.rad, org.rad, bransjerad, fullmaktrad, torad, vilkarrad,
     el("div", { class: "knapperad" }, knapp), melding);
 
   const visFeil = (nokkel) => {
@@ -251,6 +273,12 @@ export function visFirmaregistrering(hoved, ctx) {
 
     const orgnummer = org.inp.value.replace(MELLOMROM, "") || null;
     const bransje = valg.value;
+    if (!vilkarrad.hidden && !vilkarBoks.checked) {
+      vilkarBoks.focus();
+      visFeil("ui.firmareg.feil.vilkar");
+      return;
+    }
+    const godtar = vilkarrad.hidden ? null : { ...kreves };
     knapp.disabled = true;
     try {
       // BARE NÅR HUN HAR RØRT DET. Sendes feltet alltid, kan serveren ikke
@@ -266,10 +294,12 @@ export function visFirmaregistrering(hoved, ctx) {
         (kortRortAvHenne ? kort.inp.value.trim() : "") || null;
       const fullmakter = valgteFullmakter();
       const uavhengig_godkjenning = toBoks.checked;
-      const svar = await registrerFirma(
-        kortnavn ? { navn: n, kortnavn, orgnummer, bransje, fullmakter,
-                     uavhengig_godkjenning }
-          : { navn: n, orgnummer, bransje, fullmakter, uavhengig_godkjenning },
+      const kropp = kortnavn
+        ? { navn: n, kortnavn, orgnummer, bransje, fullmakter,
+            uavhengig_godkjenning }
+        : { navn: n, orgnummer, bransje, fullmakter, uavhengig_godkjenning };
+      if (godtar) kropp.godtar = godtar;
+      const svar = await registrerFirma(kropp,
         idempotensnokkelFor(n, orgnummer, bransje, kortnavn, fullmakter,
                             uavhengig_godkjenning));
       // FERDIG — OG HUN MÅ LOGGE INN PÅ NYTT. Sesjonen hennes peker på
@@ -296,6 +326,14 @@ export function visFirmaregistrering(hoved, ctx) {
         visFeil("ui.firmareg.feil.tak");
       } else if (f instanceof ApiFeil && f.kode === "firma_navn_opptatt") {
         visFeil("ui.firmareg.feil.navn_opptatt");
+      } else if (f instanceof ApiFeil && f.kode === "vilkar_ikke_godtatt") {
+        // Vilkårene ble publisert på nytt mens hun fylte ut: hent de nye,
+        // og la henne godta DEM.
+        vilkarBoks.checked = false;
+        hentGjeldendeVilkar().then((d) => { kreves = (d && d.kreves) || {};
+          vilkarrad.hidden = Object.keys(kreves).length === 0; })
+          .catch(() => {});
+        visFeil("ui.firmareg.feil.vilkar_nye");
       } else {
         visFeil("ui.firmareg.feil.ukjent");
       }
