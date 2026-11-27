@@ -85,9 +85,19 @@ def status_for(conn, tenant: str) -> dict:
         "SELECT f.status, f.prove_utloper,"
         "       f.prove_utloper - (now() AT TIME ZONE 'Europe/Oslo')::date"
         "  FROM firma_hent(%s) f", (tenant,)).fetchone()
-    # KONTAKTEN ER EIERENS, satt på verten. Uten den sier banneret «ta
-    # kontakt» uten en adresse — ærlig, men en blindvei, og PR-en sier det.
-    kontakt = (os.environ.get("DISPONIT_KONTAKT_EPOST") or "").strip() or None
+    # KONTAKTEN ER LEVERANDØRENS (234), redigert i plattformadmin.
+    # Miljøvariabelen er reserven fra før skjemaet fantes. Uten noen av
+    # dem sier banneret ingenting om kontakt — ikke en tom lenke.
+    kontakt = None
+    try:
+        with conn.transaction():
+            r = conn.execute("SELECT kontakt_epost FROM"
+                             " plattform_leverandor_les()").fetchone()
+        kontakt = r[0] if r else None
+    except Exception:                                       # noqa: BLE001
+        kontakt = None
+    kontakt = kontakt or (os.environ.get("DISPONIT_KONTAKT_EPOST")
+                          or "").strip() or None
     if r is None:
         return {"status": None, "prove_utloper": None, "dogn_igjen": None,
                 "pauset": False, "vis": False, "kontakt_epost": kontakt}

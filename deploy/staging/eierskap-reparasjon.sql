@@ -1875,7 +1875,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'plattform_firmaliste(text)',                               'disponit_plattform_eier'),
     ('FUNCTION', 'plattform_firma_opprett(text,text,text,text,integer,text)', 'disponit_plattform_eier'),
     ('FUNCTION', 'plattform_firma_oppdater(text,text,text,text,text)',       'disponit_plattform_eier'),
-    ('FUNCTION', 'plattform_firma_status(text,text,text,text)',              'disponit_plattform_eier');
+    ('FUNCTION', 'plattform_firma_status(text,text,text,text)',              'disponit_plattform_eier'),
+    -- 234: leverandoeren, redigert i plattformadmin.
+    ('FUNCTION', 'plattform_leverandor_les()',                                'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_leverandor_sett(text,text,text,text,text,text)', 'disponit_plattform_eier');
 
 DO $$
 DECLARE

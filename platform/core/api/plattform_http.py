@@ -236,3 +236,89 @@ def status_endepunkt(tjeneste, request):
         return _ok_lagret(conn, {"tenant": maal, "status": status}, rid)
 
     return _med_conn(tjeneste, rid, kjor)
+
+
+# ---------------------------------------------------------------------------
+# 234: LEVERANDØREN — hvem Disponit er, redigert i plattformadmin.
+# ---------------------------------------------------------------------------
+
+LEVERANDORFELT = ("navn", "orgnummer", "adresse", "kontakt_epost",
+                  "verneting")
+
+
+def leverandor_for(conn) -> dict | None:
+    """Leverandørens opplysninger, eller None før eieren har fylt dem inn.
+    Lesedøra er åpen (234): dette er det som står på vilkårssidene."""
+    r = conn.execute("SELECT navn, orgnummer, adresse, kontakt_epost,"
+                     " verneting, endret FROM plattform_leverandor_les()"
+                     ).fetchone()
+    if r is None:
+        return None
+    return {"navn": r[0], "orgnummer": r[1], "adresse": r[2],
+            "kontakt_epost": r[3], "verneting": r[4],
+            "endret": r[5].isoformat() if r[5] else None}
+
+
+def leverandor_endepunkt(tjeneste, request):
+    """GET /v1/plattform/leverandor — skjemaets innhold."""
+    from .app import _rid, kanonisk_json
+    from .policyadmin_http import _leseauth, _med_conn
+    rid = _rid(request)
+
+    def kjor(conn):
+        _leseauth(tjeneste, request, conn, rid)
+        return kanonisk_json({"leverandor": leverandor_for(conn),
+                              "request_id": rid}, 200,
+                             {"x-request-id": rid})
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def sett_leverandor_endepunkt(tjeneste, request):
+    """POST /v1/plattform/leverandor — eieren lagrer opplysningene.
+
+    Formen kontrolleres HER for å gi et tydelig felt tilbake; basen har de
+    samme CHECKene (234) og er den som til slutt sier nei."""
+    import re
+
+    from .app import _rid
+    from .policyadmin_http import _feil, _kropp, _med_conn, _ok_lagret
+    rid = _rid(request)
+
+    def kjor(conn):
+        import psycopg
+
+        _tenant, bid = _bid(tjeneste, request, conn, rid)
+        k = _kropp(request)
+        navn, feil = _tekst(k, "navn", MAKS_NAVN)
+        if feil:
+            return _feil("request_feilformet", rid, 400, detalj=feil)
+        verdier = {"navn": navn}
+        for felt, maks in (("orgnummer", 32), ("adresse", 300),
+                           ("kontakt_epost", 320), ("verneting", 200)):
+            v, feil = _tekst(k, felt, maks, paakrevd=False)
+            if feil:
+                return _feil("request_feilformet", rid, 400, detalj=feil)
+            verdier[felt] = v
+        if verdier["orgnummer"]:
+            verdier["orgnummer"] = verdier["orgnummer"].replace(" ", "")
+            if not re.fullmatch(r"[0-9]{9}", verdier["orgnummer"]):
+                return _feil("request_feilformet", rid, 400,
+                             detalj="orgnummer er ni siffer")
+        if verdier["kontakt_epost"] and not re.fullmatch(
+                r"[^@\s]+@[^@\s]+\.[^@\s]+", verdier["kontakt_epost"]):
+            return _feil("request_feilformet", rid, 400,
+                         detalj="kontakt_epost")
+        try:
+            with conn.transaction():
+                conn.execute(
+                    "SELECT plattform_leverandor_sett(%s,%s,%s,%s,%s,%s)",
+                    (bid, verdier["navn"], verdier["orgnummer"],
+                     verdier["adresse"], verdier["kontakt_epost"],
+                     verdier["verneting"]))
+        except psycopg.errors.InsufficientPrivilege:
+            return _feil("ikke_plattformeier", rid, 403)
+        except psycopg.errors.CheckViolation:
+            return _feil("request_feilformet", rid, 400)
+        return _ok_lagret(conn, {"leverandor": leverandor_for(conn)}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)

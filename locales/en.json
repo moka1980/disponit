@@ -3528,7 +3528,7 @@
   "ui.leverandor.terskel.tittel": "Thresholds",
   "ui.leverandor.terskel.varsel": "Warning before the agreement expires",
   "ui.leverandor.terskel.versjon": "version {versjon}",
-  "ui.leverandor.tittel": "Suppliers and SLAs",
+  "ui.leverandor.tittel": "About Disponit",
   "ui.leverandor.undertittel": "Agreements, measured deliveries and purchase prices. The register pays nothing and sets no price — it shows where the relationship has drifted, and a person decides what to do.",
   "ui.leverandor.utloper_i_dag": "expires today",
   "ui.leverandor.utlopt_ett_dogn": "expired yesterday",
@@ -7333,5 +7333,18 @@
   "ui.firmabanner.utlopt.tittel": "The trial has ended.",
   "ui.firmabanner.utlopt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything.",
   "ui.firmabanner.stengt.tittel": "The company account is closed.",
-  "ui.firmabanner.stengt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything."
+  "ui.firmabanner.stengt.tekst": "The agents are paused, and no email is fetched or sent. You can still sign in and see everything.",
+  "ui.leverandor.tekst": "Your details as the supplier. The contact email appears in the trial banner customers see, and everything is used on the terms pages once they are published.",
+  "ui.leverandor.tekst_tom": "Not filled in yet. The contact email appears in the trial banner customers see, and everything is used on the terms pages once they are published.",
+  "ui.leverandor.felt.navn": "Name",
+  "ui.leverandor.felt.orgnummer": "Organisation number",
+  "ui.leverandor.felt.adresse": "Postal address",
+  "ui.leverandor.felt.kontakt": "Contact email for customers",
+  "ui.leverandor.felt.verneting": "Legal venue (district court)",
+  "ui.leverandor.hjelp.orgnummer": "Nine digits. Leave empty until the business is registered in the Brønnøysund Register.",
+  "ui.leverandor.lagre": "Save",
+  "ui.leverandor.lagret": "Saved.",
+  "ui.leverandor.feil.orgnummer": "The organisation number must be nine digits.",
+  "ui.leverandor.feil.kontakt": "The contact email does not look like an email address.",
+  "ui.leverandor.feil.form": "Something in the fields was not accepted. Check the organisation number and the email address."
 }

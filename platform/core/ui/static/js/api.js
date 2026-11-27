@@ -382,6 +382,10 @@ export const oppdaterPlattformFirma = (tenant, kropp,
                                        idem = nyIdempotensnokkel()) =>
   _muter(`/v1/plattform/firmaer/${encodeURIComponent(tenant)}/oppdater`,
          "POST", kropp, idem);
+// 234: leverandøren — hvem Disponit er, redigert av plattformeieren.
+export const hentLeverandor = () => hentJson("/v1/plattform/leverandor");
+export const settLeverandor = (kropp, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/leverandor", "POST", kropp, idem);
 export const settPlattformFirmastatus = (tenant, status,
                                          idem = nyIdempotensnokkel()) =>
   _muter(`/v1/plattform/firmaer/${encodeURIComponent(tenant)}/status`,
