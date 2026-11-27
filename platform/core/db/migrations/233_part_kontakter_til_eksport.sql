@@ -43,3 +43,10 @@ BEGIN
 END $$;
 
 RESET ROLE;
+
+-- `firma:eksport` inn i `rolle_scope` — speiler `ROLLE_TIL_SCOPES`
+-- (autorisasjon.py), som 202 gjorde for `firma:avslutt`. 043 §6b binder
+-- de to mot hverandre. ADMIN ALENE: fila samler alt firmaet har.
+INSERT INTO rolle_scope (rolle, scope) VALUES
+    ('admin', 'firma:eksport')
+ON CONFLICT DO NOTHING;
