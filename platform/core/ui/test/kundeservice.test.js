@@ -1574,3 +1574,49 @@ test("Kundeservice: koblingen vises i saken når den åpnes, axe rent",
     const brudd = await alvorligeBrudd(h);
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });
+
+test("Kundeservice: ukjent avsender kobles til en kunde fra saken — ny eller eksisterende",
+  async () => {
+    const d = { kunde: null, fakturaer: [], tilbud: [], kan_kobles: true,
+      avsender_navn: "Siri Fjord", sett: { kunde: true, okonomi: true } };
+    const kall = [];
+    let ferdig = 0;
+    const valg = { kanKoble: true, kanSeKunder: true,
+      paaUautorisert: () => {},
+      koble: async (k) => { kall.push(k); return { part_id: "p9" }; },
+      ferdig: () => { ferdig += 1; } };
+    SVAR = { "/v1/parter": { parter: [
+      { part_id: "p1", navn: "Nordvik Bygg AS", aktiv: true },
+      { part_id: "p2", navn: "Gammel AS", aktiv: false }] } };
+    const h = nyHoved();
+    const b = koblingsboks(d, valg);
+    h.append(b);
+    const felt = b.querySelector("#ks-koble-kunde");
+    // Navnet avsenderen satte på seg selv står ferdig utfylt.
+    assert.equal(felt.value, "Siri Fjord");
+    // Et nytt navn oppretter kunden.
+    b.querySelector("form").requestSubmit();
+    await vent(() => ferdig === 1);
+    assert.deepEqual(kall[0], { navn: "Siri Fjord" });
+    // Et navn fra lista kobler til DEN kunden (store/små bokstaver likegyldig).
+    const b2 = koblingsboks(d, valg);
+    h.append(b2);
+    b2.querySelector("#ks-koble-kunde").value = "nordvik bygg as";
+    b2.querySelector("form").requestSubmit();
+    await vent(() => ferdig === 2);
+    assert.deepEqual(kall[1], { part_id: "p1" });
+    // En avviklet kunde velges ikke — samme navn blir en ny kunde.
+    const b3 = koblingsboks(d, valg);
+    h.append(b3);
+    b3.querySelector("#ks-koble-kunde").value = "Gammel AS";
+    b3.querySelector("form").requestSubmit();
+    await vent(() => ferdig === 3);
+    assert.deepEqual(kall[2], { navn: "Gammel AS" });
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    // Uten part:administrer: bare teksten, ikke skjemaet.
+    const lese = koblingsboks(d, { kanKoble: false });
+    assert.equal(lese.querySelector("form"), null);
+    assert.ok(lese.textContent.includes(
+      t("ui.kundeservice.kobling.ukjent_avsender")));
+  });

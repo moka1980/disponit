@@ -69,12 +69,12 @@ def _rader(conn, sql: str, args) -> list[dict]:
     return [dict(zip(navn, r)) for r in cur.fetchall()]
 
 
-def _avsender(conn, tenant: str, kanal: str, ref: str | None) -> str | None:
-    """Avsenderadressen for en e-postsak, fra meldingen den kom fra —
-    dekryptert her, aldri lagret. None for andre kanaler, og for en
-    melding som er slettet (da finnes adressen ikke lenger)."""
+def _avsender(conn, tenant: str, kanal: str, ref: str | None):
+    """-> (adresse, visningsnavn) for en e-postsak, fra meldingen den kom
+    fra — dekryptert her, aldri lagret. (None, None) for andre kanaler,
+    og for en melding som er slettet (da finnes adressen ikke lenger)."""
     if kanal != "epost" or not ref:
-        return None
+        return None, None
     from .epost_meldinger import _pakk_ut
     for ct, nonce, key_id in conn.execute(
             "SELECT kropp_kryptert, nonce, key_id FROM epost_melding"
@@ -88,8 +88,9 @@ def _avsender(conn, tenant: str, kanal: str, ref: str | None) -> str | None:
             continue
         fra = str((p or {}).get("fra") or "").strip()
         if "@" in fra:
-            return fra
-    return None
+            navn = str((p or {}).get("fra_navn") or "").strip()
+            return fra, (navn if navn and "@" not in navn else None)
+    return None, None
 
 
 def _tekst(conn, tenant: str, hid) -> str:
@@ -119,7 +120,7 @@ def koblinger_for(conn, tenant: str, hid, scopes) -> dict | None:
     ser_kunde = "part:read" in scopes
     ser_okonomi = "okonomi:read" in scopes
 
-    adresse = _avsender(conn, tenant, kanal, ekstern_ref)
+    adresse, avsender_navn = _avsender(conn, tenant, kanal, ekstern_ref)
     kunde = None
     if adresse and (ser_kunde or ser_okonomi):
         psn = conn.execute("SELECT tenant_pseudonym(%s,%s)",
@@ -168,6 +169,11 @@ def koblinger_for(conn, tenant: str, hid, scopes) -> dict | None:
                     "gyldig_til": t["gyldig_til"].isoformat(),
                     "grunn": "kunde"})
     return {"kunde": kunde,
+            # Navnet avsenderen satte på seg selv — forslaget når hun
+            # skal legges til som kunde. Aldri adressen.
+            "avsender_navn": avsender_navn if adresse and kunde is None
+            else None,
+            "kan_kobles": bool(adresse) and kunde is None,
             "fakturaer": fakturaer[:MAKS_VIST],
             "tilbud": tilbud[:MAKS_VIST],
             "flere_fakturaer": len(fakturaer) > MAKS_VIST,
@@ -192,3 +198,87 @@ def koblinger_endepunkt(tjeneste, request):
         svar["request_id"] = rid
         return kanonisk_json(svar, 200, {"x-request-id": rid})
     return _les(tjeneste, request, "kundeservice:innhold", _fn)
+
+
+def avsender_til_kunde_endepunkt(tjeneste, request):
+    """POST /v1/kundeservice/henvendelse/{henvendelse_id}/avsender-til-kunde
+    (part:administrer, idem). Kropp: {"part_id": …} ELLER {"navn": …}.
+
+    DEN SISTE MILEN FOR KOBLINGEN. Uten den var «Avsenderen er ikke
+    registrert» en blindvei: adressen sto bare som maske på skjermen, og
+    ingen kunne skrive den inn under Kunder uten å slå den opp i Gmail.
+    Her leser SERVEREN adressen fra saken selv — den forlater aldri huset,
+    heller ikke til nettleseren — og skriver den gjennom partsregisterets
+    egne dører, kryptert og pseudonymisert som `POST /v1/parter/…/kontakt`.
+
+    EKSISTERENDE KUNDE: adressen blir et EKSTRA kontaktpunkt, ikke det
+    primære. Den primære er den purringer og tilbud går til; at en ansatt
+    hos kunden skrev en e-post, skal ikke flytte fakturaene hennes dit.
+    NY KUNDE: referansen utledes av avsenderens pseudonym, så et nytt
+    klikk (eller et tapt svar) gir den samme kunden, aldri en tvilling.
+    """
+    import psycopg
+
+    from db import kryptering
+
+    from .app import _rid
+    from .kundeservice import _sti_uuid
+    from .parter import MAKS_NAVN, _maske
+    from .policyadmin_http import (_Avbrudd, _browserkontekst, _feil,
+                                   _kropp, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, aktor = _browserkontekst(
+            tjeneste, request, conn, rid, "part:administrer")
+        hid = _sti_uuid(request, "henvendelse_id", rid)
+        k = _kropp(request)
+        part_id = k.get("part_id")
+        navn = k.get("navn")
+        if (part_id is None) == (navn is None):
+            return _feil("request_feilformet", rid, 400,
+                         detalj="part_id eller navn")
+        if navn is not None and (not isinstance(navn, str)
+                                 or not navn.strip()
+                                 or len(navn) > MAKS_NAVN):
+            return _feil("request_feilformet", rid, 400, detalj="navn")
+        if part_id is not None:
+            import uuid as uuidlib
+            try:
+                part_id = uuidlib.UUID(str(part_id))
+            except ValueError:
+                return _feil("request_feilformet", rid, 400,
+                             detalj="part_id")
+        ref = conn.execute("SELECT * FROM m17_kilde_ref(%s,%s)",
+                           (tenant, hid)).fetchone()
+        if ref is None:
+            raise _Avbrudd(_feil("ikke_funnet", rid, 404))
+        adresse, _ = _avsender(conn, tenant, ref[0], ref[1])
+        if not adresse:
+            return _feil("henvendelse_ulovlig_tilstand", rid, 409,
+                         detalj="saken har ingen avsenderadresse")
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(conn, tenant)
+        ct, nonce = kryptering.krypter(dek, {"verdi": adresse}, tenant,
+                                       key_id)
+        try:
+            with conn.transaction():
+                psn = conn.execute("SELECT tenant_pseudonym(%s,%s)",
+                                   (tenant, adresse)).fetchone()[0]
+                ny = part_id is None
+                if ny:
+                    part_id = conn.execute(
+                        "SELECT part_registrer(%s,%s,%s,NULL,'bedrift',%s)",
+                        (tenant, "epost-" + psn[4:16], navn.strip(),
+                         aktor)).fetchone()[0]
+                conn.execute(
+                    "SELECT part_sett_kontakt(%s,%s,'epost',%s,%s,%s,%s,%s,"
+                    "%s,NULL,%s)",
+                    (tenant, part_id, _maske(adresse, "epost"), ct, nonce,
+                     key_id, psn, ny, aktor))
+        except psycopg.errors.ForeignKeyViolation:
+            return _feil("ikke_funnet", rid, 404)
+        except psycopg.errors.IntegrityConstraintViolation:
+            return _feil("part_ulovlig_tilstand", rid, 409)
+        return _ok_lagret(conn, {"part_id": str(part_id), "ny": ny}, rid)
+
+    return _med_conn(tjeneste, rid, kjor)

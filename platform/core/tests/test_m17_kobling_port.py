@@ -39,6 +39,12 @@ def test_kandidatnumrene_er_reglene_og_ikke_mer():
     assert "104" in kandidatnumre("Ang. #104")
 
 
+def _nr():
+    """Et fakturanummer med SIFFER, alltid. `token_hex` kan gi «daaebf» —
+    uten et eneste siffer, og da er det (med rette) ikke et nummer."""
+    return f"F-{secrets.randbelow(900000) + 100000}"
+
+
 def _hode(tok):
     return {"authorization": f"Bearer {tok}"}
 
@@ -99,12 +105,12 @@ def test_saken_vet_hvem_kunden_er_og_hva_som_staar_aapent(
     _kid, _postboks, _dek = _imap_kilde(migrator)
     adresse = f"per-{secrets.token_hex(3)}@nordvik.example"
     ref, _pid = _kunde_med_adresse(adresse)
-    apen = "F-" + secrets.token_hex(3)
-    betalt = "F-" + secrets.token_hex(3)
+    apen = _nr()
+    betalt = _nr()
     _faktura(ref, apen)
     _faktura(ref, betalt, betalt=True)
     # En faktura på en ANNEN kunde, nevnt med nummer i teksten.
-    fremmed = "F-" + secrets.token_hex(3)
+    fremmed = _nr()
     _faktura("K-annen-" + secrets.token_hex(2), fremmed)
 
     boks = _Postboks()
@@ -175,3 +181,86 @@ def test_ukjent_sak_er_404(klient, token):
     r = klient.get(f"/v1/kundeservice/henvendelse/{uuid.uuid4()}/koblinger",
                    headers=_hode(tok))
     assert r.status_code == 404, r.text
+
+
+@pg_plan
+def test_ukjent_avsender_legges_til_kunde_fra_saken(
+        migrator, miljo, app, klient, token, monkeypatch):
+    """DEN SISTE MILEN: «avsenderen er ikke registrert» er ingen blindvei.
+    Ett kall fra saken, og NESTE lesing kjenner kunden — uten at adressen
+    noen gang gikk via nettleseren.
+
+    Ny kunde: opprettes med navnet, adressen som primær kontakt, og et nytt
+    kall gir den SAMME kunden. Eksisterende kunde: adressen blir et ekstra
+    kontaktpunkt, ALDRI det primære (purringene skal ikke flytte seg)."""
+    from plan.epost_imap import kjor_en_runde
+    _m365(monkeypatch)
+    _imap_kilde(migrator)
+    boks = _Postboks()
+    pa = _pa()
+    tok, _ = token(rolle="admin", scopes=(
+        "decisions:read", "kundeservice:innhold", "part:read",
+        "part:administrer", "okonomi:read"))
+    try:
+        kjor_en_runde(app.tjeneste, pa, kobler=boks.kobler(),
+                      sender=lambda *a: None)
+        a1 = f"ny-{secrets.token_hex(3)}@fjordvik.example"
+        a2 = f"ansatt-{secrets.token_hex(3)}@nordvik.example"
+        e1, e2 = ("Hei " + secrets.token_hex(3), "Hallo " + secrets.token_hex(3))
+        boks.legg_til(_raa(fra=f"Siri Fjord <{a1}>", emne=e1))
+        boks.legg_til(_raa(fra=f"Ola Ansatt <{a2}>", emne=e2))
+        kjor_en_runde(app.tjeneste, pa, kobler=boks.kobler(),
+                      sender=lambda *a: None)
+        h1, h2 = _sak(klient, tok, e1), _sak(klient, tok, e2)
+
+        d = klient.get(f"/v1/kundeservice/henvendelse/{h1}/koblinger",
+                       headers=_hode(tok)).json()
+        assert d["kunde"] is None and d["kan_kobles"] is True
+        assert d["avsender_navn"] == "Siri Fjord"
+
+        def koble(hid, kropp):
+            return klient.post(
+                f"/v1/kundeservice/henvendelse/{hid}/avsender-til-kunde",
+                json=kropp, headers={**_hode(tok), "Idempotency-Key":
+                                     "ak-" + secrets.token_hex(8)})
+
+        navn = "Fjordvik " + secrets.token_hex(2) + " AS"
+        r = koble(h1, {"navn": navn})
+        assert r.status_code == 200, r.text
+        assert r.json()["ny"] is True
+        assert a1 not in r.text
+        pid = r.json()["part_id"]
+        d = klient.get(f"/v1/kundeservice/henvendelse/{h1}/koblinger",
+                       headers=_hode(tok)).json()
+        assert d["kunde"]["navn"] == navn and d["kan_kobles"] is False
+        # Et nytt klikk gir samme kunde, ikke en tvilling.
+        r2 = koble(h1, {"navn": navn})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["part_id"] == pid
+
+        # Eksisterende kunde: ekstra kontakt, ikke primær.
+        ref, eksisterende = _kunde_med_adresse(
+            f"faktura-{secrets.token_hex(3)}@nordvik.example")
+        r = koble(h2, {"part_id": str(eksisterende)})
+        assert r.status_code == 200, r.text
+        assert r.json()["ny"] is False
+        _sett_kontekst(migrator, TENANT)
+        prim = migrator.execute(
+            "SELECT primar FROM partkontakt WHERE tenant=%s AND part_id=%s"
+            " ORDER BY opprettet", (TENANT, eksisterende)).fetchall()
+        migrator.rollback()
+        assert [p[0] for p in prim] == [True, False], prim
+        d = klient.get(f"/v1/kundeservice/henvendelse/{h2}/koblinger",
+                       headers=_hode(tok)).json()
+        assert d["kunde"]["part_ref"] == ref
+
+        # Uten part:administrer: 403, og ingenting skrevet.
+        tok2, _ = token(rolle="leser", scopes=("kundeservice:innhold",
+                                               "part:read"))
+        r = klient.post(
+            f"/v1/kundeservice/henvendelse/{h1}/avsender-til-kunde",
+            json={"navn": "X"}, headers={**_hode(tok2), "Idempotency-Key":
+                                         "ak-" + secrets.token_hex(8)})
+        assert r.status_code == 403, r.text
+    finally:
+        pa.close()
