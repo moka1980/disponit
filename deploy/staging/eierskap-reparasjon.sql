@@ -1889,7 +1889,14 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'juridisk_godta(text,text,integer,text)',                   'disponit_plattform_eier'),
     -- 236: proeveperioden og bransjemalene, i plattformadmin.
     ('FUNCTION', 'plattform_innstillinger_les()',                            'disponit_plattform_eier'),
-    ('FUNCTION', 'plattform_innstillinger_sett(text,integer,text[])',        'disponit_plattform_eier');
+    ('FUNCTION', 'plattform_innstillinger_sett(text,integer,text[])',        'disponit_plattform_eier'),
+    -- 237: pliktkatalogen og firmaets pliktprofil.
+    ('FUNCTION', 'plattform_pliktkatalog()',                                 'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_pliktmal_sett(text,text,text,text,text,text,text[],boolean,boolean,boolean)', 'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_pliktfrist_sett(text,text,text,date)',           'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_pliktfrist_slett(text,text,date)',               'disponit_plattform_eier'),
+    ('FUNCTION', 'firma_pliktprofil_les(text)',                              'disponit_plattform_eier'),
+    ('FUNCTION', 'firma_pliktprofil_sett(text,text,text,boolean,boolean,text,text)', 'disponit_plattform_eier');
 
 DO $$
 DECLARE
