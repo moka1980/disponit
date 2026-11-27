@@ -24,11 +24,15 @@
 // ville vært en vei til å skrive sine egne fullmakter.
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
-import { registrerFirma, hentGjeldendeVilkar, ApiFeil, UautorisertFeil }
+import { registrerFirma, hentGjeldendeVilkar, hentRegistreringsvalg,
+         ApiFeil, UautorisertFeil }
   from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
+//: Malene som følger med appen. HVILKE av dem som tilbys, og hvor lang
+//: prøveperioden er, velger plattformeieren i plattformadmin (236) — flaten
+//: spør `/v1/registrering/valg` og viser bare de som står på.
 export const BRANSJER = ["tjenestebedrift", "handverk-bygg", "netthandel"];
 //: Det lukkede settet av fullmakter (207) — samme navn som serveren kjenner.
 export const FULLMAKTER = ["kundeservice-svar", "kampanje-send",
@@ -125,7 +129,8 @@ function felt(id, nokkel, extra) {
 
 export function visFirmaregistrering(hoved, ctx) {
   const deler = [...flateHode(t("ui.firmareg.tittel"),
-                              t("ui.firmareg.undertittel"))];
+                              t("ui.firmareg.undertittel_kort"))];
+  const undertittel = deler[1];
 
   const navn = felt("firmareg-navn", "ui.firmareg.navn",
                     { required: true, maxLength: 200 });
@@ -189,6 +194,22 @@ export function visFirmaregistrering(hoved, ctx) {
   };
   valg.addEventListener("change", tilpassBransje);
   tilpassBransje();
+  // EIERENS UTVALG (236): bare bransjene som tilbys står igjen, og
+  // prøveperiodens lengde står i undertittelen. Svarer ikke serveren, står
+  // alle tre — den dømmer uansett ved innsending.
+  hentRegistreringsvalg().then((d) => {
+    const tilbys = Array.isArray(d && d.bransjer) ? d.bransjer : null;
+    if (tilbys && tilbys.length) {
+      for (const o of [...valg.options]) {
+        if (!tilbys.includes(o.value)) o.remove();
+      }
+      tilpassBransje();
+    }
+    if (d && Number.isInteger(d.prove_dogn)) {
+      undertittel.textContent = t("ui.firmareg.undertittel")
+        .replace("{n}", String(d.prove_dogn));
+    }
+  }).catch(() => { /* serveren dømmer uansett */ });
   const fullmaktrad = el("fieldset", { class: "felt fullmakter" },
     el("legend", { text: t("ui.firmareg.fullmakter") }),
     ...fullmaktbokser,

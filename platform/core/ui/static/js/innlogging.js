@@ -5,7 +5,7 @@
 // aldri hardkodet i klienten.
 import { el, sett } from "./dom.js";
 import { t, sprak, lagreSprak, hentI18n } from "./i18n.js";
-import { hentJson } from "./api.js";
+import { hentJson, hentRegistreringsvalg } from "./api.js";
 import { Feiltilstand, lokaliserSkiplenke } from "./komponenter.js";
 import { TILBUD, erTilgjengelig, settProduksjonsmiljo, heroTekstNokkel } from "./plattformdata.js";
 import { OMRADER, KATALOG_ANTALL } from "./katalog.js";
@@ -239,6 +239,20 @@ function leverandornavn(id) {
   return t(`site.login.provider.${id}`, id);
 }
 
+// PRØVEPERIODENS LENGDE ER EIERENS INNSTILLING (236), ikke et tall i
+// teksten. Noden tegnes med den korte formen («Prøv gratis») og får tallet
+// når serveren har svart; svarer den ikke, står den korte formen — den er
+// sann uansett hva eieren har valgt.
+function medProvedogn(node, nokkel, velger) {
+  const maal = velger ? node.querySelector(velger) : node;
+  hentRegistreringsvalg().then((d) => {
+    if (maal && d && Number.isInteger(d.prove_dogn)) {
+      maal.textContent = t(nokkel).replace("{n}", String(d.prove_dogn));
+    }
+  }).catch(() => {});
+  return node;
+}
+
 function loginKort(providere, visning, tittel, tekst, knapp, retursti) {
   const kort = el("article", { class: "kort site-login-card" },
     el("h2", { text: tittel }),
@@ -346,8 +360,9 @@ function hjemSide() {
           // katalogen igjen — «prøv» ville ledet til en registrering som
           // er skjult.
           REGISTRERING_AAPEN
-            ? el("a", { class: "knapp primar", href: offentligUrl("innlogging"),
-                text: t("site.home.cta_prov") })
+            ? medProvedogn(el("a", { class: "knapp primar",
+                href: offentligUrl("innlogging"),
+                text: t("site.home.cta_prov_kort") }), "site.home.cta_prov")
             : el("a", { class: "knapp primar", href: offentligUrl("tjenester"),
                 text: t("site.home.cta") }),
           REGISTRERING_AAPEN
@@ -510,8 +525,9 @@ function innloggingSide(provider) {
     // (eiers vedtak 17/9, se REGISTRERING_AAPEN). Skillet «allerede
     // kunde?» gir bare mening over det kortet.
     REGISTRERING_AAPEN ? el("section", { class: "site-grid" },
-      loginKort(provider, "firmaregistrering", t("site.login.ny_tittel"),
-        t("site.login.ny_tekst"), t("site.login.ny_knapp"))) : null,
+      medProvedogn(loginKort(provider, "firmaregistrering",
+        t("site.login.ny_tittel_kort"), t("site.login.ny_tekst"),
+        t("site.login.ny_knapp")), "site.login.ny_tittel", "h2")) : null,
     REGISTRERING_AAPEN
       ? el("h2", { class: "site-login-skille", text: t("site.login.alt_kunde") })
       : null,

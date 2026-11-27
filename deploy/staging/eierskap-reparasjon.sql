@@ -1886,7 +1886,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'juridisk_for_eier(text)',                                  'disponit_plattform_eier'),
     ('FUNCTION', 'juridisk_lagre_utkast(text,text,text)',                    'disponit_plattform_eier'),
     ('FUNCTION', 'juridisk_publiser(text,text)',                             'disponit_plattform_eier'),
-    ('FUNCTION', 'juridisk_godta(text,text,integer,text)',                   'disponit_plattform_eier');
+    ('FUNCTION', 'juridisk_godta(text,text,integer,text)',                   'disponit_plattform_eier'),
+    -- 236: proeveperioden og bransjemalene, i plattformadmin.
+    ('FUNCTION', 'plattform_innstillinger_les()',                            'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_innstillinger_sett(text,integer,text[])',        'disponit_plattform_eier');
 
 DO $$
 DECLARE
