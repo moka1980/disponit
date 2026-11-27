@@ -1099,17 +1099,15 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import medlemmer as medlemsmodul
         return medlemsmodul.medlemmer(tjeneste, request)
 
-<<<<<<< HEAD
     # 27/11: firmaets egne data som én fil.
     def firma_eksport(request: Request) -> Response:
         from . import eksport as eksportmodul
         return eksportmodul.eksport_endepunkt(tjeneste, request)
-=======
+
     # 27/11: prøveperioden og om firmaet står stille — for skallets banner.
     def firma_status(request: Request) -> Response:
         from . import firmastatus as firmastatusmodul
         return firmastatusmodul.status_endepunkt(tjeneste, request)
->>>>>>> origin/main
 
     def oppsett(request: Request) -> Response:
         from . import oppsett as oppsettmodul
@@ -3780,11 +3778,8 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
         Route("/v1/firma/medlemmer", firma_medlemmer, methods=["GET"]),
-<<<<<<< HEAD
         Route("/v1/firma/eksport", firma_eksport, methods=["GET"]),
-=======
         Route("/v1/firma/status", firma_status, methods=["GET"]),
->>>>>>> origin/main
         Route("/v1/oppsett", oppsett, methods=["GET"]),
         Route("/v1/modellstyring", modellstyring, methods=["GET"]),
         Route("/v1/kontinuitet", kontinuitet, methods=["GET"]),
