@@ -152,12 +152,13 @@ def test_saken_vet_hvem_kunden_er_og_hva_som_staar_aapent(
         assert d2["fakturaer"] == [] and d2["sett"]["okonomi"] is False
         assert d2["kunde"]["navn"] == "Nordvik Bygg AS"
 
-        # …og uten part:read er kunden ikke navngitt.
+        # …og med bare innholdet: ingenting undersøkt, og det sies.
         tok3, _ = token(rolle="leser", scopes=(
-            "decisions:read", "kundeservice:innhold", "okonomi:read"))
+            "decisions:read", "kundeservice:innhold"))
         d3 = klient.get(f"/v1/kundeservice/henvendelse/{hid}/koblinger",
                         headers=_hode(tok3)).json()
-        assert d3["kunde"] == {"grunn": "avsender", "skjult": True}
+        assert d3["kunde"] is None and d3["fakturaer"] == []
+        assert d3["sett"] == {"kunde": False, "okonomi": False}
         assert "Nordvik" not in str(d3)
 
         # Innholdsscopet er døra.

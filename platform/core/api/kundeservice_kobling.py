@@ -18,8 +18,9 @@ man ikke kan etterprøve, er en gjetning.
 
 INGENTING FORLATER HUSET, og ingenting lagres: lesingen regnes ut på
 nytt hver gang, gjennom modulenes egne lesedører, og rulles tilbake.
-Det som vises, følger brukerens EGNE scoper: kunden krever `part:read`,
-fakturaer og tilbud `okonomi:read`. Å ha lov til å lese en e-post gir
+Det som vises, følger brukerens EGNE scoper: kunden krever `part:read`
+ELLER `okonomi:read` (fakturamodulen viser alt kundenavnet under det
+siste), fakturaer og tilbud `okonomi:read`. Å ha lov til å lese en e-post gir
 ikke lov til å se kundens utestående.
 
 Senere (eiers «1»): den samme koblingen er grunnlaget et svarforslag
@@ -166,10 +167,6 @@ def koblinger_for(conn, tenant: str, hid, scopes) -> dict | None:
                     "valuta": t["valuta"], "status": t["status"],
                     "gyldig_til": t["gyldig_til"].isoformat(),
                     "grunn": "kunde"})
-    if kunde is not None and not ser_kunde:
-        # Fakturaene er funnet GJENNOM kunden, men navnet på kunden er
-        # partsregisterets — uten `part:read` står bare at den finnes.
-        kunde = {"grunn": "avsender", "skjult": True}
     return {"kunde": kunde,
             "fakturaer": fakturaer[:MAKS_VIST],
             "tilbud": tilbud[:MAKS_VIST],
