@@ -43,10 +43,18 @@ def _hode(tok):
     return {"authorization": f"Bearer {tok}"}
 
 
-def _kunde_med_adresse(m, adresse):
+def _api():
+    """Registerets dører er API-rollens, ikke migratorens — samme
+    kobling som `test_fordring_part_port` seeder gjennom."""
+    from db.pg import koble
+    return koble(DSN)
+
+
+def _kunde_med_adresse(adresse):
     """En kunde i partsregisteret med avsenderen som e-postkontakt —
     gjennom registerets egne dører, slik flaten gjør det."""
     ref = "K-" + secrets.token_hex(3)
+    m = _api()
     _sett_kontekst(m, TENANT)
     pid = m.execute("SELECT part_registrer(%s,%s,'Nordvik Bygg AS',NULL,"
                     "'bedrift','kari')", (TENANT, ref)).fetchone()[0]
@@ -56,11 +64,13 @@ def _kunde_med_adresse(m, adresse):
               "%s,%s,'k1',%s,true,NULL,'kari')",
               (TENANT, pid, b"\x01\x02", bytes(range(12)), psn))
     m.commit()
+    m.close()
     return ref, pid
 
 
-def _faktura(m, ref, nr, *, betalt=False):
+def _faktura(ref, nr, *, betalt=False):
     fid = uuid.uuid4()
+    m = _api()
     _sett_kontekst(m, TENANT)
     m.execute("SELECT m23_registrer_fordring(%s,%s,%s,%s,450000,"
               " current_date - 40, current_date - 12, 'kari')",
@@ -70,6 +80,7 @@ def _faktura(m, ref, nr, *, betalt=False):
         m.execute("SELECT m23_registrer_betaling(%s,%s,%s,450000,"
                   " current_date,'kari')", (TENANT, uuid.uuid4(), fid))
     m.commit()
+    m.close()
     return fid
 
 
@@ -87,14 +98,14 @@ def test_saken_vet_hvem_kunden_er_og_hva_som_staar_aapent(
     _m365(monkeypatch)
     _kid, _postboks, _dek = _imap_kilde(migrator)
     adresse = f"per-{secrets.token_hex(3)}@nordvik.example"
-    ref, _pid = _kunde_med_adresse(migrator, adresse)
+    ref, _pid = _kunde_med_adresse(adresse)
     apen = "F-" + secrets.token_hex(3)
     betalt = "F-" + secrets.token_hex(3)
-    _faktura(migrator, ref, apen)
-    _faktura(migrator, ref, betalt, betalt=True)
+    _faktura(ref, apen)
+    _faktura(ref, betalt, betalt=True)
     # En faktura på en ANNEN kunde, nevnt med nummer i teksten.
     fremmed = "F-" + secrets.token_hex(3)
-    _faktura(migrator, "K-annen-" + secrets.token_hex(2), fremmed)
+    _faktura("K-annen-" + secrets.token_hex(2), fremmed)
 
     boks = _Postboks()
     pa = _pa()
