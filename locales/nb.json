@@ -1704,7 +1704,7 @@
   "ui.epost.postboks_mangler": "Oppgi postboksadressen som skal kobles til.",
   "ui.epost.status.aktiv": "Aktiv",
   "ui.epost.status.deaktivert": "Deaktivert",
-  "ui.epost.status.feilet": "Feilet",
+  "ui.epost.status.feilet": "Frakoblet",
   "ui.epost.status.ukjent": "Ukjent",
   "ui.epost.tittel": "E-post",
   "ui.epost.tom": "Ingen kilder er koblet til",
@@ -7297,5 +7297,9 @@
   "ui.kundeservice.sendte.i_ko": "Venter på sending",
   "ui.kundeservice.sendte.feilet": "Ikke sendt",
   "ui.kundeservice.sendte.sendt": "Sendt",
-  "ui.kundeservice.sendte.fra_huset": "Plattformens adresse"
+  "ui.kundeservice.sendte.fra_huset": "Plattformens adresse",
+  "ui.epost.koble_igjen": "Koble til på nytt",
+  "ui.epost.frakoblet.tekst": "Vi får ikke lenger hentet e-post fra {postbokser}. Innloggingen er utløpt. Trykk «Koble til på nytt» og logg inn én gang til, så fortsetter alt som før.",
+  "ui.epost.frakoblet.tekst_passord": "Vi får ikke lenger hentet e-post fra {postbokser}. Er postboksen koblet til med app-passord, lag et nytt app-passord hos Google og legg det inn under Gmail nedenfor.",
+  "ui.epost.frakoblet.be_admin": "Vi får ikke lenger hentet e-post fra {postbokser}. Innloggingen er utløpt. Be en administrator koble postboksen til på nytt."
 }

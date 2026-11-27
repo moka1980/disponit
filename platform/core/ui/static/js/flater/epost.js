@@ -387,7 +387,24 @@ function meldingsskuff() {
   };
 }
 
-function kildetabell(kilder, kanAdministrere, paaDeaktiver) {
+// En kilde som har mistet innloggingen (Google-testmodusens sju dager,
+// et tilbakekalt samtykke) kobles til PÅ NYTT med samme knapp som første
+// gang — serveren setter raden aktiv igjen (UNIQUE per postboks). Et
+// app-passord kan ikke fornyes med ett klikk; det sier teksten.
+const KAN_KOBLES_IGJEN = { google: 1, microsoft: 1 };
+
+function frakobletVarsel(kilder, kanAdministrere) {
+  const feilet = kilder.filter((k) => k.status === "feilet");
+  if (!feilet.length) return null;
+  const nokkel = !kanAdministrere ? "ui.epost.frakoblet.be_admin"
+    : feilet.every((k) => KAN_KOBLES_IGJEN[k.innlogging])
+      ? "ui.epost.frakoblet.tekst" : "ui.epost.frakoblet.tekst_passord";
+  return el("p", { role: "alert", class: "advarsel epost-frakoblet",
+    text: t(nokkel).replace("{postbokser}",
+      feilet.map((k) => k.postboks).join(", ")) });
+}
+
+function kildetabell(kilder, kanAdministrere, paaDeaktiver, paaKobleIgjen) {
   if (!kilder.length) {
     return TomTilstand({ tittel: t("ui.epost.tom"),
       tekst: t("ui.epost.tom_tekst") });
@@ -426,9 +443,17 @@ function kildetabell(kilder, kanAdministrere, paaDeaktiver) {
         handling = el("span", { class: "muted",
           text: t("ui.epost.deaktivert") });
       } else {
-        handling = el("button", { class: "knapp fare", type: "button",
+        const deaktiver = el("button", { class: "knapp fare", type: "button",
           text: t("ui.epost.deaktiver") });
-        handling.addEventListener("click", () => paaDeaktiver(k));
+        deaktiver.addEventListener("click", () => paaDeaktiver(k));
+        handling = deaktiver;
+        if (k.status === "feilet" && KAN_KOBLES_IGJEN[k.innlogging]) {
+          const igjen = el("button", { class: "knapp primar", type: "button",
+            text: t("ui.epost.koble_igjen") });
+          igjen.addEventListener("click",
+            () => paaKobleIgjen(k, [igjen, deaktiver]));
+          handling = el("div", { class: "knapperad" }, igjen, deaktiver);
+        }
       }
       celler.push(el("td", {}, handling));
     }
@@ -506,8 +531,9 @@ export function visEpost(hoved, ctx) {
       };
       const deler = [
         ...flateHode(t("ui.epost.tittel"), t("ui.epost.undertittel")),
-        kildetabell(kilder, kanAdministrere, bekreftDeaktiver),
-      ];
+        frakobletVarsel(kilder, kanAdministrere),
+        kildetabell(kilder, kanAdministrere, bekreftDeaktiver, kobleIgjen),
+      ].filter(Boolean);
       // SAMTYKKET AVGJØR, ikke koden: en postboks koblet før
       // sendetilgangen ble bedt om, kan leses men ikke svares fra. Sagt
       // HER, over meldingene, i stedet for som en feil når svaret alt er
@@ -670,6 +696,37 @@ export function visEpost(hoved, ctx) {
                         text: t("ui.epost.gmail.adresse") }), adr),
         el("div", { class: "knapperad" }, google), utfall),
       reserve);
+  }
+
+  // PÅ NYTT, for en kilde som har mistet innloggingen: samme start som
+  // første gang, med postboksen fra raden — ingenting å skrive inn.
+  function kobleIgjen(k, knapper) {
+    for (const b of knapper) b.disabled = true;
+    const start = k.innlogging === "google" ? startGoogleKilde
+      : startEpostKilde;
+    start(k.postboks, nyIdempotensnokkel())
+      .then((d) => {
+        if (!eierSkjermen()) return;
+        _naviger(d.autorisasjonsurl);
+      })
+      .catch((e) => {
+        for (const b of knapper) b.disabled = false;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+        const kode = e instanceof ApiFeil ? e.kode : "";
+        const tekst = t(kode === "google_ikke_konfigurert"
+          ? "ui.epost.gmail.feil.ikke_satt_opp"
+          : kode === "m365_ikke_konfigurert" ? "ui.epost.ikke_konfigurert"
+            : "ui.epost.feilet");
+        // Synlig i raden, ikke bare opplest.
+        const celle = knapper[0].closest("td");
+        let felt = celle && celle.querySelector(".epost-igjen-feil");
+        if (celle && !felt) {
+          felt = el("p", { class: "advarsel epost-igjen-feil" });
+          celle.append(felt);
+        }
+        if (felt) felt.textContent = tekst;
+        meldLive(tekst);
+      });
   }
 
   function koble(input, knapp, feilfelt) {

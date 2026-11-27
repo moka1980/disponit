@@ -438,3 +438,16 @@ def test_fornyelsen_skiller_googles_dom_fra_drift(google):
     google.setattr(k, "_google_token", brudd)
     with pytest.raises(epost_imap.ImapForbigaende):
         k._veksle_google_refresh(konfig, REFRESH)
+
+
+def test_kildelista_sier_hvordan_boksen_kobles_til_igjen():
+    """ADR-012: en frakoblet boks kobles til PÅ NYTT med samme vei som
+    første gang — lista må si hvilken, avledet av det lagrede scopet."""
+    from api.epost_kilde import (GOOGLE_KILDESCOPE, IMAP_SCOPE, M365_SCOPE,
+                                 innlogging)
+    assert innlogging("imap", GOOGLE_KILDESCOPE) == "google"
+    assert innlogging("imap", IMAP_SCOPE) == "passord"
+    assert innlogging("imap", None) == "passord"
+    assert innlogging("m365", M365_SCOPE) == "microsoft"
+    # «google» som ORD, ikke som delstreng av noe annet.
+    assert innlogging("imap", "imap smtp googleish") == "passord"

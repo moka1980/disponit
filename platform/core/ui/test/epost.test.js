@@ -937,3 +937,101 @@ test("Epost: koblingsskjemaet er sammenklappet når en postboks alt er tilkoblet
     assert.equal(h2.querySelector("#epost-kilde-postboks").closest("details"),
                  null, "koblingen er gjemt når det ikke finnes noen postboks");
   });
+
+// ADR-012: Googles testmodus gir sju dager, og et samtykke kan trekkes
+// tilbake. En frakoblet postboks skal SI det øverst og kobles til igjen
+// med ett klikk — samme start som første gang, med postboksen fra raden.
+const FRAKOBLET = { kilder: [
+  { kilde_id: "5e0a3f1e-0000-4000-8000-000000000011", leverandor: "imap",
+    postboks: "felles@gmail.example", status: "feilet", innlogging: "google",
+    sist_hentet_ts: "2026-11-20T10:00:00+00:00",
+    opprettet: "2026-11-19T09:00:00+00:00", kan_svare: true },
+  { kilde_id: "5e0a3f1e-0000-4000-8000-000000000012", leverandor: "m365",
+    postboks: "post@acme.example", status: "feilet", innlogging: "microsoft",
+    sist_hentet_ts: null, opprettet: "2026-11-19T09:00:00+00:00",
+    kan_svare: true },
+] };
+
+test("Epost: en frakoblet postboks sies øverst og kobles til igjen med ett klikk",
+    async () => {
+  SVAR = { "/v1/epost/kilder": FRAKOBLET,
+    "/v1/epost/kilder/google/start":
+      { autorisasjonsurl: "https://accounts.google.example/auth?igjen=1" },
+    "/v1/epost/kilder/start":
+      { autorisasjonsurl: "https://login.microsoftonline.example/a?igjen=1" },
+    "/v1/epost/meldinger": { meldinger: [] } };
+  KALL.length = 0;
+  const h = nyHoved();
+  const navigasjoner = [];
+  settNavigasjonForTest((url) => navigasjoner.push(url));
+  try {
+    visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+    await vent(() => h.querySelector(".epost-frakoblet"));
+    const varsel = h.querySelector(".epost-frakoblet");
+    assert.equal(varsel.getAttribute("role"), "alert");
+    assert.ok(varsel.textContent.includes("felles@gmail.example"));
+    assert.ok(varsel.textContent.includes("post@acme.example"));
+    // Varselet står FØR tabellen — det er det første hun ser.
+    assert.ok(varsel.compareDocumentPosition(h.querySelector("table"))
+      & Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(h.textContent.includes(t("ui.epost.status.feilet")));
+    const igjen = [...h.querySelectorAll("tbody button")]
+      .filter((b) => b.textContent === t("ui.epost.koble_igjen"));
+    assert.equal(igjen.length, 2);
+    assert.ok(igjen[0].classList.contains("primar"));
+    igjen[0].click();
+    await vent(() => navigasjoner.length === 1);
+    assert.deepEqual(navigasjoner,
+      ["https://accounts.google.example/auth?igjen=1"]);
+    const g = KALL.find((k) => k.url === "/v1/epost/kilder/google/start");
+    assert.deepEqual(g.kropp, { postboks: "felles@gmail.example" });
+    assert.ok(g.headers["Idempotency-Key"]);
+    igjen[1].click();
+    await vent(() => navigasjoner.length === 2);
+    const m = KALL.find((k) => k.url === "/v1/epost/kilder/start");
+    assert.deepEqual(m.kropp, { postboks: "post@acme.example" });
+    const brudd = await alvorligeBrudd(h, { fragment: true });
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  } finally {
+    settNavigasjonForTest((url) => { window.location.assign(url); });
+  }
+});
+
+test("Epost: app-passord og leser får ingen død knapp — teksten sier veien",
+    async () => {
+  const pass = { kilder: [{ ...FRAKOBLET.kilder[0], innlogging: "passord" }] };
+  SVAR = { "/v1/epost/kilder": pass, "/v1/epost/meldinger": { meldinger: [] } };
+  let h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelector(".epost-frakoblet"));
+  assert.ok(h.querySelector(".epost-frakoblet").textContent
+    .includes(t("ui.epost.frakoblet.tekst_passord").slice(0, 20)));
+  assert.equal([...h.querySelectorAll("tbody button")]
+    .filter((b) => b.textContent === t("ui.epost.koble_igjen")).length, 0);
+  // En leser kan ikke koble til — og blir bedt om å si fra.
+  SVAR = { "/v1/epost/kilder": FRAKOBLET,
+    "/v1/epost/meldinger": { meldinger: [] } };
+  h = nyHoved();
+  visEpost(h, ctx());
+  await vent(() => h.querySelector(".epost-frakoblet"));
+  assert.ok(h.querySelector(".epost-frakoblet").textContent
+    .includes(t("ui.epost.frakoblet.be_admin").slice(-30)));
+  assert.equal(h.querySelector("tbody button"), null);
+});
+
+test("Epost: feiler gjenoppkoblingen, står feilen synlig i raden",
+    async () => {
+  SVAR = { "/v1/epost/kilder": { kilder: [FRAKOBLET.kilder[0]] },
+    "/v1/epost/meldinger": { meldinger: [] },
+    "/v1/epost/kilder/google/start": 503,
+    _feilkode: "google_ikke_konfigurert" };
+  const h = nyHoved();
+  visEpost(h, ctx({ scopes: ["epost:read", "epost:kilde:administrer"] }));
+  await vent(() => h.querySelector("tbody button.primar"));
+  const igjen = h.querySelector("tbody button.primar");
+  igjen.click();
+  await vent(() => h.querySelector(".epost-igjen-feil"));
+  assert.equal(h.querySelector(".epost-igjen-feil").textContent,
+    t("ui.epost.gmail.feil.ikke_satt_opp"));
+  assert.equal(igjen.disabled, false);
+});

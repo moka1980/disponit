@@ -831,7 +831,22 @@ def kilder_for(conn, tenant: str) -> list[dict]:
          "opprettet": r[5].isoformat(),
          # Samtykkets egne ord, som ja/nei: en kilde koblet før
          # vedtaket kan lese, ikke svare — og flaten skal si det.
-         "kan_svare": kan_svare(r[6])} for r in rader]
+         "kan_svare": kan_svare(r[6]),
+         # HVORDAN boksen ble koblet til — og dermed hvordan den kobles
+         # til PÅ NYTT når innloggingen er utløpt (ADR-012: Googles
+         # testmodus gir sju dager). Aldri noe av det krypterte.
+         "innlogging": innlogging(r[1], r[6])} for r in rader]
+
+
+def innlogging(leverandor: str, scope: str | None) -> str:
+    """-> 'google' | 'microsoft' | 'passord'. Avledet av det lagrede
+    scopet, så en app-passordboks som senere ble koblet med Google,
+    sier google."""
+    if leverandor == "m365":
+        return "microsoft"
+    if "google" in (scope or "").lower().split():
+        return "google"
+    return "passord"
 
 
 def liste_endepunkt(tjeneste, request: Request) -> Response:
