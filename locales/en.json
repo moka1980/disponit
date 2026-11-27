@@ -7302,5 +7302,20 @@
   "ui.epost.frakoblet.tekst": "We can no longer fetch email from {postbokser}. The sign-in has expired. Press “Reconnect” and sign in once more, and everything continues as before.",
   "ui.epost.frakoblet.tekst_passord": "We can no longer fetch email from {postbokser}. If the mailbox is connected with an app password, create a new app password at Google and enter it under Gmail below.",
   "ui.epost.frakoblet.be_admin": "We can no longer fetch email from {postbokser}. The sign-in has expired. Ask an administrator to reconnect the mailbox.",
-  "ui.epost.koble_igjen_boks": "Reconnect {postboks}"
+  "ui.epost.koble_igjen_boks": "Reconnect {postboks}",
+  "ui.kundeservice.kobling.tittel": "What we know about the sender",
+  "ui.kundeservice.kobling.grunn.avsender": "(the sender address is registered on the customer)",
+  "ui.kundeservice.kobling.grunn.nummer": "(the invoice number is in the email)",
+  "ui.kundeservice.kobling.grunn.kunde": "(open invoice for the customer)",
+  "ui.kundeservice.kobling.ukjent_avsender": "The sender is not registered on any customer. Add the address to the customer under Customers, and the next email from them is linked automatically.",
+  "ui.kundeservice.kobling.faktura": "Invoice {nr}",
+  "ui.kundeservice.kobling.rest": "{belop} NOK outstanding",
+  "ui.kundeservice.kobling.status.betalt": "paid",
+  "ui.kundeservice.kobling.status.ettergitt": "written off",
+  "ui.kundeservice.kobling.flere": "The customer has more invoices than this. See all under Accounts receivable.",
+  "ui.kundeservice.kobling.ingen_aapne": "No open invoices for the customer.",
+  "ui.kundeservice.kobling.tilbud": "Quote {belop} NOK",
+  "ui.kundeservice.kobling.tilbudstatus.utkast": "draft",
+  "ui.kundeservice.kobling.tilbudstatus.godkjent": "sent/approved",
+  "ui.kundeservice.kobling.gyldig_til": "valid until {dato}"
 }

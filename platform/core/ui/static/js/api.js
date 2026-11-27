@@ -892,6 +892,10 @@ export const slettSvarmal = (malId, idem) =>
 
 export const hentHenvendelsesspor = (id) =>
   hentJson(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/spor`);
+// Eiers vedtak 27/11: kunden, fakturaene og tilbudene saken gjelder —
+// funnet med faste regler, hver med sin grunn.
+export const hentKoblinger = (id) =>
+  hentJson(`/v1/kundeservice/henvendelse/${encodeURIComponent(id)}/koblinger`);
 // M-18 (103): onboardingregisteret. MALEN og LØPET bærer hver sin
 // SP-2-nøkkel — serveren utleder id-en av den, så en tapt respons + nytt
 // klikk gjenspiller i stedet for å starte et løp til. Et dobbelt startet

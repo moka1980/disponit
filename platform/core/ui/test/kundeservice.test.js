@@ -28,7 +28,7 @@ import {
   alderTekst, avsenderTekst, klassifiseringTekst, kortref, regelTekst,
   hvemTekst, sporTekst, sporHvem, svartidTekst,
   visKundeservice,
-  funnFor, trengerMenneske,
+  funnFor, trengerMenneske, koblingsboks,
 } from "../static/js/flater/kundeservice.js";
 
 settI18nForTest(NB, "nb");
@@ -1510,3 +1510,67 @@ test("Kundeservice: «Sendte svar» viser adressen hvert svar gikk fra",
   const brudd = await alvorligeBrudd(h, { fragment: true });
   assert.equal(brudd.length, 0, beskrivBrudd(brudd));
 });
+
+
+// EIERS VEDTAK 27/11: «Bare kobling, ingen modell». Saken sier hva
+// firmaet alt vet om avsenderen — med grunnen på hver linje.
+const KOBLINGER = {
+  kunde: { part_id: "p1", part_ref: "K-1", navn: "Nordvik Bygg AS",
+           grunn: "avsender" },
+  fakturaer: [
+    { fordring_id: "f1", fakturanummer: "F-1043", kunde: "Annen AS",
+      rest_ore: 450000, belop_ore: 450000, forfall: "2026-11-15",
+      dogn_over_forfall: 12, status: "apen", trinn_navn: "Purring 1",
+      grunn: "nummer" },
+    { fordring_id: "f2", fakturanummer: "F-1050", kunde: "Nordvik Bygg AS",
+      rest_ore: 125050, belop_ore: 200000, forfall: "2026-11-30",
+      dogn_over_forfall: -3, status: "apen", trinn_navn: null,
+      grunn: "kunde" }],
+  tilbud: [{ tilbud_id: "t1", kunde: "Nordvik Bygg AS", sum_ore: 1200000,
+             valuta: "NOK", status: "godkjent", gyldig_til: "2026-12-01",
+             grunn: "kunde" }],
+  flere_fakturaer: false, sett: { kunde: true, okonomi: true },
+};
+
+test("Kundeservice: koblingsboksen sier hvem, hva som står åpent, og hvorfor",
+  () => {
+    const b = koblingsboks(KOBLINGER);
+    const tekst = b.textContent;
+    assert.ok(tekst.includes("Nordvik Bygg AS"));
+    assert.ok(tekst.includes(t("ui.kundeservice.kobling.grunn.avsender")));
+    const linjer = [...b.querySelectorAll("li")].map((l) => l.textContent);
+    // Fakturaen NEVNT i e-posten står først, og sier hvorfor.
+    assert.ok(linjer[0].includes("F-1043"));
+    assert.ok(linjer[0].includes("4500,00"));
+    assert.ok(linjer[0].includes("Purring 1"));
+    assert.ok(linjer[0].includes(t("ui.kundeservice.kobling.grunn.nummer")));
+    assert.ok(linjer[1].includes(t("ui.kundeservice.kobling.grunn.kunde")));
+    assert.ok(linjer[2].includes("01.12.2026"));
+    // Ingenting undersøkt: ingen boks, ikke en tom en.
+    assert.equal(koblingsboks({ sett: { kunde: false, okonomi: false } }),
+                 null);
+    // Undersøkt, ingen kunde: én setning om hvordan man kobler.
+    const ukjent = koblingsboks({ kunde: null, fakturaer: [], tilbud: [],
+      sett: { kunde: true, okonomi: true } });
+    assert.ok(ukjent.textContent.includes(
+      t("ui.kundeservice.kobling.ukjent_avsender")));
+  });
+
+test("Kundeservice: koblingen vises i saken når den åpnes, axe rent",
+  async () => {
+    SVAR = { ...fullSvar(),
+      [`/v1/kundeservice/henvendelse/${H1}/koblinger`]: KOBLINGER };
+    const h = nyHoved();
+    visKundeservice(h, ctx());
+    await vent(() => h.querySelectorAll("table tbody tr").length === 2);
+    [...h.querySelectorAll("tbody button")].find(
+      (b) => b.textContent === t("ui.kundeservice.knapp.apne")).click();
+    await vent(() => h.querySelector(".hv-kobling"));
+    const boks = h.querySelector(".hv-kobling");
+    assert.ok(boks, "koblingen kom ikke på skjermen");
+    // Over kundens tekst — det er det man trenger FØR man svarer.
+    assert.ok(boks.compareDocumentPosition(h.querySelector(".hv-tekst"))
+      & Node.DOCUMENT_POSITION_FOLLOWING);
+    const brudd = await alvorligeBrudd(h);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });

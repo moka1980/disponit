@@ -7302,5 +7302,20 @@
   "ui.epost.frakoblet.tekst": "Vi får ikke lenger hentet e-post fra {postbokser}. Innloggingen er utløpt. Trykk «Koble til på nytt» og logg inn én gang til, så fortsetter alt som før.",
   "ui.epost.frakoblet.tekst_passord": "Vi får ikke lenger hentet e-post fra {postbokser}. Er postboksen koblet til med app-passord, lag et nytt app-passord hos Google og legg det inn under Gmail nedenfor.",
   "ui.epost.frakoblet.be_admin": "Vi får ikke lenger hentet e-post fra {postbokser}. Innloggingen er utløpt. Be en administrator koble postboksen til på nytt.",
-  "ui.epost.koble_igjen_boks": "Koble til {postboks} på nytt"
+  "ui.epost.koble_igjen_boks": "Koble til {postboks} på nytt",
+  "ui.kundeservice.kobling.tittel": "Hva vi vet om avsenderen",
+  "ui.kundeservice.kobling.grunn.avsender": "(avsenderadressen er registrert på kunden)",
+  "ui.kundeservice.kobling.grunn.nummer": "(fakturanummeret står i e-posten)",
+  "ui.kundeservice.kobling.grunn.kunde": "(åpen faktura på kunden)",
+  "ui.kundeservice.kobling.ukjent_avsender": "Avsenderen er ikke registrert på noen kunde. Legg adressen til kunden under Kunder, så kobles neste e-post fra henne automatisk.",
+  "ui.kundeservice.kobling.faktura": "Faktura {nr}",
+  "ui.kundeservice.kobling.rest": "{belop} kr igjen",
+  "ui.kundeservice.kobling.status.betalt": "betalt",
+  "ui.kundeservice.kobling.status.ettergitt": "ettergitt",
+  "ui.kundeservice.kobling.flere": "Kunden har flere fakturaer enn dette. Se alle under Kundefordringer.",
+  "ui.kundeservice.kobling.ingen_aapne": "Ingen åpne fakturaer på kunden.",
+  "ui.kundeservice.kobling.tilbud": "Tilbud {belop} kr",
+  "ui.kundeservice.kobling.tilbudstatus.utkast": "utkast",
+  "ui.kundeservice.kobling.tilbudstatus.godkjent": "sendt/godkjent",
+  "ui.kundeservice.kobling.gyldig_til": "gyldig til {dato}"
 }

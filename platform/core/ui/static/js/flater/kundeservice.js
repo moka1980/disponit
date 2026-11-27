@@ -35,7 +35,7 @@ import {
   klassifiserHenvendelse, lagreUtkast, lukkHenvendelse,
   tildelHenvendelse, hentHenvendelsesspor, hentMedlemmer,
   hentSvarmaler, lagreSvarmal, slettSvarmal, sendFraPostboks,
-  hentSendteSvar,
+  hentSendteSvar, hentKoblinger,
   hentFullmakter, hentStilleregler, nyIdempotensnokkel,
   settFullmakter, settKundeserviceavsender, settStilleregler,
 } from "../api.js";
@@ -45,6 +45,7 @@ import { flateHode, medStatus } from "./felles.js";
 // LESEVISNINGEN ER E-POSTMODULENS (#475): samme tekst, samme rensing,
 // samme bryter. En egen variant her var feilen eier meldte 16/9.
 import { lesbarTekst } from "./epost.js";
+import { belopTekst, forfallTekst } from "./fordring.js";
 
 const PRIORITETER = ["kritisk", "hoy", "normal", "lav"];
 const TEMAER = ["faktura", "leveranse", "teknisk", "salg", "klage",
@@ -673,6 +674,70 @@ function stilleSeksjon(ctx, last, kvitter) {
   return boks;
 }
 
+// HVA FIRMAET ALT VET OM AVSENDEREN (eiers vedtak 27/11). Gmail viser
+// e-posten; dette er det Gmail ikke vet: hvem kunden er, og hva som står
+// åpent mot henne. Hver linje sier HVORFOR den står der — en kobling man
+// ikke kan etterprøve, er en gjetning. Ingenting undersøkt = ingen boks;
+// undersøkt og ingenting funnet = én setning om hvordan man kobler.
+export function koblingsboks(d) {
+  if (!d || (!d.sett?.kunde && !d.sett?.okonomi)) return null;
+  const boks = el("section", { class: "kort hv-kobling",
+    "aria-label": t("ui.kundeservice.kobling.tittel") },
+    el("h4", { text: t("ui.kundeservice.kobling.tittel") }));
+  const fakt = d.fakturaer || [];
+  const tilb = d.tilbud || [];
+  if (d.kunde) {
+    boks.append(el("p", { class: "hv-kobling-kunde" },
+      el("a", { href: "#/parter", text: d.kunde.navn }), " ",
+      el("span", { class: "muted",
+        text: t("ui.kundeservice.kobling.grunn.avsender") })));
+  } else if (d.sett?.kunde) {
+    boks.append(el("p", { class: "muted",
+      text: t("ui.kundeservice.kobling.ukjent_avsender") }));
+  }
+  if (fakt.length) {
+    const ul = el("ul", { class: "hv-kobling-liste" });
+    for (const f of fakt) {
+      const deler = [
+        t("ui.kundeservice.kobling.faktura").replace("{nr}", f.fakturanummer),
+        f.status === "apen"
+          ? t("ui.kundeservice.kobling.rest")
+            .replace("{belop}", belopTekst(f.rest_ore))
+          : t(`ui.kundeservice.kobling.status.${f.status}`),
+      ];
+      if (f.status === "apen") deler.push(forfallTekst(f.dogn_over_forfall));
+      if (f.trinn_navn) deler.push(f.trinn_navn);
+      if (!d.kunde && f.kunde) deler.push(f.kunde);
+      ul.append(el("li", {},
+        el("a", { href: "#/fordring", text: deler.join(" · ") }), " ",
+        el("span", { class: "muted",
+          text: t(`ui.kundeservice.kobling.grunn.${f.grunn}`) })));
+    }
+    boks.append(ul);
+    if (d.flere_fakturaer) {
+      boks.append(el("p", { class: "muted",
+        text: t("ui.kundeservice.kobling.flere") }));
+    }
+  } else if (d.sett?.okonomi && d.kunde) {
+    boks.append(el("p", { class: "muted",
+      text: t("ui.kundeservice.kobling.ingen_aapne") }));
+  }
+  if (tilb.length) {
+    const ul = el("ul", { class: "hv-kobling-liste" });
+    for (const x of tilb) {
+      ul.append(el("li", {}, el("a", { href: "#/tilbud",
+        text: [t("ui.kundeservice.kobling.tilbud")
+          .replace("{belop}", belopTekst(x.sum_ore)),
+        t(`ui.kundeservice.kobling.tilbudstatus.${x.status}`),
+        t("ui.kundeservice.kobling.gyldig_til")
+          .replace("{dato}", x.gyldig_til.split("-").reverse().join("."))]
+          .join(" · ") })));
+    }
+    boks.append(ul);
+  }
+  return boks;
+}
+
 function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
   const boks = el("div", { class: "hv-detalj" });
   const innhold = el("div", { class: "hv-detalj-innhold" });
@@ -957,8 +1022,9 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
   // LESEFELT TIL VENSTRE, HANDLINGER TIL HØYRE fra 64rem; under
   // hverandre på en telefon (`.hv-rutenett`).
   const melding = el("article", { class: "hv-melding" });
+  const kobling = el("div", { class: "hv-kobling-plass" });
   if (leser) {
-    melding.append(kropp, bytterad,
+    melding.append(kobling, kropp, bytterad,
       el("h4", { text: t("ui.kundeservice.detalj.utkast") }), utkastliste);
   } else {
     // ÆRLIG OM HVA SOM MANGLER: ikke en tom boks, men en setning om at
@@ -1203,7 +1269,17 @@ function detaljpanel(ctx, last, kvitter, settApen, visKoe, sammendrag) {
       sett(kropp);
       bytterad.hidden = true;
       sett(utkastliste);
+      sett(kobling);
       const hid = h.henvendelse_id;
+      // Koblingen hentes VED SIDEN AV teksten, ikke etter: den er ikke
+      // nødvendig for å lese, og en feil i den skal ikke stoppe lesingen.
+      hentKoblinger(hid).then((k) => {
+        if (!fortsatt(hid)) return;
+        const b = koblingsboks(k);
+        if (b) sett(kobling, b);
+      }).catch((e) => {
+        if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+      });
       try {
         const d = await hentJson(
           `/v1/kundeservice/henvendelse/${encodeURIComponent(hid)}/innhold`);
