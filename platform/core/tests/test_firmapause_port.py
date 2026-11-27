@@ -30,8 +30,11 @@ def _firma(m, t, *, dogn=30, status=None):
     m.execute("SELECT firma_registrer(%s,%s,NULL,%s,'kari')",
               (t, "Pauset AS", dogn))
     if status:
-        m.execute("UPDATE firma SET status=%s, endret=now(), endret_av='test'"
-                  " WHERE tenant=%s", (status, t))
+        # `stengt` krever tidspunkt og aktør (firma_status_helhet).
+        m.execute("UPDATE firma SET status=%s, endret=now(), endret_av='test',"
+                  " stengt_ts = CASE WHEN %s='stengt' THEN now() END,"
+                  " stengt_av = CASE WHEN %s='stengt' THEN 'test' END"
+                  " WHERE tenant=%s", (status, status, status, t))
     m.commit()
 
 
