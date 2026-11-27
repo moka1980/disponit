@@ -395,7 +395,35 @@ function meldingsskuff() {
 // Et app-passord kan ikke fornyes med ett klikk; det sier teksten.
 const KAN_KOBLES_IGJEN = { google: 1, microsoft: 1 };
 
-function frakobletVarsel(kilder, kanAdministrere, paaKobleIgjen) {
+// PÅ NYTT, for en kilde som har mistet innloggingen: samme start som
+// første gang, med postboksen fra raden — ingenting å skrive inn.
+// `eierSkjermen` er flatens egen vakt: har brukeren gått videre mens
+// svaret var i lufta, skal et sent svar ikke rive henne til Google.
+function kobleIgjen(k, knapper, feilfelt, ctx, eierSkjermen) {
+  for (const b of knapper) b.disabled = true;
+  feilfelt.textContent = "";
+  const start = k.innlogging === "google" ? startGoogleKilde
+    : startEpostKilde;
+  start(k.postboks, nyIdempotensnokkel())
+    .then((d) => {
+      if (!eierSkjermen()) return;
+      _naviger(d.autorisasjonsurl);
+    })
+    .catch((e) => {
+      for (const b of knapper) b.disabled = false;
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      const kode = e instanceof ApiFeil ? e.kode : "";
+      feilfelt.textContent = t(kode === "google_ikke_konfigurert"
+        ? "ui.epost.gmail.feil.ikke_satt_opp"
+        : kode === "m365_ikke_konfigurert" ? "ui.epost.ikke_konfigurert"
+          : "ui.epost.feilet");
+    });
+}
+
+// ÉN KOMPONENT, TO STEDER: E-post-flaten og oversikten (27/11) viser det
+// samme varselet med den samme knappen — to kopier ville før eller siden
+// sagt hver sin ting.
+export function frakobletVarsel(kilder, kanAdministrere, ctx, eierSkjermen) {
   const feilet = kilder.filter((k) => k.status === "feilet");
   if (!feilet.length) return null;
   const nokkel = !kanAdministrere ? "ui.epost.frakoblet.be_admin"
@@ -416,7 +444,7 @@ function frakobletVarsel(kilder, kanAdministrere, paaKobleIgjen) {
     text: igjen.length === 1 ? t("ui.epost.koble_igjen")
       : t("ui.epost.koble_igjen_boks").replace("{postboks}", k.postboks) }));
   knapper.forEach((b, i) => b.addEventListener("click",
-    () => paaKobleIgjen(igjen[i], knapper, feil)));
+    () => kobleIgjen(igjen[i], knapper, feil, ctx, eierSkjermen)));
   boks.append(el("div", { class: "knapperad" }, ...knapper), feil);
   return boks;
 }
@@ -540,7 +568,7 @@ export function visEpost(hoved, ctx) {
       };
       const deler = [
         ...flateHode(t("ui.epost.tittel"), t("ui.epost.undertittel")),
-        frakobletVarsel(kilder, kanAdministrere, kobleIgjen),
+        frakobletVarsel(kilder, kanAdministrere, ctx, eierSkjermen),
         kildetabell(kilder, kanAdministrere, bekreftDeaktiver),
       ].filter(Boolean);
       // SAMTYKKET AVGJØR, ikke koden: en postboks koblet før
@@ -705,29 +733,6 @@ export function visEpost(hoved, ctx) {
                         text: t("ui.epost.gmail.adresse") }), adr),
         el("div", { class: "knapperad" }, google), utfall),
       reserve);
-  }
-
-  // PÅ NYTT, for en kilde som har mistet innloggingen: samme start som
-  // første gang, med postboksen fra raden — ingenting å skrive inn.
-  function kobleIgjen(k, knapper, feilfelt) {
-    for (const b of knapper) b.disabled = true;
-    feilfelt.textContent = "";
-    const start = k.innlogging === "google" ? startGoogleKilde
-      : startEpostKilde;
-    start(k.postboks, nyIdempotensnokkel())
-      .then((d) => {
-        if (!eierSkjermen()) return;
-        _naviger(d.autorisasjonsurl);
-      })
-      .catch((e) => {
-        for (const b of knapper) b.disabled = false;
-        if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
-        const kode = e instanceof ApiFeil ? e.kode : "";
-        feilfelt.textContent = t(kode === "google_ikke_konfigurert"
-          ? "ui.epost.gmail.feil.ikke_satt_opp"
-          : kode === "m365_ikke_konfigurert" ? "ui.epost.ikke_konfigurert"
-            : "ui.epost.feilet");
-      });
   }
 
   function koble(input, knapp, feilfelt) {
