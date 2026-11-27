@@ -122,13 +122,16 @@ def test_statusruten(klient, token, migrator):
 
 
 def _kilde(m, t, lev):
+    from db import kryptering
     _sett_kontekst(m, t)
+    key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(m, t)
+    ct, nonce = kryptering.krypter(dek, {"x": 1}, t, key_id)
     kid = m.execute(
         "INSERT INTO epost_kilde (tenant, leverandor, postboks,"
         " auth_kryptert, nonce, key_id, scope) VALUES"
-        " (%s,%s,%s,%s,%s,'k1','imap smtp') RETURNING kilde_id",
-        (t, lev, f"post-{secrets.token_hex(3)}@x.example", b"\x01",
-         bytes(range(12)))).fetchone()[0]
+        " (%s,%s,%s,%s,%s,%s,'imap smtp') RETURNING kilde_id",
+        (t, lev, f"post-{secrets.token_hex(3)}@x.example", ct, nonce,
+         key_id)).fetchone()[0]
     m.commit()
     return kid
 
