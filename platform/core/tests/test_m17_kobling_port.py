@@ -39,6 +39,12 @@ def test_kandidatnumrene_er_reglene_og_ikke_mer():
     assert "104" in kandidatnumre("Ang. #104")
 
 
+def _nr():
+    """Et fakturanummer med SIFFER, alltid. `token_hex` kan gi «daaebf» —
+    uten et eneste siffer, og da er det (med rette) ikke et nummer."""
+    return f"F-{secrets.randbelow(900000) + 100000}"
+
+
 def _hode(tok):
     return {"authorization": f"Bearer {tok}"}
 
@@ -99,12 +105,12 @@ def test_saken_vet_hvem_kunden_er_og_hva_som_staar_aapent(
     _kid, _postboks, _dek = _imap_kilde(migrator)
     adresse = f"per-{secrets.token_hex(3)}@nordvik.example"
     ref, _pid = _kunde_med_adresse(adresse)
-    apen = "F-" + secrets.token_hex(3)
-    betalt = "F-" + secrets.token_hex(3)
+    apen = _nr()
+    betalt = _nr()
     _faktura(ref, apen)
     _faktura(ref, betalt, betalt=True)
     # En faktura på en ANNEN kunde, nevnt med nummer i teksten.
-    fremmed = "F-" + secrets.token_hex(3)
+    fremmed = _nr()
     _faktura("K-annen-" + secrets.token_hex(2), fremmed)
 
     boks = _Postboks()
