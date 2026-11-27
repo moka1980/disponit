@@ -3610,6 +3610,13 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def pa_plattform_status(request: Request) -> Response:
         return plattformmodul.status_endepunkt(tjeneste, request)
 
+    # 234: leverandøren — hvem Disponit er, redigert i plattformadmin.
+    def pa_plattform_leverandor(request: Request) -> Response:
+        return plattformmodul.leverandor_endepunkt(tjeneste, request)
+
+    def pa_plattform_sett_leverandor(request: Request) -> Response:
+        return plattformmodul.sett_leverandor_endepunkt(tjeneste, request)
+
     def pa_varselvalg(request: Request) -> Response:
         return policyadmin_http.varselvalg_endepunkt(tjeneste, request)
 
@@ -4724,6 +4731,10 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
               methods=["POST"]),
         Route("/v1/firma/avslutt", pa_firma_avslutt, methods=["POST"]),
         Route("/v1/plattform/meg", pa_plattform_meg, methods=["GET"]),
+        Route("/v1/plattform/leverandor", pa_plattform_leverandor,
+              methods=["GET"]),
+        Route("/v1/plattform/leverandor", pa_plattform_sett_leverandor,
+              methods=["POST"]),
         Route("/v1/plattform/firmaer", pa_plattform_firmaer,
               methods=["GET"]),
         Route("/v1/plattform/firmaer", pa_plattform_opprett,
@@ -6385,6 +6396,8 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("POST", "/v1/firma/avslutt"):           "firma:avslutt",
     ("GET",  "/v1/firma/eksport"):           "firma:eksport",
     ("GET",  "/v1/plattform/meg"):           "policy:read",
+    ("GET",  "/v1/plattform/leverandor"):    "policy:read",
+    ("POST", "/v1/plattform/leverandor"):    "policy:read",
     ("GET",  "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer/{tenant:str}/oppdater"): "policy:read",

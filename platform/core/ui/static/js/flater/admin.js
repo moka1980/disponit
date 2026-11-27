@@ -2,7 +2,8 @@ import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
          oppdaterPlattformFirma, opprettPlattformFirma,
-         settPlattformFirmastatus } from "../api.js";
+         settPlattformFirmastatus, hentLeverandor, settLeverandor }
+  from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 import { FASEOVERSIKT, MODULOVERSIKT, modulmerke, planEtikett, plattformTelling }
@@ -208,6 +209,86 @@ function plattformseksjon(ctx) {
 }
 
 
+// OM DISPONIT (234). Eier 27/11: «det må være et skjema for admin også slik
+// at admin kan selv legge inn/redigere slike info … alt kan gjøres
+// selvbetjent i dashboard både for admin og kunder.» Navnet, org.nr.,
+// adressen, kontakten og vernetinget sto før i en fil i koden; nå står de
+// her, og vilkårssidene og prøvebanneret leser dem. Samme dør som
+// firmalisten: seksjonen finnes bare for plattformeieren.
+export function leverandorseksjon(ctx) {
+  const boks = el("section", { class: "kort", "aria-labelledby": "lev-tittel" });
+  boks.hidden = true;
+  const FELT = [
+    ["navn", "ui.omdisponit.felt.navn", "text", true],
+    ["orgnummer", "ui.omdisponit.felt.orgnummer", "text", false],
+    ["adresse", "ui.omdisponit.felt.adresse", "text", false],
+    ["kontakt_epost", "ui.omdisponit.felt.kontakt", "email", false],
+    ["verneting", "ui.omdisponit.felt.verneting", "text", false],
+  ];
+  const tegn = (lev) => {
+    const melding = el("p", { class: "melding", role: "status" });
+    const inn = {};
+    const rader = FELT.map(([navn, nokkel, type, paakrevd]) => {
+      const id = `lev-${navn}`;
+      inn[navn] = el("input", { id, type, class: "felt-inp",
+        value: (lev && lev[navn]) || "", autocomplete: "off" });
+      if (paakrevd) inn[navn].required = true;
+      return el("div", { class: "felt" },
+        el("label", { for: id, text: t(nokkel) }), inn[navn],
+        ...(navn === "orgnummer" ? [el("p", { class: "hjelpetekst",
+          text: t("ui.omdisponit.hjelp.orgnummer") })] : []));
+    });
+    const knapp = el("button", { type: "submit", class: "knapp primar",
+      text: t("ui.omdisponit.lagre") });
+    const skjema = el("form", { class: "kv-skjema lev-skjema" }, ...rader,
+      el("div", { class: "knapperad" }, knapp), melding);
+    skjema.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const kropp = {};
+      for (const [navn] of FELT) kropp[navn] = inn[navn].value.trim() || null;
+      if (kropp.orgnummer) kropp.orgnummer = kropp.orgnummer.replace(/\s+/g, "");
+      // SAMME REGLER SOM BASEN (234), sagt FØR innsending og ved feltet:
+      // en 400 som bare sier «feilformet» gir henne ingenting å rette.
+      if (kropp.orgnummer && !/^[0-9]{9}$/.test(kropp.orgnummer)) {
+        melding.textContent = t("ui.omdisponit.feil.orgnummer");
+        inn.orgnummer.focus(); return;
+      }
+      if (kropp.kontakt_epost
+          && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(kropp.kontakt_epost)) {
+        melding.textContent = t("ui.omdisponit.feil.kontakt");
+        inn.kontakt_epost.focus(); return;
+      }
+      knapp.disabled = true;
+      settLeverandor(kropp)
+        .then((d) => {
+          tegn(d.leverandor);
+          const m = boks.querySelector(".melding");
+          m.textContent = t("ui.omdisponit.lagret");
+          meldLive(m.textContent);
+        })
+        .catch((e) => {
+          knapp.disabled = false;
+          if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+          melding.textContent = t(e instanceof ApiFeil && e.status === 400
+            ? "ui.omdisponit.feil.form" : "ui.plattform.feilet");
+        });
+    });
+    sett(boks,
+      el("h2", { id: "lev-tittel", text: t("ui.omdisponit.tittel") }),
+      el("p", { text: t(lev ? "ui.omdisponit.tekst"
+        : "ui.omdisponit.tekst_tom") }),
+      skjema);
+    boks.hidden = false;
+  };
+  erPlattformeier()
+    .then((d) => {
+      if (!(d && d.eier === true)) return null;
+      return hentLeverandor().then((x) => tegn(x.leverandor));
+    })
+    .catch((e) => { if (e instanceof UautorisertFeil) ctx.paaUautorisert?.(); });
+  return boks;
+}
+
 export function visAdmin(hoved, ctx = {}) {
   const telling = plattformTelling();
   const forvalter = kanForvaltePolicy(ctx);
@@ -264,6 +345,7 @@ export function visAdmin(hoved, ctx = {}) {
     // plattformeier. Til da er den `hidden`, og for alle andre forblir den
     // det for alltid.
     plattformseksjon(ctx),
+    leverandorseksjon(ctx),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
         el("p", { class: "site-eyebrow", text: t("ui.admin.status") }),

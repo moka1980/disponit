@@ -1925,3 +1925,7 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
    toppen og innholdet (ikke inne i en flate). */
 .skall > .firmabanner { grid-column: 1 / -1; margin: var(--sp-3) 0 0; }
 .firmabanner p { margin: 0; }
+
+/* 234: «Om Disponit» — luft mellom feltene, så etiketten hører til sitt. */
+.lev-skjema .felt + .felt { margin-top: var(--sp-3); }
+.lev-skjema .knapperad { margin-top: var(--sp-4); }
