@@ -219,11 +219,11 @@ export function leverandorseksjon(ctx) {
   const boks = el("section", { class: "kort", "aria-labelledby": "lev-tittel" });
   boks.hidden = true;
   const FELT = [
-    ["navn", "ui.leverandor.felt.navn", "text", true],
-    ["orgnummer", "ui.leverandor.felt.orgnummer", "text", false],
-    ["adresse", "ui.leverandor.felt.adresse", "text", false],
-    ["kontakt_epost", "ui.leverandor.felt.kontakt", "email", false],
-    ["verneting", "ui.leverandor.felt.verneting", "text", false],
+    ["navn", "ui.omdisponit.felt.navn", "text", true],
+    ["orgnummer", "ui.omdisponit.felt.orgnummer", "text", false],
+    ["adresse", "ui.omdisponit.felt.adresse", "text", false],
+    ["kontakt_epost", "ui.omdisponit.felt.kontakt", "email", false],
+    ["verneting", "ui.omdisponit.felt.verneting", "text", false],
   ];
   const tegn = (lev) => {
     const melding = el("p", { class: "melding", role: "status" });
@@ -236,11 +236,11 @@ export function leverandorseksjon(ctx) {
       return el("div", { class: "felt" },
         el("label", { for: id, text: t(nokkel) }), inn[navn],
         ...(navn === "orgnummer" ? [el("p", { class: "hjelpetekst",
-          text: t("ui.leverandor.hjelp.orgnummer") })] : []));
+          text: t("ui.omdisponit.hjelp.orgnummer") })] : []));
     });
     const knapp = el("button", { type: "submit", class: "knapp primar",
-      text: t("ui.leverandor.lagre") });
-    const skjema = el("form", { class: "kv-skjema" }, ...rader,
+      text: t("ui.omdisponit.lagre") });
+    const skjema = el("form", { class: "kv-skjema lev-skjema" }, ...rader,
       el("div", { class: "knapperad" }, knapp), melding);
     skjema.addEventListener("submit", (ev) => {
       ev.preventDefault();
@@ -250,12 +250,12 @@ export function leverandorseksjon(ctx) {
       // SAMME REGLER SOM BASEN (234), sagt FØR innsending og ved feltet:
       // en 400 som bare sier «feilformet» gir henne ingenting å rette.
       if (kropp.orgnummer && !/^[0-9]{9}$/.test(kropp.orgnummer)) {
-        melding.textContent = t("ui.leverandor.feil.orgnummer");
+        melding.textContent = t("ui.omdisponit.feil.orgnummer");
         inn.orgnummer.focus(); return;
       }
       if (kropp.kontakt_epost
           && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(kropp.kontakt_epost)) {
-        melding.textContent = t("ui.leverandor.feil.kontakt");
+        melding.textContent = t("ui.omdisponit.feil.kontakt");
         inn.kontakt_epost.focus(); return;
       }
       knapp.disabled = true;
@@ -263,20 +263,20 @@ export function leverandorseksjon(ctx) {
         .then((d) => {
           tegn(d.leverandor);
           const m = boks.querySelector(".melding");
-          m.textContent = t("ui.leverandor.lagret");
+          m.textContent = t("ui.omdisponit.lagret");
           meldLive(m.textContent);
         })
         .catch((e) => {
           knapp.disabled = false;
           if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
           melding.textContent = t(e instanceof ApiFeil && e.status === 400
-            ? "ui.leverandor.feil.form" : "ui.plattform.feilet");
+            ? "ui.omdisponit.feil.form" : "ui.plattform.feilet");
         });
     });
     sett(boks,
-      el("h2", { id: "lev-tittel", text: t("ui.leverandor.tittel") }),
-      el("p", { text: t(lev ? "ui.leverandor.tekst"
-        : "ui.leverandor.tekst_tom") }),
+      el("h2", { id: "lev-tittel", text: t("ui.omdisponit.tittel") }),
+      el("p", { text: t(lev ? "ui.omdisponit.tekst"
+        : "ui.omdisponit.tekst_tom") }),
       skjema);
     boks.hidden = false;
   };
