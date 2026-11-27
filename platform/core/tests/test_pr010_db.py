@@ -320,7 +320,9 @@ def test_rolle_scopes_er_kjente_og_leser_ikke_sikkerhet():
         # `leser` som kunne det, kunne avsluttet firmaet på vei ut døra.
         # Døra går én vei (201), så scopet kan ikke brukes til å GI seg noe.
         "part:administrer", "firma:inviter", "firma:blimed",
-        "firma:avslutt"}
+        "firma:avslutt",
+        # 27/11: eksporten av alt firmaet har — admin alene.
+        "firma:eksport"}
     # 102 (M-17): `kundeservice:innhold` er `leser`s, og det er en
     # dom: den som svarer kunder MÅ kunne lese hva de skrev. Scopet er
     # likevel SKILT UT fra `decisions:read` — nettopp for at en tenant

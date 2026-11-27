@@ -7317,5 +7317,11 @@
   "ui.kundeservice.kobling.tilbud": "Quote {belop} NOK",
   "ui.kundeservice.kobling.tilbudstatus.utkast": "draft",
   "ui.kundeservice.kobling.tilbudstatus.godkjent": "sent/approved",
-  "ui.kundeservice.kobling.gyldig_til": "valid until {dato}"
+  "ui.kundeservice.kobling.gyldig_til": "valid until {dato}",
+  "ui.kundeadmin.eksport.tittel": "Your data",
+  "ui.kundeadmin.eksport.tekst": "Download everything the company has entered, as one file: the same as the app shows, module by module. You can do this at any time, also after the trial has ended.",
+  "ui.kundeadmin.eksport.knapp": "Download the data",
+  "ui.kundeadmin.eksport.lager": "Creating the file …",
+  "ui.kundeadmin.eksport.ferdig": "Downloaded: {fil}",
+  "ui.kundeadmin.eksport.feil": "The file could not be created right now. Try again shortly."
 }

@@ -67,6 +67,27 @@ export async function hentJson(sti, sok = null) {
   return kropp;
 }
 
+// 27/11: firmaets egne data som én fil. Hentes som blob, ikke som en
+// lenke: en 403/503 skal bli en melding i flaten, ikke en side med rå
+// JSON-feil som erstatter appen.
+export async function hentEksport() {
+  let r;
+  try {
+    r = await fetch("/v1/firma/eksport", { credentials: "same-origin",
+      redirect: "error" });
+  } catch (e) {
+    throw new ApiFeil(0, "nettverk");
+  }
+  if (!r.ok) {
+    let kropp = null;
+    try { kropp = await r.json(); } catch { kropp = null; }
+    _kast(r.status, kropp && kropp.feil);
+  }
+  const cd = r.headers.get("content-disposition") || "";
+  const m = /filename="([^"]+)"/.exec(cd);
+  return { blob: await r.blob(), filnavn: m ? m[1] : "disponit-eksport.json" };
+}
+
 // Kandidatdokumentet hentes av FORELDEREN, aldri av visningsrammen selv
 // (eiers funn 31/8, runde 2): en `<iframe sandbox="">` har OPAK origin,
 // og nettleseren sender ikke øktcookien med rammens dokumentforespørsel

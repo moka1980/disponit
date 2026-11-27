@@ -7317,5 +7317,11 @@
   "ui.kundeservice.kobling.tilbud": "Tilbud {belop} kr",
   "ui.kundeservice.kobling.tilbudstatus.utkast": "utkast",
   "ui.kundeservice.kobling.tilbudstatus.godkjent": "sendt/godkjent",
-  "ui.kundeservice.kobling.gyldig_til": "gyldig til {dato}"
+  "ui.kundeservice.kobling.gyldig_til": "gyldig til {dato}",
+  "ui.kundeadmin.eksport.tittel": "Dataene dine",
+  "ui.kundeadmin.eksport.tekst": "Last ned alt firmaet har lagt inn, som én fil: det samme som appen viser, modul for modul. Du kan gjøre det når som helst, også etter at prøveperioden er over.",
+  "ui.kundeadmin.eksport.knapp": "Last ned dataene",
+  "ui.kundeadmin.eksport.lager": "Lager fila …",
+  "ui.kundeadmin.eksport.ferdig": "Lastet ned: {fil}",
+  "ui.kundeadmin.eksport.feil": "Fila kunne ikke lages akkurat nå. Prøv igjen om litt."
 }
