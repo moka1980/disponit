@@ -1099,6 +1099,11 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         from . import medlemmer as medlemsmodul
         return medlemsmodul.medlemmer(tjeneste, request)
 
+    # 27/11: firmaets egne data som én fil.
+    def firma_eksport(request: Request) -> Response:
+        from . import eksport as eksportmodul
+        return eksportmodul.eksport_endepunkt(tjeneste, request)
+
     # 27/11: prøveperioden og om firmaet står stille — for skallets banner.
     def firma_status(request: Request) -> Response:
         from . import firmastatus as firmastatusmodul
@@ -3780,6 +3785,7 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         # tenants plan og modultildeling.
         Route("/v1/utrulling", utrulling, methods=["GET"]),
         Route("/v1/firma/medlemmer", firma_medlemmer, methods=["GET"]),
+        Route("/v1/firma/eksport", firma_eksport, methods=["GET"]),
         Route("/v1/firma/status", firma_status, methods=["GET"]),
         Route("/v1/oppsett", oppsett, methods=["GET"]),
         Route("/v1/modellstyring", modellstyring, methods=["GET"]),
@@ -4808,6 +4814,9 @@ LESESCOPES = frozenset({"decisions:read", "exceptions:read", "policy:read",
                         # lesende, og skilt fra køens `decisions:read`
                         # fordi bare det ene er persondata.
                         "kundeservice:innhold",
+                        # 27/11: eksporten av alt firmaet har — rent
+                        # lesende (GET), admin alene (`autorisasjon.py`).
+                        "firma:eksport",
                         # 183: kundelista. UTEN DENNE LINJA er flaten
                         # DØD for alle som logger inn i nettleseren
                         # (CodeRabbit, kritisk): browsersesjonen får
@@ -6385,6 +6394,7 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     # alene — den mest inngripende handlingen en vanlig kunde kan gjøre, og
     # en `leser` som kunne si opp kunne avsluttet firmaet på vei ut døra.
     ("POST", "/v1/firma/avslutt"):           "firma:avslutt",
+    ("GET",  "/v1/firma/eksport"):           "firma:eksport",
     ("GET",  "/v1/plattform/meg"):           "policy:read",
     ("GET",  "/v1/plattform/leverandor"):    "policy:read",
     ("POST", "/v1/plattform/leverandor"):    "policy:read",

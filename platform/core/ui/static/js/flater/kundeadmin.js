@@ -4,7 +4,7 @@ import { flateHode } from "./felles.js";
 import { KUNDEROLLER, modulerFraIder, tenantTelling } from "../plattformdata.js";
 import { hentGodkjenningsregel, settGodkjenningsregel } from "../api.js";
 import { ApiFeil, UautorisertFeil, loggUt, opprettInvitasjon,
-         hentInvitasjoner, siOppAbonnement,
+         hentInvitasjoner, siOppAbonnement, hentEksport,
          nyIdempotensnokkel } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { byggRuter, kanForvaltePolicy } from "../sitekart.js";
@@ -270,6 +270,42 @@ export function godkjenningsregelDel(ctx) {
   return boks;
 }
 
+// DATAENE DINE (27/11). Kundens vei ut med det hun har lagt inn — én fil,
+// det samme som appen viser, modul for modul. Admin alene (`firma:eksport`),
+// og seksjonen finnes ikke for andre, som oppsigelsen under.
+export function eksportdel(ctx) {
+  if (!new Set(ctx.scopes || []).has("firma:eksport")) {
+    return el("div", { hidden: true });
+  }
+  const melding = el("p", { class: "melding", role: "status" });
+  const knapp = el("button", { type: "button", class: "knapp",
+    text: t("ui.kundeadmin.eksport.knapp") });
+  knapp.addEventListener("click", async () => {
+    knapp.disabled = true;
+    melding.textContent = t("ui.kundeadmin.eksport.lager");
+    try {
+      const { blob, filnavn } = await hentEksport();
+      const url = URL.createObjectURL(blob);
+      const a = el("a", { href: url, download: filnavn, hidden: true });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      melding.textContent = t("ui.kundeadmin.eksport.ferdig")
+        .replace("{fil}", filnavn);
+    } catch (e) {
+      if (e instanceof UautorisertFeil) { ctx.paaUautorisert(); return; }
+      melding.textContent = t("ui.kundeadmin.eksport.feil");
+    } finally {
+      knapp.disabled = false;
+    }
+  });
+  return el("section", { class: "kort", "aria-labelledby": "eksport-tittel" },
+    el("h2", { id: "eksport-tittel", text: t("ui.kundeadmin.eksport.tittel") }),
+    el("p", { text: t("ui.kundeadmin.eksport.tekst") }),
+    el("div", { class: "knapperad" }, knapp), melding);
+}
+
 function abonnementsdel(ctx) {
   // EGEN SCOPE-SJEKK, som `invitasjonsdel` over. Jeg la den foerst i
   // `visKundeadmin` og brukte en `scopes` som er definert i en HELT ANNEN
@@ -375,6 +411,7 @@ export function visKundeadmin(hoved, ctx = {}) {
     ...flateHode(t("ui.kundeadmin.tittel"), t("ui.kundeadmin.undertittel")),
     // Kundens egen vei ut. Seksjonen skjuler seg selv for den som mangler
     // scopet.
+    eksportdel(ctx),
     abonnementsdel(ctx),
     el("div", { class: "site-grid site-grid-3" },
       el("section", { class: "kort site-hero-card" },
