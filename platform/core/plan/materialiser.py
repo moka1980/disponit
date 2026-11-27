@@ -344,11 +344,11 @@ def kjor_en_runde(tjeneste, conn) -> dict:
     # M-6 (175): innhenteren — postboksene leses inn i registeret. Ingen
     # bestilling, ingen policyport her: dette er inntak, ikke handling.
     from plan.epost import kjor_en_runde as epostrunde
-    epost = epostrunde(tjeneste, conn)
+    epost = _isolert("epost", epostrunde, tjeneste, conn)
     # M-6 over IMAP (229, ADR-011): vanlig Gmail med app-passord — egen
     # modul med egne kandidatdører, så Microsoft-veien står urørt.
     from plan.epost_imap import kjor_en_runde as imaprunde
-    epost_imap = imaprunde(tjeneste, conn)
+    epost_imap = _isolert("epost_imap", imaprunde, tjeneste, conn)
     # M-17 (204): stille avsendere — ETTER innhentingen og broen, så
     # rundens nye henvendelser klassifiseres i samme runde. Én definer,
     # to tall; regelen eies av basen.
@@ -364,6 +364,32 @@ def kjor_en_runde(tjeneste, conn) -> dict:
         print(json.dumps({"hendelse": "plan_runde", **res},
                          ensure_ascii=False, default=str), flush=True)
     return res
+
+
+def _isolert(navn, runde, tjeneste, conn):
+    """Én e-postrunde, isolert fra resten av planrunden.
+
+    MÅLT I DRIFT 26/11 og 27/11: én treg Microsoft-postboks (`httpx.
+    ReadTimeout` fra Graph) boblet ut av `plan.epost.kjor_en_runde`, felte
+    HELE planrunden (`disponit-plan.service: Failed`) — og IMAP-runden og
+    stillereglene etter den kjørte ikke den gangen. En ekstern tjeneste
+    som er treg, er drift; den skal ikke ta ned det som ikke har noe med
+    den å gjøre. Runden prøves igjen om fem minutter som før.
+
+    Her og ikke i `plan/epost.py`: den fila er M-6s sertifiserte bevisrot.
+    Bare unntak FANGES her — ingenting om hvordan postboksen leses endres.
+    """
+    try:
+        return runde(tjeneste, conn)
+    except Exception as e:                                  # noqa: BLE001
+        try:
+            conn.rollback()
+        except psycopg.Error:
+            pass
+        print(json.dumps({"hendelse": "plan_epostrunde_avbrutt",
+                          "runde": navn, "feiltype": type(e).__name__},
+                         ensure_ascii=False), flush=True)
+        return {"avbrutt": type(e).__name__}
 
 
 def main() -> int:
