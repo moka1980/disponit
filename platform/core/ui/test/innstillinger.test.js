@@ -45,6 +45,9 @@ globalThis.fetch = async (url, opts = {}) => {
     return ok({ dokumenter: [], felt: [] });
   }
   if (sti === "/v1/juridisk") return ok({ gjeldende: {}, kreves: {} });
+  if (sti === "/v1/plattform/pliktkatalog") {
+    return ok({ myndigheter: ["skatteetaten"], maler: [] });
+  }
   return { ok: false, status: 404, json: async () => ({ feil: "x" }) };
 };
 
@@ -127,6 +130,7 @@ test("Plattform: eierens seksjoner er faner, ikke én lang side", async () => {
     visAdmin(m, ctx);
     const forventet = [t("ui.profil.tittel"), t("ui.plattform.firmaer"),
       t("ui.plattform.nytt_firma"), t("ui.innstillinger.tittel"),
+      t("ui.pliktkatalog.tittel"),
       t("ui.omdisponit.tittel"), t("ui.juridiskadmin.tittel"),
       t("ui.admin.drift_fane")];
     const faner = () => [...m.querySelectorAll('[role="tab"]')]

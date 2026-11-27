@@ -119,7 +119,12 @@ export function seksjonsfaner(hoved) {
         .map((s) => s.id).join(" ");
       const kn = el("button", { type: "button", class: "seksjonsfane",
         id: faneId, role: "tab", "aria-controls": paneler, text: tittel });
-      kn.addEventListener("click", () => vis(tittel, false));
+      // DEN VALGTE FANEN SKAL SYNES: på telefon ruller raden sidelengs,
+      // og en fane valgt utenfor kanten så ut som om ingenting skjedde.
+      kn.addEventListener("click", () => {
+        vis(tittel, false);
+        kn.scrollIntoView?.({ block: "nearest", inline: "center" });
+      });
       kn.addEventListener("keydown", (e) => {
         let ny = null;
         if (e.key === "ArrowRight") ny = (i + 1) % titler.length;

@@ -4,7 +4,8 @@ import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
          oppdaterPlattformFirma, opprettPlattformFirma,
          settPlattformFirmastatus, hentLeverandor, settLeverandor,
          hentJuridisk, lagreJuridiskUtkast, publiserJuridisk,
-         hentInnstillinger, settInnstillinger }
+         hentInnstillinger, settInnstillinger, hentPliktkatalog,
+         settPliktmal, settPliktfrist, slettPliktfrist }
   from "../api.js";
 import { tekstTilNoder } from "./juridisk.js";
 import { meldLive } from "../komponenter.js";
@@ -233,6 +234,189 @@ function plattformseksjon(ctx) {
     .catch(() => {});
 
   return [boks, nyBoks];
+}
+
+// PLIKTKATALOGEN (237). Frist- og pliktvaktens kilde: hvilke lovpålagte
+// plikter som finnes, hvem de gjelder for, hjemmelen — og fristene, AVLEST
+// fra myndigheten (helg og helligdag flytter dem). Kundenes «Lovpålagte
+// frister» lages herfra. Eier 27/11: «alt må betjenes via dashboard».
+//
+// Ikke en lang liste: ett kort per plikt, med «hvem gjelder den for» som
+// brikker, fristene som brikker med ×, og en ny frist på ÉN linje.
+const PLIKTFELT = [["nokkel", "text"], ["tittel", "text"],
+  ["hjemmel", "text"], ["kilde_url", "url"]];
+
+function datoNo(iso) {
+  return iso ? iso.slice(0, 10).split("-").reverse().join(".") : "";
+}
+
+export function pliktkatalogseksjon(ctx) {
+  const boks = el("section", { class: "kort", "aria-labelledby": "pk-tittel" });
+  boks.hidden = true;
+  const melding = el("p", { class: "melding", role: "status" });
+  const feil = (e) => {
+    if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+    melding.textContent = t(e instanceof ApiFeil && e.status === 400
+      ? "ui.pliktkatalog.feil.form" : "ui.plattform.feilet");
+    meldLive(melding.textContent);
+  };
+  let myndigheter = [];
+
+  const malSkjema = (m, ved) => {
+    const id = (f) => `pk-${m ? m.nokkel : "ny"}-${f}`;
+    const inn = {};
+    const felt = PLIKTFELT.map(([f, type]) => {
+      inn[f] = el("input", { id: id(f), type, class: "felt-inp",
+        value: (m && m[f]) || "", autocomplete: "off" });
+      if (f === "nokkel" && m) inn[f].readOnly = true;
+      return el("div", { class: "felt" },
+        el("label", { for: id(f), text: t(`ui.pliktkatalog.felt.${f}`) }),
+        inn[f]);
+    });
+    const mynd = el("select", { id: id("myndighet"), class: "felt-inp" },
+      ...myndigheter.map((x) => el("option", { value: x,
+        text: t(`ui.pliktkatalog.myndighet.${x}`, x) })));
+    if (m) mynd.value = m.myndighet;
+    const former = el("input", { id: id("orgformer"), class: "felt-inp",
+      value: m ? m.orgformer.join(", ") : "", autocomplete: "off" });
+    const boksFor = (f, nokkel, verdi) => {
+      const b = el("input", { type: "checkbox", id: id(f) });
+      b.checked = verdi;
+      inn[f] = b;
+      return el("label", { class: "avkryssing", for: id(f) }, b,
+        el("span", { text: t(nokkel) }));
+    };
+    const lagre = el("button", { type: "submit", class: "knapp primar",
+      text: t(m ? "ui.pliktkatalog.lagre" : "ui.pliktkatalog.legg_til_plikt") });
+    const avbryt = el("button", { type: "button", class: "knapp",
+      text: t("ui.plattform.avbryt") });
+    avbryt.addEventListener("click", () => ved(null));
+    const skjema = el("form", { class: "kv-skjema lev-skjema", novalidate: "" },
+      ...felt,
+      el("div", { class: "felt" },
+        el("label", { for: id("myndighet"), text: t("ui.pliktkatalog.felt.myndighet") }),
+        mynd),
+      el("div", { class: "felt" },
+        el("label", { for: id("orgformer"), text: t("ui.pliktkatalog.felt.orgformer") }),
+        former,
+        el("p", { class: "hjelpetekst", text: t("ui.pliktkatalog.hjelp.orgformer") })),
+      boksFor("krever_mva", "ui.pliktkatalog.krever_mva", m ? m.krever_mva : false),
+      boksFor("krever_ansatte", "ui.pliktkatalog.krever_ansatte",
+              m ? m.krever_ansatte : false),
+      boksFor("aktiv", "ui.pliktkatalog.aktiv", m ? m.aktiv : true),
+      el("div", { class: "knapperad" }, lagre, avbryt));
+    skjema.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      lagre.disabled = true;
+      settPliktmal({
+        nokkel: inn.nokkel.value.trim(), tittel: inn.tittel.value.trim(),
+        hjemmel: inn.hjemmel.value.trim(), kilde_url: inn.kilde_url.value.trim(),
+        myndighet: mynd.value,
+        orgformer: former.value.split(/[\s,]+/).map((x) => x.trim().toUpperCase())
+          .filter(Boolean),
+        krever_mva: inn.krever_mva.checked,
+        krever_ansatte: inn.krever_ansatte.checked, aktiv: inn.aktiv.checked,
+      })
+        .then((d) => ved(d, t("ui.pliktkatalog.lagret")))
+        .catch((e) => { lagre.disabled = false; feil(e); });
+    });
+    return skjema;
+  };
+
+  const malKort = (m, tegn) => {
+    const gjelder = [
+      m.orgformer.length ? m.orgformer.join(", ") : t("ui.pliktkatalog.alle_former"),
+      ...(m.krever_mva ? [t("ui.pliktkatalog.krever_mva")] : []),
+      ...(m.krever_ansatte ? [t("ui.pliktkatalog.krever_ansatte")] : []),
+      t(`ui.pliktkatalog.myndighet.${m.myndighet}`, m.myndighet),
+      ...(m.aktiv ? [] : [t("ui.pliktkatalog.inaktiv")]),
+    ];
+    const frister = el("ul", { class: "brikkerad" },
+      ...m.frister.map((f) => {
+        const x = el("button", { type: "button", class: "brikke-x",
+          "aria-label": t("ui.pliktkatalog.slett_frist")
+            .replace("{frist}", `${f.periode} ${datoNo(f.frist)}`),
+          text: "×" });
+        x.addEventListener("click", () => {
+          x.disabled = true;
+          slettPliktfrist({ nokkel: m.nokkel, frist: f.frist })
+            .then((d) => tegn(d, t("ui.pliktkatalog.slettet")))
+            .catch((e) => { x.disabled = false; feil(e); });
+        });
+        return el("li", { class: "brikke" },
+          el("span", { class: "brikke-navn", text: datoNo(f.frist) }),
+          el("span", { class: "muted", text: f.periode }), x);
+      }));
+    const pId = `pk-${m.nokkel}-periode`;
+    const dId = `pk-${m.nokkel}-dato`;
+    const periode = el("input", { id: pId, class: "felt-inp", autocomplete: "off" });
+    const datoInn = el("input", { id: dId, type: "date", class: "felt-inp" });
+    const leggTil = el("button", { type: "submit", class: "knapp",
+      text: t("ui.pliktkatalog.legg_til_frist") });
+    const nyFrist = el("form", { class: "kv-skjema-linje", novalidate: "" },
+      el("div", { class: "felt" },
+        el("label", { for: dId, text: t("ui.pliktkatalog.felt.frist") }), datoInn),
+      el("div", { class: "felt" },
+        el("label", { for: pId, text: t("ui.pliktkatalog.felt.periode") }), periode),
+      leggTil);
+    nyFrist.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      if (!datoInn.value) { datoInn.focus(); return; }
+      if (!periode.value.trim()) { periode.focus(); return; }
+      leggTil.disabled = true;
+      settPliktfrist({ nokkel: m.nokkel, periode: periode.value.trim(),
+                       frist: datoInn.value })
+        .then((d) => tegn(d, t("ui.pliktkatalog.lagt_til")))
+        .catch((e) => { leggTil.disabled = false; feil(e); });
+    });
+    const endre = el("button", { type: "button", class: "knapp liten",
+      text: t("ui.pliktkatalog.endre") });
+    const kort = el("article", { class: "pk-mal" },
+      el("div", { class: "pk-hode" },
+        el("h3", { text: m.tittel }), endre),
+      el("p", { class: "muted pk-hjemmel" }, `${m.hjemmel} · `,
+        el("a", { href: m.kilde_url, target: "_blank", rel: "noopener",
+          text: t("ui.lovfrister.kilde") })),
+      el("ul", { class: "brikkerad" },
+        ...gjelder.map((g) => el("li", { class: "brikke brikke-tekst", text: g }))),
+      el("h4", { text: t("ui.pliktkatalog.frister").replace("{n}",
+        String(m.frister.length)) }),
+      frister, nyFrist);
+    endre.addEventListener("click", () => {
+      sett(kort, malSkjema(m, (d, k) => (d ? tegn(d, k) : tegn())));
+    });
+    return kort;
+  };
+
+  let siste = null;
+  const tegn = (d, kvittering) => {
+    if (d) siste = d;
+    const ny = el("button", { type: "button", class: "knapp",
+      text: t("ui.pliktkatalog.ny_plikt") });
+    const nyBoks = el("div");
+    ny.addEventListener("click", () => {
+      sett(nyBoks, malSkjema(null, (x, k) => (x ? tegn(x, k) : sett(nyBoks))));
+    });
+    sett(boks,
+      el("h2", { id: "pk-tittel", text: t("ui.pliktkatalog.tittel") }),
+      el("p", { text: t("ui.pliktkatalog.tekst") }),
+      melding,
+      el("div", { class: "pk-maler" }, ...siste.maler.map((m) => malKort(m, tegn))),
+      el("div", { class: "knapperad" }, ny), nyBoks);
+    melding.textContent = kvittering || "";
+    if (kvittering) meldLive(kvittering);
+    boks.hidden = false;
+  };
+  erPlattformeier()
+    .then((d) => {
+      if (!(d && d.eier === true)) return null;
+      return hentPliktkatalog().then((x) => {
+        myndigheter = x.myndigheter || [];
+        tegn(x);
+      });
+    })
+    .catch(feil);
+  return boks;
 }
 
 // INNSTILLINGER (236). Eier 27/11: «gjøre de siste innstillingene som
@@ -725,6 +909,7 @@ export function visAdmin(hoved, ctx = {}) {
       profil,
       ...plattformseksjon(ctx),
       innstillingsseksjon(ctx),
+      pliktkatalogseksjon(ctx),
       leverandorseksjon(ctx),
       juridiskseksjon(ctx),
       drift));

@@ -1941,3 +1941,72 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 .jur-felt label { display: block; margin-bottom: var(--sp-1); }
 .jur-felt .jur-tekst { display: block; width: 100%; max-width: none; font-family: var(--font-mono, monospace); }
 .jur-forhand { margin-top: var(--sp-4); padding: var(--sp-4); border: 1px dashed var(--line); border-radius: var(--radius-sm); }
+
+/* ---------------------------------------------------------------------
+   Lovpålagte frister (237): én rad per frist — datoblokk, hva, status,
+   handling. Ikke en tabell: på telefon brytes raden i to linjer, og
+   statusen er et merke med ORD (aldri bare farge).
+   --------------------------------------------------------------------- */
+.lf { display: grid; gap: var(--sp-4); }
+.lf-kpi { margin-top: 0; }
+.lf-kpi .site-kpi span { display: block; font-size: var(--fs-sm); }
+.lf-liste { list-style: none; margin: 0; padding: 0; display: grid;
+  gap: var(--sp-2); }
+.lf-rad { display: grid; gap: var(--sp-2) var(--sp-3); align-items: center;
+  grid-template-columns: 3.25rem minmax(0, 1fr);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--card); }
+.lf-dato { display: grid; justify-items: center; line-height: 1.1;
+  padding: var(--sp-1) 0; border-radius: var(--radius-sm);
+  background: var(--flate); }
+.lf-dato strong { font-size: var(--fs-lg); }
+.lf-dato span { font-size: var(--fs-xs); text-transform: uppercase;
+  color: var(--muted); }
+.lf-hva { display: grid; gap: 0.125rem; min-width: 0; }
+.lf-hva > span { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.lf-rad > .merke { justify-self: start; grid-column: 2; }
+.lf-handling { grid-column: 1 / -1; display: flex; flex-wrap: wrap;
+  gap: var(--sp-2); align-items: center; }
+.lf-handling:empty { display: none; }
+.lf-handling .felt-inp { flex: 1 1 12rem; min-width: 0; }
+@media (min-width: 48rem) {
+  .lf-rad { grid-template-columns: 3.25rem minmax(0, 1fr) auto auto; }
+  .lf-rad > .merke { grid-column: auto; justify-self: end; }
+  .lf-handling { grid-column: auto; justify-content: flex-end; }
+}
+.lf-senere { display: grid; gap: var(--sp-2); margin-top: var(--sp-3);
+  justify-items: start; }
+.lf-senere > div { width: 100%; }
+.lf-nye { display: flex; flex-wrap: wrap; gap: var(--sp-3);
+  align-items: center; justify-content: space-between; }
+.lf-oppsett { display: grid; gap: var(--sp-3); }
+.lf-orgrad { display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: end; }
+.lf-orgrad .felt { flex: 0 1 16rem; display: grid; gap: var(--sp-1);
+  min-width: min(12rem, 100%); }
+.lf-valg { display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-5);
+  align-items: end; }
+.lf-valg .felt { display: grid; gap: var(--sp-1); min-width: 12rem; }
+.lf-funnet { margin: 0; font-weight: 600; }
+
+/* Pliktkatalogen i plattformadmin (237): ett kort per plikt. */
+.pk-maler { display: grid; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.pk-mal { display: grid; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--card); }
+.pk-hode { display: flex; gap: var(--sp-2); align-items: center;
+  justify-content: space-between; }
+.pk-hode h3, .pk-mal h4 { margin: 0; }
+.pk-mal h4 { font-size: var(--fs-sm); margin-top: var(--sp-2); }
+.pk-hjemmel { margin: 0; font-size: var(--fs-sm); }
+.pk-mal .brikke-navn { white-space: nowrap; overflow-wrap: normal; }
+/* Tre tall på rad også på telefon — de er korte, og tre kort under
+   hverandre skjøv fristene ut av første skjermbilde. */
+.lf-kpi { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+@media (max-width: 40rem) {
+  .lf-kpi .site-kpi { padding: var(--sp-2); }
+  .lf-kpi .site-kpi strong { font-size: var(--fs-md, 1rem); }
+  .lf-kpi .site-kpi span { font-size: var(--fs-xs); }
+}
+.pk-maler, .pk-mal { min-width: 0; max-width: 100%; }
+.pk-mal .brikke > .muted { white-space: normal; overflow-wrap: anywhere; }

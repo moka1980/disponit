@@ -85,6 +85,11 @@ export function erPlattformdrift(sesjon) {
 // API bak seg og hører derfor alle kundeøkter til.
 const BASISRUTER = [
   { nokkel: "oversikt", scope: "decisions:read" },
+  // 237: LOVPÅLAGTE FRISTER — kjernen kunden betaler for (eier 27/11:
+  // «Frist- og pliktvakt»). I toppnavigasjonen, rett etter oversikten:
+  // det er produktet, ikke en modul blant 57. Samme scope som M-21s
+  // lesing (`GET /v1/lovfrister` = `decisions:read`).
+  { nokkel: "lovfrister", scope: "decisions:read" },
   // M-16: nøkkeltall regnet fra faktiske beslutninger — ren leseflate
   // over samme scope som oversikten (tallene ER beslutningsdataene).
   //

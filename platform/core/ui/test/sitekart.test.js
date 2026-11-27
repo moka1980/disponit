@@ -77,6 +77,10 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // referansetekst, som ALLE kunderollene skal kunne slå opp i.
   // `GET /v1/kunnskap` krever nøyaktig det scopet i `RUTESCOPE`.
   //
+  // 237: «Lovpålagte frister» står rett etter oversikten — kjernen kunden
+  // betaler for (eier 27/11), bak M-21s lesescope (`GET /v1/lovfrister` =
+  // `decisions:read`).
+  //
   // M-21 (096): pliktregisteret er en LESEFLATE for enhver kunderolle
   // med `decisions:read` — hvilke frister som løper og hvem som eier
   // dem er ikke administratorens hemmelighet. Skriveveiene er gatet på
@@ -98,8 +102,8 @@ test("byggRuter: hver rute krever scopet API-et bak flaten krever", () => {
   // at LISTEN kan vises, ikke at hver celle kan åpnes, og flaten sier
   // det med rene ord til den som mangler innsynsscopet.
   assert.deepEqual(alle,
-    ["oversikt", "nokkeltall", "policy", "beslutninger", "unntak",
-      "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
+    ["oversikt", "lovfrister", "nokkeltall", "policy", "beslutninger",
+      "unntak", "kundeadmin", "wcagkontroll", "rekruttering", "dokumentmal",
       "kunnskap", "avtalefrist", "lisens", "kundeservice",
       "onboarding"]);
   // …og en leseøkt skal FAKTISK nå flaten: uten rute slipper
