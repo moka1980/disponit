@@ -11,9 +11,12 @@ bruker), aldri gjennom en kopi av spørringene. En eksport som leste
 tabellene selv, ville drevet fra flatene den speiler, og den ville
 trengt rettigheter API-et med vilje ikke har.
 
-HVA DEN IKKE ER: en databasedump. Kontaktpunktene i kunderegisteret står
-som MASKER, slik lista viser dem — klarteksten har ingen lesedør i dag.
-Det står i fila selv (`merknader`), så ingen tror den er fullstendig.
+HVA DEN IKKE ER: en databasedump. Listene er avkortet slik flatene er;
+det står i fila selv (`merknader`).
+
+KONTAKTPUNKTENE I KLARTEKST (233): kunderegisterets adresser er
+kundens egne, og en kunde som slutter, trenger dem. Døra gir ciphertext;
+de dekrypteres HER, med tenantens DEK, og bare i denne veien.
 
 SCOPET ER ADMINS ALENE (`firma:eksport`): fila samler alt firmaet har,
 også det en `leser` ikke får se modul for modul. Hver modul tas likevel
@@ -38,8 +41,6 @@ _EKSTRA = (
 MERKNADER = {
     "nb": [
         "Fila viser det samme som appen viser, modul for modul.",
-        "Kontaktpunktene i kunderegisteret står som masker (f.eks. "
-        "pe**@firma.no), slik lista i appen viser dem.",
         "Lister i appen er avkortet til de nyeste radene per modul; det "
         "samme gjelder her. Feltet «vist» sier hvor mange som er med.",
     ],
@@ -57,6 +58,37 @@ def _modul(conn, apimodul: str, fn: str, kall: str, tenant: str):
             return f(conn, tenant), None
     except psycopg.Error as e:
         return None, type(e).__name__
+
+
+def _legg_paa_kontakter(conn, tenant: str, kunder: list, utelatt: list):
+    """Hver kundes kontaktpunkter, dekryptert. Et punkt som ikke lar seg
+    dekryptere (en destruert nøkkel) står med masken og sier det."""
+    from db import kryptering
+    per_part: dict = {}
+    try:
+        with conn.transaction():
+            rader = conn.execute(
+                "SELECT * FROM part_kontakter_eksport(%s)", (tenant,)
+            ).fetchall()
+    except psycopg.Error:
+        utelatt.append({"modul": "kontakter", "grunn": "kunne_ikke_leses"})
+        return
+    dekker: dict = {}
+    for pid, kanal, maske, ct, nonce, key_id, primar, merkelapp in rader:
+        punkt = {"kanal": kanal, "primar": primar, "merkelapp": merkelapp,
+                 "verdi": None, "maske": maske}
+        if ct is not None and nonce is not None and key_id:
+            try:
+                if key_id not in dekker:
+                    dekker[key_id] = kryptering.hent_dek(conn, tenant, key_id)
+                punkt["verdi"] = kryptering.dekrypter(
+                    dekker[key_id], bytes(ct), bytes(nonce), tenant,
+                    key_id).get("verdi")
+            except Exception:                               # noqa: BLE001
+                punkt["uleselig"] = True
+        per_part.setdefault(str(pid), []).append(punkt)
+    for k in kunder:
+        k["kontakter"] = per_part.get(k["part_id"], [])
 
 
 def eksport_for(conn, tenant: str, scopes) -> dict:
@@ -99,6 +131,8 @@ def eksport_for(conn, tenant: str, scopes) -> dict:
                         " FROM part_liste(%s,NULL,%s)", (tenant, 100000))]
         except psycopg.Error:
             utelatt.append({"modul": "parter", "grunn": "kunne_ikke_leses"})
+        if kunder is not None:
+            _legg_paa_kontakter(conn, tenant, kunder, utelatt)
     return {
         "format": "disponit-eksport/1",
         "eksportert": datetime.now(timezone.utc).isoformat(),

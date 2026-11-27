@@ -54,7 +54,37 @@ def test_eksporten_er_en_fil_med_modulene_brukeren_kan_se(klient, token):
     assert "hms" not in d["moduler"]
     assert {"modul": "hms", "grunn": "mangler_scope"} in d["utelatt"]
     assert d["kunder"] is None, "kundelista krever part:read"
-    assert any("masker" in m for m in d["merknader"])
+
+
+@pg
+def test_kunderegisteret_kommer_med_adressene_i_klartekst(klient, token):
+    """233: kundens kontakter er hennes, og en kunde som slutter trenger
+    ADRESSENE, ikke maskene. Dekryptert i API-et, bare i eksportveien."""
+    from db import kryptering
+    from db.pg import koble
+    ref = "K-eks-" + secrets.token_hex(3)
+    adr = f"ola-{secrets.token_hex(3)}@kunde.example"
+    c = koble(DSN)
+    try:
+        _sett_kontekst(c, TENANT)
+        pid = c.execute("SELECT part_registrer(%s,%s,'Eksport AS',NULL,"
+                        "'bedrift','kari')", (TENANT, ref)).fetchone()[0]
+        key_id, dek = kryptering.hent_eller_opprett_aktiv_dek(c, TENANT)
+        ct, nonce = kryptering.krypter(dek, {"verdi": adr}, TENANT, key_id)
+        psn = c.execute("SELECT tenant_pseudonym(%s,%s)",
+                        (TENANT, adr)).fetchone()[0]
+        c.execute("SELECT part_sett_kontakt(%s,%s,'epost','ol**@kunde.example',"
+                  "%s,%s,%s,%s,true,NULL,'kari')",
+                  (TENANT, pid, ct, nonce, key_id, psn))
+        c.commit()
+    finally:
+        c.close()
+    tok, _ = token(rolle="admin", scopes=("firma:eksport", "part:read"))
+    d = json.loads(klient.get("/v1/firma/eksport", headers=_hode(tok)).content)
+    kunde = next(k for k in d["kunder"] if k["part_ref"] == ref)
+    assert kunde["kontakter"] == [{"kanal": "epost", "primar": True,
+                                   "merkelapp": None, "verdi": adr,
+                                   "maske": "ol**@kunde.example"}]
 
 
 @pg
