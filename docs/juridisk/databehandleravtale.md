@@ -2,8 +2,7 @@
 
 *UTKAST 27.11.2026, ikke gjeldende. Versjon 0.1.*
 
-Mellom **kunden** (behandlingsansvarlig) og **[FYLL INN: juridisk navn,
-org.nr.]** («Disponit», databehandler). Avtalen er en del av bruksvilkårene
+Mellom **kunden** (behandlingsansvarlig) og **Disponit (org.nr. under registrering), 2007 Kjeller** («Disponit», databehandler). Avtalen er en del av bruksvilkårene
 og gjelder så lenge Disponit behandler personopplysninger på kundens vegne.
 
 ## 1. Formål og instruks
@@ -48,7 +47,7 @@ vurdert det særskilt.
 ## 5. Underdatabehandlere
 
 Kunden godkjenner leverandørene i personvernerklæringen. Disponit varsler
-kunden minst [FYLL INN: f.eks. 30] dager før en ny underdatabehandler tas i
+kunden minst 30 dager før en ny underdatabehandler tas i
 bruk, og kunden kan da si opp. Disponit inngår avtaler med samme
 plikter som denne med hver underdatabehandler.
 
@@ -57,9 +56,9 @@ postboks hos dem, og da etter kundens egen avtale med dem.
 
 ## 6. Overføring ut av EØS
 
-[FYLL INN: Bekreft at serveren står i EØS. For Google og Microsoft: grunnlag
-for overføring, for eksempel EUs standardavtaler eller EU–US Data Privacy
-Framework.]
+Kundens data lagres på servere i Tyskland (EØS). Google og Microsoft kan
+behandle data i USA når kunden kobler til en postboks hos dem. Grunnlaget er
+EU–US Data Privacy Framework og EUs standardavtaler i deres egne vilkår.
 
 ## 7. Bistand
 
@@ -70,7 +69,7 @@ konsekvensvurderinger når kunden ber om det.
 ## 8. Avvik
 
 Disponit varsler kunden uten ugrunnet opphold, og senest innen
-[FYLL INN: f.eks. 48] timer, etter å ha blitt kjent med et brudd på
+48 timer, etter å ha blitt kjent med et brudd på
 personopplysningssikkerheten.
 
 ## 9. Revisjon

@@ -4,8 +4,8 @@
 
 ## Hvem vi er
 
-**[FYLL INN: juridisk navn, org.nr., adresse]** leverer tjenesten Disponit.
-Personvernspørsmål: **[FYLL INN: e-post]**.
+**Disponit (org.nr. under registrering), 2007 Kjeller** leverer tjenesten Disponit.
+Personvernspørsmål: **eliassi@gmail.com**.
 
 ## To roller
 
@@ -41,10 +41,10 @@ leverandørene (underdatabehandlere):
 
 | Leverandør | Hva | Hvor |
 |---|---|---|
-| [FYLL INN: vertsleverandør] | Servere og database | [FYLL INN: land, EØS] |
-| Google | Innlogging, og Gmail hvis firmaet kobler det til | [FYLL INN: Googles behandlingssted / EU-standardavtaler] |
-| Microsoft | Innlogging, og Microsoft 365-postboks hvis firmaet kobler den til | [FYLL INN] |
-| [FYLL INN: e-postleverandør] | Utgående e-post fra plattformens adresse | [FYLL INN] |
+| one.com (driftet av dogado GmbH i one.com-konsernet) | Servere og database | Tyskland (EØS) |
+| Google | Innlogging, og Gmail hvis firmaet kobler det til | EØS og USA (EU–US Data Privacy Framework og EUs standardavtaler) |
+| Microsoft | Innlogging, og Microsoft 365-postboks hvis firmaet kobler den til | EØS og USA (EU–US Data Privacy Framework og EUs standardavtaler) |
+| one.com | Utgående e-post fra plattformens adresse | EØS |
 
 Ingen språkmodell eller annen ekstern KI-tjeneste får tilgang til dataene.
 
@@ -58,7 +58,7 @@ per rolle, og alt som endres, logges.
 
 Du kan be om innsyn, retting, sletting, begrensning og dataportabilitet, og
 du kan protestere mot behandling som bygger på berettiget interesse. Kontakt
-oss på [FYLL INN: e-post]. Gjelder det data firmaet ditt har lagt inn, sender
+oss på eliassi@gmail.com. Gjelder det data firmaet ditt har lagt inn, sender
 vi henvendelsen videre til firmaet.
 
 Du kan klage til Datatilsynet (datatilsynet.no).

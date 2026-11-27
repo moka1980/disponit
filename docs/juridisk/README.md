@@ -1,6 +1,6 @@
 # Juridiske tekster: UTKAST
 
-**Status: utkast skrevet 27.11.2026. Ikke publisert, og ingen kunde har godtatt noe.**
+**Status: utkast 27.11.2026, eiers opplysninger fylt inn. Ikke publisert, og ingen kunde har godtatt noe.**
 
 De tre dokumentene må gjennomgås av eier, og helst av en jurist, før de
 publiseres og registreringen begynner å kreve at de godtas.
@@ -11,17 +11,25 @@ publiseres og registreringen begynner å kreve at de godtas.
 | `personvern.md` | Personvernerklæring | Brukerne som logger inn, og alle som vil vite hva vi gjør med data |
 | `databehandleravtale.md` | Databehandleravtale (GDPR art. 28) | Kunden er behandlingsansvarlig for sine kunders og ansattes data, og Disponit er databehandler |
 
-## Det eier må fylle inn (`[FYLL INN: …]` i tekstene)
+## Fylt inn av eier 27.11.2026
 
-1. **Juridisk enhet** som leverer tjenesten: navn, organisasjonsnummer og adresse.
-2. **Kontaktadresse** for kunder og for personvernspørsmål. Samme adresse kan settes som
-   `DISPONIT_KONTAKT_EPOST` på verten, så den også vises i prøveperiodebanneret.
-3. **Vertsleverandør og land** for serveren (`disponit-srv`, OpenStack-sky). Bekreft
-   leverandør og at dataene ligger i EØS.
-4. **E-postleverandør** for utgående e-post fra plattformens egen adresse (SMTP).
-5. **Pris og betaling** når betaling innføres. Vilkårene sier nå bare at prøveperioden
-   er gratis og at videre bruk avtales.
-6. **Ansvarsbegrensning**: beløpsgrensen i vilkårene § 9.
+- Leverandør: Disponit, 2007 Kjeller. **Org.nr. mangler** — se under.
+- Kontakt: eliassi@gmail.com (også `DISPONIT_KONTAKT_EPOST` på verten).
+- Vert og e-post: one.com. Serveren (81.88.19.25) er registrert på
+  dogado GmbH i one.com-konsernet, Dortmund, **Tyskland (EØS)** — slått
+  opp i RIPE 27.11.
+- Pris: avtales individuelt.
+- Ansvarsgrense: forslag (§ 9) — det kunden har betalt siste 12 måneder,
+  null i prøveperioden, ikke ved grov uaktsomhet/forsett.
+- Verneting: Lillestrøm tingrett.
+
+## Før publisering
+
+1. **Organisasjonsnummer.** «Disponit» uten org.nr. er ikke en juridisk
+   person — avtalepart blir da personen bak. Registrer et
+   enkeltpersonforetak eller AS i Brønnøysundregistrene, og sett inn
+   navn og nummer.
+2. Helst en gjennomlesning av jurist.
 
 ## Fakta som er hentet fra koden (endres koden, må teksten følge)
 

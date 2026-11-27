@@ -4,7 +4,7 @@
 
 ## 1. Partene
 
-Disse vilkårene gjelder mellom **[FYLL INN: juridisk navn, org.nr., adresse]**
+Disse vilkårene gjelder mellom **Disponit (org.nr. under registrering), 2007 Kjeller**
 («Disponit», «vi») og firmaet som registrerer seg og bruker tjenesten
 («kunden»). Den som registrerer firmaet, bekrefter at hun har rett til å binde
 firmaet.
@@ -33,8 +33,8 @@ går ut. Når prøveperioden er over og ingen videre avtale er inngått:
 - slutter agentene å gjøre noe av seg selv, og ingen e-post hentes eller sendes,
 - kan kunden fortsatt logge inn, se alt og laste ned dataene sine.
 
-Videre bruk etter prøveperioden avtales med Disponit. **[FYLL INN: pris og
-betalingsvilkår når betaling innføres.]**
+Videre bruk etter prøveperioden, med pris og betalingsvilkår, avtales
+individuelt med Disponit.
 
 ## 4. Kundens ansvar
 
@@ -74,24 +74,27 @@ det en angrefrist på 30 dager der firmaet kan gjenåpnes med alt i behold.
 Deretter destrueres firmaets krypteringsnøkkel, slik at dataene ikke lenger
 kan leses, og de ryddes bort. Last ned dataene før fristen er ute.
 
-Disponit kan si opp avtalen med [FYLL INN: varsel, f.eks. 30 dagers]
+Disponit kan si opp avtalen med 30 dagers
 skriftlig varsel, eller straks ved vesentlig mislighold.
 
 ## 8. Endringer i vilkårene
 
 Vi varsler vesentlige endringer i appen og på e-post minst
-[FYLL INN: f.eks. 30] dager før de trer i kraft.
+30 dager før de trer i kraft.
 
 ## 9. Ansvarsbegrensning
 
-Disponit er ikke ansvarlig for indirekte tap. Samlet ansvar er begrenset til
-[FYLL INN: f.eks. det kunden har betalt de siste 12 månedene / et fast beløp].
-Begrensningen gjelder ikke ved grov uaktsomhet eller forsett.
+Disponit er ikke ansvarlig for indirekte tap, som tapt fortjeneste eller tapte
+data utover det eksporten og slettefristene sikrer. Samlet ansvar er begrenset
+til det kunden har betalt for tjenesten de siste 12 månedene før skaden
+oppsto. I prøveperioden, og ellers når tjenesten er vederlagsfri, er Disponit
+ikke ansvarlig for tap. Begrensningene gjelder ikke ved grov uaktsomhet eller
+forsett.
 
 ## 10. Lovvalg og verneting
 
-Norsk rett gjelder. Tvister løses ved [FYLL INN: tingrett] som avtalt verneting.
+Norsk rett gjelder. Tvister løses ved Lillestrøm tingrett som avtalt verneting.
 
 ## 11. Kontakt
 
-[FYLL INN: e-postadresse for kunder]
+eliassi@gmail.com
