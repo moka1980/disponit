@@ -82,7 +82,7 @@ INSERT INTO juridisk_dokument (dok, versjon, tekst, endret_av) VALUES
 
 Disse vilkårene gjelder mellom **{{navn}}, org.nr. {{orgnummer}}, {{adresse}}**
 («Disponit», «vi») og firmaet som registrerer seg og bruker tjenesten
-(«kunden»). Den som registrerer firmaet, bekrefter at hun har rett til å binde
+(«kunden»). Den som registrerer firmaet, bekrefter å ha rett til å binde
 firmaet.
 
 ## 2. Tjenesten

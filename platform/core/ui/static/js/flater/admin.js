@@ -379,9 +379,10 @@ export function juridiskseksjon(ctx) {
         el("a", { href: `/${d.dok}`, target: "_blank", rel: "noopener",
           text: t("ui.juridiskadmin.se_siden") })),
       status, utkastinfo,
-      el("label", { for: id, text: t("ui.juridiskadmin.tekst") }), tekst,
-      el("p", { class: "hjelpetekst", text: t("ui.juridiskadmin.felt")
-        .replace("{felt}", felt.map((f) => `{{${f}}}`).join(", ")) }),
+      el("div", { class: "felt jur-felt" },
+        el("label", { for: id, text: t("ui.juridiskadmin.tekst") }), tekst,
+        el("p", { class: "hjelpetekst", text: t("ui.juridiskadmin.felt")
+          .replace("{felt}", felt.map((f) => `{{${f}}}`).join(", ")) })),
       rad, forhand);
   };
 
