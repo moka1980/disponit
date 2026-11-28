@@ -1066,7 +1066,10 @@ def test_rutescope_registeret_dekker_alle_ruter():
                        "/v1/juridisk", "/v1/juridisk/{dok:str}",
                        # 236: prøveperioden og bransjene som tilbys —
                        # forsiden viser tallet før noen er logget inn.
-                       "/v1/registrering/valg"}
+                       "/v1/registrering/valg",
+                       # 239: kalenderfila hentes av Outlook/Google uten
+                       # økt. Credentialet er lenken selv (hash i basen).
+                       "/kalender/{fil:str}"}
     for (metode, sti), scope in RUTESCOPE.items():
         if scope is None:
             assert sti in UAUTENTISERT_OK, \

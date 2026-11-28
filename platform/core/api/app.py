@@ -3651,6 +3651,18 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
     def lovfrister_oppslag(request: Request) -> Response:
         return lovfristmodul.oppslag_endepunkt(tjeneste, request)
 
+    def lovfrister_egen(request: Request) -> Response:
+        return lovfristmodul.egen_endepunkt(tjeneste, request)
+
+    def lovfrister_kalender_lag(request: Request) -> Response:
+        return lovfristmodul.kalender_lag_endepunkt(tjeneste, request)
+
+    def lovfrister_kalender_slett(request: Request) -> Response:
+        return lovfristmodul.kalender_slett_endepunkt(tjeneste, request)
+
+    def kalender_ics(request: Request) -> Response:
+        return lovfristmodul.kalender_endepunkt(tjeneste, request)
+
     def pa_pliktkatalog(request: Request) -> Response:
         return lovfristmodul.katalog_endepunkt(tjeneste, request)
 
@@ -4810,6 +4822,12 @@ def lag_app(dsn: str | None = None, **kwargs) -> Starlette:
         Route("/v1/lovfrister", lovfrister_lagre, methods=["POST"]),
         Route("/v1/lovfrister/oppslag", lovfrister_oppslag,
               methods=["POST"]),
+        Route("/v1/lovfrister/egen", lovfrister_egen, methods=["POST"]),
+        Route("/v1/lovfrister/kalender", lovfrister_kalender_lag,
+              methods=["POST"]),
+        Route("/v1/lovfrister/kalender/slett", lovfrister_kalender_slett,
+              methods=["POST"]),
+        Route("/kalender/{fil:str}", kalender_ics, methods=["GET"]),
         Route("/v1/plattform/pliktkatalog", pa_pliktkatalog,
               methods=["GET"]),
         Route("/v1/plattform/pliktkatalog/mal", pa_pliktkatalog_mal,
@@ -6505,6 +6523,13 @@ RUTESCOPE: dict[tuple[str, str], str | None] = {
     ("GET",  "/v1/lovfrister"):              "decisions:read",
     ("POST", "/v1/lovfrister"):              "bestilling:opprett",
     ("POST", "/v1/lovfrister/oppslag"):      "bestilling:opprett",
+    # 239: egne frister og kalenderlenken. Selve kalenderfila hentes av et
+    # kalenderprogram UTEN økt — lenken (256 biter, bare hashen lagret) er
+    # nøkkelen.
+    ("POST", "/v1/lovfrister/egen"):         "bestilling:opprett",
+    ("POST", "/v1/lovfrister/kalender"):     "bestilling:opprett",
+    ("POST", "/v1/lovfrister/kalender/slett"): "bestilling:opprett",
+    ("GET",  "/kalender/{fil:str}"):         None,
     ("GET",  "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer"):       "policy:read",
     ("POST", "/v1/plattform/firmaer/{tenant:str}/oppdater"): "policy:read",
