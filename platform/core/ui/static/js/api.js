@@ -442,6 +442,8 @@ export const settPliktfrist = (frist, idem = nyIdempotensnokkel()) =>
   _muter("/v1/plattform/pliktkatalog/frist", "POST", frist, idem);
 export const slettPliktfrist = (frist, idem = nyIdempotensnokkel()) =>
   _muter("/v1/plattform/pliktkatalog/frist/slett", "POST", frist, idem);
+export const settPliktveiledning = (v, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/plattform/pliktkatalog/veiledning", "POST", v, idem);
 export const hentInnstillinger = () => hentJson("/v1/plattform/innstillinger");
 export const settInnstillinger = (kropp, idem = nyIdempotensnokkel()) =>
   _muter("/v1/plattform/innstillinger", "POST", kropp, idem);

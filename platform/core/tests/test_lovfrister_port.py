@@ -41,9 +41,11 @@ def ren_katalog():
     try:
         maler = m.execute("SELECT * FROM plattform_pliktmal").fetchall()
         frister = m.execute("SELECT * FROM plattform_pliktfrist").fetchall()
+        veil = m.execute("SELECT * FROM plattform_pliktveiledning").fetchall()
         m.rollback()
         yield
         m.execute("DELETE FROM plattform_pliktfrist")
+        m.execute("DELETE FROM plattform_pliktveiledning")
         m.execute("DELETE FROM plattform_pliktmal")
         for r in maler:
             m.execute("INSERT INTO plattform_pliktmal VALUES"
@@ -51,6 +53,9 @@ def ren_katalog():
         for r in frister:
             m.execute("INSERT INTO plattform_pliktfrist VALUES"
                       " (%s,%s,%s,%s,%s)", r)
+        for r in veil:
+            m.execute("INSERT INTO plattform_pliktveiledning VALUES"
+                      " (%s,%s,%s,%s,%s,%s)", r)
         m.commit()
     finally:
         m.close()
@@ -410,3 +415,73 @@ def test_kalenderen_viser_bare_firmaets_egne_frister(klient, fast_dag,
                         headers=_idem(hb)).json()["sti"]
     tekst = klient.get(sti_b).text
     assert "Avtale B" in tekst and "Hemmelig avtale A" not in tekst
+
+
+# ---------------------------------------------------------------------------
+# 240: «Slik gjør du det»
+#
+# MUTASJONER SOM DREPER DISSE: dropp `plattform_krev_eier` fra
+# veiledningsdøra (403-kravet), send veiledningen med for ALLE plikter
+# (ENK-kravet), la en halv lenke (tekst uten adresse) slippe gjennom.
+# ---------------------------------------------------------------------------
+
+@pg
+def test_slik_gjor_du_det_folger_fristen(klient, fast_dag, ren_katalog):
+    _tenant, c, h = _kunde()
+    d = klient.post("/v1/lovfrister", cookies=c, headers=h, json={
+        "orgnummer": "923609016", "orgform": "AS", "mva": True,
+        "ansatte": True, "kilde": "brreg"}).json()
+    v = d["veiledning"]
+    # Startteksten: hver plikt kunden HAR, og bare dem.
+    assert set(v) == {f["nokkel"] for f in d["frister"]}
+    assert "forskuddsskatt_enk" not in v
+    assert len(v["a_melding"]["steg"]) >= 2
+    assert v["a_melding"]["skjema_url"].startswith("https://")
+    assert v["generalforsamling"]["skjema_url"] is None
+
+    # Eieren retter teksten i plattformadmin, og kunden ser den nye.
+    ec, eh = _eier()
+    r = klient.post("/v1/plattform/pliktkatalog/veiledning", cookies=ec,
+                    headers=eh, json={
+                        "nokkel": "a_melding",
+                        "steg": ["  Kjør lønn.  ", "", "Send fra lønnssystemet."],
+                        "skjema_navn": "Altinn", "skjema_url":
+                            "https://info.altinn.no/"})
+    assert r.status_code == 200, r.text
+    mal = next(m for m in r.json()["maler"] if m["nokkel"] == "a_melding")
+    assert mal["veiledning"] == {
+        "steg": ["Kjør lønn.", "Send fra lønnssystemet."],
+        "skjema_navn": "Altinn", "skjema_url": "https://info.altinn.no/"}
+    assert klient.get("/v1/lovfrister", cookies=c).json()[
+        "veiledning"]["a_melding"]["steg"][0] == "Kjør lønn."
+
+    # Tomt = veiledningen fjernes, og knappen forsvinner hos kunden.
+    r = klient.post("/v1/plattform/pliktkatalog/veiledning", cookies=ec,
+                    headers=eh, json={"nokkel": "a_melding", "steg": []})
+    assert r.status_code == 200, r.text
+    assert "a_melding" not in klient.get(
+        "/v1/lovfrister", cookies=c).json()["veiledning"]
+
+
+@pg
+def test_veiledningen_er_plattformeierens(klient, ren_katalog):
+    from api import sesjon as sesjonmodul
+    ec, eh = _eier()
+    god = {"nokkel": "mva_termin", "steg": ["Send meldingen."]}
+    for kropp in ({**god, "steg": ["x"] * 9},
+                  {**god, "steg": ["x" * 301]},
+                  {**god, "steg": "ikke en liste"},
+                  {**god, "skjema_navn": "Bare tekst"},
+                  {**god, "skjema_url": "https://bare.adresse.example/"},
+                  {**god, "skjema_navn": "n",
+                   "skjema_url": "http://usikker.example/"},
+                  {**god, "nokkel": "finnes_ikke"}):
+        r = klient.post("/v1/plattform/pliktkatalog/veiledning", cookies=ec,
+                        headers=eh, json=kropp)
+        assert r.status_code == 400, (kropp, r.text)
+    bid = _bruker("lovf-veil-uten", plattformeier=False)
+    cookie, csrf = _browsersesjon(bid)
+    r = klient.post("/v1/plattform/pliktkatalog/veiledning",
+                    cookies={sesjonmodul.C_SESJON: cookie},
+                    headers={"x-disponit-csrf": csrf}, json=god)
+    assert r.status_code == 403, r.text

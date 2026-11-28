@@ -171,7 +171,7 @@ function profilSkjema(d, ctx, etter) {
   return skjema;
 }
 
-function fristRad(f, ctx, oppdater, idag) {
+function fristRad(f, ctx, oppdater, idag, veiledning) {
   const [tekst, art] = statusTekst(f, idag);
   const handling = el("div", { class: "lf-handling" });
   if (f.status === "apen" && f.registrert) {
@@ -235,13 +235,38 @@ function fristRad(f, ctx, oppdater, idag) {
         `${f.periode} · ${f.hjemmel} · `,
         el("a", { href: f.kilde_url, target: "_blank", rel: "noopener",
           text: t("ui.lovfrister.kilde") }));
+  // «SLIK GJØR DU DET» (240): fristvakten sa NÅR — dette sier HVA og
+  // HVOR. Sammenklappet, så listen fortsatt er en liste; bare for frister
+  // som ikke er levert.
+  const slik = veiledning && f.status === "apen"
+    ? slikGjorDu(f, veiledning) : [];
   return el("li", { class: "lf-rad" },
     el("div", { class: "lf-dato", "aria-hidden": "true" },
       el("strong", { text: dag }),
       el("span", { text: t(`ui.lovfrister.mnd.${Number(mnd)}`) })),
-    el("div", { class: "lf-hva" }, el("strong", { text: f.tittel }), om),
+    el("div", { class: "lf-hva" }, el("strong", { text: f.tittel }), om,
+      ...slik.slice(0, 1)),
     el("span", { class: `merke ${art}`, text: tekst }),
-    handling);
+    handling, ...slik.slice(1));
+}
+
+// [knappen, panelet]. Knappen sier om panelet er åpent (aria-expanded).
+function slikGjorDu(f, v) {
+  const id = `lf-slik-${f.plikt_id}`;
+  const knapp = el("button", { type: "button", class: "knapp liten lf-slikknapp",
+    "aria-expanded": "false", "aria-controls": id,
+    text: t("ui.lovfrister.slik") });
+  const panel = el("div", { id, class: "lf-slik", hidden: true },
+    ...(v.steg.length ? [el("ol", {},
+      ...v.steg.map((x) => el("li", { text: x })))] : []),
+    ...(v.skjema_url ? [el("a", { class: "knapp liten primar",
+      href: v.skjema_url, target: "_blank", rel: "noopener noreferrer",
+      text: v.skjema_navn || t("ui.lovfrister.kilde") })] : []));
+  knapp.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    knapp.setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  return [knapp, panel];
 }
 
 // «+ EGEN FRIST» (239): leieavtalen, forsikringen, domenet. Én linje —
@@ -417,7 +442,8 @@ export function visLovfrister(hoved, ctx = {}) {
     const senere = frister.filter((f) => !naer.includes(f));
     const oppdater = (k) => hentLovfrister().then((x) => tegn(x, k));
     const liste = (rader) => el("ol", { class: "lf-liste" },
-      ...rader.map((f) => fristRad(f, ctx, oppdater, idag)));
+      ...rader.map((f) => fristRad(f, ctx, oppdater, idag,
+        f.egen ? null : (d.veiledning || {})[f.nokkel])));
 
     const nyeBoks = d.profil && d.nye_i_katalogen > 0 ? (() => {
       const knapp = el("button", { type: "button", class: "knapp primar liten",

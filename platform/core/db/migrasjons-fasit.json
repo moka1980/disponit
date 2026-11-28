@@ -237,5 +237,6 @@
   "236_plattform_innstillinger.sql": "cdf8b196cf2461bc844889c924b24e222ce9ea5bb126d81bf15248286c3ef505",
   "237_lovpalagte_frister.sql": "f264d73dc5887f6e16f8c30e13d7abbfa05bf77a3605705737135f50c22c34c1",
   "238_lovfrister_av_seg_selv.sql": "d6f5bf8c7fd05ca33c8ff35436760f99567b75a93575ba063680e6482f6797fb",
-  "239_kalenderlenke.sql": "7d12e02102427a3a5e2a63bf3e7154af1f98a76dc216a96e3761db1605421978"
+  "239_kalenderlenke.sql": "7d12e02102427a3a5e2a63bf3e7154af1f98a76dc216a96e3761db1605421978",
+  "240_slik_gjor_du_det.sql": "6af6b2bab9d2d83ff617a3b96ec1dc9453357df3f31bef8f9daf3db96574bbe0"
 }

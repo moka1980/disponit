@@ -78,11 +78,23 @@ def katalog(conn) -> list[dict]:
             "nokkel": nokkel, "tittel": tittel, "myndighet": myndighet,
             "hjemmel": hjemmel, "kilde_url": kilde_url,
             "orgformer": list(orgformer or []), "krever_mva": mva,
-            "krever_ansatte": ansatte, "aktiv": aktiv, "frister": []})
+            "krever_ansatte": ansatte, "aktiv": aktiv, "frister": [],
+            "veiledning": None})
         if frist is not None:
             m["frister"].append({"periode": periode,
                                  "frist": frist.isoformat()})
+    for nokkel, v in veiledninger(conn).items():
+        if nokkel in maler:
+            maler[nokkel]["veiledning"] = v
     return list(maler.values())
+
+
+def veiledninger(conn) -> dict[str, dict]:
+    """«Slik gjør du det» per plikt (240): noen få steg og én lenke."""
+    return {r[0]: {"steg": list(r[1] or []), "skjema_navn": r[2],
+                   "skjema_url": r[3]}
+            for r in conn.execute(
+                "SELECT * FROM plattform_pliktveiledning()").fetchall()}
 
 
 def gjelder(mal: dict, profil: dict) -> bool:
@@ -199,7 +211,13 @@ def svar_for(conn, tenant: str) -> dict:
     frister.sort(key=lambda x: (x["frist"], x["nokkel"], x["plikt_id"]))
     laget = conn.execute("SELECT kalenderlenke_status(%s)",
                          (tenant,)).fetchone()[0]
+    # «SLIK GJØR DU DET» (240), én gang per plikt — ikke gjentatt på hver
+    # av årets tretten a-meldinger.
+    viste = {f["nokkel"] for f in frister}
+    veiledning = {m["nokkel"]: m["veiledning"] for m in maler
+                  if m["veiledning"] and m["nokkel"] in viste}
     return {"profil": profil, "frister": frister, "nye_i_katalogen": nye,
+            "veiledning": veiledning,
             "orgnummer_firma": _firmaets_orgnummer(conn, tenant),
             "kalender": {"aktiv": laget is not None,
                          "opprettet": laget.isoformat() if laget else None}}
@@ -652,5 +670,39 @@ def frist_slett_endepunkt(tjeneste, request):
             return "frist"
         conn.execute("SELECT plattform_pliktfrist_slett(%s,%s,%s)",
                      (bid, k["nokkel"], frist))
+        return None
+    return _eier_skriv(tjeneste, request, fn)
+
+
+MAKS_STEG = 8
+
+
+def veiledning_endepunkt(tjeneste, request):
+    """POST /v1/plattform/pliktkatalog/veiledning —
+    {nokkel, steg: [tekst …], skjema_navn?, skjema_url?}. Tomme steg og
+    ingen lenke fjerner veiledningen."""
+    def fn(conn, bid, k):
+        if not isinstance(k.get("nokkel"), str):
+            return "nokkel"
+        steg = k.get("steg", [])
+        if not isinstance(steg, list) or not all(
+                isinstance(x, str) for x in steg):
+            return "steg"
+        steg = [x.strip() for x in steg if x.strip()]
+        if len(steg) > MAKS_STEG or any(len(x) > 300 for x in steg):
+            return "steg"
+        navn, url = k.get("skjema_navn"), k.get("skjema_url")
+        for v in (navn, url):
+            if v is not None and not isinstance(v, str):
+                return "skjema"
+        navn, url = (navn or "").strip(), (url or "").strip()
+        if bool(navn) != bool(url):
+            return "skjema"         # knappen trenger både tekst og adresse
+        if url and (not url.startswith("https://") or " " in url
+                    or len(url) > 500 or len(navn) > 80):
+            return "skjema"
+        conn.execute(
+            "SELECT plattform_pliktveiledning_sett(%s,%s,%s,%s,%s)",
+            (bid, k["nokkel"], steg, navn or None, url or None))
         return None
     return _eier_skriv(tjeneste, request, fn)

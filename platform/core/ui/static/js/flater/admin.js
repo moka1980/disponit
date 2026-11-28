@@ -5,7 +5,8 @@ import { ApiFeil, UautorisertFeil, erPlattformeier, hentPlattformFirmaer,
          settPlattformFirmastatus, hentLeverandor, settLeverandor,
          hentJuridisk, lagreJuridiskUtkast, publiserJuridisk,
          hentInnstillinger, settInnstillinger, hentPliktkatalog,
-         settPliktmal, settPliktfrist, slettPliktfrist }
+         settPliktmal, settPliktfrist, slettPliktfrist,
+         settPliktveiledning }
   from "../api.js";
 import { tekstTilNoder } from "./juridisk.js";
 import { meldLive } from "../komponenter.js";
@@ -371,6 +372,67 @@ export function pliktkatalogseksjon(ctx) {
     });
     const endre = el("button", { type: "button", class: "knapp liten",
       text: t("ui.pliktkatalog.endre") });
+    // «SLIK GJØR DU DET» (240): stegene kunden ser under fristen. Én knapp
+    // som sier hvor mange steg som står der; skjemaet åpnes først da.
+    const v = m.veiledning || { steg: [], skjema_navn: null, skjema_url: null };
+    const slikBoks = el("div", { class: "pk-slik" });
+    const slikKnapp = el("button", { type: "button", class: "knapp liten",
+      text: v.steg.length || v.skjema_url
+        ? t("ui.pliktkatalog.slik.endre").replace("{n}", String(v.steg.length))
+        : t("ui.pliktkatalog.slik.legg_til") });
+    slikKnapp.addEventListener("click", () => {
+      const sId = `pk-${m.nokkel}-steg`;
+      const nId = `pk-${m.nokkel}-skjemanavn`;
+      const uId = `pk-${m.nokkel}-skjemaurl`;
+      const steg = el("textarea", { id: sId, class: "felt-inp", rows: "5" });
+      steg.value = v.steg.join("\n");
+      const navn = el("input", { id: nId, class: "felt-inp", autocomplete: "off",
+        value: v.skjema_navn || "" });
+      const url = el("input", { id: uId, class: "felt-inp", type: "url",
+        autocomplete: "off", value: v.skjema_url || "" });
+      const lagre = el("button", { type: "submit", class: "knapp primar",
+        text: t("ui.pliktkatalog.slik.lagre") });
+      const avbryt = el("button", { type: "button", class: "knapp",
+        text: t("ui.plattform.avbryt") });
+      avbryt.addEventListener("click", () => {
+        sett(slikBoks, slikKnapp); slikKnapp.focus();
+      });
+      const skjema = el("form", { class: "kv-skjema lev-skjema", novalidate: "" },
+        el("div", { class: "felt" },
+          el("label", { for: sId, text: t("ui.pliktkatalog.slik.steg") }), steg,
+          el("p", { class: "hjelpetekst", text: t("ui.pliktkatalog.slik.hjelp") })),
+        el("div", { class: "felt" },
+          el("label", { for: nId, text: t("ui.pliktkatalog.slik.skjema_navn") }),
+          navn),
+        el("div", { class: "felt" },
+          el("label", { for: uId, text: t("ui.pliktkatalog.slik.skjema_url") }),
+          url),
+        el("div", { class: "knapperad" }, lagre, avbryt));
+      skjema.addEventListener("submit", (ev) => {
+        ev.preventDefault();
+        const linjer = steg.value.split("\n").map((x) => x.trim()).filter(Boolean);
+        // Grensene sies HER, ved feltet — ikke som et avslag fra serveren.
+        const galt = linjer.length > 8 || linjer.some((x) => x.length > 300)
+          ? "ui.pliktkatalog.slik.feil.steg"
+          : (!!navn.value.trim() !== !!url.value.trim()
+             || (url.value.trim() && !/^https:\/\/\S+$/.test(url.value.trim()))
+            ? "ui.pliktkatalog.slik.feil.skjema" : null);
+        if (galt) {
+          melding.textContent = t(galt); meldLive(melding.textContent);
+          (galt.endsWith("steg") ? steg : url).focus();
+          return;
+        }
+        lagre.disabled = true;
+        settPliktveiledning({ nokkel: m.nokkel, steg: linjer,
+          skjema_navn: navn.value.trim() || null,
+          skjema_url: url.value.trim() || null })
+          .then((d) => tegn(d, t("ui.pliktkatalog.slik.lagret")))
+          .catch((e) => { lagre.disabled = false; feil(e); });
+      });
+      sett(slikBoks, skjema);
+      steg.focus();
+    });
+    slikBoks.append(slikKnapp);
     const kort = el("article", { class: "pk-mal" },
       el("div", { class: "pk-hode" },
         el("h3", { text: m.tittel }), endre),
@@ -381,7 +443,7 @@ export function pliktkatalogseksjon(ctx) {
         ...gjelder.map((g) => el("li", { class: "brikke brikke-tekst", text: g }))),
       el("h4", { text: t("ui.pliktkatalog.frister").replace("{n}",
         String(m.frister.length)) }),
-      frister, nyFrist);
+      frister, nyFrist, slikBoks);
     endre.addEventListener("click", () => {
       sett(kort, malSkjema(m, (d, k) => (d ? tegn(d, k) : tegn())));
     });
