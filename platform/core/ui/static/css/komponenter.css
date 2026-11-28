@@ -2018,3 +2018,16 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
   align-items: center; justify-content: space-between; }
 .dash-fristtekst { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3);
   align-items: center; min-width: 0; }
+
+/* Egne frister og kalenderlenken (239). */
+.lf-hode { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center;
+  justify-content: space-between; }
+.lf-hode h2 { margin: 0; }
+.lf-egen { margin: var(--sp-3) 0; padding: var(--sp-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--flate); }
+.lf-kalrad { display: flex; flex-wrap: wrap; gap: var(--sp-2);
+  align-items: center; }
+.lf-kalrad .felt-inp { flex: 1 1 16rem; min-width: 0;
+  font-family: var(--font-mono); font-size: var(--fs-sm); }
+.lf-hva .tag { line-height: 1.3rem; font-size: var(--fs-xs); }

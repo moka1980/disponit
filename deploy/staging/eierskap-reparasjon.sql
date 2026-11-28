@@ -1900,7 +1900,12 @@ INSERT INTO _design VALUES
     -- 238: fristvakten virker av seg selv.
     ('FUNCTION', 'lovfrister_plikt_id(text,text,date)',                      'disponit_plattform_eier'),
     ('FUNCTION', 'lovfrister_registrer(text,text,text)',                     'disponit_plattform_eier'),
-    ('FUNCTION', 'lovfrister_synk(integer)',                                 'disponit_plattform_eier');
+    ('FUNCTION', 'lovfrister_synk(integer)',                                 'disponit_plattform_eier'),
+    -- 239: kalenderlenken.
+    ('FUNCTION', 'kalenderlenke_sett(text,text,text)',                       'disponit_plattform_eier'),
+    ('FUNCTION', 'kalenderlenke_slett(text)',                                'disponit_plattform_eier'),
+    ('FUNCTION', 'kalenderlenke_status(text)',                               'disponit_plattform_eier'),
+    ('FUNCTION', 'kalenderlenke_tenant(text)',                               'disponit_plattform_eier');
 
 DO $$
 DECLARE

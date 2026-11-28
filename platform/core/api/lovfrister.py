@@ -138,21 +138,28 @@ def _firmaets_orgnummer(conn, tenant: str) -> str | None:
         return None
 
 
+def _registeret(conn, tenant: str) -> list[dict]:
+    """Hele M-21-registeret til firmaet, med fristen som Oslo-dato."""
+    return [{"plikt_id": str(r[0]), "tittel": r[1], "kilde": r[2],
+             "frist": r[3].astimezone(OSLO).date(), "dogn_til_frist": r[4],
+             "gjentakelse": r[5], "status": r[6], "kvittering_ref": r[7]}
+            for r in conn.execute(
+                "SELECT plikt_id, tittel, kilde, frist_ts, dogn_til_frist,"
+                " gjentakelse, status, kvittering_ref"
+                " FROM m21_plikter(%s,%s)", (tenant, 500)).fetchall()]
+
+
 def svar_for(conn, tenant: str) -> dict:
     profil = profil_for(conn, tenant)
     maler = katalog(conn)
-    status: dict[str, dict] = {}
-    for r in conn.execute("SELECT plikt_id, status, dogn_til_frist,"
-                          " kvittering_ref FROM m21_plikter(%s,%s)",
-                          (tenant, 500)).fetchall():
-        status[str(r[0])] = {"status": r[1], "dogn_til_frist": r[2],
-                             "kvittering_ref": r[3]}
+    register = _registeret(conn, tenant)
+    status = {p["plikt_id"]: p for p in register}
     frister = []
     nye = 0
+    fra = i_dag() - datetime.timedelta(days=60)
     if profil is not None:
         # Fra 60 dager tilbake: en frist som nettopp gikk ut og ikke er
         # levert, skal fortsatt stå der.
-        fra = i_dag() - datetime.timedelta(days=60)
         for f in firmaets_frister(maler, profil, fra):
             pid = str(plikt_id(tenant, f["nokkel"], f["frist"]))
             st = status.get(pid)
@@ -160,13 +167,42 @@ def svar_for(conn, tenant: str) -> dict:
                 nye += 1
             if st is None and f["frist"] < i_dag():
                 continue            # aldri registrert, og alt forbi
-            frister.append({**f, "frist": f["frist"].isoformat(),
-                            "plikt_id": pid, "registrert": st is not None,
-                            **(st or {"status": None,
-                                      "dogn_til_frist": None,
-                                      "kvittering_ref": None})})
+            frister.append({
+                **f, "frist": f["frist"].isoformat(), "plikt_id": pid,
+                "registrert": st is not None, "egen": False,
+                "status": st["status"] if st else None,
+                "dogn_til_frist": st["dogn_til_frist"] if st else None,
+                "kvittering_ref": st["kvittering_ref"] if st else None})
+    # EGNE FRISTER (239): alt i registeret som IKKE er en katalogfrist —
+    # leieavtalen, forsikringen, domenet. Katalog-id-ene regnes over HELE
+    # katalogen (ikke bare profilens utvalg), så en lovpålagt frist ikke
+    # dukker opp som «egen» fordi profilen ble endret etterpå.
+    katalog_ider = {str(plikt_id(tenant, m["nokkel"],
+                                 datetime.date.fromisoformat(f["frist"])))
+                    for m in maler for f in m["frister"]}
+    for p in register:
+        if p["plikt_id"] in katalog_ider or p["status"] == "bortfalt":
+            continue
+        if p["status"] == "lukket" and p["frist"] < fra:
+            continue
+        frister.append({
+            "nokkel": "egen", "tittel": p["tittel"], "periode": None,
+            "frist": p["frist"].isoformat(), "myndighet": None,
+            # Standardteksten er bare det basen krever (en plikt har en
+            # kilde); den er ikke et notat å vise.
+            "hjemmel": None if p["kilde"] == EGEN_KILDE else p["kilde"],
+            "kilde_url": None,
+            "plikt_id": p["plikt_id"], "registrert": True, "egen": True,
+            "gjentakelse": p["gjentakelse"], "status": p["status"],
+            "dogn_til_frist": p["dogn_til_frist"],
+            "kvittering_ref": p["kvittering_ref"]})
+    frister.sort(key=lambda x: (x["frist"], x["nokkel"], x["plikt_id"]))
+    laget = conn.execute("SELECT kalenderlenke_status(%s)",
+                         (tenant,)).fetchone()[0]
     return {"profil": profil, "frister": frister, "nye_i_katalogen": nye,
-            "orgnummer_firma": _firmaets_orgnummer(conn, tenant)}
+            "orgnummer_firma": _firmaets_orgnummer(conn, tenant),
+            "kalender": {"aktiv": laget is not None,
+                         "opprettet": laget.isoformat() if laget else None}}
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +343,195 @@ def lagre_endepunkt(tjeneste, request):
             tall = registrer(conn, tenant, bid, profil)
         return _ok_lagret(conn, {**tall, **svar_for(conn, tenant)}, rid)
     return _med_conn(tjeneste, rid, kjor)
+
+
+# ---------------------------------------------------------------------------
+# Egne frister og kalenderlenken (239)
+# ---------------------------------------------------------------------------
+
+GJENTAKELSER = ("engang", "aarlig", "kvartalsvis", "manedlig")
+EGEN_KILDE = "Egen frist"
+_EGEN_NS = uuidlib.uuid5(uuidlib.NAMESPACE_URL, "disponit:lovfrister:egen")
+
+
+def egen_endepunkt(tjeneste, request):
+    """POST /v1/lovfrister/egen (bestilling:opprett, idem) —
+    {tittel, frist (dato), gjentakelse?, notat?}.
+
+    En egen frist er en vanlig M-21-plikt med innloggeren som EIER — hun
+    la den inn for seg selv. Fristen er en DATO; klokkeslettet settes her
+    (23:59 i Oslo), så flaten slipper å gjette på tidssoner."""
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _feil, _krev_idem,
+                                   _kropp, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        import psycopg
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "bestilling:opprett")
+        nokkel = _krev_idem(request, rid)
+        k = _kropp(request)
+        tittel = _tekst(k, "tittel", 200)
+        frist = _dato(k, "frist")
+        if not tittel:
+            return _feil("request_feilformet", rid, 400, detalj="tittel")
+        if frist is None:
+            return _feil("request_feilformet", rid, 400, detalj="frist")
+        gjentakelse = k.get("gjentakelse", "engang")
+        if gjentakelse not in GJENTAKELSER:
+            return _feil("request_feilformet", rid, 400, detalj="gjentakelse")
+        notat = k.get("notat")
+        if notat is not None and (not isinstance(notat, str)
+                                  or len(notat) > 500):
+            return _feil("request_feilformet", rid, 400, detalj="notat")
+        kilde = (notat or "").strip() or EGEN_KILDE
+        frist_ts = datetime.datetime.combine(frist, datetime.time(23, 59),
+                                             tzinfo=OSLO)
+        pid = uuidlib.uuid5(_EGEN_NS, f"{tenant}\x1f{nokkel}")
+        try:
+            with conn.transaction():
+                conn.execute(
+                    "SELECT m21_registrer_plikt(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tenant, pid, tittel, bid, kilde, frist_ts, gjentakelse,
+                     None, bid))
+        except psycopg.errors.UniqueViolation:
+            return _feil("request_feilformet", rid, 400,
+                         detalj="samme nøkkel, annet innhold")
+        return _ok_lagret(conn, svar_for(conn, tenant), rid)
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def kalender_lag_endepunkt(tjeneste, request):
+    """POST /v1/lovfrister/kalender (bestilling:opprett) — lag (eller bytt)
+    kalenderlenken. Svaret bærer stien ÉN gang; bare hashen lagres."""
+    import secrets
+
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, bid = _browserkontekst(tjeneste, request, conn, rid,
+                                       "bestilling:opprett")
+        token = secrets.token_urlsafe(32)
+        with conn.transaction():
+            conn.execute("SELECT kalenderlenke_sett(%s,%s,%s)",
+                         (tenant, _token_hash(token), f"bruker:{bid}"))
+        return _ok_lagret(conn, {"sti": f"/kalender/{token}.ics",
+                                 **svar_for(conn, tenant)}, rid)
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def kalender_slett_endepunkt(tjeneste, request):
+    """POST /v1/lovfrister/kalender/slett — lenken slutter å virke."""
+    from .app import _rid
+    from .policyadmin_http import (_browserkontekst, _med_conn, _ok_lagret)
+    rid = _rid(request)
+
+    def kjor(conn):
+        tenant, _bid = _browserkontekst(tjeneste, request, conn, rid,
+                                        "bestilling:opprett")
+        with conn.transaction():
+            conn.execute("SELECT kalenderlenke_slett(%s)", (tenant,))
+        return _ok_lagret(conn, svar_for(conn, tenant), rid)
+    return _med_conn(tjeneste, rid, kjor)
+
+
+def _ics_tekst(v: str) -> str:
+    """RFC 5545 §3.3.11: backslash, semikolon, komma og linjeskift."""
+    return (v.replace("\\", "\\\\").replace(";", "\\;")
+            .replace(",", "\\,").replace("\r\n", "\\n")
+            .replace("\n", "\\n").replace("\r", ""))
+
+
+def _ics_linje(linje: str) -> str:
+    """Brettes ved 75 OKTETTER (§3.1), aldri midt i et UTF-8-tegn."""
+    ut, naa, lengde = [], "", 0
+    for tegn in linje:
+        n = len(tegn.encode("utf-8"))
+        if lengde + n > 75:
+            ut.append(naa)
+            naa, lengde = " ", 1
+        naa += tegn
+        lengde += n
+    ut.append(naa)
+    return "\r\n".join(ut)
+
+
+def ics(navn: str, plikter: list[dict], naa: datetime.datetime) -> str:
+    """Åpne frister som heldagshendelser. Ren funksjon."""
+    stempel = naa.astimezone(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    linjer = ["BEGIN:VCALENDAR", "VERSION:2.0",
+              "PRODID:-//Disponit//Frister//NB", "CALSCALE:GREGORIAN",
+              "METHOD:PUBLISH",
+              f"X-WR-CALNAME:{_ics_tekst(navn)}",
+              "X-PUBLISHED-TTL:PT6H"]
+    for p in plikter:
+        if p["status"] != "apen":
+            continue
+        d = p["frist"]
+        linjer += ["BEGIN:VEVENT",
+                   f"UID:{p['plikt_id']}@disponit",
+                   f"DTSTAMP:{stempel}",
+                   f"DTSTART;VALUE=DATE:{d.strftime('%Y%m%d')}",
+                   "DTEND;VALUE=DATE:"
+                   + (d + datetime.timedelta(days=1)).strftime("%Y%m%d"),
+                   f"SUMMARY:{_ics_tekst(p['tittel'])}",
+                   f"DESCRIPTION:{_ics_tekst(p['kilde'] or '')}",
+                   "TRANSP:TRANSPARENT", "END:VEVENT"]
+    linjer.append("END:VCALENDAR")
+    return "\r\n".join(_ics_linje(x) for x in linjer) + "\r\n"
+
+
+def kalender_endepunkt(tjeneste, request):
+    """GET /kalender/{fil} — iCalendar for kalenderprogrammer, UTEN økt.
+    Lenken er nøkkelen: ukjent eller avslått lenke er 404, og svaret er
+    likt for begge."""
+    import psycopg
+    from starlette.responses import Response
+
+    from db.pg import sett_kontekst
+
+    from .app import _rid
+    rid = _rid(request)
+    ikke_funnet = Response("Not Found", status_code=404,
+                           media_type="text/plain",
+                           headers={"x-request-id": rid})
+    fil = request.path_params.get("fil", "")
+    if not fil.endswith(".ics") or not re.fullmatch(r"[A-Za-z0-9_-]{20,100}",
+                                                    fil[:-4]):
+        return ikke_funnet
+    try:
+        conn = tjeneste.pool.hent()
+    except (TimeoutError, psycopg.Error):
+        return Response("", status_code=503, headers={"x-request-id": rid})
+    try:
+        tenant = conn.execute("SELECT kalenderlenke_tenant(%s)",
+                              (_token_hash(fil[:-4]),)).fetchone()[0]
+        if tenant is None:
+            return ikke_funnet
+        sett_kontekst(conn, tenant, "system:kalender", rid)
+        plikter = _registeret(conn, tenant)
+        firma = conn.execute("SELECT navn FROM firma_hent(%s)",
+                             (tenant,)).fetchone()
+        navn = f"Frister – {firma[0]}" if firma else "Frister – Disponit"
+        kropp = ics(navn, plikter, datetime.datetime.now(OSLO))
+        return Response(kropp, media_type="text/calendar; charset=utf-8",
+                        headers={"x-request-id": rid,
+                                 "cache-control": "private, max-age=900",
+                                 "content-disposition":
+                                     'inline; filename="disponit-frister.ics"'})
+    finally:
+        try:
+            conn.rollback()
+        except psycopg.Error:
+            pass
+        tjeneste.pool.gi_tilbake(conn)
 
 
 # ---------------------------------------------------------------------------

@@ -428,6 +428,13 @@ export const slaaOppOrgnr = (orgnummer, idem = nyIdempotensnokkel()) =>
   _muter("/v1/lovfrister/oppslag", "POST", { orgnummer }, idem);
 export const lagreLovfrister = (profil, idem = nyIdempotensnokkel()) =>
   _muter("/v1/lovfrister", "POST", profil, idem);
+// 239: egne frister og kalenderlenken.
+export const leggTilEgenFrist = (frist, idem = nyIdempotensnokkel()) =>
+  _muter("/v1/lovfrister/egen", "POST", frist, idem);
+export const lagKalenderlenke = (idem = nyIdempotensnokkel()) =>
+  _muter("/v1/lovfrister/kalender", "POST", {}, idem);
+export const slettKalenderlenke = (idem = nyIdempotensnokkel()) =>
+  _muter("/v1/lovfrister/kalender/slett", "POST", {}, idem);
 export const hentPliktkatalog = () => hentJson("/v1/plattform/pliktkatalog");
 export const settPliktmal = (mal, idem = nyIdempotensnokkel()) =>
   _muter("/v1/plattform/pliktkatalog/mal", "POST", mal, idem);

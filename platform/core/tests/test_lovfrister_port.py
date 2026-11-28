@@ -292,3 +292,121 @@ def test_fristvakten_legger_inn_nye_frister_av_seg_selv(klient, ren_katalog,
     plikter = klient.get("/v1/plikt", cookies=c).json()["plikter"]
     assert len(plikter) == foer + 1
     assert any("Ekstra termin" in p["tittel"] for p in plikter)
+
+
+# ---------------------------------------------------------------------------
+# 239: egne frister og kalenderlenken
+# ---------------------------------------------------------------------------
+
+def _idem(h):
+    return {**h, "Idempotency-Key": secrets.token_hex(16)}
+
+
+@pg
+def test_egen_frist_staar_sammen_med_de_lovpaalagte(klient, fast_dag,
+                                                    ren_katalog):
+    _t, c, h = _kunde()
+    # Uten profil: en egen frist virker likevel — hun trenger ikke et
+    # org.nr. for å huske leieavtalen.
+    r = klient.post("/v1/lovfrister/egen", cookies=c, headers=_idem(h),
+                    json={"tittel": "Leieavtale lokaler – si opp eller forny",
+                          "frist": "2027-03-01", "gjentakelse": "aarlig",
+                          "notat": "Avtale med Gårdeier AS, punkt 7"})
+    assert r.status_code == 200, r.text
+    egne = [f for f in r.json()["frister"] if f["egen"]]
+    assert len(egne) == 1
+    assert egne[0]["frist"] == "2027-03-01", "fristen er en Oslo-dato"
+    assert egne[0]["gjentakelse"] == "aarlig"
+    assert egne[0]["hjemmel"] == "Avtale med Gårdeier AS, punkt 7"
+
+    # Med profil: i samme liste, sortert på dato, og de lovpålagte er
+    # IKKE «egne».
+    r = klient.post("/v1/lovfrister", cookies=c, headers=_idem(h), json={
+        "orgform": "ENK", "mva": False, "ansatte": False})
+    frister = r.json()["frister"]
+    assert [f["frist"] for f in frister] == sorted(f["frist"] for f in frister)
+    assert sum(1 for f in frister if f["egen"]) == 1
+    assert any(not f["egen"] and f["nokkel"] == "skattemelding_enk"
+               for f in frister)
+
+    for kropp in ({"tittel": "", "frist": "2027-03-01"},
+                  {"tittel": "x", "frist": "i morgen"},
+                  {"tittel": "x", "frist": "2027-03-01",
+                   "gjentakelse": "ukentlig"}):
+        assert klient.post("/v1/lovfrister/egen", cookies=c,
+                           headers=_idem(h), json=kropp).status_code == 400
+
+
+@pg
+def test_kalenderlenken_er_noekkelen_og_kan_byttes(klient, fast_dag,
+                                                   ren_katalog):
+    from db.pg import koble
+    tenant, c, h = _kunde()
+    klient.post("/v1/lovfrister", cookies=c, headers=_idem(h), json={
+        "orgform": "AS", "mva": True, "ansatte": False})
+    klient.post("/v1/lovfrister/egen", cookies=c, headers=_idem(h),
+                json={"tittel": "Forsikring; fornyes, årlig",
+                      "frist": "2027-01-20"})
+    assert klient.get("/v1/lovfrister", cookies=c).json()["kalender"] == {
+        "aktiv": False, "opprettet": None}
+
+    r = klient.post("/v1/lovfrister/kalender", cookies=c, headers=_idem(h))
+    assert r.status_code == 200, r.text
+    sti = r.json()["sti"]
+    assert sti.startswith("/kalender/") and sti.endswith(".ics")
+    assert r.json()["kalender"]["aktiv"] is True
+    # BARE HASHEN ER LAGRET.
+    from db.pg import sett_kontekst
+    m = koble(MIGRATOR_DSN)
+    try:
+        sett_kontekst(m, tenant, "sys", "kalendertest")
+        rad = m.execute("SELECT token_hash FROM firma_kalenderlenke"
+                        " WHERE tenant=%s", (tenant,)).fetchone()
+        m.rollback()
+    finally:
+        m.close()
+    token = sti[len("/kalender/"):-4]
+    assert rad[0] != token and token not in rad[0]
+
+    # Kalenderprogrammet henter UTEN økt.
+    k = klient.get(sti)
+    assert k.status_code == 200, k.text
+    assert k.headers["content-type"].startswith("text/calendar")
+    tekst = k.text
+    assert tekst.startswith("BEGIN:VCALENDAR\r\n")
+    assert "DTSTART;VALUE=DATE:20270412" in tekst, "MVA 1. termin 2027"
+    assert "SUMMARY:Forsikring\; fornyes\\, årlig" in tekst
+    assert "DTSTART;VALUE=DATE:20270120" in tekst
+    assert all(len(l.encode("utf-8")) <= 75 for l in tekst.split("\r\n"))
+
+    # En gjettet lenke, og en feilformet, er 404 — likt.
+    assert klient.get("/kalender/" + "a" * 43 + ".ics").status_code == 404
+    assert klient.get("/kalender/x.ics").status_code == 404
+    assert klient.get(sti[:-4]).status_code == 404
+
+    # NY LENKE: den gamle slutter å virke i samme øyeblikk.
+    ny = klient.post("/v1/lovfrister/kalender", cookies=c,
+                     headers=_idem(h)).json()["sti"]
+    assert ny != sti
+    assert klient.get(sti).status_code == 404
+    assert klient.get(ny).status_code == 200
+    # SLÅTT AV: ingenting virker.
+    r = klient.post("/v1/lovfrister/kalender/slett", cookies=c,
+                    headers=_idem(h))
+    assert r.status_code == 200 and r.json()["kalender"]["aktiv"] is False
+    assert klient.get(ny).status_code == 404
+
+
+@pg
+def test_kalenderen_viser_bare_firmaets_egne_frister(klient, fast_dag,
+                                                     ren_katalog):
+    _a, ca, ha = _kunde()
+    _b, cb, hb = _kunde()
+    klient.post("/v1/lovfrister/egen", cookies=ca, headers=_idem(ha),
+                json={"tittel": "Hemmelig avtale A", "frist": "2027-02-02"})
+    klient.post("/v1/lovfrister/egen", cookies=cb, headers=_idem(hb),
+                json={"tittel": "Avtale B", "frist": "2027-02-03"})
+    sti_b = klient.post("/v1/lovfrister/kalender", cookies=cb,
+                        headers=_idem(hb)).json()["sti"]
+    tekst = klient.get(sti_b).text
+    assert "Avtale B" in tekst and "Hemmelig avtale A" not in tekst
