@@ -19,7 +19,8 @@
 import { el, sett } from "../dom.js";
 import { t } from "../i18n.js";
 import { ApiFeil, UautorisertFeil, hentLovfrister, lagreLovfrister,
-         slaaOppOrgnr, lukkPlikt } from "../api.js";
+         slaaOppOrgnr, lukkPlikt, bortfallPlikt, leggTilEgenFrist,
+         lagKalenderlenke, slettKalenderlenke } from "../api.js";
 import { meldLive } from "../komponenter.js";
 import { flateHode } from "./felles.js";
 
@@ -30,6 +31,7 @@ import { flateHode } from "./felles.js";
 //: Enhetsregisteret kan si andre; da står koden som et eget valg.
 export const ORGFORMER = ["as", "enk", "asa", "nuf", "da", "ans", "sa"];
 const NAER_DOGN = 90;
+const GJENTAKELSER = ["engang", "aarlig", "kvartalsvis", "manedlig"];
 
 function dato(iso) {
   return iso ? iso.slice(0, 10).split("-").reverse().join(".") : "";
@@ -201,21 +203,151 @@ function fristRad(f, ctx, oppdater, idag) {
     });
     handling.append(knapp);
   }
+  // EGNE FRISTER (239) kan fjernes — de er hennes. En lovpålagt frist kan
+  // ikke: den gjelder enten hun liker det eller ei.
+  if (f.egen && f.status === "apen") {
+    const fjern = el("button", { type: "button", class: "knapp liten",
+      text: t("ui.lovfrister.fjern"),
+      "aria-label": `${t("ui.lovfrister.fjern")}: ${f.tittel}` });
+    fjern.addEventListener("click", () => {
+      fjern.disabled = true;
+      bortfallPlikt(f.plikt_id, t("ui.lovfrister.fjernet_grunn"))
+        .then(() => oppdater(t("ui.lovfrister.fjernet")))
+        .catch((e) => {
+          fjern.disabled = false;
+          if (e instanceof UautorisertFeil) ctx.paaUautorisert?.();
+        });
+    });
+    handling.append(fjern);
+  }
   const [, mnd, dag] = f.frist.slice(0, 10).split("-");
-  return el("li", { class: "lf-rad" },
-    el("div", { class: "lf-dato", "aria-hidden": "true" },
-      el("strong", { text: dag }),
-      el("span", { text: t(`ui.lovfrister.mnd.${Number(mnd)}`) })),
-    el("div", { class: "lf-hva" },
-      el("strong", { text: f.tittel }),
-      el("span", { class: "muted" },
+  const om = f.egen
+    ? el("span", { class: "muted" },
+        el("span", { class: "sr-only",
+          text: `${t("ui.lovfrister.frist")} ${dato(f.frist)}. ` }),
+        el("span", { class: "tag", text: t("ui.lovfrister.egen") }),
+        ` ${[f.gjentakelse && f.gjentakelse !== "engang"
+          ? t(`ui.lovfrister.gjentakelse.${f.gjentakelse}`) : null,
+          f.hjemmel].filter(Boolean).join(" · ")}`)
+    : el("span", { class: "muted" },
         el("span", { class: "sr-only",
           text: `${t("ui.lovfrister.frist")} ${dato(f.frist)}. ` }),
         `${f.periode} · ${f.hjemmel} · `,
         el("a", { href: f.kilde_url, target: "_blank", rel: "noopener",
-          text: t("ui.lovfrister.kilde") }))),
+          text: t("ui.lovfrister.kilde") }));
+  return el("li", { class: "lf-rad" },
+    el("div", { class: "lf-dato", "aria-hidden": "true" },
+      el("strong", { text: dag }),
+      el("span", { text: t(`ui.lovfrister.mnd.${Number(mnd)}`) })),
+    el("div", { class: "lf-hva" }, el("strong", { text: f.tittel }), om),
     el("span", { class: `merke ${art}`, text: tekst }),
     handling);
+}
+
+// «+ EGEN FRIST» (239): leieavtalen, forsikringen, domenet. Én linje —
+// dato, hva, hvor ofte — og fristen står i samme liste som de lovpålagte,
+// med de samme varslene.
+function egenSkjema(ctx, etter) {
+  const dId = "lf-egen-dato";
+  const tId = "lf-egen-tittel";
+  const gId = "lf-egen-gjentakelse";
+  const datoInn = el("input", { id: dId, type: "date", class: "felt-inp" });
+  const tittel = el("input", { id: tId, class: "felt-inp", maxlength: "200",
+    autocomplete: "off" });
+  const gjenta = el("select", { id: gId, class: "felt-inp" },
+    ...GJENTAKELSER.map((g) => el("option", { value: g,
+      text: t(`ui.lovfrister.gjentakelse.${g}`) })));
+  const knapp = el("button", { type: "submit", class: "knapp primar",
+    text: t("ui.lovfrister.egen_lagre") });
+  const feil = el("p", { class: "skjema-hjelp", role: "status" });
+  const skjema = el("form", { class: "kv-skjema-linje lf-egen", novalidate: "" },
+    el("div", { class: "felt" },
+      el("label", { for: dId, text: t("ui.lovfrister.frist") }), datoInn),
+    el("div", { class: "felt" },
+      el("label", { for: tId, text: t("ui.lovfrister.egen_tittel") }), tittel),
+    el("div", { class: "felt" },
+      el("label", { for: gId, text: t("ui.lovfrister.egen_gjentas") }), gjenta),
+    knapp, feil);
+  skjema.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!datoInn.value) { datoInn.focus(); return; }
+    if (!tittel.value.trim()) { tittel.focus(); return; }
+    knapp.disabled = true;
+    leggTilEgenFrist({ tittel: tittel.value.trim(), frist: datoInn.value,
+                       gjentakelse: gjenta.value })
+      .then((svar) => etter(svar, t("ui.lovfrister.egen_lagret")))
+      .catch((e) => {
+        knapp.disabled = false;
+        if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
+        feil.textContent = t("ui.lovfrister.feil.lagre");
+      });
+  });
+  return skjema;
+}
+
+// KALENDERLENKEN (239): fristene i Outlook og Google Kalender. Lenken er
+// nøkkelen — den vises ÉN gang (bare hashen lagres), kan byttes og kan
+// slås av. Derfor tre tilstander: av, nettopp laget (med lenken), på.
+function kalenderkort(d, sti, ctx, etter) {
+  const feil = (e) => {
+    if (e instanceof UautorisertFeil) ctx.paaUautorisert?.();
+  };
+  const lag = (nokkel, klasse = "knapp") => {
+    const b = el("button", { type: "button", class: klasse, text: t(nokkel) });
+    b.addEventListener("click", () => {
+      b.disabled = true;
+      lagKalenderlenke()
+        .then((svar) => etter(svar, t("ui.lovfrister.kal.laget"), svar.sti))
+        .catch((e) => { b.disabled = false; feil(e); });
+    });
+    return b;
+  };
+  const deler = [el("h2", { id: "lf-kal-t", text: t("ui.lovfrister.kal.tittel") })];
+  const aktiv = d.kalender && d.kalender.aktiv;
+  if (sti) {
+    const vindu = globalThis.location || {};
+    const url = `${vindu.origin || ""}${sti}`;
+    const felt = el("input", { id: "lf-kal-url", class: "felt-inp", readonly: "",
+      value: url });
+    felt.addEventListener("focus", () => felt.select());
+    const kopier = el("button", { type: "button", class: "knapp primar",
+      text: t("ui.lovfrister.kal.kopier") });
+    const kvitt = el("span", { class: "muted", role: "status" });
+    kopier.addEventListener("click", () => {
+      const ferdig = () => { kvitt.textContent = t("ui.lovfrister.kal.kopiert"); };
+      const utklipp = globalThis.navigator && globalThis.navigator.clipboard;
+      if (utklipp && utklipp.writeText) {
+        utklipp.writeText(url).then(ferdig).catch(() => felt.select());
+      } else { felt.select(); }
+    });
+    deler.push(
+      el("p", { text: t("ui.lovfrister.kal.ny_tekst") }),
+      el("div", { class: "lf-kalrad" },
+        el("label", { for: "lf-kal-url", class: "sr-only",
+          text: t("ui.lovfrister.kal.lenke") }), felt, kopier,
+        el("a", { class: "knapp", href: `webcal://${vindu.host || ""}${sti}`,
+          text: t("ui.lovfrister.kal.apne") })),
+      kvitt,
+      el("p", { class: "hjelpetekst", text: t("ui.lovfrister.kal.advarsel") }));
+  } else if (aktiv) {
+    const av = el("button", { type: "button", class: "knapp",
+      text: t("ui.lovfrister.kal.av") });
+    av.addEventListener("click", () => {
+      av.disabled = true;
+      slettKalenderlenke()
+        .then((svar) => etter(svar, t("ui.lovfrister.kal.slatt_av")))
+        .catch((e) => { av.disabled = false; feil(e); });
+    });
+    deler.push(
+      el("p", { text: t("ui.lovfrister.kal.aktiv")
+        .replace("{dato}", dato(d.kalender.opprettet)) }),
+      el("div", { class: "knapperad" }, lag("ui.lovfrister.kal.ny"), av));
+  } else {
+    deler.push(
+      el("p", { text: t("ui.lovfrister.kal.tekst") }),
+      el("div", { class: "knapperad" }, lag("ui.lovfrister.kal.lag")));
+  }
+  return el("section", { class: "kort", "aria-labelledby": "lf-kal-t" }, ...deler);
 }
 
 export function visLovfrister(hoved, ctx = {}) {
@@ -224,23 +356,26 @@ export function visLovfrister(hoved, ctx = {}) {
   sett(hoved, ...flateHode(t("ui.lovfrister.tittel"),
                            t("ui.lovfrister.undertittel")), melding, kropp);
 
-  const tegn = (d, kvittering) => {
+  const tegn = (d, kvittering, sti) => {
     const idag = new Date();
-    if (!d.profil) {
-      sett(kropp, el("section", { class: "kort", "aria-labelledby": "lf-start-t" },
+    const etter = (s, k, nySti) => tegn(s, k, nySti);
+    const frister = d.frister || [];
+    // UTEN OPPSETT står oppsettet øverst — men egne frister og kalenderen
+    // virker uansett: hun trenger ikke et org.nr. for å huske leieavtalen.
+    const start = d.profil ? null
+      : el("section", { class: "kort", "aria-labelledby": "lf-start-t" },
         el("h2", { id: "lf-start-t", text: t("ui.lovfrister.start_tittel") }),
         el("p", { text: t("ui.lovfrister.start_tekst") }),
-        profilSkjema(d, ctx, (s, k) => tegn(s, k))));
-      return;
-    }
-    const aapne = d.frister.filter((f) => f.status === "apen");
+        profilSkjema(d, ctx, etter));
+
+    const aapne = frister.filter((f) => f.status === "apen");
     const forfalt = aapne.filter((f) => dagerTil(f.frist, idag) < 0);
     const neste = aapne.find((f) => dagerTil(f.frist, idag) >= 0);
     const snart = aapne.filter((f) => {
       const n = dagerTil(f.frist, idag);
       return n >= 0 && n <= 30;
     });
-    const kpi = el("div", { class: "site-kpi-row lf-kpi" },
+    const kpi = frister.length ? el("div", { class: "site-kpi-row lf-kpi" },
       el("div", { class: "site-kpi" },
         el("strong", { text: neste ? dato(neste.frist) : "—" }),
         el("span", { text: neste ? neste.tittel : t("ui.lovfrister.ingen_neste") })),
@@ -249,16 +384,16 @@ export function visLovfrister(hoved, ctx = {}) {
         el("span", { text: t("ui.lovfrister.kpi.snart") })),
       el("div", { class: "site-kpi" },
         el("strong", { text: String(forfalt.length) }),
-        el("span", { text: t("ui.lovfrister.kpi.forfalt") })));
+        el("span", { text: t("ui.lovfrister.kpi.forfalt") }))) : null;
 
-    const naer = d.frister.filter((f) => dagerTil(f.frist, idag) <= NAER_DOGN
+    const naer = frister.filter((f) => dagerTil(f.frist, idag) <= NAER_DOGN
       && (f.status === "apen" || dagerTil(f.frist, idag) >= -30));
-    const senere = d.frister.filter((f) => !naer.includes(f));
+    const senere = frister.filter((f) => !naer.includes(f));
     const oppdater = (k) => hentLovfrister().then((x) => tegn(x, k));
     const liste = (rader) => el("ol", { class: "lf-liste" },
       ...rader.map((f) => fristRad(f, ctx, oppdater, idag)));
 
-    const nyeBoks = d.nye_i_katalogen > 0 ? (() => {
+    const nyeBoks = d.profil && d.nye_i_katalogen > 0 ? (() => {
       const knapp = el("button", { type: "button", class: "knapp primar liten",
         text: t("ui.lovfrister.legg_til_nye") });
       knapp.addEventListener("click", () => {
@@ -287,36 +422,56 @@ export function visLovfrister(hoved, ctx = {}) {
       return el("div", { class: "lf-senere" }, vis, boks);
     })() : null;
 
-    const p = d.profil;
-    const profilLinje = [p.orgnummer ? `${t("ui.lovfrister.orgnr")} ${p.orgnummer}` : null,
-      t(`ui.lovfrister.orgform.${p.orgform.toLowerCase()}`, p.orgform),
-      p.mva ? t("ui.lovfrister.er_mva") : t("ui.lovfrister.ikke_mva"),
-      p.ansatte ? t("ui.lovfrister.har_ansatte") : t("ui.lovfrister.ingen_ansatte"),
-      t(`ui.lovfrister.kilde.${p.kilde}`)].filter(Boolean);
-    const endre = el("button", { type: "button", class: "knapp liten",
-      "aria-expanded": "false", text: t("ui.lovfrister.endre") });
-    const endreBoks = el("div", { hidden: true });
-    endre.addEventListener("click", () => {
-      if (endreBoks.hidden) sett(endreBoks, profilSkjema(d, ctx, (s, k) => tegn(s, k)));
-      endreBoks.hidden = !endreBoks.hidden;
-      endre.setAttribute("aria-expanded", String(!endreBoks.hidden));
+    const egenKnapp = el("button", { type: "button", class: "knapp liten",
+      "aria-expanded": "false", text: t("ui.lovfrister.egen_ny") });
+    const egenBoks = el("div", { hidden: true });
+    egenKnapp.addEventListener("click", () => {
+      if (egenBoks.hidden) sett(egenBoks, egenSkjema(ctx, etter));
+      egenBoks.hidden = !egenBoks.hidden;
+      egenKnapp.setAttribute("aria-expanded", String(!egenBoks.hidden));
+      if (!egenBoks.hidden) egenBoks.querySelector("input").focus();
     });
 
+    const p = d.profil;
+    const profilDel = p ? (() => {
+      const linje = [p.orgnummer ? `${t("ui.lovfrister.orgnr")} ${p.orgnummer}` : null,
+        t(`ui.lovfrister.orgform.${p.orgform.toLowerCase()}`, p.orgform),
+        p.mva ? t("ui.lovfrister.er_mva") : t("ui.lovfrister.ikke_mva"),
+        p.ansatte ? t("ui.lovfrister.har_ansatte") : t("ui.lovfrister.ingen_ansatte"),
+        t(`ui.lovfrister.kilde.${p.kilde}`)].filter(Boolean);
+      const endre = el("button", { type: "button", class: "knapp liten",
+        "aria-expanded": "false", text: t("ui.lovfrister.endre") });
+      const endreBoks = el("div", { hidden: true });
+      endre.addEventListener("click", () => {
+        if (endreBoks.hidden) sett(endreBoks, profilSkjema(d, ctx, etter));
+        endreBoks.hidden = !endreBoks.hidden;
+        endre.setAttribute("aria-expanded", String(!endreBoks.hidden));
+      });
+      return el("section", { class: "kort", "aria-labelledby": "lf-profil-t" },
+        el("h2", { id: "lf-profil-t", text: t("ui.lovfrister.profil_tittel") }),
+        el("ul", { class: "brikkerad" },
+          ...linje.map((x) => el("li", { class: "brikke brikke-tekst", text: x }))),
+        el("div", { class: "knapperad" }, endre), endreBoks);
+    })() : null;
+
     sett(kropp,
+      start,
       kpi,
       nyeBoks,
       el("section", { class: "kort", "aria-labelledby": "lf-frister-t" },
-        el("h2", { id: "lf-frister-t", text: t("ui.lovfrister.frister_tittel") }),
+        el("div", { class: "lf-hode" },
+          el("h2", { id: "lf-frister-t", text: t("ui.lovfrister.frister_tittel") }),
+          egenKnapp),
+        egenBoks,
         el("p", { class: "muted", text: t("ui.lovfrister.varsel_tekst") }),
         naer.length ? liste(naer)
-          : el("p", { text: t("ui.lovfrister.ingen_naer") }),
+          : el("p", { text: t(frister.length ? "ui.lovfrister.ingen_naer"
+            : "ui.lovfrister.ingen_ennaa") }),
         senereDel),
-      el("section", { class: "kort", "aria-labelledby": "lf-profil-t" },
-        el("h2", { id: "lf-profil-t", text: t("ui.lovfrister.profil_tittel") }),
-        el("ul", { class: "brikkerad" },
-          ...profilLinje.map((x) => el("li", { class: "brikke brikke-tekst", text: x }))),
-        el("div", { class: "knapperad" }, endre), endreBoks));
-    if (kvittering) { melding.textContent = kvittering; meldLive(kvittering); }
+      kalenderkort(d, sti, ctx, etter),
+      profilDel);
+    melding.textContent = kvittering || "";
+    if (kvittering) meldLive(kvittering);
   };
 
   hentLovfrister()

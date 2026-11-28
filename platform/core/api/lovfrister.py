@@ -188,7 +188,10 @@ def svar_for(conn, tenant: str) -> dict:
         frister.append({
             "nokkel": "egen", "tittel": p["tittel"], "periode": None,
             "frist": p["frist"].isoformat(), "myndighet": None,
-            "hjemmel": p["kilde"], "kilde_url": None,
+            # Standardteksten er bare det basen krever (en plikt har en
+            # kilde); den er ikke et notat å vise.
+            "hjemmel": None if p["kilde"] == EGEN_KILDE else p["kilde"],
+            "kilde_url": None,
             "plikt_id": p["plikt_id"], "registrert": True, "egen": True,
             "gjentakelse": p["gjentakelse"], "status": p["status"],
             "dogn_til_frist": p["dogn_til_frist"],
@@ -347,6 +350,7 @@ def lagre_endepunkt(tjeneste, request):
 # ---------------------------------------------------------------------------
 
 GJENTAKELSER = ("engang", "aarlig", "kvartalsvis", "manedlig")
+EGEN_KILDE = "Egen frist"
 _EGEN_NS = uuidlib.uuid5(uuidlib.NAMESPACE_URL, "disponit:lovfrister:egen")
 
 
@@ -381,7 +385,7 @@ def egen_endepunkt(tjeneste, request):
         if notat is not None and (not isinstance(notat, str)
                                   or len(notat) > 500):
             return _feil("request_feilformet", rid, 400, detalj="notat")
-        kilde = (notat or "").strip() or "Egen frist"
+        kilde = (notat or "").strip() or EGEN_KILDE
         frist_ts = datetime.datetime.combine(frist, datetime.time(23, 59),
                                              tzinfo=OSLO)
         pid = uuidlib.uuid5(_EGEN_NS, f"{tenant}\x1f{nokkel}")

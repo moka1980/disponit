@@ -189,3 +189,105 @@ test("Oversikt: fristkortet viser neste frist, eller veien til oppsettet",
     const brudd = await alvorligeBrudd(m);
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });
+
+// 239: egne frister og kalenderlenken.
+test("Frister: egen frist legges til på én linje, og kan fjernes", async () => {
+  SVAR = { profil: null, frister: [], nye_i_katalogen: 0,
+           kalender: { aktiv: false, opprettet: null } };
+  POSTER.length = 0;
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const sti = url.split("?")[0];
+    if (opts.method === "POST" && sti === "/v1/lovfrister/egen") {
+      const kropp = JSON.parse(opts.body);
+      POSTER.push({ sti, kropp });
+      SVAR = { ...SVAR, frister: [{ ...F("egen", kropp.tittel, null,
+        kropp.frist), egen: true, hjemmel: null, kilde_url: null,
+        gjentakelse: kropp.gjentakelse }] };
+      return { ok: true, status: 200, json: async () => SVAR };
+    }
+    return orig(url, opts);
+  };
+  try {
+    const m = nyHoved();
+    visLovfrister(m, ctx);
+    // UTEN PROFIL virker egne frister likevel.
+    const ny = await (async () => {
+      await vent(() => [...m.querySelectorAll("button")]
+        .some((b) => b.textContent === t("ui.lovfrister.egen_ny")));
+      return [...m.querySelectorAll("button")]
+        .find((b) => b.textContent === t("ui.lovfrister.egen_ny"));
+    })();
+    ny.click();
+    assert.equal(ny.getAttribute("aria-expanded"), "true");
+    m.querySelector("#lf-egen-dato").value = "2099-03-01";
+    m.querySelector("#lf-egen-tittel").value = "Leieavtale – forny";
+    m.querySelector("#lf-egen-gjentakelse").value = "aarlig";
+    m.querySelector("form.lf-egen").requestSubmit();
+    assert.ok(await vent(() => POSTER.length === 1));
+    assert.deepEqual(POSTER[0].kropp, { tittel: "Leieavtale – forny",
+      frist: "2099-03-01", gjentakelse: "aarlig" });
+    assert.ok(await vent(() => m.querySelector(".lf-rad")));
+    const rad = m.querySelector(".lf-rad");
+    assert.ok(rad.textContent.includes(t("ui.lovfrister.egen")));
+    assert.ok(rad.textContent.includes(t("ui.lovfrister.gjentakelse.aarlig")));
+    assert.equal(rad.querySelector("a"), null, "en egen frist har ingen kilde");
+    const fjern = [...rad.querySelectorAll("button")]
+      .find((b) => b.textContent === t("ui.lovfrister.fjern"));
+    fjern.click();
+    assert.ok(await vent(() => POSTER.some((p) =>
+      p.sti === "/v1/plikt/egen-2099-03-01/bortfall")));
+    const brudd = await alvorligeBrudd(m);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  } finally { globalThis.fetch = orig; }
+});
+
+test("Frister: kalenderlenken vises én gang, og kan slås av", async () => {
+  const profil = { orgform: "AS", mva: true, ansatte: true, kilde: "brreg" };
+  SVAR = { profil, frister: [], nye_i_katalogen: 0,
+           kalender: { aktiv: false, opprettet: null } };
+  POSTER.length = 0;
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const sti = url.split("?")[0];
+    const ok = (d) => ({ ok: true, status: 200, json: async () => d });
+    if (opts.method === "POST" && sti === "/v1/lovfrister/kalender") {
+      POSTER.push({ sti });
+      SVAR = { ...SVAR, kalender: { aktiv: true,
+        opprettet: "2026-11-28T10:00:00+00:00" } };
+      return ok({ ...SVAR, sti: "/kalender/hemmeligtoken1234567890.ics" });
+    }
+    if (opts.method === "POST" && sti === "/v1/lovfrister/kalender/slett") {
+      POSTER.push({ sti });
+      SVAR = { ...SVAR, kalender: { aktiv: false, opprettet: null } };
+      return ok(SVAR);
+    }
+    return orig(url, opts);
+  };
+  const knapp = (m, nokkel) => [...m.querySelectorAll("button")]
+    .find((b) => b.textContent === t(nokkel));
+  try {
+    let m = nyHoved();
+    visLovfrister(m, ctx);
+    assert.ok(await vent(() => knapp(m, "ui.lovfrister.kal.lag")));
+    knapp(m, "ui.lovfrister.kal.lag").click();
+    assert.ok(await vent(() => m.querySelector("#lf-kal-url")));
+    assert.ok(m.querySelector("#lf-kal-url").value
+      .endsWith("/kalender/hemmeligtoken1234567890.ics"));
+    assert.ok(m.querySelector('a[href^="webcal://"]'), "ingen abonner-lenke");
+    assert.ok(m.textContent.includes(t("ui.lovfrister.kal.advarsel")));
+    const brudd = await alvorligeBrudd(m);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+
+    // NESTE BESØK: lenken er på, men vises ikke igjen (bare hashen finnes).
+    m = nyHoved();
+    visLovfrister(m, ctx);
+    assert.ok(await vent(() => knapp(m, "ui.lovfrister.kal.av")));
+    assert.equal(m.querySelector("#lf-kal-url"), null);
+    assert.ok(m.textContent.includes("28.11.2026"));
+    knapp(m, "ui.lovfrister.kal.av").click();
+    assert.ok(await vent(() => knapp(m, "ui.lovfrister.kal.lag")));
+    assert.deepEqual(POSTER.map((p) => p.sti), ["/v1/lovfrister/kalender",
+      "/v1/lovfrister/kalender/slett"]);
+  } finally { globalThis.fetch = orig; }
+});
