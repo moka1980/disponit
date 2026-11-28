@@ -72,6 +72,11 @@ PARTSGRENSE = 50
 #: noen få per døgn; grensen er en bøtte, ikke et tak noen når.
 PROVEGRENSE = 100
 
+#: Maks antall FIRMAER fristvakten går gjennom per kjøring (238). Hvert
+#: firma tas én gang i døgnet (og når katalogen er endret), så med en
+#: kjøring hvert femte minutt rekker 50 om gangen 14 400 firmaer i døgnet.
+LOVFRISTGRENSE = 50
+
 
 @dataclass
 class Reapresultat:
@@ -90,13 +95,18 @@ class Reapresultat:
     #: (tenant, dato) per firma hvis prøveperiode gikk ut (190).
     proveutlop: list[tuple[str, str]] = field(default_factory=list)
     proveutlop_feilet: bool = False
+    #: (tenant, antall nye frister) per firma fristvakten la noe inn hos
+    #: (238). `-1` = profilens eier er ikke lenger et aktivt medlem.
+    lovfrister: list[tuple[str, int]] = field(default_factory=list)
+    lovfrister_feilet: bool = False
 
 
 def kjor(conn, *, grense: int = BATCHGRENSE,
          kandidatgrense: int = KANDIDATGRENSE,
          epostgrense: int = EPOSTGRENSE,
          partsgrense: int = PARTSGRENSE,
-         provegrense: int = PROVEGRENSE) -> Reapresultat:
+         provegrense: int = PROVEGRENSE,
+         lovfristgrense: int = LOVFRISTGRENSE) -> Reapresultat:
     """Én reaperkjøring: evidensfristene først, så kandidatdatagrensen,
     så e-postdatagrensen (088). Overlapp er trygt uten lås i alle tre:
     funksjonene bruker `FOR UPDATE SKIP LOCKED`, så to samtidige
@@ -185,4 +195,19 @@ def kjor(conn, *, grense: int = BATCHGRENSE,
         except Exception:
             pass
         r.proveutlop_feilet = True
+
+    # 238: FRISTVAKTEN. Katalogens nye frister inn hos hvert firma med en
+    # pliktprofil. Egen transaksjon, som de andre: en feil her skal ikke
+    # ta retensjonen eller prøveutløpet med seg — og omvendt.
+    try:
+        rader = conn.execute("SELECT tenant, nye FROM lovfrister_synk(%s)",
+                             (lovfristgrense,)).fetchall()
+        conn.commit()
+        r.lovfrister = [(t, int(n)) for (t, n) in rader]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        r.lovfrister_feilet = True
     return r
