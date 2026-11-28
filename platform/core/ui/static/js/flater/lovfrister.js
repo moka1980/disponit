@@ -84,6 +84,7 @@ function profilSkjema(d, ctx, etter) {
   let kilde = p.kilde || "manuell";
   const funnet = el("p", { class: "muted lf-funnet", hidden: true });
 
+  let avSegSelv = false;
   hent.addEventListener("click", () => {
     const nr = orgnr.value.replace(/\s+/g, "");
     if (!/^[0-9]{9}$/.test(nr)) {
@@ -107,7 +108,10 @@ function profilSkjema(d, ctx, etter) {
           .replace("{navn}", f.navn || nr);
         melding.textContent = t("ui.lovfrister.sjekk");
         meldLive(melding.textContent);
-        lagre.focus();
+        // Fokus flyttes bare når HUN trykket — ikke når oppslaget gikk
+        // av seg selv ved sidelasting.
+        if (!avSegSelv) lagre.focus();
+        avSegSelv = false;
       })
       .catch((e) => {
         if (e instanceof UautorisertFeil) { ctx.paaUautorisert?.(); return; }
@@ -116,6 +120,12 @@ function profilSkjema(d, ctx, etter) {
       })
       .finally(() => { hent.disabled = false; });
   });
+  // FØRSTE GANG, MED KJENT ORG.NR.: oppslaget går av seg selv. Hun kom
+  // hit for å få fristene, og nummeret står der alt — da er «Hent» et
+  // trykk som bare ber henne bekrefte det åpenbare.
+  if (!d.profil && /^[0-9]{9}$/.test(orgnr.value)) {
+    queueMicrotask(() => { avSegSelv = true; hent.click(); });
+  }
   // Rører hun et valg selv, er opplysningene hennes, ikke registerets.
   for (const x of [form, mva, ansatte]) {
     x.addEventListener("change", () => { kilde = "manuell"; });

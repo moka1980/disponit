@@ -7425,7 +7425,7 @@
   "ui.lovfrister.feil.lagre": "Could not save. Try again.",
   "ui.lovfrister.feil.last": "Could not load the deadlines. Reload the page.",
   "ui.lovfrister.frister_tittel": "Upcoming deadlines",
-  "ui.lovfrister.varsel_tekst": "You get a reminder 30, 7 and 1 day before each deadline, in Disponit and by email.",
+  "ui.lovfrister.varsel_tekst": "You get a reminder 30, 7 and 1 day before each deadline, in Disponit and by email. New deadlines are added automatically.",
   "ui.lovfrister.ingen_naer": "No deadlines in the next 90 days.",
   "ui.lovfrister.ingen_neste": "No upcoming deadlines",
   "ui.lovfrister.kpi.snart": "deadlines in the next 30 days",
@@ -7506,5 +7506,11 @@
   "ui.lovfrister.orgform.nuf": "Norwegian-registered foreign enterprise",
   "ui.lovfrister.orgform.da": "Partnership with shared liability",
   "ui.lovfrister.orgform.ans": "General partnership",
-  "ui.lovfrister.orgform.sa": "Cooperative"
+  "ui.lovfrister.orgform.sa": "Cooperative",
+  "ui.dashbord.frist.neste": "Next deadline",
+  "ui.dashbord.frist.snart": "{n} in the next 30 days",
+  "ui.dashbord.frist.forfalt": "{n} overdue",
+  "ui.dashbord.frist.se_alle": "See the deadlines",
+  "ui.dashbord.frist.start": "Get a reminder before VAT, payroll reporting, annual accounts and the other statutory deadlines.",
+  "ui.dashbord.frist.start_knapp": "Find your company's deadlines"
 }

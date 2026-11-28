@@ -7425,7 +7425,7 @@
   "ui.lovfrister.feil.lagre": "Kunne ikke lagre. Prøv igjen.",
   "ui.lovfrister.feil.last": "Kunne ikke hente fristene. Last siden på nytt.",
   "ui.lovfrister.frister_tittel": "Neste frister",
-  "ui.lovfrister.varsel_tekst": "Du får varsel 30, 7 og 1 dag før hver frist, i Disponit og på e-post.",
+  "ui.lovfrister.varsel_tekst": "Du får varsel 30, 7 og 1 dag før hver frist, i Disponit og på e-post. Nye frister legges inn automatisk.",
   "ui.lovfrister.ingen_naer": "Ingen frister de neste 90 dagene.",
   "ui.lovfrister.ingen_neste": "Ingen kommende frister",
   "ui.lovfrister.kpi.snart": "frister de neste 30 dagene",
@@ -7506,5 +7506,11 @@
   "ui.lovfrister.orgform.nuf": "Norskregistrert utenlandsk foretak",
   "ui.lovfrister.orgform.da": "Selskap med delt ansvar",
   "ui.lovfrister.orgform.ans": "Ansvarlig selskap",
-  "ui.lovfrister.orgform.sa": "Samvirkeforetak"
+  "ui.lovfrister.orgform.sa": "Samvirkeforetak",
+  "ui.dashbord.frist.neste": "Neste frist",
+  "ui.dashbord.frist.snart": "{n} de neste 30 dagene",
+  "ui.dashbord.frist.forfalt": "{n} forfalt",
+  "ui.dashbord.frist.se_alle": "Se fristene",
+  "ui.dashbord.frist.start": "Få varsel før MVA, a-melding, årsregnskap og de andre lovpålagte fristene.",
+  "ui.dashbord.frist.start_knapp": "Finn fristene for bedriften"
 }
