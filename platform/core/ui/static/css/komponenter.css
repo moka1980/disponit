@@ -2030,4 +2030,5 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
   align-items: center; }
 .lf-kalrad .felt-inp { flex: 1 1 16rem; min-width: 0;
   font-family: var(--font-mono); font-size: var(--fs-sm); }
+#lf-kal-velg { margin: var(--sp-3) 0 var(--sp-2); }
 .lf-hva .tag { line-height: 1.3rem; font-size: var(--fs-xs); }

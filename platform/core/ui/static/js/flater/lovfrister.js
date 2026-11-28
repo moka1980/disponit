@@ -285,6 +285,22 @@ function egenSkjema(ctx, etter) {
   return skjema;
 }
 
+// Hvor abonnementet legges inn, per kalender: [tekstnøkkel, adresse, ny fane].
+export function kalendermal(vert, sti) {
+  const webcal = `webcal://${vert}${sti}`;
+  const https = encodeURIComponent(`https://${vert}${sti}`);
+  const outlook = (domene) => `https://${domene}/calendar/0/addfromweb`
+    + `?url=${https}&name=Disponit`;
+  return [
+    ["ui.lovfrister.kal.google",
+      `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`,
+      true],
+    ["ui.lovfrister.kal.outlook_jobb", outlook("outlook.office.com"), true],
+    ["ui.lovfrister.kal.outlook_privat", outlook("outlook.live.com"), true],
+    ["ui.lovfrister.kal.apne", webcal, false],
+  ];
+}
+
 // KALENDERLENKEN (239): fristene i Outlook og Google Kalender. Lenken er
 // nøkkelen — den vises ÉN gang (bare hashen lagres), kan byttes og kan
 // slås av. Derfor tre tilstander: av, nettopp laget (med lenken), på.
@@ -325,9 +341,19 @@ function kalenderkort(d, sti, ctx, etter) {
       el("div", { class: "lf-kalrad" },
         el("label", { for: "lf-kal-url", class: "sr-only",
           text: t("ui.lovfrister.kal.lenke") }), felt, kopier,
-        el("a", { class: "knapp", href: `webcal://${vindu.host || ""}${sti}`,
-          text: t("ui.lovfrister.kal.apne") })),
+        ),
       kvitt,
+      // ÉN KNAPP PER KALENDER. `webcal:` alene åpner et PROGRAM på maskinen
+      // — den som har kalenderen i nettleseren (Google, Outlook på nett),
+      // fikk bare «velg et program» (eier 28/11). Nettkalenderne tar imot
+      // abonnementet på sin egen adresse.
+      el("p", { id: "lf-kal-velg", text: t("ui.lovfrister.kal.velg") }),
+      el("div", { class: "lf-kalrad", role: "group",
+        "aria-labelledby": "lf-kal-velg" },
+        ...kalendermal(vindu.host || "", sti).map(([nokkel, href, ny]) =>
+          el("a", { class: "knapp", href,
+            ...(ny ? { target: "_blank", rel: "noopener noreferrer" } : {}),
+            text: t(nokkel) }))),
       el("p", { class: "hjelpetekst", text: t("ui.lovfrister.kal.advarsel") }));
   } else if (aktiv) {
     const av = el("button", { type: "button", class: "knapp",

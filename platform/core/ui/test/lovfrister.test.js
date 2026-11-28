@@ -275,6 +275,20 @@ test("Frister: kalenderlenken vises én gang, og kan slås av", async () => {
     assert.ok(m.querySelector("#lf-kal-url").value
       .endsWith("/kalender/hemmeligtoken1234567890.ics"));
     assert.ok(m.querySelector('a[href^="webcal://"]'), "ingen abonner-lenke");
+    // NETTKALENDERNE har sin egen adresse — `webcal:` alene ga eieren
+    // «velg et program» (28/11). Lenken bæres med, riktig kodet.
+    const google = m.querySelector('a[href^="https://calendar.google.com/"]');
+    assert.ok(google, "ingen Google Kalender-knapp");
+    assert.match(new URL(google.href).searchParams.get("cid"),
+      /^webcal:\/\/[^/]*\/kalender\/hemmeligtoken1234567890\.ics$/);
+    assert.equal(google.target, "_blank");
+    assert.match(google.rel, /noopener/);
+    for (const domene of ["outlook.office.com", "outlook.live.com"]) {
+      const o = m.querySelector(`a[href^="https://${domene}/"]`);
+      assert.ok(o, `ingen knapp for ${domene}`);
+      assert.match(new URL(o.href).searchParams.get("url"),
+        /^https:\/\/[^/]*\/kalender\/hemmeligtoken1234567890\.ics$/);
+    }
     assert.ok(m.textContent.includes(t("ui.lovfrister.kal.advarsel")));
     const brudd = await alvorligeBrudd(m);
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
