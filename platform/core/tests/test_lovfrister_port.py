@@ -356,8 +356,10 @@ def test_kalenderlenken_er_noekkelen_og_kan_byttes(klient, fast_dag,
     assert sti.startswith("/kalender/") and sti.endswith(".ics")
     assert r.json()["kalender"]["aktiv"] is True
     # BARE HASHEN ER LAGRET.
+    from db.pg import sett_kontekst
     m = koble(MIGRATOR_DSN)
     try:
+        sett_kontekst(m, tenant, "sys", "kalendertest")
         rad = m.execute("SELECT token_hash FROM firma_kalenderlenke"
                         " WHERE tenant=%s", (tenant,)).fetchone()
         m.rollback()
