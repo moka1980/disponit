@@ -14,11 +14,14 @@ VEIEN FOR KUNDEN, tre trinn:
    varslene (30/7/1 døgn før, i appen og på e-post) og kvitteringen.
 3. `GET /v1/lovfrister` — profilen og fristene, med status fra M-21.
 
-PLIKT-ID-EN ER AVLEDET av (tenant, katalognøkkel, frist), så et nytt
-trykk på «Oppdater» legger bare til det som er nytt i katalogen. Det som
-alt står, rører vi ikke — heller ikke om eieren har rettet teksten i
-katalogen etterpå (M-21s SP-2 ville kalt det en materiell konflikt; her
-er det bare «fantes fra før»).
+PLIKT-ID-EN ER AVLEDET av (tenant, katalognøkkel, frist), så et gjenspill
+legger bare til det som er nytt i katalogen. Det som alt står, røres ikke —
+heller ikke om eieren har rettet teksten i katalogen etterpå.
+
+FRISTVAKTEN VIRKER AV SEG SELV (238): `lovfrister_synk` kalles fra
+`drift/evidensreaper.py` og legger katalogens nye frister inn hos hvert
+firma med en profil — også det som aldri logger inn. Kundens knapp og
+sveipen går gjennom SAMME dør (`lovfrister_registrer`).
 
 PLATTFORMEIEREN vedlikeholder katalogen: `GET /v1/plattform/pliktkatalog`,
 `POST …/mal`, `POST …/frist`, `POST …/frist/slett`. Fullmakten er raden i
@@ -31,6 +34,7 @@ Org.nr. er ni sifre før det settes inn i stien.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import re
 import uuid as uuidlib
@@ -43,14 +47,17 @@ HORISONT_DOGN = 400
 BRREG_URL = "https://data.brreg.no/enhetsregisteret/api/enheter/{orgnr}"
 MYNDIGHETER = ("skatteetaten", "brreg", "altinn", "nav", "arbeidstilsynet",
                "ssb", "annen")
-_NS = uuidlib.uuid5(uuidlib.NAMESPACE_URL, "disponit:lovfrister:237")
 _ORGNR = re.compile(r"^[0-9]{9}$")
 _ORGFORM = re.compile(r"^[A-Z]{2,4}$")
 _NOKKEL = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
 
 def plikt_id(tenant: str, nokkel: str, frist: datetime.date) -> uuidlib.UUID:
-    return uuidlib.uuid5(_NS, f"{tenant}|{nokkel}|{frist.isoformat()}")
+    """Samme avledning som `lovfrister_plikt_id` i basen (238) — porten
+    `test_plikt_id_er_basens` holder de to like."""
+    return uuidlib.UUID(hashlib.md5(
+        f"disponit:lovfrister:{tenant}|{nokkel}|{frist.isoformat()}"
+        .encode("utf-8"), usedforsecurity=False).hexdigest())
 
 
 def i_dag() -> datetime.date:
@@ -255,33 +262,16 @@ def oppslag_endepunkt(tjeneste, request):
 
 
 def registrer(conn, tenant: str, bid: str, profil: dict) -> dict:
-    """Profilen lagres og fristene registreres i M-21. I kallerens
-    transaksjon; hver plikt i sitt eget savepoint."""
-    import psycopg
+    """Profilen lagres, og fristene registreres i M-21 gjennom
+    `lovfrister_registrer` (238) — SAMME dør som nattsveipen bruker, så
+    utvalget og teksten bor ett sted. I kallerens transaksjon."""
     conn.execute("SELECT firma_pliktprofil_sett(%s,%s,%s,%s,%s,%s,%s)",
                  (tenant, profil.get("orgnummer"), profil["orgform"],
                   profil["mva"], profil["ansatte"], profil["kilde"],
                   f"bruker:{bid}"))
-    nye = fantes = 0
-    for f in firmaets_frister(katalog(conn), profil, i_dag()):
-        frist_ts = datetime.datetime.combine(
-            f["frist"], datetime.time(23, 59), tzinfo=OSLO)
-        kilde = f"{f['hjemmel']} — {f['kilde_url']}"[:500]
-        tittel = f"{f['tittel']} – {f['periode']}"[:200]
-        try:
-            with conn.transaction():
-                ny = conn.execute(
-                    "SELECT m21_registrer_plikt(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (tenant, plikt_id(tenant, f["nokkel"], f["frist"]),
-                     tittel, bid, kilde, frist_ts, "engang", None,
-                     bid)).fetchone()[0]
-        except psycopg.errors.UniqueViolation:
-            ny = False      # står fra før med annen tekst — rør den ikke
-        if ny:
-            nye += 1
-        else:
-            fantes += 1
-    return {"nye": nye, "fantes": fantes}
+    nye = conn.execute("SELECT lovfrister_registrer(%s,%s,%s)",
+                       (tenant, bid, bid)).fetchone()[0]
+    return {"nye": int(nye)}
 
 
 def lagre_endepunkt(tjeneste, request):

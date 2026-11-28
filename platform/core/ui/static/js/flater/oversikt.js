@@ -496,12 +496,69 @@ function postboksvarsel(hoved, ctx) {
   return rot;
 }
 
+// NESTE LOVPÅLAGTE FRIST (237/238). Fristvakten er det kunden betaler for
+// (eier 27/11), så den står ØVERST på dashbordet: én linje med neste
+// frist, hvor mange som kommer de neste 30 dagene, og hva som er forfalt.
+// Har firmaet ikke satt den opp, er linjen veien dit — to trykk.
+// Feiler hentingen, står ingenting: dashbordet er der uansett.
+export function fristkort(hoved, ctx) {
+  const rot = el("div", { class: "dash-frist" });
+  if (!(ctx.scopes || []).includes("decisions:read")) return rot;
+  const minRute = visningsToken(hoved);
+  hentJson("/v1/lovfrister").then((d) => {
+    if (!erGjeldendeVisning(hoved, minRute)) return;
+    const lenke = (nokkel) => el("a", { class: "lenkeknapp",
+      href: "#/lovfrister", text: t(nokkel) });
+    if (!d.profil) {
+      sett(rot, el("div", { class: "banner info dash-fristlinje" },
+        el("span", { text: t("ui.dashbord.frist.start") }),
+        lenke("ui.dashbord.frist.start_knapp")));
+      return;
+    }
+    const idag = new Date();
+    const dager = (iso) => {
+      const [a, m, dd] = iso.slice(0, 10).split("-").map(Number);
+      return Math.round((Date.UTC(a, m - 1, dd) - Date.UTC(idag.getFullYear(),
+        idag.getMonth(), idag.getDate())) / 86400000);
+    };
+    const aapne = (d.frister || []).filter((f) => f.status === "apen");
+    const forfalt = aapne.filter((f) => dager(f.frist) < 0).length;
+    const neste = aapne.find((f) => dager(f.frist) >= 0);
+    const snart = aapne.filter((f) => {
+      const n = dager(f.frist); return n >= 0 && n <= 30;
+    }).length;
+    const dato = (iso) => iso.slice(0, 10).split("-").reverse().join(".");
+    const deler = [];
+    if (forfalt) {
+      deler.push(el("span", { class: "merke stopp",
+        text: t("ui.dashbord.frist.forfalt").replace("{n}", String(forfalt)) }));
+    }
+    deler.push(el("span", {}, neste
+      ? el("strong", { text: `${dato(neste.frist)} · ${neste.tittel}` })
+      : t("ui.lovfrister.ingen_neste")));
+    if (neste) {
+      deler.push(el("span", { class: "muted",
+        text: t("ui.dashbord.frist.snart").replace("{n}", String(snart)) }));
+    }
+    sett(rot, el("div", { class: `banner ${forfalt ? "fare" : "info"}`
+      + " dash-fristlinje" },
+      el("span", { class: "dash-fristtekst" },
+        el("span", { class: "muted", text: t("ui.dashbord.frist.neste") }),
+        ...deler),
+      lenke("ui.dashbord.frist.se_alle")));
+  }).catch((e) => {
+    if (e instanceof UautorisertFeil) ctx.paaUautorisert();
+  });
+  return rot;
+}
+
 export function visOversikt(hoved, ctx) {
   // KPI-kortene beholder heltside-semantikken de alltid har hatt: feiler
   // selve helsebildet, feiler siden — det er dashbordets rygg. De to
   // listene under er blokker med egne løp.
   sett(hoved,
     ...flateHode(t("ui.oversikt.tittel"), t("ui.oversikt.undertittel")),
+    fristkort(hoved, ctx),
     postboksvarsel(hoved, ctx),
     oppsettBlokk(ctx),
     el("div", { class: "dash-kpi" }));

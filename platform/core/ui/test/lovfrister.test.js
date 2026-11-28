@@ -10,6 +10,7 @@ import { NB, alvorligeBrudd, beskrivBrudd, nyttBrett } from "./hjelp.js";
 import { settI18nForTest, t } from "../static/js/i18n.js";
 import { visLovfrister, statusTekst } from "../static/js/flater/lovfrister.js";
 import { pliktkatalogseksjon } from "../static/js/flater/admin.js";
+import { fristkort } from "../static/js/flater/oversikt.js";
 
 settI18nForTest(NB, "nb");
 
@@ -94,10 +95,12 @@ test("Frister: første gang — org.nr., oppslag fyller valgene, ett trykk lager
     assert.ok(await vent(() => m.querySelector("#lf-orgnr")));
     assert.equal(m.querySelector("#lf-orgnr").value, "923609016",
       "firmaets eget org.nr. er forhåndsutfylt");
-    const hent = [...m.querySelectorAll("button")]
-      .find((b) => b.textContent === t("ui.lovfrister.hent"));
-    hent.click();
-    assert.ok(await vent(() => m.querySelector("#lf-mva").checked));
+    // OPPSLAGET GÅR AV SEG SELV når org.nr. er kjent: hun trykker ikke
+    // «Hent» for å bekrefte et nummer som alt står der.
+    assert.ok(await vent(() => m.querySelector("#lf-mva").checked),
+      "oppslaget gikk ikke av seg selv");
+    assert.equal(POSTER.filter((p) => p.sti === "/v1/lovfrister/oppslag")
+      .length, 1);
     assert.equal(m.querySelector("#lf-orgform").value, "as");
     assert.equal(m.querySelector("#lf-ansatte").checked, false);
     m.querySelector("form").requestSubmit();
@@ -157,6 +160,32 @@ test("Pliktkatalog: skjult for andre, og eieren legger til en frist",
       kropp: { nokkel: "mva_termin", periode: "1. termin 2028",
                frist: "2028-04-10" } });
     assert.ok(await vent(() => s.textContent.includes("10.04.2028")));
+    const brudd = await alvorligeBrudd(m);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+  });
+
+test("Oversikt: fristkortet viser neste frist, eller veien til oppsettet",
+  async () => {
+    SVAR = { profil: null, frister: [], nye_i_katalogen: 0 };
+    let m = nyHoved();
+    let k = fristkort(m, ctx);
+    m.append(k);
+    assert.ok(await vent(() => k.querySelector("a")));
+    assert.equal(k.querySelector("a").getAttribute("href"), "#/lovfrister");
+    assert.ok(k.textContent.includes(t("ui.dashbord.frist.start")));
+
+    SVAR = { profil: { orgform: "AS", mva: true, ansatte: false },
+             frister: [F("a_melding", "A-melding", "Gammel", "2020-01-05"),
+                       F("mva_termin", "MVA-melding", "1. termin 2099",
+                         "2099-04-12")], nye_i_katalogen: 0 };
+    m = nyHoved();
+    k = fristkort(m, ctx);
+    m.append(k);
+    assert.ok(await vent(() => k.textContent.includes("12.04.2099")));
+    assert.ok(k.textContent.includes("MVA-melding"));
+    assert.ok(k.textContent.includes(
+      t("ui.dashbord.frist.forfalt").replace("{n}", "1")),
+      "en forfalt frist skal stå med ord");
     const brudd = await alvorligeBrudd(m);
     assert.equal(brudd.length, 0, beskrivBrudd(brudd));
   });

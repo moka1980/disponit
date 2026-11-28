@@ -1896,7 +1896,11 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'plattform_pliktfrist_sett(text,text,text,date)',           'disponit_plattform_eier'),
     ('FUNCTION', 'plattform_pliktfrist_slett(text,text,date)',               'disponit_plattform_eier'),
     ('FUNCTION', 'firma_pliktprofil_les(text)',                              'disponit_plattform_eier'),
-    ('FUNCTION', 'firma_pliktprofil_sett(text,text,text,boolean,boolean,text,text)', 'disponit_plattform_eier');
+    ('FUNCTION', 'firma_pliktprofil_sett(text,text,text,boolean,boolean,text,text)', 'disponit_plattform_eier'),
+    -- 238: fristvakten virker av seg selv.
+    ('FUNCTION', 'lovfrister_plikt_id(text,text,date)',                      'disponit_plattform_eier'),
+    ('FUNCTION', 'lovfrister_registrer(text,text,text)',                     'disponit_plattform_eier'),
+    ('FUNCTION', 'lovfrister_synk(integer)',                                 'disponit_plattform_eier');
 
 DO $$
 DECLARE

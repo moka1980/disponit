@@ -2010,3 +2010,11 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
 }
 .pk-maler, .pk-mal { min-width: 0; max-width: 100%; }
 .pk-mal .brikke > .muted { white-space: normal; overflow-wrap: anywhere; }
+
+/* Neste lovpålagte frist på dashbordet (238): én linje, lenke til høyre. */
+.dash-frist:empty { display: none; }
+.dash-frist { margin-bottom: var(--sp-3); }
+.dash-fristlinje { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4);
+  align-items: center; justify-content: space-between; }
+.dash-fristtekst { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3);
+  align-items: center; min-width: 0; }

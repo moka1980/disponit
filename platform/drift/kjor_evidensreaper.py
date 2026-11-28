@@ -72,10 +72,14 @@ def main() -> int:
                       "proveutlop": len(r.proveutlop),
                       "utlopte": [{"tenant": t, "frist": d}
                                   for t, d in r.proveutlop],
-                      "proveutlop_feilet": int(r.proveutlop_feilet)}))
+                      "proveutlop_feilet": int(r.proveutlop_feilet),
+                      "lovfrister_firmaer": len(r.lovfrister),
+                      "lovfrister": [{"tenant": t, "nye": n}
+                                     for t, n in r.lovfrister],
+                      "lovfrister_feilet": int(r.lovfrister_feilet)}))
     return 1 if (r.feilet or r.kandidatdata_feilet
                  or r.epostdata_feilet or r.partsdata_feilet
-                 or r.proveutlop_feilet) else 0
+                 or r.proveutlop_feilet or r.lovfrister_feilet) else 0
 
 
 if __name__ == "__main__":       # pragma: no cover

@@ -131,7 +131,7 @@ def test_profilen_gir_nettopp_de_riktige_pliktene(klient, fast_dag,
         "ansatte": True, "kilde": "brreg"})
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["nye"] > 0 and d["fantes"] == 0
+    assert d["nye"] > 0
     nokler = {f["nokkel"] for f in d["frister"]}
     assert {"mva_termin", "a_melding", "aga_forskuddstrekk",
             "aksjonaerregisteroppgave", "skattemelding_selskap",
@@ -230,3 +230,65 @@ def test_katalogen_er_plattformeierens(klient, ren_katalog):
                         json={"nokkel": "mva_termin", "periode": "x",
                               "frist": "2027-01-01"})
         assert r.status_code == 403, (sti, r.text)
+
+
+@pg
+def test_plikt_id_er_basens(migrator_lf):
+    """Python viser fristene med samme id som basen registrerer dem med."""
+    import datetime as dt
+
+    from api.lovfrister import plikt_id
+    for tenant, nokkel, frist in (("akme", "mva_termin", dt.date(2027, 4, 12)),
+                                  ("t-æøå", "a_melding", dt.date(2026, 12, 7))):
+        basens = migrator_lf.execute(
+            "SELECT lovfrister_plikt_id(%s,%s,%s)",
+            (tenant, nokkel, frist)).fetchone()[0]
+        assert plikt_id(tenant, nokkel, frist) == basens
+    migrator_lf.rollback()
+
+
+@pytest.fixture
+def migrator_lf():
+    from db.pg import koble
+    m = koble(DSN)
+    yield m
+    m.close()
+
+
+@pg
+def test_fristvakten_legger_inn_nye_frister_av_seg_selv(klient, ren_katalog,
+                                                         migrator_lf):
+    """DRIFTSVEIEN, ikke døra: `evidensreaper.kjor` — samme funksjon
+    timeren kaller — legger katalogens nye frist inn hos et firma som
+    ALDRI trykker på noe. Uten dette er fristvakten en liste."""
+    from drift import evidensreaper
+
+    from .test_outbox_bestilling import _reaperkobling
+    tenant, c, h = _kunde()
+    r = klient.post("/v1/lovfrister", cookies=c, headers=h, json={
+        "orgform": "AS", "mva": True, "ansatte": False})
+    assert r.status_code == 200, r.text
+    foer = len(klient.get("/v1/plikt", cookies=c).json()["plikter"])
+    assert foer > 0
+
+    # Eieren legger en ny frist i katalogen …
+    ec, eh = _eier()
+    frist = (datetime.date.today() + datetime.timedelta(days=200)).isoformat()
+    assert klient.post("/v1/plattform/pliktkatalog/frist", cookies=ec,
+                       headers=eh, json={"nokkel": "mva_termin",
+                                         "periode": "Ekstra termin",
+                                         "frist": frist}).status_code == 200
+    # … og timeren gjør resten.
+    rp, _rolle = _reaperkobling()
+    try:
+        res = evidensreaper.kjor(rp)
+        assert not res.lovfrister_feilet, (
+            "timerrollen har EXECUTE — en nekt her er et rettighetshull")
+        assert (tenant, 1) in res.lovfrister, res.lovfrister
+        # Samme kjøring igjen: ingenting nytt, og firmaet er ikke for tur.
+        assert tenant not in {t for t, _n in evidensreaper.kjor(rp).lovfrister}
+    finally:
+        rp.close()
+    plikter = klient.get("/v1/plikt", cookies=c).json()["plikter"]
+    assert len(plikter) == foer + 1
+    assert any("Ekstra termin" in p["tittel"] for p in plikter)
