@@ -164,6 +164,9 @@ REVOKE ALL ON FUNCTION lovfrister_plikt_id(TEXT, TEXT, DATE) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lovfrister_registrer(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION lovfrister_synk(INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION lovfrister_registrer(TEXT, TEXT, TEXT) TO disponit;
+-- Ren avledning uten tabelltilgang: flaten viser fristene med samme id,
+-- og porten `test_plikt_id_er_basens` måler at Python og basen er enige.
+GRANT EXECUTE ON FUNCTION lovfrister_plikt_id(TEXT, TEXT, DATE) TO disponit;
 
 -- SVEIPEN ER KRYSS-TENANT: ryddekontoen eier jobben der den finnes, og
 -- runtime er da nektet. Der den mangler (CI, lokalt) faller den til

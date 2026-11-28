@@ -250,7 +250,7 @@ def test_plikt_id_er_basens(migrator_lf):
 @pytest.fixture
 def migrator_lf():
     from db.pg import koble
-    m = koble(MIGRATOR_DSN)
+    m = koble(DSN)
     yield m
     m.close()
 
