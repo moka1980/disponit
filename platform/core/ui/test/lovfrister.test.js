@@ -305,3 +305,88 @@ test("Frister: kalenderlenken vises én gang, og kan slås av", async () => {
       "/v1/lovfrister/kalender/slett"]);
   } finally { globalThis.fetch = orig; }
 });
+
+// 240: «Slik gjør du det».
+//
+// MUTASJONER SOM DREPER DISSE: vis panelet åpent fra start, vis knappen
+// også på egne og leverte frister, send skjemaet med ni steg, send en
+// lenketekst uten adresse.
+test("Frister: «Slik gjør du det» åpner stegene og lenken til skjemaet",
+  async () => {
+    SVAR = { profil: { orgform: "AS", mva: true, ansatte: true, kilde: "brreg" },
+      nye_i_katalogen: 0, kalender: { aktiv: false, opprettet: null },
+      frister: [
+        F("a_melding", "A-melding", "November 2099", "2099-12-07"),
+        F("a_melding", "A-melding", "Oktober 2099", "2099-11-05", "lukket"),
+        F("mva_termin", "MVA-melding", "1. termin 2099", "2099-04-12"),
+        { nokkel: "egen", tittel: "Leieavtale", periode: null,
+          frist: "2099-12-31", hjemmel: null, kilde_url: null, plikt_id: "e1",
+          registrert: true, egen: true, gjentakelse: "engang", status: "apen" }],
+      veiledning: { a_melding: { steg: ["Kjør lønn.", "Send a-meldingen."],
+        skjema_navn: "Skatteetaten: a-meldingen",
+        skjema_url: "https://www.skatteetaten.no/a" } } };
+    const m = nyHoved();
+    visLovfrister(m, ctx);
+    assert.ok(await vent(() => m.querySelector(".lf-rad")));
+    // Vis også «resten av året», så alle fire radene er tegnet.
+    const knapper = () => [...m.querySelectorAll(".lf-slikknapp")];
+    assert.equal(knapper().length, 1,
+      "bare den åpne a-meldingen: ikke den leverte, ikke MVA uten "
+      + "veiledning, ikke den egne fristen");
+    const [knapp] = knapper();
+    const panel = m.querySelector(`#${knapp.getAttribute("aria-controls")}`);
+    assert.equal(panel.hidden, true);
+    assert.equal(knapp.getAttribute("aria-expanded"), "false");
+    knapp.click();
+    assert.equal(panel.hidden, false);
+    assert.equal(knapp.getAttribute("aria-expanded"), "true");
+    assert.deepEqual([...panel.querySelectorAll("ol > li")]
+      .map((x) => x.textContent), ["Kjør lønn.", "Send a-meldingen."]);
+    const lenke = panel.querySelector("a");
+    assert.equal(lenke.textContent, "Skatteetaten: a-meldingen");
+    assert.equal(lenke.getAttribute("href"), "https://www.skatteetaten.no/a");
+    assert.match(lenke.rel, /noopener/);
+    const brudd = await alvorligeBrudd(m);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    knapp.click();
+    assert.equal(panel.hidden, true);
+  });
+
+test("Pliktkatalog: eieren skriver stegene, og grensene sies ved feltet",
+  async () => {
+    EIER = true;
+    POSTER.length = 0;
+    const m = nyHoved();
+    const s = pliktkatalogseksjon(ctx);
+    m.append(s);
+    assert.ok(await vent(() => !s.hidden && s.querySelector(".pk-slik button")));
+    assert.equal(s.querySelector(".pk-slik button").textContent,
+      t("ui.pliktkatalog.slik.legg_til"));
+    s.querySelector(".pk-slik button").click();
+    const steg = s.querySelector("#pk-mva_termin-steg");
+    const navn = s.querySelector("#pk-mva_termin-skjemanavn");
+    const url = s.querySelector("#pk-mva_termin-skjemaurl");
+    const skjema = s.querySelector(".pk-slik form");
+    steg.value = Array.from({ length: 9 }, (_, i) => `Steg ${i + 1}`).join("\n");
+    skjema.requestSubmit();
+    assert.equal(POSTER.length, 0, "ni steg skal ikke sendes");
+    assert.equal(s.querySelector(".melding").textContent,
+      t("ui.pliktkatalog.slik.feil.steg"));
+    steg.value = "  Gjør ferdig bokføringen.  \n\nSend meldingen.";
+    navn.value = "Skatteetaten";
+    skjema.requestSubmit();
+    assert.equal(POSTER.length, 0, "lenketekst uten adresse skal ikke sendes");
+    assert.equal(s.querySelector(".melding").textContent,
+      t("ui.pliktkatalog.slik.feil.skjema"));
+    url.value = "https://www.skatteetaten.no/mva";
+    const brudd = await alvorligeBrudd(m);
+    assert.equal(brudd.length, 0, beskrivBrudd(brudd));
+    skjema.requestSubmit();
+    assert.ok(await vent(() => POSTER.length === 1));
+    assert.deepEqual(POSTER[0], {
+      sti: "/v1/plattform/pliktkatalog/veiledning",
+      kropp: { nokkel: "mva_termin",
+        steg: ["Gjør ferdig bokføringen.", "Send meldingen."],
+        skjema_navn: "Skatteetaten",
+        skjema_url: "https://www.skatteetaten.no/mva" } });
+  });

@@ -1905,7 +1905,10 @@ INSERT INTO _design VALUES
     ('FUNCTION', 'kalenderlenke_sett(text,text,text)',                       'disponit_plattform_eier'),
     ('FUNCTION', 'kalenderlenke_slett(text)',                                'disponit_plattform_eier'),
     ('FUNCTION', 'kalenderlenke_status(text)',                               'disponit_plattform_eier'),
-    ('FUNCTION', 'kalenderlenke_tenant(text)',                               'disponit_plattform_eier');
+    ('FUNCTION', 'kalenderlenke_tenant(text)',                               'disponit_plattform_eier'),
+    -- 240: slik gjor du det.
+    ('FUNCTION', 'plattform_pliktveiledning()',                              'disponit_plattform_eier'),
+    ('FUNCTION', 'plattform_pliktveiledning_sett(text,text,text[],text,text)', 'disponit_plattform_eier');
 
 DO $$
 DECLARE

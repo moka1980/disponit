@@ -2030,5 +2030,13 @@ html[data-visning="landing"][data-offentlig-side="tjenester"] #hovedinnhold {
   align-items: center; }
 .lf-kalrad .felt-inp { flex: 1 1 16rem; min-width: 0;
   font-family: var(--font-mono); font-size: var(--fs-sm); }
+.lf-slikknapp { justify-self: start; margin-top: var(--sp-1); }
+.lf-slik { grid-column: 1 / -1; display: grid; gap: var(--sp-2);
+  justify-items: start; padding: var(--sp-3); border-radius: var(--radius-sm);
+  background: var(--flate); }
+.lf-slik[hidden] { display: none; }
+.lf-slik ol { margin: 0; padding-left: 1.25rem; display: grid;
+  gap: var(--sp-1); }
+.pk-slik { margin-top: var(--sp-2); }
 #lf-kal-velg { margin: var(--sp-3) 0 var(--sp-2); }
 .lf-hva .tag { line-height: 1.3rem; font-size: var(--fs-xs); }
